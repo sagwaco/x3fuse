@@ -1,3 +1,7 @@
+# 0.0.2 - Beta 1
+
+- Update x3f_extract entitlements
+
 # 0.0.1 - Initial Release
 
 - Initial release of X3Fuse
