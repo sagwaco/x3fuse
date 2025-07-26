@@ -4,6 +4,12 @@ on:
   issue_comment:
     types: [created]
 
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  actions: write
+
 concurrency:
   group: publish-release${{ github.ref }}
   cancel-in-progress: true
@@ -282,9 +288,10 @@ jobs:
           github_token: ${{ github.token }}
           message: "Release version v${{ needs.release.outputs.new_version }}"
 
-      - uses: geekyeggo/delete-artifact@v2
+      - uses: geekyeggo/delete-artifact@v5
         with:
           name: "*"
+          failOnError: false
 
       - name: Add success reactions
         if: ${{ contains(join(needs.*.result, ','), 'success') }}
