@@ -17,9 +17,26 @@ concurrency:
 jobs:
   preparation:
     name: Preparation job
-    if: ${{ github.event.issue.pull_request != null && contains(github.event.comment.body, '/release') && github.event.comment.user.login == github.repository_owner }}
+    if: ${{ github.event.issue.pull_request != null && contains(github.event.comment.body, '/release') }}
     runs-on: ubuntu-latest
     steps:
+      - name: Check permissions
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const commenter = context.payload.comment.user.login;
+            const { data: { permission } } = await github.rest.repos.getCollaboratorPermissionLevel({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              username: commenter,
+            });
+
+            if (permission !== 'admin' && permission !== 'write') {
+              core.setFailed(`User ${commenter} does not have write permissions`);
+            }
+
+            console.log(`User ${commenter} has ${permission} permission`);
+
       - name: Add reactions
         uses: peter-evans/create-or-update-comment@v2
         with:
