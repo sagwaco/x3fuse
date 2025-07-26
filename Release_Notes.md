@@ -1,11 +1,3 @@
-# 0.0.4 - Beta 1.0.2
-
-- Build test!
-
-# 0.0.3 - Beta 1.0.1
-
-- Build test!
-
 # 0.0.2 - Beta 1
 
 - Update x3f_extract entitlements
