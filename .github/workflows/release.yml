@@ -17,7 +17,7 @@ concurrency:
 jobs:
   preparation:
     name: Preparation job
-    if: ${{ github.event.issue.pull_request && contains(github.event.comment.body, '/release') && github.event.comment.user.login == github.repository_owner }}
+    if: ${{ github.event.issue.pull_request != null && contains(github.event.comment.body, '/release') && github.event.comment.user.login == github.repository_owner }}
     runs-on: ubuntu-latest
     steps:
       - name: Add reactions
