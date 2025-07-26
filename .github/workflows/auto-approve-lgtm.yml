@@ -112,16 +112,6 @@ jobs:
               core.setFailed(`Error approving PR: ${error.message}`);
             }
 
-      - name: Post confirmation comment
-        if: steps.check-lgtm.outputs.contains_lgtm == 'true' && steps.check-permissions.outputs.has_permission == 'true'
-        uses: peter-evans/create-or-update-comment@v4
-        with:
-          issue-number: ${{ github.event.issue.number }}
-          body: |
-            ✅ This PR has been automatically approved based on LGTM from @${{ github.event.comment.user.login }}.
-
-            The PR is now ready to merge.
-
       - name: Handle unauthorized attempt
         if: steps.check-lgtm.outputs.contains_lgtm == 'true' && steps.check-permissions.outputs.has_permission != 'true'
         uses: peter-evans/create-or-update-comment@v4
