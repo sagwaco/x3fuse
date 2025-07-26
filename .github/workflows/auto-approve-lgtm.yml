@@ -1,0 +1,133 @@
+name: Auto Approve on LGTM
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  auto-approve:
+    name: Auto approve PR on LGTM
+    # Only run on pull request comments
+    if: github.event.issue.pull_request
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
+    steps:
+      - name: Check if comment contains LGTM
+        id: check-lgtm
+        run: |
+          if [[ "${{ github.event.comment.body }}" == "LGTM" ]] || [[ "${{ github.event.comment.body }}" =~ ^LGTM[[:space:]] ]] || [[ "${{ github.event.comment.body }}" =~ [[:space:]]LGTM[[:space:]]? ]] || [[ "${{ github.event.comment.body }}" =~ [[:space:]]LGTM$ ]]; then
+            echo "contains_lgtm=true" >> $GITHUB_OUTPUT
+          else
+            echo "contains_lgtm=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Get PR details and check permissions
+        if: steps.check-lgtm.outputs.contains_lgtm == 'true'
+        uses: actions/github-script@v7
+        id: check-permissions
+        with:
+          script: |
+            // Initialize output to false
+            core.setOutput('has_permission', 'false');
+
+            try {
+              // Get the PR details
+              const pr = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: context.issue.number
+              });
+              
+              // Check if the commenter has write permissions
+              const permission = await github.rest.repos.getCollaboratorPermissionLevel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                username: context.payload.comment.user.login
+              });
+              
+              console.log(`User ${context.payload.comment.user.login} has ${permission.data.permission} permission`);
+              
+              // Check if user has write or admin permissions (can merge to main)
+              const hasPermission = ['write', 'admin'].includes(permission.data.permission);
+              
+              if (!hasPermission) {
+                core.setFailed(`User ${context.payload.comment.user.login} does not have merge permissions`);
+                return;
+              }
+              
+              // Store PR head SHA for later use
+              core.setOutput('pr_head_sha', pr.data.head.sha);
+              core.setOutput('has_permission', 'true');
+              
+            } catch (error) {
+              core.setFailed(`Error checking permissions: ${error.message}`);
+            }
+
+      - name: Add reaction to comment
+        if: steps.check-lgtm.outputs.contains_lgtm == 'true' && steps.check-permissions.outputs.has_permission == 'true'
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          comment-id: ${{ github.event.comment.id }}
+          reactions: "+1"
+
+      - name: Approve PR
+        if: steps.check-lgtm.outputs.contains_lgtm == 'true' && steps.check-permissions.outputs.has_permission == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            try {
+              // Check if the bot has already approved
+              const reviews = await github.rest.pulls.listReviews({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: context.issue.number
+              });
+              
+              const botReview = reviews.data.find(review => 
+                review.user.type === 'Bot' && 
+                review.user.login === 'github-actions[bot]' &&
+                review.state === 'APPROVED'
+              );
+              
+              if (botReview) {
+                console.log('PR already approved by bot');
+                return;
+              }
+              
+              // Create an approving review
+              await github.rest.pulls.createReview({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: context.issue.number,
+                commit_id: '${{ steps.check-permissions.outputs.pr_head_sha }}',
+                event: 'APPROVE',
+                body: `Automatically approved based on LGTM from @${context.payload.comment.user.login} who has merge permissions.`
+              });
+              
+              console.log('PR approved successfully');
+              
+            } catch (error) {
+              core.setFailed(`Error approving PR: ${error.message}`);
+            }
+
+      - name: Post confirmation comment
+        if: steps.check-lgtm.outputs.contains_lgtm == 'true' && steps.check-permissions.outputs.has_permission == 'true'
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            ✅ This PR has been automatically approved based on LGTM from @${{ github.event.comment.user.login }}.
+
+            The PR is now ready to merge.
+
+      - name: Handle unauthorized attempt
+        if: steps.check-lgtm.outputs.contains_lgtm == 'true' && steps.check-permissions.outputs.has_permission != 'true'
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            ❌ @${{ github.event.comment.user.login }} does not have merge permissions to approve this PR.
+
+            Only users with write or admin permissions can use LGTM to auto-approve.
