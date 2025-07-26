@@ -17,9 +17,26 @@ concurrency:
 jobs:
   preparation:
     name: Preparation job
-    if: ${{ github.event.issue.pull_request != null && contains(github.event.comment.body, '/release') && github.event.comment.user.login == github.repository_owner }}
+    if: ${{ github.event.issue.pull_request != null && contains(github.event.comment.body, '/release') }}
     runs-on: ubuntu-latest
     steps:
+      - name: Check permissions
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const commenter = context.payload.comment.user.login;
+            const { data: { permission } } = await github.rest.repos.getCollaboratorPermissionLevel({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              username: commenter,
+            });
+
+            if (permission !== 'admin' && permission !== 'write') {
+              core.setFailed(`User ${commenter} does not have write permissions`);
+            }
+
+            console.log(`User ${commenter} has ${permission} permission`);
+
       - name: Add reactions
         uses: peter-evans/create-or-update-comment@v2
         with:
@@ -89,7 +106,7 @@ jobs:
 
   archive:
     name: Build and export app
-    runs-on: macos-12
+    runs-on: macos-latest
     needs: preparation
     steps:
       - uses: actions/download-artifact@master
@@ -110,10 +127,23 @@ jobs:
         with:
           ref: ${{ steps.comment-branch.outputs.head_ref }}
 
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Verify Xcode version
+        run: |
+          echo "Selected Xcode version:"
+          xcodebuild -version
+
       - name: Override versions in project
         run: |
-          # Update version in Info.plist
+          # Update version in Info.plist - add keys if they don't exist
+          /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string ${{ steps.info.outputs.new_version }}" X3Fuse/Info.plist 2>/dev/null || \
           /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${{ steps.info.outputs.new_version }}" X3Fuse/Info.plist
+
+          /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string ${{ steps.info.outputs.new_version }}" X3Fuse/Info.plist 2>/dev/null || \
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${{ steps.info.outputs.new_version }}" X3Fuse/Info.plist
 
           # Update version in Xcode project - find current version first
@@ -150,17 +180,32 @@ jobs:
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
           cp $PP_PATH ~/Library/MobileDevice/Provisioning\ Profiles
 
+          # List certificates to verify correct import
+          echo "Available certificates:"
+          security find-identity -v -p codesigning $KEYCHAIN_PATH
+
       - name: Build and archive
         run: |
+          # Get the provisioning profile UUID
+          PROVISION_UUID=$(grep -A1 UUID ~/Library/MobileDevice/Provisioning\ Profiles/*.mobileprovision | grep -o '[0-9a-fA-F]\{8\}-[0-9a-fA-F]\{4\}-[0-9a-fA-F]\{4\}-[0-9a-fA-F]\{4\}-[0-9a-fA-F]\{12\}' | head -1)
+
           xcodebuild clean archive \
             -project X3Fuse.xcodeproj \
             -scheme X3Fuse \
             -configuration Release \
-            -archivePath X3Fuse
+            -archivePath X3Fuse \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="Developer ID Application" \
+            DEVELOPMENT_TEAM="RPKWZLZ8NN" \
+            PROVISIONING_PROFILE_SPECIFIER="$PROVISION_UUID" \
+            OTHER_CODE_SIGN_FLAGS="--timestamp --options=runtime"
 
       - name: Export app
         run: |
           # Create export options
+          # Get the provisioning profile UUID for export options
+          PROVISION_UUID=$(grep -A1 UUID ~/Library/MobileDevice/Provisioning\ Profiles/*.mobileprovision | grep -o '[0-9a-fA-F]\{8\}-[0-9a-fA-F]\{4\}-[0-9a-fA-F]\{4\}-[0-9a-fA-F]\{4\}-[0-9a-fA-F]\{12\}' | head -1)
+
           cat > export_options.plist << EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -170,6 +215,17 @@ jobs:
               <string>developer-id</string>
               <key>stripSwiftSymbols</key>
               <true/>
+              <key>signingStyle</key>
+              <string>manual</string>
+              <key>signingCertificate</key>
+              <string>Developer ID Application</string>
+              <key>teamID</key>
+              <string>RPKWZLZ8NN</string>
+              <key>provisioningProfiles</key>
+              <dict>
+                  <key>com.sagwa.X3Fuse</key>
+                  <string>$PROVISION_UUID</string>
+              </dict>
           </dict>
           </plist>
           EOF
@@ -179,16 +235,33 @@ jobs:
             -exportPath Release \
             -exportOptionsPlist "export_options.plist"
 
-      - name: Zip app
+      - name: Create ZIP archive
         run: |
           cd Release
-          ditto -c -k --sequesterRsrc --keepParent X3Fuse.app X3Fuse.zip
+          zip -r X3Fuse.zip X3Fuse.app
+          cd ..
 
-      - name: Upload archived app
+      - name: Generate macOS installer
+        uses: akiojin/generate-mac-installer-github-action@v0.1.0
+        id: generate_installer
+        with:
+          output-directory: ${{ runner.temp }}
+          root-directory: Release
+          bundle-path: X3Fuse.app
+          identifier: com.sagwa.X3Fuse
+          version: ${{ steps.info.outputs.new_version }}
+
+      - name: Move installer to Release directory
+        run: |
+          mv "${{ steps.generate_installer.outputs.output-path }}" Release/X3Fuse.pkg
+
+      - name: Upload artifacts
         uses: actions/upload-artifact@master
         with:
           name: app
-          path: Release/X3Fuse.zip
+          path: |
+            Release/X3Fuse.pkg
+            Release/X3Fuse.zip
 
   release:
     name: "Create Release"
@@ -216,33 +289,38 @@ jobs:
           mv artifacts/artifact/title title
           mv artifacts/artifact/latest_changes latest_changes
           mkdir Release
+          mv artifacts/app/X3Fuse.pkg Release/
           mv artifacts/app/X3Fuse.zip Release/
 
       - name: Prepare Sparkle update creation
-        env:
-          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
         run: |
-          echo -n "$SPARKLE_PRIVATE_KEY" > ./Configuration/sparkle_private_key
-          rm -rf Release/*.app
+          # Clean up Release directory
           rm -rf Release/*.log
           rm -rf Release/*.plist
+
+          # List Release directory contents
+          echo "Release directory contents:"
+          ls -la Release/
 
       - name: Setup Sparkle
         run: |
           # Download Sparkle
-          curl -L -o Sparkle.tar.xz https://github.com/sparkle-project/Sparkle/releases/download/2.5.2/Sparkle-2.5.2.tar.xz
+          curl -L -o Sparkle.tar.xz https://github.com/sparkle-project/Sparkle/releases/download/2.7.1/Sparkle-2.7.1.tar.xz
           tar -xf Sparkle.tar.xz
-          cp bin/generate_appcast ./Configuration/generate_appcast
-          chmod +x ./Configuration/generate_appcast
 
       - name: Update appcast
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
         run: |
-          ./Configuration/generate_appcast \
-              --ed-key-file Configuration/sparkle_private_key \
-              --link https://github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/releases \
-              --download-url-prefix https://github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/releases/download/v${{ steps.info.outputs.new_version }}/ \
-              -o docs/Support/appcast.xml \
-              Release/
+          # Create a temporary directory for appcast generation
+          mkdir -p appcast_temp
+          cp Release/X3Fuse.zip appcast_temp/
+
+          # Generate appcast using the zip file with the private key file
+          echo "$SPARKLE_PRIVATE_KEY" | ./bin/generate_appcast --ed-key-file - --link "https://github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/releases" --download-url-prefix "https://github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/releases/download/v${{ steps.info.outputs.new_version }}/" -o docs/Support/appcast.xml appcast_temp/
+
+          # Clean up temporary directory and key file
+          rm -rf appcast_temp
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v1
@@ -251,7 +329,9 @@ jobs:
           tag_name: v${{ steps.info.outputs.new_version }}
           fail_on_unmatched_files: true
           body_path: latest_changes
-          files: Release/X3Fuse.zip
+          files: |
+            Release/X3Fuse.pkg
+            Release/X3Fuse.zip
 
       - name: Saving changes
         uses: stefanzweifel/git-auto-commit-action@v4
@@ -270,7 +350,7 @@ jobs:
     name: Ending job
     if: always()
     runs-on: ubuntu-latest
-    needs: [release]
+    needs: [preparation, archive, release]
     steps:
       - uses: xt0rted/pull-request-comment-branch@v1
         id: comment-branch
@@ -280,6 +360,7 @@ jobs:
           ref: ${{ steps.comment-branch.outputs.head_ref }}
 
       - name: Merge PR
+        if: ${{ needs.preparation.result == 'success' && needs.archive.result == 'success' && needs.release.result == 'success' }}
         uses: devmasx/merge-branch@master
         with:
           type: now
