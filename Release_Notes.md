@@ -1,8 +1,6 @@
 # 0.0.3 - Beta 1.0.1
 
-- Verified build stability and compatibility across supported platforms.
-- Conducted regression testing to ensure no new issues were introduced.
-- Updated build scripts for improved automation and error handling.
+- Build test!
 
 # 0.0.2 - Beta 1
 
