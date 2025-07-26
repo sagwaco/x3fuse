@@ -1,0 +1,150 @@
+/* 
+  Localizable.strings
+  X3Fuse
+
+  Created by Cline on 7/18/25.
+*/
+
+// MARK: - App Title
+"app.title" = "X3Fuse BETA";
+
+// MARK: - Buttons
+"button.convert" = "변환";
+"button.stop" = "중지";
+"button.add_files" = "파일 추가";
+"button.settings" = "설정";
+"button.ok" = "확인";
+"button.cancel" = "취소";
+"button.done" = "완료";
+"button.browse" = "찾아보기...";
+"button.overwrite" = "덮어쓰기";
+
+// MARK: - Toolbar and Menu
+"toolbar.stop_conversion" = "변환 중지";
+"toolbar.convert_all" = "모두 변환";
+"toolbar.convert_selected" = "선택된 항목 변환";
+
+// MARK: - Footer
+"footer.output_directory" = "출력 디렉토리";
+"footer.alongside_original" = "원본 파일과 같은 위치";
+
+// MARK: - File Selection Dialog
+"dialog.select_x3f_files.title" = "X3F 파일 선택";
+"dialog.select_x3f_files.message" = "변환할 X3F 파일을 선택하세요";
+"dialog.select_output_directory.title" = "출력 디렉토리 선택";
+"dialog.select_output_directory.message" = "변환된 파일이 저장될 위치를 선택하세요";
+
+// MARK: - Alerts
+"alert.setup_issues.title" = "설정 문제";
+
+// MARK: - Settings View
+"settings.section.output" = "출력 설정";
+"settings.section.conversion" = "변환 설정";
+"settings.section.debug" = "디버그";
+"settings.section.updates" = "업데이트";
+"settings.section.about" = "정보";
+
+"settings.save_alongside_original" = "원본 파일과 함께 저장";
+"settings.save_alongside_original.help" = "활성화하면 변환된 파일이 원본 파일과 같은 위치에 저장됩니다.";
+"settings.save_alongside_original.description" = "사용자 지정 출력 디렉토리를 선택하려면 비활성화하세요.";
+
+"settings.output_location" = "출력 위치";
+"settings.only_convert_new" = "대기열의 새 항목만 변환";
+"settings.only_convert_new.help" = "활성화하면 '모두 변환'이 아직 변환되지 않은 파일만 처리합니다. 비활성화하면 이미 변환된 파일을 포함하여 대기열의 모든 파일을 처리합니다.";
+
+"settings.conversion_format" = "변환 형식";
+"settings.raw_compression" = "RAW 압축";
+"settings.raw_compression.help" = "DNG와 TIFF의 무손실 압축을 활성화합니다";
+"settings.color_profile" = "색상 프로파일";
+"settings.denoise" = "노이즈 제거";
+"settings.denoise.help" = "변환 중 노이즈 감소를 적용합니다";
+"settings.faster_processing" = "빠른 처리";
+"settings.faster_processing.help" = "빠른 처리를 위한 OpenCL 가속을 활성화합니다";
+
+"settings.debug_logging" = "디버그 로깅";
+"settings.debug_logging.help" = "문제 해결을 위한 자세한 디버그 로그를 활성화합니다";
+"settings.debug_logs" = "디버그 로그";
+"settings.open_logs_folder" = "로그 폴더 열기";
+"settings.clear_logs" = "로그 지우기";
+
+"settings.log.conversion" = "변환 로그:";
+"settings.log.error" = "오류 로그:";
+"settings.log.debug" = "디버그 로그:";
+
+"settings.version" = "버전";
+"settings.build" = "빌드";
+
+// MARK: - Menu Commands
+"menu.help.X3Fuse_help" = "X3Fuse 도움말";
+"menu.help.show_debug_logs" = "디버그 로그 표시";
+"menu.help.clear_debug_logs" = "디버그 로그 지우기";
+
+"menu.file.add_x3f_files" = "X3F 파일 추가...";
+"menu.file.settings" = "설정";
+
+"menu.edit.select_all_files" = "모든 파일 선택";
+"menu.edit.deselect_all_files" = "모든 파일 선택 해제";
+"menu.edit.remove_selected_files" = "선택된 파일 제거";
+
+"menu.conversion.title" = "변환";
+"menu.conversion.convert_all_files" = "모든 파일 변환";
+"menu.conversion.stop_conversion" = "변환 중지";
+"menu.conversion.clear_queue" = "대기열 지우기";
+"menu.conversion.remove_failed_files" = "실패한 파일 제거";
+"menu.conversion.remove_completed_files" = "완료된 파일 제거";
+
+// MARK: - File Queue View
+"queue.column.name" = "이름";
+"queue.column.date" = "날짜";
+"queue.column.size" = "크기";
+
+"queue.empty.title" = "대기열에 파일이 없습니다";
+"queue.empty.message" = "X3F 파일을 여기에 끌어다 놓아 변환 대기열에 추가하세요";
+
+// MARK: - Context Menu
+"context.convert" = "변환";
+"context.convert_selected" = "선택된 항목 변환";
+"context.reconvert" = "재변환";
+"context.reconvert_selected" = "선택된 항목 재변환";
+"context.stop_conversion" = "변환 중지";
+"context.remove" = "제거";
+"context.remove_selected" = "선택된 항목 제거";
+"context.show_in_finder" = "Finder에서 보기";
+"context.open_converted_in_finder" = "변환된 파일을 Finder에서 보기";
+"context.open_converted_in_finder_multiple" = "변환된 파일들을 Finder에서 보기";
+"context.remove_failed_file" = "실패한 파일 제거";
+"context.remove_failed_files" = "실패한 파일들 제거";
+"context.remove_completed_file" = "완료된 파일 제거";
+"context.remove_completed_files" = "완료된 파일들 제거";
+"context.deselect_all" = "모두 선택 해제";
+"context.convert_all" = "모두 변환";
+"context.remove_all" = "모두 제거";
+
+// MARK: - Reconversion Confirmation
+"reconversion.title" = "기존 파일을 덮어쓰시겠습니까?";
+"reconversion.message" = "다음 파일들이 덮어쓰여집니다:";
+"reconversion.warning" = "이 작업은 되돌릴 수 없습니다. 기존 변환된 파일들이 영구적으로 교체됩니다.";
+"reconversion.location_prefix" = " ";
+
+// MARK: - File Status
+"status.queued" = "대기 중";
+"status.processing" = "처리 중";
+"status.completed" = "완료";
+"status.failed" = "실패";
+"status.warning" = "경고";
+"status.conversion_failed" = "변환에 실패했습니다";
+"status.conversion_completed_with_warnings" = "경고와 함께 변환이 완료되었습니다";
+
+// MARK: - Updates
+"updates.check_for_updates" = "업데이트 확인…";
+"updates.checking_for_updates" = "업데이트 확인 중…";
+"updates.automatic_updates" = "자동으로 업데이트 확인";
+"updates.automatic_updates.help" = "백그라운드에서 자동으로 업데이트를 확인합니다";
+"updates.automatic_download" = "자동으로 업데이트 다운로드";
+"updates.automatic_download.help" = "업데이트가 있을 때 자동으로 다운로드합니다";
+"updates.last_checked" = "마지막 확인";
+"updates.never" = "없음";
+"updates.current_version" = "현재 버전";
+
+// MARK: - Placeholders
+"placeholder.dash" = "—";

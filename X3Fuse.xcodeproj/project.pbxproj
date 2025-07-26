@@ -1,0 +1,664 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		2571E44B2E2BF7F200044135 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 2571E44A2E2BF7F200044135 /* Sparkle */; };
+		25D57E7D2E1E0003004F6242 /* X3Fuse/x3f_extract in Resources */ = {isa = PBXBuildFile; fileRef = 25D57E7B2E1E0001004F6242 /* X3Fuse/x3f_extract */; };
+		25D57E7E2E1E0004004F6242 /* X3Fuse/opcodes in Resources */ = {isa = PBXBuildFile; fileRef = 25D57E7C2E1E0002004F6242 /* X3Fuse/opcodes */; };
+		25D57E7F2E1E0005004F6242 /* X3Fuse/exiftool in Resources */ = {isa = PBXBuildFile; fileRef = 25D57E7A2E1E0000004F6242 /* X3Fuse/exiftool */; };
+		25D57E802E1E0006004F6242 /* X3Fuse/lib in Resources */ = {isa = PBXBuildFile; fileRef = 25D57E792E1DFFFF004F6242 /* X3Fuse/lib */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		25D57E5F2E1DFFDE004F6242 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 25D57E462E1DFFDD004F6242 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 25D57E4D2E1DFFDD004F6242;
+			remoteInfo = X3Fuse;
+		};
+		25D57E692E1DFFDE004F6242 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 25D57E462E1DFFDD004F6242 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 25D57E4D2E1DFFDD004F6242;
+			remoteInfo = X3Fuse;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		25D57E4E2E1DFFDD004F6242 /* X3Fuse.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = X3Fuse.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		25D57E5E2E1DFFDE004F6242 /* X3FuseTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = X3FuseTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		25D57E682E1DFFDE004F6242 /* X3FuseUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = X3FuseUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		25D57E792E1DFFFF004F6242 /* X3Fuse/lib */ = {isa = PBXFileReference; lastKnownFileType = folder; path = X3Fuse/lib; sourceTree = "<group>"; };
+		25D57E7A2E1E0000004F6242 /* X3Fuse/exiftool */ = {isa = PBXFileReference; lastKnownFileType = text.script.perl; path = X3Fuse/exiftool; sourceTree = "<group>"; };
+		25D57E7B2E1E0001004F6242 /* X3Fuse/x3f_extract */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.executable"; path = X3Fuse/x3f_extract; sourceTree = "<group>"; };
+		25D57E7C2E1E0002004F6242 /* X3Fuse/opcodes */ = {isa = PBXFileReference; lastKnownFileType = folder; path = X3Fuse/opcodes; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		25C4B2982E2CA5F300444629 /* Exceptions for "X3Fuse" folder in "X3Fuse" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 25D57E4D2E1DFFDD004F6242 /* X3Fuse */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		25D57E502E1DFFDD004F6242 /* X3Fuse */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				25C4B2982E2CA5F300444629 /* Exceptions for "X3Fuse" folder in "X3Fuse" target */,
+			);
+			path = X3Fuse;
+			sourceTree = "<group>";
+		};
+		25D57E612E1DFFDE004F6242 /* X3FuseTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = X3FuseTests;
+			sourceTree = "<group>";
+		};
+		25D57E6B2E1DFFDE004F6242 /* X3FuseUITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = X3FuseUITests;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		25D57E4B2E1DFFDD004F6242 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				2571E44B2E2BF7F200044135 /* Sparkle in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		25D57E5B2E1DFFDE004F6242 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		25D57E652E1DFFDE004F6242 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		25D57E452E1DFFDD004F6242 = {
+			isa = PBXGroup;
+			children = (
+				25D57E502E1DFFDD004F6242 /* X3Fuse */,
+				25D57E7B2E1E0001004F6242 /* X3Fuse/x3f_extract */,
+				25D57E7C2E1E0002004F6242 /* X3Fuse/opcodes */,
+				25D57E7A2E1E0000004F6242 /* X3Fuse/exiftool */,
+				25D57E792E1DFFFF004F6242 /* X3Fuse/lib */,
+				25D57E612E1DFFDE004F6242 /* X3FuseTests */,
+				25D57E6B2E1DFFDE004F6242 /* X3FuseUITests */,
+				25D57E4F2E1DFFDD004F6242 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		25D57E4F2E1DFFDD004F6242 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				25D57E4E2E1DFFDD004F6242 /* X3Fuse.app */,
+				25D57E5E2E1DFFDE004F6242 /* X3FuseTests.xctest */,
+				25D57E682E1DFFDE004F6242 /* X3FuseUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		25D57E4D2E1DFFDD004F6242 /* X3Fuse */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 25D57E722E1DFFDE004F6242 /* Build configuration list for PBXNativeTarget "X3Fuse" */;
+			buildPhases = (
+				25D57E4A2E1DFFDD004F6242 /* Sources */,
+				25D57E4B2E1DFFDD004F6242 /* Frameworks */,
+				25D57E4C2E1DFFDD004F6242 /* Resources */,
+				25C4B2992E2CAA0800444629 /* ShellScript */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				25D57E502E1DFFDD004F6242 /* X3Fuse */,
+			);
+			name = X3Fuse;
+			packageProductDependencies = (
+				2571E44A2E2BF7F200044135 /* Sparkle */,
+			);
+			productName = X3Fuse;
+			productReference = 25D57E4E2E1DFFDD004F6242 /* X3Fuse.app */;
+			productType = "com.apple.product-type.application";
+		};
+		25D57E5D2E1DFFDE004F6242 /* X3FuseTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 25D57E752E1DFFDE004F6242 /* Build configuration list for PBXNativeTarget "X3FuseTests" */;
+			buildPhases = (
+				25D57E5A2E1DFFDE004F6242 /* Sources */,
+				25D57E5B2E1DFFDE004F6242 /* Frameworks */,
+				25D57E5C2E1DFFDE004F6242 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				25D57E602E1DFFDE004F6242 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				25D57E612E1DFFDE004F6242 /* X3FuseTests */,
+			);
+			name = X3FuseTests;
+			packageProductDependencies = (
+			);
+			productName = X3FuseTests;
+			productReference = 25D57E5E2E1DFFDE004F6242 /* X3FuseTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		25D57E672E1DFFDE004F6242 /* X3FuseUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 25D57E782E1DFFDE004F6242 /* Build configuration list for PBXNativeTarget "X3FuseUITests" */;
+			buildPhases = (
+				25D57E642E1DFFDE004F6242 /* Sources */,
+				25D57E652E1DFFDE004F6242 /* Frameworks */,
+				25D57E662E1DFFDE004F6242 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				25D57E6A2E1DFFDE004F6242 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				25D57E6B2E1DFFDE004F6242 /* X3FuseUITests */,
+			);
+			name = X3FuseUITests;
+			packageProductDependencies = (
+			);
+			productName = X3FuseUITests;
+			productReference = 25D57E682E1DFFDE004F6242 /* X3FuseUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		25D57E462E1DFFDD004F6242 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1640;
+				LastUpgradeCheck = 1640;
+				TargetAttributes = {
+					25D57E4D2E1DFFDD004F6242 = {
+						CreatedOnToolsVersion = 16.4;
+					};
+					25D57E5D2E1DFFDE004F6242 = {
+						CreatedOnToolsVersion = 16.4;
+						TestTargetID = 25D57E4D2E1DFFDD004F6242;
+					};
+					25D57E672E1DFFDE004F6242 = {
+						CreatedOnToolsVersion = 16.4;
+						TestTargetID = 25D57E4D2E1DFFDD004F6242;
+					};
+				};
+			};
+			buildConfigurationList = 25D57E492E1DFFDD004F6242 /* Build configuration list for PBXProject "X3Fuse" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+				ja,
+				ko,
+			);
+			mainGroup = 25D57E452E1DFFDD004F6242;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				2571E4492E2BF7F200044135 /* XCRemoteSwiftPackageReference "Sparkle" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 25D57E4F2E1DFFDD004F6242 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				25D57E4D2E1DFFDD004F6242 /* X3Fuse */,
+				25D57E5D2E1DFFDE004F6242 /* X3FuseTests */,
+				25D57E672E1DFFDE004F6242 /* X3FuseUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		25D57E4C2E1DFFDD004F6242 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				25D57E7D2E1E0003004F6242 /* X3Fuse/x3f_extract in Resources */,
+				25D57E7E2E1E0004004F6242 /* X3Fuse/opcodes in Resources */,
+				25D57E7F2E1E0005004F6242 /* X3Fuse/exiftool in Resources */,
+				25D57E802E1E0006004F6242 /* X3Fuse/lib in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		25D57E5C2E1DFFDE004F6242 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		25D57E662E1DFFDE004F6242 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		25C4B2992E2CAA0800444629 /* ShellScript */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 12;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# Type a script or drag a script file from your workspace to insert its path.\ncodesign --force --options=runtime \\\n--sign \"${EXPANDED_CODE_SIGN_IDENTITY_NAME}\" \\\n\"${BUILT_PRODUCTS_DIR}/${WRAPPER_NAME}/Contents/Resources/x3f_extract\"\n\ncodesign --force --options=runtime \\\n--sign \"${EXPANDED_CODE_SIGN_IDENTITY_NAME}\" \\\n\"${BUILT_PRODUCTS_DIR}/${WRAPPER_NAME}/Contents/Resources/exiftool\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		25D57E4A2E1DFFDD004F6242 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		25D57E5A2E1DFFDE004F6242 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		25D57E642E1DFFDE004F6242 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		25D57E602E1DFFDE004F6242 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 25D57E4D2E1DFFDD004F6242 /* X3Fuse */;
+			targetProxy = 25D57E5F2E1DFFDE004F6242 /* PBXContainerItemProxy */;
+		};
+		25D57E6A2E1DFFDE004F6242 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 25D57E4D2E1DFFDD004F6242 /* X3Fuse */;
+			targetProxy = 25D57E692E1DFFDE004F6242 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		25D57E702E1DFFDE004F6242 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = RPKWZLZ8NN;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 15.5;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		25D57E712E1DFFDE004F6242 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = RPKWZLZ8NN;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 15.5;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		25D57E732E1DFFDE004F6242 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
+				CODE_SIGN_ENTITLEMENTS = X3Fuse/X3Fuse.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 0.0.1;
+				DEVELOPMENT_TEAM = RPKWZLZ8NN;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = X3Fuse/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = X3Fuse;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.photography";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/X3Fuse",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 0.0.1;
+				OTHER_CODE_SIGN_FLAGS = "--deep";
+				PRODUCT_BUNDLE_IDENTIFIER = com.sagwa.X3Fuse;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				REGISTER_APP_GROUPS = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		25D57E742E1DFFDE004F6242 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
+				CODE_SIGN_ENTITLEMENTS = X3Fuse/X3Fuse.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 0.0.1;
+				DEVELOPMENT_TEAM = RPKWZLZ8NN;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = X3Fuse/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = X3Fuse;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.photography";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/X3Fuse",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 0.0.1;
+				OTHER_CODE_SIGN_FLAGS = "--deep";
+				PRODUCT_BUNDLE_IDENTIFIER = com.sagwa.X3Fuse;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				REGISTER_APP_GROUPS = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		25D57E762E1DFFDE004F6242 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 0.0.1;
+				DEVELOPMENT_TEAM = RPKWZLZ8NN;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 0.0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.sagwa.X3FuseTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/X3Fuse.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/X3Fuse";
+			};
+			name = Debug;
+		};
+		25D57E772E1DFFDE004F6242 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 0.0.1;
+				DEVELOPMENT_TEAM = RPKWZLZ8NN;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 0.0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.sagwa.X3FuseTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/X3Fuse.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/X3Fuse";
+			};
+			name = Release;
+		};
+		25D57E792E1DFFDE004F6242 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 0.0.1;
+				DEVELOPMENT_TEAM = RPKWZLZ8NN;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 0.0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.sagwa.X3FuseUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = X3Fuse;
+			};
+			name = Debug;
+		};
+		25D57E7A2E1DFFDE004F6242 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 0.0.1;
+				DEVELOPMENT_TEAM = RPKWZLZ8NN;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 0.0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.sagwa.X3FuseUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = X3Fuse;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		25D57E492E1DFFDD004F6242 /* Build configuration list for PBXProject "X3Fuse" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				25D57E702E1DFFDE004F6242 /* Debug */,
+				25D57E712E1DFFDE004F6242 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		25D57E722E1DFFDE004F6242 /* Build configuration list for PBXNativeTarget "X3Fuse" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				25D57E732E1DFFDE004F6242 /* Debug */,
+				25D57E742E1DFFDE004F6242 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		25D57E752E1DFFDE004F6242 /* Build configuration list for PBXNativeTarget "X3FuseTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				25D57E762E1DFFDE004F6242 /* Debug */,
+				25D57E772E1DFFDE004F6242 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		25D57E782E1DFFDE004F6242 /* Build configuration list for PBXNativeTarget "X3FuseUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				25D57E792E1DFFDE004F6242 /* Debug */,
+				25D57E7A2E1DFFDE004F6242 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		2571E4492E2BF7F200044135 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.7.1;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		2571E44A2E2BF7F200044135 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 2571E4492E2BF7F200044135 /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 25D57E462E1DFFDD004F6242 /* Project object */;
+}

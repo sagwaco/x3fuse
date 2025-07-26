@@ -1,0 +1,150 @@
+/* 
+  Localizable.strings
+  X3Fuse
+
+  Created by Cline on 7/18/25.
+*/
+
+// MARK: - App Title
+"app.title" = "X3Fuse BETA";
+
+// MARK: - Buttons
+"button.convert" = "変換";
+"button.stop" = "停止";
+"button.add_files" = "ファイルを追加";
+"button.settings" = "設定";
+"button.ok" = "OK";
+"button.cancel" = "キャンセル";
+"button.done" = "完了";
+"button.browse" = "参照...";
+"button.overwrite" = "上書き";
+
+// MARK: - Toolbar and Menu
+"toolbar.stop_conversion" = "変換を停止";
+"toolbar.convert_all" = "すべて変換";
+"toolbar.convert_selected" = "選択項目を変換";
+
+// MARK: - Footer
+"footer.output_directory" = "出力ディレクトリ";
+"footer.alongside_original" = "元ファイルと同じ場所";
+
+// MARK: - File Selection Dialog
+"dialog.select_x3f_files.title" = "X3Fファイルを選択";
+"dialog.select_x3f_files.message" = "変換するX3Fファイルを選択してください";
+"dialog.select_output_directory.title" = "出力ディレクトリを選択";
+"dialog.select_output_directory.message" = "変換したファイルの保存場所を選択してください";
+
+// MARK: - Alerts
+"alert.setup_issues.title" = "セットアップの問題";
+
+// MARK: - Settings View
+"settings.section.output" = "出力設定";
+"settings.section.conversion" = "変換設定";
+"settings.section.debug" = "デバッグ";
+"settings.section.updates" = "アップデート";
+"settings.section.about" = "このアプリについて";
+
+"settings.save_alongside_original" = "元ファイルと同じ場所に保存";
+"settings.save_alongside_original.help" = "有効にすると、変換されたファイルは元のファイルと同じ場所に保存されます。";
+"settings.save_alongside_original.description" = "カスタム出力ディレクトリを選択するには無効にしてください。";
+
+"settings.output_location" = "出力場所";
+"settings.only_convert_new" = "キュー内の新しい項目のみを変換";
+"settings.only_convert_new.help" = "有効にすると、「すべて変換」はまだ変換されていないファイルのみを処理します。無効にすると、既に変換されたファイルを含むキュー内のすべてのファイルを処理します。";
+
+"settings.conversion_format" = "変換形式";
+"settings.raw_compression" = "RAW圧縮";
+"settings.raw_compression.help" = "DNGとTIFFのロスレス圧縮を有効にする";
+"settings.color_profile" = "カラープロファイル";
+"settings.denoise" = "ノイズ除去";
+"settings.denoise.help" = "変換中にノイズ低減を適用する";
+"settings.faster_processing" = "高速処理";
+"settings.faster_processing.help" = "高速処理のためのOpenCLアクセラレーションを有効にする";
+
+"settings.debug_logging" = "デバッグログ";
+"settings.debug_logging.help" = "トラブルシューティング用の詳細なデバッグログを有効にする";
+"settings.debug_logs" = "デバッグログ";
+"settings.open_logs_folder" = "ログフォルダを開く";
+"settings.clear_logs" = "ログをクリア";
+
+"settings.log.conversion" = "変換ログ:";
+"settings.log.error" = "エラーログ:";
+"settings.log.debug" = "デバッグログ:";
+
+"settings.version" = "バージョン";
+"settings.build" = "ビルド";
+
+// MARK: - Menu Commands
+"menu.help.X3Fuse_help" = "X3Fuseヘルプ";
+"menu.help.show_debug_logs" = "デバッグログを表示";
+"menu.help.clear_debug_logs" = "デバッグログをクリア";
+
+"menu.file.add_x3f_files" = "X3Fファイルを追加...";
+"menu.file.settings" = "設定";
+
+"menu.edit.select_all_files" = "すべてのファイルを選択";
+"menu.edit.deselect_all_files" = "すべてのファイルの選択を解除";
+"menu.edit.remove_selected_files" = "選択したファイルを削除";
+
+"menu.conversion.title" = "変換";
+"menu.conversion.convert_all_files" = "すべてのファイルを変換";
+"menu.conversion.stop_conversion" = "変換を停止";
+"menu.conversion.clear_queue" = "キューをクリア";
+"menu.conversion.remove_failed_files" = "失敗したファイルを削除";
+"menu.conversion.remove_completed_files" = "完了したファイルを削除";
+
+// MARK: - File Queue View
+"queue.column.name" = "名前";
+"queue.column.date" = "日付";
+"queue.column.size" = "サイズ";
+
+"queue.empty.title" = "キューにファイルがありません";
+"queue.empty.message" = "X3Fファイルをここにドラッグ&ドロップして変換キューに追加してください";
+
+// MARK: - Context Menu
+"context.convert" = "変換";
+"context.convert_selected" = "選択項目を変換";
+"context.reconvert" = "再変換";
+"context.reconvert_selected" = "選択項目を再変換";
+"context.stop_conversion" = "変換を停止";
+"context.remove" = "削除";
+"context.remove_selected" = "選択項目を削除";
+"context.show_in_finder" = "Finderで表示";
+"context.open_converted_in_finder" = "変換されたファイルをFinderで表示";
+"context.open_converted_in_finder_multiple" = "変換されたファイルをFinderで表示";
+"context.remove_failed_file" = "失敗したファイルを削除";
+"context.remove_failed_files" = "失敗したファイルを削除";
+"context.remove_completed_file" = "完了したファイルを削除";
+"context.remove_completed_files" = "完了したファイルを削除";
+"context.deselect_all" = "すべて選択解除";
+"context.convert_all" = "すべて変換";
+"context.remove_all" = "すべて削除";
+
+// MARK: - Reconversion Confirmation
+"reconversion.title" = "既存のファイルを上書きしますか？";
+"reconversion.message" = "以下のファイルが上書きされます:";
+"reconversion.warning" = "この操作は元に戻せません。既存の変換済みファイルは完全に置き換えられます。";
+"reconversion.location_prefix" = " ";
+
+// MARK: - File Status
+"status.queued" = "待機中";
+"status.processing" = "処理中";
+"status.completed" = "完了";
+"status.failed" = "失敗";
+"status.warning" = "警告";
+"status.conversion_failed" = "変換に失敗しました";
+"status.conversion_completed_with_warnings" = "警告付きで変換が完了しました";
+
+// MARK: - Updates
+"updates.check_for_updates" = "アップデートを確認…";
+"updates.checking_for_updates" = "アップデートを確認中…";
+"updates.automatic_updates" = "自動的にアップデートを確認";
+"updates.automatic_updates.help" = "バックグラウンドで自動的にアップデートを確認します";
+"updates.automatic_download" = "自動的にアップデートをダウンロード";
+"updates.automatic_download.help" = "アップデートが利用可能な時に自動的にダウンロードします";
+"updates.last_checked" = "最終確認";
+"updates.never" = "なし";
+"updates.current_version" = "現在のバージョン";
+
+// MARK: - Placeholders
+"placeholder.dash" = "—";

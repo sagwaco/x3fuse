@@ -1,0 +1,150 @@
+/* 
+  Localizable.strings
+  X3Fuse
+
+  Created by Cline on 7/18/25.
+*/
+
+// MARK: - App Title
+"app.title" = "X3Fuse BETA";
+
+// MARK: - Buttons
+"button.convert" = "Convert";
+"button.stop" = "Stop";
+"button.add_files" = "Add files";
+"button.settings" = "Settings";
+"button.ok" = "OK";
+"button.cancel" = "Cancel";
+"button.done" = "Done";
+"button.browse" = "Browse...";
+"button.overwrite" = "Overwrite";
+
+// MARK: - Toolbar and Menu
+"toolbar.stop_conversion" = "Stop conversion";
+"toolbar.convert_all" = "Convert all";
+"toolbar.convert_selected" = "Convert selected";
+
+// MARK: - Footer
+"footer.output_directory" = "Output directory";
+"footer.alongside_original" = "Alongside the original file";
+
+// MARK: - File Selection Dialog
+"dialog.select_x3f_files.title" = "Select X3F Files";
+"dialog.select_x3f_files.message" = "Choose X3F files to convert";
+"dialog.select_output_directory.title" = "Select Output Directory";
+"dialog.select_output_directory.message" = "Choose where converted files should be saved";
+
+// MARK: - Alerts
+"alert.setup_issues.title" = "Setup Issues";
+
+// MARK: - Settings View
+"settings.section.output" = "Output settings";
+"settings.section.conversion" = "Conversion settings";
+"settings.section.debug" = "Debug";
+"settings.section.updates" = "Updates";
+"settings.section.about" = "About";
+
+"settings.save_alongside_original" = "Save alongside original file";
+"settings.save_alongside_original.help" = "When enabled, converted files will be saved alongside the original files.";
+"settings.save_alongside_original.description" = "Disable to choose a custom output directory.";
+
+"settings.output_location" = "Output location";
+"settings.only_convert_new" = "Only convert new items in the queue";
+"settings.only_convert_new.help" = "When enabled, 'Convert All' will only process files that haven't been converted yet. When disabled, it will process all files in the queue, including those already converted.";
+
+"settings.conversion_format" = "Conversion format";
+"settings.raw_compression" = "RAW compression";
+"settings.raw_compression.help" = "Enable lossless compression for DNGs and TIFFs";
+"settings.color_profile" = "Color profile";
+"settings.denoise" = "Denoise";
+"settings.denoise.help" = "Apply noise reduction during conversion";
+"settings.faster_processing" = "Faster processing";
+"settings.faster_processing.help" = "Enable OpenCL acceleration for faster processing";
+
+"settings.debug_logging" = "Debug logging";
+"settings.debug_logging.help" = "Enable detailed debug logging for troubleshooting";
+"settings.debug_logs" = "Debug logs";
+"settings.open_logs_folder" = "Open logs folder";
+"settings.clear_logs" = "Clear logs";
+
+"settings.log.conversion" = "Conversion Log:";
+"settings.log.error" = "Error Log:";
+"settings.log.debug" = "Debug Log:";
+
+"settings.version" = "Version";
+"settings.build" = "Build";
+
+// MARK: - Menu Commands
+"menu.help.X3Fuse_help" = "X3Fuse Help";
+"menu.help.show_debug_logs" = "Show Debug Logs";
+"menu.help.clear_debug_logs" = "Clear Debug Logs";
+
+"menu.file.add_x3f_files" = "Add X3F Files...";
+"menu.file.settings" = "Settings";
+
+"menu.edit.select_all_files" = "Select All Files";
+"menu.edit.deselect_all_files" = "Deselect All Files";
+"menu.edit.remove_selected_files" = "Remove Selected Files";
+
+"menu.conversion.title" = "Conversion";
+"menu.conversion.convert_all_files" = "Convert all files";
+"menu.conversion.stop_conversion" = "Stop conversion";
+"menu.conversion.clear_queue" = "Clear queue";
+"menu.conversion.remove_failed_files" = "Remove failed files";
+"menu.conversion.remove_completed_files" = "Remove completed files";
+
+// MARK: - File Queue View
+"queue.column.name" = "Name";
+"queue.column.date" = "Date";
+"queue.column.size" = "Size";
+
+"queue.empty.title" = "No files in queue";
+"queue.empty.message" = "Drag and drop X3F files here to add them to the conversion queue";
+
+// MARK: - Context Menu
+"context.convert" = "Convert";
+"context.convert_selected" = "Convert Selected";
+"context.reconvert" = "Re-convert";
+"context.reconvert_selected" = "Re-convert Selected";
+"context.stop_conversion" = "Stop conversion";
+"context.remove" = "Remove";
+"context.remove_selected" = "Remove Selected";
+"context.show_in_finder" = "Show in Finder";
+"context.open_converted_in_finder" = "Show Converted File in Finder";
+"context.open_converted_in_finder_multiple" = "Show Converted Files in Finder";
+"context.remove_failed_file" = "Remove Failed File";
+"context.remove_failed_files" = "Remove Failed Files";
+"context.remove_completed_file" = "Remove Completed File";
+"context.remove_completed_files" = "Remove Completed Files";
+"context.deselect_all" = "Deselect All";
+"context.convert_all" = "Convert All";
+"context.remove_all" = "Remove All";
+
+// MARK: - Reconversion Confirmation
+"reconversion.title" = "Overwrite Existing Files?";
+"reconversion.message" = "The following files will be overwritten:";
+"reconversion.warning" = "This action cannot be undone. The existing converted files will be permanently replaced.";
+"reconversion.location_prefix" = "in ";
+
+// MARK: - File Status
+"status.queued" = "Queued";
+"status.processing" = "Processing";
+"status.completed" = "Completed";
+"status.failed" = "Failed";
+"status.warning" = "Warning";
+"status.conversion_failed" = "Conversion failed";
+"status.conversion_completed_with_warnings" = "Conversion completed with warnings";
+
+// MARK: - Updates
+"updates.check_for_updates" = "Check for Updates…";
+"updates.checking_for_updates" = "Checking for updates…";
+"updates.automatic_updates" = "Check for updates automatically";
+"updates.automatic_updates.help" = "Automatically check for updates in the background";
+"updates.automatic_download" = "Download updates automatically";
+"updates.automatic_download.help" = "Automatically download updates when available";
+"updates.last_checked" = "Last checked";
+"updates.never" = "Never";
+"updates.current_version" = "Current version";
+
+// MARK: - Placeholders
+"placeholder.dash" = "—";
