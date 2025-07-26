@@ -106,7 +106,7 @@ jobs:
 
   archive:
     name: Build and export app
-    runs-on: macos-12
+    runs-on: macos-14
     needs: preparation
     steps:
       - uses: actions/download-artifact@master
@@ -196,16 +196,25 @@ jobs:
             -exportPath Release \
             -exportOptionsPlist "export_options.plist"
 
-      - name: Zip app
-        run: |
-          cd Release
-          ditto -c -k --sequesterRsrc --keepParent X3Fuse.app X3Fuse.zip
+      - name: Generate macOS installer
+        uses: akiojin/generate-mac-installer-github-action@v0.1.0
+        id: generate_installer
+        with:
+          output-directory: ${{ runner.temp }}
+          root-directory: Release
+          bundle-path: X3Fuse.app
+          identifier: com.sagwa.X3Fuse
+          version: ${{ steps.info.outputs.new_version }}
 
-      - name: Upload archived app
+      - name: Move installer to Release directory
+        run: |
+          mv "${{ steps.generate_installer.outputs.output-path }}" Release/X3Fuse.pkg
+
+      - name: Upload installer
         uses: actions/upload-artifact@master
         with:
           name: app
-          path: Release/X3Fuse.zip
+          path: Release/X3Fuse.pkg
 
   release:
     name: "Create Release"
@@ -233,7 +242,7 @@ jobs:
           mv artifacts/artifact/title title
           mv artifacts/artifact/latest_changes latest_changes
           mkdir Release
-          mv artifacts/app/X3Fuse.zip Release/
+          mv artifacts/app/X3Fuse.pkg Release/
 
       - name: Prepare Sparkle update creation
         env:
@@ -268,7 +277,7 @@ jobs:
           tag_name: v${{ steps.info.outputs.new_version }}
           fail_on_unmatched_files: true
           body_path: latest_changes
-          files: Release/X3Fuse.zip
+          files: Release/X3Fuse.pkg
 
       - name: Saving changes
         uses: stefanzweifel/git-auto-commit-action@v4
