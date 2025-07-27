@@ -331,7 +331,6 @@ jobs:
           fail_on_unmatched_files: true
           body_path: latest_changes
           files: |
-            Release/X3Fuse-Installer.zip
             Release/X3Fuse-App.zip
 
       - name: Saving changes
