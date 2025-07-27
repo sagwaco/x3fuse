@@ -307,8 +307,6 @@ jobs:
           # Download Sparkle
           curl -L -o Sparkle.tar.xz https://github.com/sparkle-project/Sparkle/releases/download/2.5.2/Sparkle-2.5.2.tar.xz
           tar -xf Sparkle.tar.xz
-          cp bin/generate_appcast ./Configuration/generate_appcast
-          chmod +x ./Configuration/generate_appcast
 
       - name: Update appcast
         env:
@@ -319,7 +317,7 @@ jobs:
           cp Release/X3Fuse.zip appcast_temp/
 
           # Generate appcast using the zip file with the private key file
-          echo "$SPARKLE_PRIVATE_KEY" | ./Configuration/generate_appcast --ed-key-file - --link "https://github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/releases" --download-url-prefix "https://github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/releases/download/v${{ steps.info.outputs.new_version }}/" -o docs/Support/appcast.xml appcast_temp/
+          echo "$SPARKLE_PRIVATE_KEY" | ./bin/generate_appcast --ed-key-file - --link "https://github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/releases" --download-url-prefix "https://github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/releases/download/v${{ steps.info.outputs.new_version }}/" -o docs/Support/appcast.xml appcast_temp/
 
           # Clean up temporary directory and key file
           rm -rf appcast_temp
