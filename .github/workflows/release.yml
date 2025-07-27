@@ -242,7 +242,7 @@ jobs:
           cd ..
 
       - name: Generate macOS installer
-        uses: akiojin/generate-mac-installer-github-action@v0.1.0
+        uses: akiojin/generate-mac-installer-github-action@v1.0.4
         id: generate_installer
         with:
           output-directory: ${{ runner.temp }}
