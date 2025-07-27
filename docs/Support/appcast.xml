@@ -1,10 +1,19 @@
-<?xml version="1.0" encoding="utf-8"?>
-<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/" version="2.0">
     <channel>
         <title>X3Fuse Changelog</title>
         <link>https://sagwaco.github.io/x3fuse/Support/appcast.xml</link>
         <description>Most recent changes with links to updates.</description>
         <language>en</language>
         <!-- Sparkle will populate this with release items -->
+        <item>
+            <title>0.0.2</title>
+            <pubDate>Sun, 27 Jul 2025 07:03:01 +0000</pubDate>
+            <link>https://github.com/sagwaco/x3fuse/releases</link>
+            <sparkle:version>0.0.2</sparkle:version>
+            <sparkle:shortVersionString>0.0.2</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/sagwaco/x3fuse/releases/download/v0.0.2/X3Fuse.zip" length="57713372" type="application/octet-stream" sparkle:edSignature="PlV+FdgoWiWdJ1/LRPbcDyWpqrSdd956ohFvjOnOE7EaG9iqkvHrzRnIB76Efu8eSBh8u3nUxYaIUb0Nr/ybBQ=="/>
+        </item>
     </channel>
 </rss>
