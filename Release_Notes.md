@@ -1,3 +1,7 @@
+# 0.0.4 - Beta 1.0.2
+
+- Test version bump
+
 # 0.0.3 - Beta 1.0.1
 
 - Test version bump
