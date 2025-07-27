@@ -287,7 +287,11 @@ jobs:
         env:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
         run: |
+          # Create private key file
           echo -n "$SPARKLE_PRIVATE_KEY" > ./Configuration/sparkle_private_key
+          chmod 600 ./Configuration/sparkle_private_key
+
+          # Clean up Release directory
           rm -rf Release/*.app
           rm -rf Release/*.log
           rm -rf Release/*.plist
