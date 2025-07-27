@@ -180,17 +180,32 @@ jobs:
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
           cp $PP_PATH ~/Library/MobileDevice/Provisioning\ Profiles
 
+          # List certificates to verify correct import
+          echo "Available certificates:"
+          security find-identity -v -p codesigning $KEYCHAIN_PATH
+
       - name: Build and archive
         run: |
+          # Get the provisioning profile UUID
+          PROVISION_UUID=$(grep -A1 UUID ~/Library/MobileDevice/Provisioning\ Profiles/*.mobileprovision | grep -o '[0-9a-fA-F]\{8\}-[0-9a-fA-F]\{4\}-[0-9a-fA-F]\{4\}-[0-9a-fA-F]\{4\}-[0-9a-fA-F]\{12\}' | head -1)
+
           xcodebuild clean archive \
             -project X3Fuse.xcodeproj \
             -scheme X3Fuse \
             -configuration Release \
-            -archivePath X3Fuse
+            -archivePath X3Fuse \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="Developer ID Application" \
+            DEVELOPMENT_TEAM="RPKWZLZ8NN" \
+            PROVISIONING_PROFILE_SPECIFIER="$PROVISION_UUID" \
+            OTHER_CODE_SIGN_FLAGS="--timestamp --options=runtime"
 
       - name: Export app
         run: |
           # Create export options
+          # Get the provisioning profile UUID for export options
+          PROVISION_UUID=$(grep -A1 UUID ~/Library/MobileDevice/Provisioning\ Profiles/*.mobileprovision | grep -o '[0-9a-fA-F]\{8\}-[0-9a-fA-F]\{4\}-[0-9a-fA-F]\{4\}-[0-9a-fA-F]\{4\}-[0-9a-fA-F]\{12\}' | head -1)
+
           cat > export_options.plist << EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -200,6 +215,17 @@ jobs:
               <string>developer-id</string>
               <key>stripSwiftSymbols</key>
               <true/>
+              <key>signingStyle</key>
+              <string>manual</string>
+              <key>signingCertificate</key>
+              <string>Developer ID Application</string>
+              <key>teamID</key>
+              <string>RPKWZLZ8NN</string>
+              <key>provisioningProfiles</key>
+              <dict>
+                  <key>com.sagwa.X3Fuse</key>
+                  <string>$PROVISION_UUID</string>
+              </dict>
           </dict>
           </plist>
           EOF
