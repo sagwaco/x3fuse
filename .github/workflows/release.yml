@@ -106,7 +106,7 @@ jobs:
 
   archive:
     name: Build and export app
-    runs-on: macos-14
+    runs-on: macos-latest
     needs: preparation
     steps:
       - uses: actions/download-artifact@master
@@ -126,6 +126,16 @@ jobs:
         if: success()
         with:
           ref: ${{ steps.comment-branch.outputs.head_ref }}
+
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Verify Xcode version
+        run: |
+          echo "Selected Xcode version:"
+          xcodebuild -version
 
       - name: Override versions in project
         run: |
