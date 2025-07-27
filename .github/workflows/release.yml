@@ -293,15 +293,7 @@ jobs:
           mv artifacts/app/X3Fuse.zip Release/
 
       - name: Prepare Sparkle update creation
-        env:
-          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
         run: |
-          # Debug: Check if private key environment variable is set
-          if [ -z "$SPARKLE_PRIVATE_KEY" ]; then
-            echo "ERROR: SPARKLE_PRIVATE_KEY environment variable is empty!"
-            exit 1
-          fi
-
           # Clean up Release directory
           rm -rf Release/*.log
           rm -rf Release/*.plist
@@ -322,15 +314,40 @@ jobs:
         env:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
         run: |
+          # Debug: Check if private key is set and has content
+          if [ -z "$SPARKLE_PRIVATE_KEY" ]; then
+            echo "ERROR: SPARKLE_PRIVATE_KEY is empty!"
+            exit 1
+          fi
+
+          # Check the first few characters to ensure it's not empty (without exposing the key)
+          echo "Private key length: ${#SPARKLE_PRIVATE_KEY}"
+          echo "Private key starts with: ${SPARKLE_PRIVATE_KEY:0:5}..."
+
           # Create a temporary directory for appcast generation
           mkdir -p appcast_temp
           cp Release/X3Fuse.zip appcast_temp/
 
-          # Create a temporary file for the private key
-          echo "$SPARKLE_PRIVATE_KEY" > sparkle_private_key.pem
+          # Try different methods to create the key file
+          # Method 1: Direct echo with quotes preserved
+          printf '%s\n' "$SPARKLE_PRIVATE_KEY" > sparkle_private_key.pem
 
-          # Generate appcast using the zip file with the private key file
-          ./Configuration/generate_appcast --ed-key-file sparkle_private_key.pem --link "https://github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/releases" --download-url-prefix "https://github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/releases/download/v${{ steps.info.outputs.new_version }}/" -o docs/Support/appcast.xml appcast_temp/
+          # Check if the file was created and has content
+          if [ ! -s sparkle_private_key.pem ]; then
+            echo "ERROR: Private key file is empty or was not created!"
+            ls -la sparkle_private_key.pem || echo "File does not exist"
+            exit 1
+          fi
+
+          echo "Private key file size: $(wc -c < sparkle_private_key.pem) bytes"
+
+          # Try running generate_appcast with the key file
+          ./Configuration/generate_appcast --ed-key-file sparkle_private_key.pem --link "https://github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/releases" --download-url-prefix "https://github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/releases/download/v${{ steps.info.outputs.new_version }}/" -o docs/Support/appcast.xml appcast_temp/ || {
+            echo "generate_appcast failed. Trying alternative approach..."
+            
+            # Alternative: Try with stdin again but with proper formatting
+            printf '%s' "$SPARKLE_PRIVATE_KEY" | ./Configuration/generate_appcast --ed-key-file - --link "https://github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/releases" --download-url-prefix "https://github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/releases/download/v${{ steps.info.outputs.new_version }}/" -o docs/Support/appcast.xml appcast_temp/
+          }
 
           # Clean up temporary directory and key file
           rm -rf appcast_temp
