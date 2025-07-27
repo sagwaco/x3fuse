@@ -129,8 +129,11 @@ jobs:
 
       - name: Override versions in project
         run: |
-          # Update version in Info.plist
+          # Update version in Info.plist - add keys if they don't exist
+          /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string ${{ steps.info.outputs.new_version }}" X3Fuse/Info.plist 2>/dev/null || \
           /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${{ steps.info.outputs.new_version }}" X3Fuse/Info.plist
+
+          /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string ${{ steps.info.outputs.new_version }}" X3Fuse/Info.plist 2>/dev/null || \
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${{ steps.info.outputs.new_version }}" X3Fuse/Info.plist
 
           # Update version in Xcode project - find current version first
