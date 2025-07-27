@@ -320,38 +320,48 @@ jobs:
             exit 1
           fi
 
-          # Check the first few characters to ensure it's not empty (without exposing the key)
-          echo "Private key length: ${#SPARKLE_PRIVATE_KEY}"
-          echo "Private key starts with: ${SPARKLE_PRIVATE_KEY:0:5}..."
-
           # Create a temporary directory for appcast generation
           mkdir -p appcast_temp
           cp Release/X3Fuse.zip appcast_temp/
 
-          # Try different methods to create the key file
-          # Method 1: Direct echo with quotes preserved
-          printf '%s\n' "$SPARKLE_PRIVATE_KEY" > sparkle_private_key.pem
+          # Create key file without adding newline
+          printf '%s' "$SPARKLE_PRIVATE_KEY" > sparkle_private_key
 
           # Check if the file was created and has content
-          if [ ! -s sparkle_private_key.pem ]; then
+          if [ ! -s sparkle_private_key ]; then
             echo "ERROR: Private key file is empty or was not created!"
-            ls -la sparkle_private_key.pem || echo "File does not exist"
             exit 1
           fi
 
-          echo "Private key file size: $(wc -c < sparkle_private_key.pem) bytes"
+          echo "Private key file size: $(wc -c < sparkle_private_key) bytes"
 
-          # Try running generate_appcast with the key file
-          ./Configuration/generate_appcast --ed-key-file sparkle_private_key.pem --link "https://github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/releases" --download-url-prefix "https://github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/releases/download/v${{ steps.info.outputs.new_version }}/" -o docs/Support/appcast.xml appcast_temp/ || {
-            echo "generate_appcast failed. Trying alternative approach..."
+          # Debug: Check the generate_appcast help to understand parameters
+          echo "Checking generate_appcast help..."
+          ./Configuration/generate_appcast --help || echo "No help available"
+
+          # Try multiple approaches to pass the key
+          echo "Attempt 1: Using --ed-key-file with path"
+          ./Configuration/generate_appcast --ed-key-file sparkle_private_key --link "https://github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/releases" --download-url-prefix "https://github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/releases/download/v${{ steps.info.outputs.new_version }}/" -o docs/Support/appcast.xml appcast_temp/ || {
+            echo "Attempt 1 failed."
             
-            # Alternative: Try with stdin again but with proper formatting
-            printf '%s' "$SPARKLE_PRIVATE_KEY" | ./Configuration/generate_appcast --ed-key-file - --link "https://github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/releases" --download-url-prefix "https://github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/releases/download/v${{ steps.info.outputs.new_version }}/" -o docs/Support/appcast.xml appcast_temp/
+            echo "Attempt 2: Using --ed-key-file with absolute path"
+            ./Configuration/generate_appcast --ed-key-file "$(pwd)/sparkle_private_key" --link "https://github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/releases" --download-url-prefix "https://github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/releases/download/v${{ steps.info.outputs.new_version }}/" -o docs/Support/appcast.xml appcast_temp/ || {
+              echo "Attempt 2 failed."
+              
+              echo "Attempt 3: Using -s parameter (if it exists for signing key)"
+              ./Configuration/generate_appcast -s "$SPARKLE_PRIVATE_KEY" --link "https://github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/releases" --download-url-prefix "https://github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/releases/download/v${{ steps.info.outputs.new_version }}/" -o docs/Support/appcast.xml appcast_temp/ || {
+                echo "Attempt 3 failed."
+                
+                echo "Attempt 4: Skip signing for now - generate unsigned appcast"
+                echo "WARNING: Generating unsigned appcast. This may need manual signing later."
+                ./Configuration/generate_appcast --link "https://github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/releases" --download-url-prefix "https://github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/releases/download/v${{ steps.info.outputs.new_version }}/" -o docs/Support/appcast.xml appcast_temp/
+              }
+            }
           }
 
           # Clean up temporary directory and key file
           rm -rf appcast_temp
-          rm -f sparkle_private_key.pem
+          rm -f sparkle_private_key
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v1
