@@ -7,6 +7,15 @@
         <language>en</language>
         <!-- Sparkle will populate this with release items -->
         <item>
+            <title>0.0.3</title>
+            <pubDate>Sun, 27 Jul 2025 20:56:23 +0000</pubDate>
+            <link>https://github.com/sagwaco/x3fuse/releases</link>
+            <sparkle:version>0.0.3</sparkle:version>
+            <sparkle:shortVersionString>0.0.3</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/sagwaco/x3fuse/releases/download/v0.0.3/X3Fuse.zip" length="57713296" type="application/octet-stream" sparkle:edSignature="IYe39bSYZZbvtOWMXm0WijWQuyLXdkgj710SNDYrys6kDTJPBmzdbP1d8H9zHMZM58W2T5iKjMa1f244QQ3rBA=="/>
+        </item>
+        <item>
             <title>0.0.2</title>
             <pubDate>Sun, 27 Jul 2025 07:03:01 +0000</pubDate>
             <link>https://github.com/sagwaco/x3fuse/releases</link>
