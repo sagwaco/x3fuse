@@ -291,10 +291,24 @@ jobs:
           echo -n "$SPARKLE_PRIVATE_KEY" > ./Configuration/sparkle_private_key
           chmod 600 ./Configuration/sparkle_private_key
 
+          # Debug: Check if private key was created properly
+          echo "Private key file size: $(wc -c < ./Configuration/sparkle_private_key) bytes"
+          echo "Private key file exists: $(test -f ./Configuration/sparkle_private_key && echo 'yes' || echo 'no')"
+          echo "Current directory: $(pwd)"
+          echo "Configuration directory contents:"
+          ls -la ./Configuration/
+
           # Clean up Release directory
           rm -rf Release/*.app
           rm -rf Release/*.log
           rm -rf Release/*.plist
+
+          # Create a zip archive of the pkg for Sparkle
+          cd Release
+          zip -r X3Fuse.zip X3Fuse.pkg
+          echo "Release directory contents after zip:"
+          ls -la
+          cd ..
 
       - name: Setup Sparkle
         run: |
@@ -315,7 +329,9 @@ jobs:
           tag_name: v${{ steps.info.outputs.new_version }}
           fail_on_unmatched_files: true
           body_path: latest_changes
-          files: Release/X3Fuse.pkg
+          files: |
+            Release/X3Fuse.pkg
+            Release/X3Fuse.zip
 
       - name: Saving changes
         uses: stefanzweifel/git-auto-commit-action@v4
