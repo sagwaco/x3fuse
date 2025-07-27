@@ -314,54 +314,15 @@ jobs:
         env:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
         run: |
-          # Debug: Check if private key is set and has content
-          if [ -z "$SPARKLE_PRIVATE_KEY" ]; then
-            echo "ERROR: SPARKLE_PRIVATE_KEY is empty!"
-            exit 1
-          fi
-
           # Create a temporary directory for appcast generation
           mkdir -p appcast_temp
           cp Release/X3Fuse.zip appcast_temp/
 
-          # Create key file without adding newline
-          printf '%s' "$SPARKLE_PRIVATE_KEY" > sparkle_private_key
-
-          # Check if the file was created and has content
-          if [ ! -s sparkle_private_key ]; then
-            echo "ERROR: Private key file is empty or was not created!"
-            exit 1
-          fi
-
-          echo "Private key file size: $(wc -c < sparkle_private_key) bytes"
-
-          # Debug: Check the generate_appcast help to understand parameters
-          echo "Checking generate_appcast help..."
-          ./Configuration/generate_appcast --help || echo "No help available"
-
-          # Try multiple approaches to pass the key
-          echo "Attempt 1: Using --ed-key-file with path"
-          ./Configuration/generate_appcast --ed-key-file sparkle_private_key --link "https://github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/releases" --download-url-prefix "https://github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/releases/download/v${{ steps.info.outputs.new_version }}/" -o docs/Support/appcast.xml appcast_temp/ || {
-            echo "Attempt 1 failed."
-            
-            echo "Attempt 2: Using --ed-key-file with absolute path"
-            ./Configuration/generate_appcast --ed-key-file "$(pwd)/sparkle_private_key" --link "https://github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/releases" --download-url-prefix "https://github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/releases/download/v${{ steps.info.outputs.new_version }}/" -o docs/Support/appcast.xml appcast_temp/ || {
-              echo "Attempt 2 failed."
-              
-              echo "Attempt 3: Using -s parameter (if it exists for signing key)"
-              ./Configuration/generate_appcast -s "$SPARKLE_PRIVATE_KEY" --link "https://github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/releases" --download-url-prefix "https://github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/releases/download/v${{ steps.info.outputs.new_version }}/" -o docs/Support/appcast.xml appcast_temp/ || {
-                echo "Attempt 3 failed."
-                
-                echo "Attempt 4: Skip signing for now - generate unsigned appcast"
-                echo "WARNING: Generating unsigned appcast. This may need manual signing later."
-                ./Configuration/generate_appcast --link "https://github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/releases" --download-url-prefix "https://github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/releases/download/v${{ steps.info.outputs.new_version }}/" -o docs/Support/appcast.xml appcast_temp/
-              }
-            }
-          }
+          # Generate appcast using the zip file with the private key file
+          echo "$SPARKLE_PRIVATE_KEY" | ./Configuration/generate_appcast --ed-key-file - --link "https://github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/releases" --download-url-prefix "https://github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/releases/download/v${{ steps.info.outputs.new_version }}/" -o docs/Support/appcast.xml appcast_temp/
 
           # Clean up temporary directory and key file
           rm -rf appcast_temp
-          rm -f sparkle_private_key
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v1
