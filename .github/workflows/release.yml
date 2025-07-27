@@ -235,12 +235,6 @@ jobs:
             -exportPath Release \
             -exportOptionsPlist "export_options.plist"
 
-      - name: Create ZIP archive
-        run: |
-          cd Release
-          zip -r X3Fuse.zip X3Fuse.app
-          cd ..
-
       - name: Generate macOS installer
         uses: akiojin/generate-mac-installer-github-action@v1.0.4
         id: generate_installer
@@ -255,13 +249,20 @@ jobs:
         run: |
           mv "${{ steps.generate_installer.outputs.output-path }}" Release/X3Fuse.pkg
 
+      - name: Create ZIP archives
+        run: |
+          cd Release
+          zip -r X3Fuse-App.zip X3Fuse.app
+          zip -r X3Fuse-Installer.zip X3Fuse.pkg
+          cd ..
+
       - name: Upload artifacts
         uses: actions/upload-artifact@master
         with:
           name: app
           path: |
-            Release/X3Fuse.pkg
-            Release/X3Fuse.zip
+            Release/X3Fuse-Installer.zip
+            Release/X3Fuse-App.zip
 
   release:
     name: "Create Release"
@@ -289,8 +290,8 @@ jobs:
           mv artifacts/artifact/title title
           mv artifacts/artifact/latest_changes latest_changes
           mkdir Release
-          mv artifacts/app/X3Fuse.pkg Release/
-          mv artifacts/app/X3Fuse.zip Release/
+          mv artifacts/app/X3Fuse-App.zip Release/
+          mv artifacts/app/X3Fuse-Installer.zip Release/
 
       - name: Prepare Sparkle update creation
         run: |
@@ -314,7 +315,7 @@ jobs:
         run: |
           # Create a temporary directory for appcast generation
           mkdir -p appcast_temp
-          cp Release/X3Fuse.zip appcast_temp/
+          cp Release/X3Fuse-App.zip appcast_temp/
 
           # Generate appcast using the zip file with the private key file
           echo "$SPARKLE_PRIVATE_KEY" | ./bin/generate_appcast --ed-key-file - --link "https://github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/releases" --download-url-prefix "https://github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/releases/download/v${{ steps.info.outputs.new_version }}/" -o docs/Support/appcast.xml appcast_temp/
@@ -330,8 +331,8 @@ jobs:
           fail_on_unmatched_files: true
           body_path: latest_changes
           files: |
-            Release/X3Fuse.pkg
-            Release/X3Fuse.zip
+            Release/X3Fuse-Installer.zip
+            Release/X3Fuse-App.zip
 
       - name: Saving changes
         uses: stefanzweifel/git-auto-commit-action@v4
