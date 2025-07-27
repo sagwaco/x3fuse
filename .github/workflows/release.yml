@@ -235,6 +235,12 @@ jobs:
             -exportPath Release \
             -exportOptionsPlist "export_options.plist"
 
+      - name: Create ZIP archive
+        run: |
+          cd Release
+          zip -r X3Fuse.zip X3Fuse.app
+          cd ..
+
       - name: Generate macOS installer
         uses: akiojin/generate-mac-installer-github-action@v0.1.0
         id: generate_installer
@@ -249,11 +255,13 @@ jobs:
         run: |
           mv "${{ steps.generate_installer.outputs.output-path }}" Release/X3Fuse.pkg
 
-      - name: Upload installer
+      - name: Upload artifacts
         uses: actions/upload-artifact@master
         with:
           name: app
-          path: Release/X3Fuse.pkg
+          path: |
+            Release/X3Fuse.pkg
+            Release/X3Fuse.zip
 
   release:
     name: "Create Release"
@@ -282,6 +290,7 @@ jobs:
           mv artifacts/artifact/latest_changes latest_changes
           mkdir Release
           mv artifacts/app/X3Fuse.pkg Release/
+          mv artifacts/app/X3Fuse.zip Release/
 
       - name: Prepare Sparkle update creation
         env:
@@ -294,7 +303,6 @@ jobs:
           fi
 
           # Clean up Release directory
-          rm -rf Release/*.app
           rm -rf Release/*.log
           rm -rf Release/*.plist
 
@@ -312,7 +320,15 @@ jobs:
 
       - name: Update appcast
         run: |
-          echo "$SPARKLE_PRIVATE_KEY" | ./Configuration/generate_appcast --ed-key-file - --link "https://github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/releases" --download-url-prefix "https://github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/releases/download/v${{ steps.info.outputs.new_version }}/" -o docs/Support/appcast.xml Release/
+          # Create a temporary directory for appcast generation
+          mkdir -p appcast_temp
+          cp Release/X3Fuse.zip appcast_temp/
+
+          # Generate appcast using the zip file
+          echo "$SPARKLE_PRIVATE_KEY" | ./Configuration/generate_appcast --ed-key-file - --link "https://github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/releases" --download-url-prefix "https://github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/releases/download/v${{ steps.info.outputs.new_version }}/" -o docs/Support/appcast.xml appcast_temp/
+
+          # Clean up temporary directory
+          rm -rf appcast_temp
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v1
@@ -321,7 +337,9 @@ jobs:
           tag_name: v${{ steps.info.outputs.new_version }}
           fail_on_unmatched_files: true
           body_path: latest_changes
-          files: Release/X3Fuse.pkg
+          files: |
+            Release/X3Fuse.pkg
+            Release/X3Fuse.zip
 
       - name: Saving changes
         uses: stefanzweifel/git-auto-commit-action@v4
