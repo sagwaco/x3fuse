@@ -242,9 +242,9 @@ struct SettingsView: View {
           }
 
           HStack {
-            Text("Acknowledgements")
+            Text(LocalizationService.settingsAcknowledgements)
             Spacer()
-            Button("View Licenses") {
+            Button(LocalizationService.settingsViewLicenses) {
               openAcknowledgements()
             }
             .buttonStyle(.bordered)

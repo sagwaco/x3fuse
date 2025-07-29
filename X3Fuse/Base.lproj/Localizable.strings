@@ -73,6 +73,8 @@
 
 "settings.version" = "Version";
 "settings.build" = "Build";
+"settings.acknowledgements" = "Acknowledgements";
+"settings.view_licenses" = "View Licenses";
 
 // MARK: - Menu Commands
 "menu.help.X3Fuse_help" = "X3Fuse Help";

@@ -73,6 +73,8 @@
 
 "settings.version" = "버전";
 "settings.build" = "빌드";
+"settings.acknowledgements" = "감사";
+"settings.view_licenses" = "라이선스 보기";
 
 // MARK: - Menu Commands
 "menu.help.X3Fuse_help" = "X3Fuse 도움말";
