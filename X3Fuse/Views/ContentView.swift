@@ -15,7 +15,6 @@ struct ContentView: View {
   @State private var fileProcessor = FileProcessor.shared
   @State private var logger = LoggingService.shared
 
-  @State private var showingSettings = false
   @State private var selectedFile: X3FFile?
   @State private var setupIssues: [String] = []
   @State private var selectedFileIDs = Set<X3FFile.ID>()
@@ -81,11 +80,6 @@ struct ContentView: View {
     }
     .onDisappear {
       removeNotificationObservers()
-    }
-    .sheet(isPresented: $showingSettings) {
-      SettingsView()
-        .frame(idealWidth: 450, maxWidth: 450, idealHeight: 700, maxHeight: .infinity)
-        .fixedSize(horizontal: true, vertical: false)
     }
     .alert(LocalizationService.alertSetupIssuesTitle, isPresented: .constant(!setupIssues.isEmpty)) {
       Button(LocalizationService.buttonOK) {
@@ -210,7 +204,7 @@ struct ContentView: View {
 
       Spacer()
 
-      Button(action: { showingSettings = true }) {
+      SettingsLink {
         Image(systemName: "gearshape")
       }
       .buttonStyle(.bordered)
@@ -367,13 +361,8 @@ struct ContentView: View {
       self.handleDeselectAll()
     }
 
-    NotificationCenter.default.addObserver(
-      forName: NSNotification.Name("ShowSettings"),
-      object: nil,
-      queue: .main
-    ) { _ in
-      self.showingSettings = true
-    }
+    // Note: ShowSettings notification is not needed when using SettingsLink
+    // The menu command will automatically open the Settings scene
   }
 
   private func removeNotificationObservers() {

@@ -46,13 +46,6 @@ struct MenuCommands: Commands {
         openFilePanel()
       }
       .keyboardShortcut("o", modifiers: .command)
-
-      Divider()
-
-      Button(LocalizationService.menuFileSettings) {
-        NotificationCenter.default.post(name: NSNotification.Name("ShowSettings"), object: nil)
-      }
-      .keyboardShortcut(",", modifiers: .command)
     }
 
     // Edit menu additions

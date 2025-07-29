@@ -12,7 +12,6 @@ struct SettingsView: View {
   @State private var settings = ConversionSettings.shared
   @State private var loggingService = LoggingService.shared
   @EnvironmentObject private var updaterService: UpdaterService
-  @Environment(\.dismiss) private var dismiss
 
   var body: some View {
     NavigationStack {
@@ -252,21 +251,10 @@ struct SettingsView: View {
         }
       }
       .formStyle(GroupedFormStyle())
-      .toolbar {
-        ToolbarItem(placement: .cancellationAction) {
-          Button(LocalizationService.buttonCancel) {
-            dismiss()
-          }
-        }
-
-        ToolbarItem(placement: .confirmationAction) {
-          Button(LocalizationService.buttonDone) {
-            settings.saveSettings()
-            dismiss()
-          }
-          .buttonStyle(.borderedProminent)
-        }
-      }
+    }
+    .onDisappear {
+      // Auto-save settings when the window closes
+      settings.saveSettings()
     }
   }
 
