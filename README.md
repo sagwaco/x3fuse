@@ -14,7 +14,7 @@ X3Fuse is a RAW conversion tool that converts your Sigma Merrill and Quattro X3F
 - **Batch Processing**: Process multiple files at once with an intuitive queue system
 - **Native macOS App**: Built with SwiftUI for a seamless macOS experience
 - **EXIF Data Preservation**: Attempts to preserve metadata like preferred aspect ratio
-- **Multi-language Support**: Available in English, Japanese, and Korean\*
+- **Multi-language Support**: Available in English, Japanese, Korean, and Chinese\*
 - **Drag & Drop Interface**: Simple file management with drag and drop support
 - **Conversion Settings**: Customizable output options for your workflow
 
