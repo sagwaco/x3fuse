@@ -73,6 +73,8 @@
 
 "settings.version" = "バージョン";
 "settings.build" = "ビルド";
+"settings.acknowledgements" = "謝辞";
+"settings.view_licenses" = "ライセンスを表示";
 
 // MARK: - Menu Commands
 "menu.help.X3Fuse_help" = "X3Fuseヘルプ";

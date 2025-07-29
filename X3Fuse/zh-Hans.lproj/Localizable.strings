@@ -1,0 +1,152 @@
+/* 
+  Localizable.strings
+  X3Fuse
+
+  Created by Cline on 7/18/25.
+*/
+
+// MARK: - App Title
+"app.title" = "X3Fuse 测试版";
+
+// MARK: - Buttons
+"button.convert" = "转换";
+"button.stop" = "停止";
+"button.add_files" = "添加文件";
+"button.settings" = "设置";
+"button.ok" = "确定";
+"button.cancel" = "取消";
+"button.done" = "完成";
+"button.browse" = "浏览...";
+"button.overwrite" = "覆盖";
+
+// MARK: - Toolbar and Menu
+"toolbar.stop_conversion" = "停止转换";
+"toolbar.convert_all" = "全部转换";
+"toolbar.convert_selected" = "转换所选";
+
+// MARK: - Footer
+"footer.output_directory" = "输出目录";
+"footer.alongside_original" = "与原始文件并排";
+
+// MARK: - File Selection Dialog
+"dialog.select_x3f_files.title" = "选择 X3F 文件";
+"dialog.select_x3f_files.message" = "选择要转换的 X3F 文件";
+"dialog.select_output_directory.title" = "选择输出目录";
+"dialog.select_output_directory.message" = "选择转换后文件的保存位置";
+
+// MARK: - Alerts
+"alert.setup_issues.title" = "设置问题";
+
+// MARK: - Settings View
+"settings.section.output" = "输出设置";
+"settings.section.conversion" = "转换设置";
+"settings.section.debug" = "调试";
+"settings.section.updates" = "更新";
+"settings.section.about" = "关于";
+
+"settings.save_alongside_original" = "与原始文件并排保存";
+"settings.save_alongside_original.help" = "启用后，转换后的文件将与原始文件保存在一起。";
+"settings.save_alongside_original.description" = "禁用以选择自定义输出目录。";
+
+"settings.output_location" = "输出位置";
+"settings.only_convert_new" = "仅转换队列中的新项目";
+"settings.only_convert_new.help" = "启用后，“全部转换”将仅处理尚未转换的文件。禁用后，它将处理队列中的所有文件，包括已转换的文件。";
+
+"settings.conversion_format" = "转换格式";
+"settings.raw_compression" = "RAW 压缩";
+"settings.raw_compression.help" = "为 DNG 和 TIFF 启用无损压缩";
+"settings.color_profile" = "色彩配置文件";
+"settings.denoise" = "降噪";
+"settings.denoise.help" = "在转换过程中应用降噪";
+"settings.faster_processing" = "更快的处理";
+"settings.faster_processing.help" = "启用 OpenCL 加速以加快处理速度";
+
+"settings.debug_logging" = "调试日志记录";
+"settings.debug_logging.help" = "启用详细的调试日志以进行故障排除";
+"settings.debug_logs" = "调试日志";
+"settings.open_logs_folder" = "打开日志文件夹";
+"settings.clear_logs" = "清除日志";
+
+"settings.log.conversion" = "转换日志：";
+"settings.log.error" = "错误日志：";
+"settings.log.debug" = "调试日志：";
+
+"settings.version" = "版本";
+"settings.build" = "构建";
+"settings.acknowledgements" = "致谢";
+"settings.view_licenses" = "查看许可证";
+
+// MARK: - Menu Commands
+"menu.help.X3Fuse_help" = "X3Fuse 帮助";
+"menu.help.show_debug_logs" = "显示调试日志";
+"menu.help.clear_debug_logs" = "清除调试日志";
+
+"menu.file.add_x3f_files" = "添加 X3F 文件...";
+"menu.file.settings" = "设置";
+
+"menu.edit.select_all_files" = "全选文件";
+"menu.edit.deselect_all_files" = "取消全选";
+"menu.edit.remove_selected_files" = "移除所选文件";
+
+"menu.conversion.title" = "转换";
+"menu.conversion.convert_all_files" = "转换所有文件";
+"menu.conversion.stop_conversion" = "停止转换";
+"menu.conversion.clear_queue" = "清除队列";
+"menu.conversion.remove_failed_files" = "移除失败文件";
+"menu.conversion.remove_completed_files" = "移除完成文件";
+
+// MARK: - File Queue View
+"queue.column.name" = "名称";
+"queue.column.date" = "日期";
+"queue.column.size" = "大小";
+
+"queue.empty.title" = "队列中没有文件";
+"queue.empty.message" = "将 X3F 文件拖放到此处以将其添加到转换队列";
+
+// MARK: - Context Menu
+"context.convert" = "转换";
+"context.convert_selected" = "转换所选";
+"context.reconvert" = "重新转换";
+"context.reconvert_selected" = "重新转换所选";
+"context.stop_conversion" = "停止转换";
+"context.remove" = "移除";
+"context.remove_selected" = "移除所选";
+"context.show_in_finder" = "在访达中显示";
+"context.open_converted_in_finder" = "在访达中显示转换后的文件";
+"context.open_converted_in_finder_multiple" = "在访达中显示转换后的文件";
+"context.remove_failed_file" = "移除失败文件";
+"context.remove_failed_files" = "移除失败文件";
+"context.remove_completed_file" = "移除完成文件";
+"context.remove_completed_files" = "移除完成文件";
+"context.deselect_all" = "取消全选";
+"context.convert_all" = "全部转换";
+"context.remove_all" = "全部移除";
+
+// MARK: - Reconversion Confirmation
+"reconversion.title" = "覆盖现有文件？";
+"reconversion.message" = "将覆盖以下文件：";
+"reconversion.warning" = "此操作无法撤消。现有的转换文件将被永久替换。";
+"reconversion.location_prefix" = "在 ";
+
+// MARK: - File Status
+"status.queued" = "已排队";
+"status.processing" = "处理中";
+"status.completed" = "已完成";
+"status.failed" = "失败";
+"status.warning" = "警告";
+"status.conversion_failed" = "转换失败";
+"status.conversion_completed_with_warnings" = "转换完成但有警告";
+
+// MARK: - Updates
+"updates.check_for_updates" = "检查更新…";
+"updates.checking_for_updates" = "正在检查更新…";
+"updates.automatic_updates" = "自动检查更新";
+"updates.automatic_updates.help" = "在后台自动检查更新";
+"updates.automatic_download" = "自动下载更新";
+"updates.automatic_download.help" = "可用时自动下载更新";
+"updates.last_checked" = "上次检查";
+"updates.never" = "从不";
+"updates.current_version" = "当前版本";
+
+// MARK: - Placeholders
+"placeholder.dash" = "—";

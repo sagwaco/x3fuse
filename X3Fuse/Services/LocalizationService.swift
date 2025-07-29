@@ -79,6 +79,8 @@ struct LocalizationService {
     
     static let settingsVersion = NSLocalizedString("settings.version", comment: "Version label")
     static let settingsBuild = NSLocalizedString("settings.build", comment: "Build label")
+    static let settingsAcknowledgements = NSLocalizedString("settings.acknowledgements", comment: "Acknowledgements label")
+    static let settingsViewLicenses = NSLocalizedString("settings.view_licenses", comment: "View Licenses button")
     
     // MARK: - Menu Commands
     static let menuHelpX3FuseHelp = NSLocalizedString("menu.help.X3Fuse_help", comment: "X3Fuse help menu item")
