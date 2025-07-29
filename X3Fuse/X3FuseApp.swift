@@ -27,5 +27,11 @@ struct x3f_convertApp: App {
             MenuCommands()
         }
         .windowResizability(.contentSize)
+        
+        Settings {
+            SettingsView()
+                .environmentObject(updaterService)
+                .frame(width: 450, height: 700)
+        }
     }
 }
