@@ -1,3 +1,8 @@
+# 0.0.5 - Beta 1.0.3
+
+- Improved settings UI
+- Add Chinese localizations
+
 # 0.0.4 - Beta 1.0.2
 
 - Test version bump
