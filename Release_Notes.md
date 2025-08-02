@@ -1,4 +1,4 @@
-# 0.0.5 - Beta 1.0.4
+# 0.0.6 - Beta 1.0.6
 
 - Fix purple tint issue on low ISO SD Quattro H images
 
