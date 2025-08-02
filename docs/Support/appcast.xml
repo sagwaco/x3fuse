@@ -13,7 +13,7 @@
             <sparkle:version>0.0.5</sparkle:version>
             <sparkle:shortVersionString>0.0.5</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <enclosure url="https://github.com/sagwaco/x3fuse/releases/download/v0.0.5/X3Fuse-App.zip" length="57715313" type="application/octet-stream" sparkle:edSignature="xwYkwLBRqz9sg72Nmczt/Kiunn3qFryBFGfufQO7e5lZXSmEaKrNIGqoik1P28a6tmT6BOojXiG2N+db57boBA=="/>
+            <enclosure url="https://github.com/sagwaco/x3fuse/releases/download/v0.0.5/X3Fuse-App.zip" length="57715352" type="application/octet-stream" sparkle:edSignature="Gg9eartjTXGFkDdPmvvcd9nnme+lTNWmfyOoJS2xgbL013NlGUvneRyhStivIY/uE58Ly5DUkhHvJY2ULwRACQ=="/>
         </item>
         <item>
             <title>0.0.4</title>
