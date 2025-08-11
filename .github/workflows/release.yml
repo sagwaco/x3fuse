@@ -121,22 +121,32 @@ jobs:
           ls -la artifacts/ || echo "artifacts directory not found"
           find artifacts -type f 2>/dev/null || echo "No files found in artifacts"
 
-          # Check if the files exist before reading
-          if [ -f "artifacts/artifact/new_version" ]; then
+          # Check if the files exist before reading - try both possible locations
+          if [ -f "artifacts/new_version" ]; then
+            NEW_VERSION=$(cat artifacts/new_version)
+            echo "Found version in artifacts/: $NEW_VERSION"
+          elif [ -f "artifacts/artifact/new_version" ]; then
             NEW_VERSION=$(cat artifacts/artifact/new_version)
-            echo "Found version: $NEW_VERSION"
+            echo "Found version in artifacts/artifact/: $NEW_VERSION"
           else
-            echo "ERROR: artifacts/artifact/new_version not found!"
-            # Try to find the file in other locations
+            echo "ERROR: new_version file not found!"
+            echo "Searched locations:"
+            echo "  - artifacts/new_version"
+            echo "  - artifacts/artifact/new_version"
+            # Try to find the file anywhere
+            echo "Files found in current directory:"
             find . -name "new_version" -type f 2>/dev/null
             exit 1
           fi
 
-          if [ -f "artifacts/artifact/title" ]; then
+          if [ -f "artifacts/title" ]; then
+            TITLE=$(cat artifacts/title)
+            echo "Found title in artifacts/: $TITLE"
+          elif [ -f "artifacts/artifact/title" ]; then
             TITLE=$(cat artifacts/artifact/title)
-            echo "Found title: $TITLE"
+            echo "Found title in artifacts/artifact/: $TITLE"
           else
-            echo "ERROR: artifacts/artifact/title not found!"
+            echo "ERROR: title file not found!"
             exit 1
           fi
 
@@ -323,11 +333,24 @@ jobs:
       - name: Parse info generated in preparation job
         id: info
         run: |
-          echo "new_version=$(cat artifacts/artifact/new_version)" >> $GITHUB_OUTPUT
-          echo "title=$(cat artifacts/artifact/title)" >> $GITHUB_OUTPUT
-          mv artifacts/artifact/new_version new_version
-          mv artifacts/artifact/title title
-          mv artifacts/artifact/latest_changes latest_changes
+          # Check both possible locations for artifact files
+          if [ -f "artifacts/new_version" ]; then
+            echo "new_version=$(cat artifacts/new_version)" >> $GITHUB_OUTPUT
+            echo "title=$(cat artifacts/title)" >> $GITHUB_OUTPUT
+            mv artifacts/new_version new_version
+            mv artifacts/title title
+            mv artifacts/latest_changes latest_changes
+          elif [ -f "artifacts/artifact/new_version" ]; then
+            echo "new_version=$(cat artifacts/artifact/new_version)" >> $GITHUB_OUTPUT
+            echo "title=$(cat artifacts/artifact/title)" >> $GITHUB_OUTPUT
+            mv artifacts/artifact/new_version new_version
+            mv artifacts/artifact/title title
+            mv artifacts/artifact/latest_changes latest_changes
+          else
+            echo "ERROR: Could not find artifact files in expected locations"
+            exit 1
+          fi
+
           mkdir Release
           mv artifacts/app/X3Fuse-App.zip Release/
           mv artifacts/app/X3Fuse-Installer.zip Release/
