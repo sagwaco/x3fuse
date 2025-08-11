@@ -61,6 +61,7 @@ struct LocalizationService {
     static let settingsConversionFormat = NSLocalizedString("settings.conversion_format", comment: "Conversion format setting")
     static let settingsRawCompression = NSLocalizedString("settings.raw_compression", comment: "RAW compression setting")
     static let settingsRawCompressionHelp = NSLocalizedString("settings.raw_compression.help", comment: "RAW compression help text")
+    static let settingsRawCompressionWarning = NSLocalizedString("settings.raw_compression.warning", comment: "RAW compression warning text")
     static let settingsColorProfile = NSLocalizedString("settings.color_profile", comment: "Color profile setting")
     static let settingsDenoise = NSLocalizedString("settings.denoise", comment: "Denoise setting")
     static let settingsDenoiseHelp = NSLocalizedString("settings.denoise.help", comment: "Denoise help text")

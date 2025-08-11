@@ -13,7 +13,7 @@ class ConversionSettings {
 
   // Settings that match the requirements
   var outputFormat: OutputFormat = .dng
-  var compress: Bool = true
+  var compress: Bool = false
   var denoise: Bool = true
   var fasterProcessing: Bool = false  // OpenCL acceleration
   var colorProfile: ColorProfile = .sRGB
@@ -75,7 +75,7 @@ class ConversionSettings {
     let defaults = UserDefaults.standard
 
     outputFormat = OutputFormat(rawValue: defaults.integer(forKey: "outputFormat")) ?? .dng
-    compress = defaults.object(forKey: "compress") as? Bool ?? true
+    compress = defaults.object(forKey: "compress") as? Bool ?? false
     denoise = defaults.object(forKey: "denoise") as? Bool ?? true
     fasterProcessing = defaults.bool(forKey: "fasterProcessing")
     colorProfile = ColorProfile(rawValue: defaults.integer(forKey: "colorProfile")) ?? .sRGB

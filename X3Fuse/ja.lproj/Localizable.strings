@@ -55,6 +55,7 @@
 "settings.conversion_format" = "変換形式";
 "settings.raw_compression" = "RAW圧縮";
 "settings.raw_compression.help" = "DNGとTIFFのロスレス圧縮を有効にする";
+"settings.raw_compression.warning" = "RAW圧縮されたDNGは一部のアプリで開けない場合があります。問題が発生した場合は、圧縮を無効にしてください。";
 "settings.color_profile" = "カラープロファイル";
 "settings.denoise" = "ノイズ除去";
 "settings.denoise.help" = "変換中にノイズ低減を適用する";

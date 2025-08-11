@@ -55,6 +55,7 @@
 "settings.conversion_format" = "轉換格式";
 "settings.raw_compression" = "RAW 壓縮";
 "settings.raw_compression.help" = "為 DNG 和 TIFF 啟用無損壓縮";
+"settings.raw_compression.warning" = "RAW 壓縮的 DNG 可能無法在某些應用程式中開啟。如果遇到問題，請停用壓縮。";
 "settings.color_profile" = "色彩設定檔";
 "settings.denoise" = "降噪";
 "settings.denoise.help" = "在轉換過程中套用降噪";

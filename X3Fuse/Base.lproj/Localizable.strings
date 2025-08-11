@@ -55,6 +55,7 @@
 "settings.conversion_format" = "Conversion format";
 "settings.raw_compression" = "RAW compression";
 "settings.raw_compression.help" = "Enable lossless compression for DNGs and TIFFs";
+"settings.raw_compression.warning" = "RAW Compressed DNGs may not open in some apps. If you encounter issues, disable compression.";
 "settings.color_profile" = "Color profile";
 "settings.denoise" = "Denoise";
 "settings.denoise.help" = "Apply noise reduction during conversion";

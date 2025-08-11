@@ -5,8 +5,8 @@
 //  Created by Sang Lee on 7/8/25.
 //
 
-import SwiftUI
 import AppKit
+import SwiftUI
 
 struct SettingsView: View {
   @State private var settings = ConversionSettings.shared
@@ -46,39 +46,38 @@ struct SettingsView: View {
               .font(.caption)
               .foregroundColor(.secondary)
               .fixedSize(horizontal: false, vertical: true)
-            }
-          }
+            } else {
+              // Show custom directory controls only when toggle is off
+              HStack(spacing: 12) {
+                Text(LocalizationService.settingsOutputLocation)
 
-          // Show custom directory controls only when toggle is off
-          if !settings.outputToSameDirectory {
+                Spacer()
 
-            HStack(spacing: 12) {
-              Text(LocalizationService.settingsOutputLocation)
+                HStack {
+                  if !settings.isOutputDirectoryValid() {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                      .foregroundColor(.red)
+                      .font(.caption)
+                  }
 
-              Spacer()
+                  Text(settings.outputDirectoryDisplayName)
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundColor(settings.isOutputDirectoryValid() ? .secondary : .red)
+                    .lineLimit(1)
+                    .truncationMode(.head)
+                    .help(settings.outputDirectoryDisplayName)
 
-              HStack {
-                if !settings.isOutputDirectoryValid() {
-                  Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundColor(.red)
-                    .font(.caption)
+                  Button(LocalizationService.buttonBrowse) {
+                    selectOutputDirectory()
+                  }
+                  .buttonStyle(.bordered)
+                  .font(.caption)
                 }
-
-                Text(settings.outputDirectoryDisplayName)
-                  .font(.system(.caption, design: .monospaced))
-                  .foregroundColor(settings.isOutputDirectoryValid() ? .secondary : .red)
-                  .lineLimit(1)
-                  .truncationMode(.head)
-                  .help(settings.outputDirectoryDisplayName)
-
-                Button(LocalizationService.buttonBrowse) {
-                  selectOutputDirectory()
-                }
-                .buttonStyle(.bordered)
-                .font(.caption)
               }
+              .frame(maxWidth: .infinity)
             }
           }
+          .frame(maxWidth: .infinity, alignment: .leading)
 
           Toggle(LocalizationService.settingsOnlyConvertNew, isOn: $settings.onlyProcessNewItems)
             .help(
@@ -97,8 +96,32 @@ struct SettingsView: View {
 
           // Compression toggle (only shown for DNG and TIFF)
           if settings.shouldShowCompressionOption {
-            Toggle(LocalizationService.settingsRawCompression, isOn: $settings.compress)
-              .help(LocalizationService.settingsRawCompressionHelp)
+            VStack {
+              VStack(alignment: .leading) {
+                Toggle(LocalizationService.settingsRawCompression, isOn: $settings.compress)
+                  .help(LocalizationService.settingsRawCompressionHelp)
+              }
+              if settings.compress {
+                // Warning text for compression
+                HStack(alignment: .top, spacing: 2) {
+                  Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundColor(.orange)
+                    .symbolRenderingMode(.hierarchical)
+                  Text(
+                    LocalizationService.settingsRawCompressionWarning
+                  )
+                  .fixedSize(horizontal: false, vertical: true)
+                  .foregroundColor(.orange)
+                  .font(.caption)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(8)
+                .background(
+                  RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.orange.opacity(0.1))
+                )
+              }
+            }
           }
 
           if settings.shouldShowColorProfileOption {
