@@ -191,16 +191,20 @@ struct ContentView: View {
 
       Spacer()
 
-      VStack {
-        Text(LocalizationService.footerOutputDirectory)
-          .font(.footnote)
-          .foregroundColor(.secondary)
-          .opacity(0.5)
-        Text(outputDirectoryText)
-          .font(.caption)
-          .foregroundColor(.secondary)
-          .truncationMode(.head)
+      Button(action: selectOutputDirectory) {
+        VStack {
+          Text(LocalizationService.footerOutputDirectory)
+            .font(.footnote)
+            .foregroundColor(.secondary)
+            .opacity(0.5)
+          Text(outputDirectoryText)
+            .font(.caption)
+            .foregroundColor(.secondary)
+            .truncationMode(.head)
+        }
       }
+      .buttonStyle(.plain)
+      .help(LocalizationService.buttonSettings)
 
       Spacer()
 
@@ -235,6 +239,22 @@ struct ContentView: View {
 
     if panel.runModal() == .OK {
       queue.addFiles(panel.urls)
+    }
+  }
+
+  private func selectOutputDirectory() {
+    let panel = NSOpenPanel()
+    panel.canChooseFiles = false
+    panel.canChooseDirectories = true
+    panel.allowsMultipleSelection = false
+    panel.title = "Select Output Directory"
+    panel.message = "Choose where to save converted files"
+    panel.prompt = "Select"
+
+    if panel.runModal() == .OK {
+      if let url = panel.url {
+        settings.outputDirectory = url.path
+      }
     }
   }
 
