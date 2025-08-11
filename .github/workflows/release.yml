@@ -116,8 +116,32 @@ jobs:
       - name: Parse info generated in preparation job
         id: info
         run: |
-          echo "new_version=$(cat artifacts/artifact/new_version)" >> $GITHUB_OUTPUT
-          echo "title=$(cat artifacts/artifact/title)" >> $GITHUB_OUTPUT
+          # Debug: List artifact directory structure
+          echo "Artifact directory structure:"
+          ls -la artifacts/ || echo "artifacts directory not found"
+          find artifacts -type f 2>/dev/null || echo "No files found in artifacts"
+
+          # Check if the files exist before reading
+          if [ -f "artifacts/artifact/new_version" ]; then
+            NEW_VERSION=$(cat artifacts/artifact/new_version)
+            echo "Found version: $NEW_VERSION"
+          else
+            echo "ERROR: artifacts/artifact/new_version not found!"
+            # Try to find the file in other locations
+            find . -name "new_version" -type f 2>/dev/null
+            exit 1
+          fi
+
+          if [ -f "artifacts/artifact/title" ]; then
+            TITLE=$(cat artifacts/artifact/title)
+            echo "Found title: $TITLE"
+          else
+            echo "ERROR: artifacts/artifact/title not found!"
+            exit 1
+          fi
+
+          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "title=$TITLE" >> $GITHUB_OUTPUT
 
       - uses: xt0rted/pull-request-comment-branch@v1
         id: comment-branch
@@ -139,6 +163,14 @@ jobs:
 
       - name: Override versions in project
         run: |
+          # Safety check: Ensure we have a version
+          if [ -z "${{ steps.info.outputs.new_version }}" ]; then
+            echo "ERROR: Version is empty! Cannot proceed with version replacement."
+            exit 1
+          fi
+
+          echo "Updating project to version: ${{ steps.info.outputs.new_version }}"
+
           # Update version in Info.plist - add keys if they don't exist
           /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string ${{ steps.info.outputs.new_version }}" X3Fuse/Info.plist 2>/dev/null || \
           /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${{ steps.info.outputs.new_version }}" X3Fuse/Info.plist
