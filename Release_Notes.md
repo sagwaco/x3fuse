@@ -1,3 +1,9 @@
+# 0.1.0 - Beta 1.1.0
+
+- Support Intel Macs. Intel and Apple Silicon macs on macOS 14+ are now supported.
+- Apply DPXM green cast fixes to the SD1M
+- Add warning message for RAW compression
+
 # 0.0.6 - Beta 1.0.6
 
 - Fix purple tint issue on low ISO SD Quattro H images
