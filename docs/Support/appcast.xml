@@ -7,6 +7,15 @@
         <language>en</language>
         <!-- Sparkle will populate this with release items -->
         <item>
+            <title>0.1.0</title>
+            <pubDate>Mon, 11 Aug 2025 06:51:12 +0000</pubDate>
+            <link>https://github.com/sagwaco/x3fuse/releases</link>
+            <sparkle:version>0.1.0</sparkle:version>
+            <sparkle:shortVersionString>0.1.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/sagwaco/x3fuse/releases/download/v0.1.0/X3Fuse-App.zip" length="59812898" type="application/octet-stream" sparkle:edSignature="r8BD6LqLQtumW4dgRdGcXWO+x5/PSEq24kIUJMtwNSL9kG2l0rpmasPMMasMPPYD394sS24YUSS9c/lQ4WicBw=="/>
+        </item>
+        <item>
             <title>0.0.6</title>
             <pubDate>Sat, 02 Aug 2025 15:35:01 +0000</pubDate>
             <link>https://github.com/sagwaco/x3fuse/releases</link>
@@ -23,15 +32,6 @@
             <sparkle:shortVersionString>0.0.5</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
             <enclosure url="https://github.com/sagwaco/x3fuse/releases/download/v0.0.5/X3Fuse-App.zip" length="57715352" type="application/octet-stream" sparkle:edSignature="Gg9eartjTXGFkDdPmvvcd9nnme+lTNWmfyOoJS2xgbL013NlGUvneRyhStivIY/uE58Ly5DUkhHvJY2ULwRACQ=="/>
-        </item>
-        <item>
-            <title>0.0.4</title>
-            <pubDate>Sun, 27 Jul 2025 21:13:49 +0000</pubDate>
-            <link>https://github.com/sagwaco/x3fuse/releases</link>
-            <sparkle:version>0.0.4</sparkle:version>
-            <sparkle:shortVersionString>0.0.4</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <enclosure url="https://github.com/sagwaco/x3fuse/releases/download/v0.0.4/X3Fuse-App.zip" length="57713295" type="application/octet-stream" sparkle:edSignature="Sl8b3g9/eLV23Ra1SLTtz8bfqD1buqXYMosK4wa8T4a9TXRfne8F/zbWNLpKtRen3trPFgJ4qezOqjZKMzRRAA=="/>
         </item>
     </channel>
 </rss>
