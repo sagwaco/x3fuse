@@ -82,6 +82,10 @@ If you have a Sigma Foveon camera from the Merrill and Quattro generations that 
 
 ## Known Issues
 
+#### Compatibility issues with RAW compression on DNGs
+
+DNGs that were created with the **RAW compression** setting enabled have reduced compatibility and may not open reliably in applications that do not use the Capture One or Adobe Camera Raw (Photoshop, Lightroom) decoders. If you encounter this issue, try disabling RAW compression in the application settings.
+
 #### DNGs look broken in Quick Look
 
 Foveon cameras do not have a color filter array (CFA) like most other cameras, and the lack of a CFA, among other differences, can cause some applications like Quick Look to misinterpret the RAW data. If you encounter this issue, please use an alternative viewer or editor to confirm the integrity of the DNG files. The files should open correctly in applications like Adobe Lightroom or Capture One.
