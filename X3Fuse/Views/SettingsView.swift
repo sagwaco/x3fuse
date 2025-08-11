@@ -17,7 +17,7 @@ struct SettingsView: View {
     NavigationStack {
       Form {
         Section(LocalizationService.settingsSectionOutput) {
-          VStack(alignment: .leading) {
+          VStack(alignment: .leading, spacing: 8) {
 
             // Toggle for same directory vs custom directory
             Toggle(
@@ -38,6 +38,7 @@ struct SettingsView: View {
               )
             )
             .help(LocalizationService.settingsSaveAlongsideOriginalHelp)
+
             if settings.outputToSameDirectory {
               // Description text
               Text(
@@ -103,22 +104,22 @@ struct SettingsView: View {
               }
               if settings.compress {
                 // Warning text for compression
-                HStack(alignment: .top, spacing: 2) {
-                  Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundColor(.orange)
+                HStack(alignment: .top, spacing: 4) {
+                  Image(systemName: "info.circle.fill")
+                    .foregroundColor(.secondary)
                     .symbolRenderingMode(.hierarchical)
                   Text(
                     LocalizationService.settingsRawCompressionWarning
                   )
                   .fixedSize(horizontal: false, vertical: true)
-                  .foregroundColor(.orange)
+                  .foregroundColor(.secondary)
                   .font(.caption)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(8)
                 .background(
                   RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.orange.opacity(0.1))
+                    .fill(Color.secondary.opacity(0.1))
                 )
               }
             }
