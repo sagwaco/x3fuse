@@ -40,7 +40,7 @@ If you have a Sigma Foveon camera from the Merrill and Quattro generations that 
 ## System Requirements
 
 - macOS 14.0 (Sonoma) or later
-- Apple Silicon (M1, M2, etc)
+- Intel or Apple Silicon
 
 ## Installation
 
