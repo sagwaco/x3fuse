@@ -97,8 +97,18 @@ struct SettingsView: View {
 
           // Compression toggle (only shown for DNG and TIFF)
           if settings.shouldShowCompressionOption {
-            Toggle(LocalizationService.settingsRawCompression, isOn: $settings.compress)
-              .help(LocalizationService.settingsRawCompressionHelp)
+            VStack(alignment: .leading) {
+              Toggle(LocalizationService.settingsRawCompression, isOn: $settings.compress)
+                .help(LocalizationService.settingsRawCompressionHelp)
+              
+              if settings.compress {
+                // Warning text for compression
+                Text("RAW Compressed DNGs may not open in some apps. If you encounter issues, disable compression.")
+                  .font(.caption)
+                  .foregroundColor(.orange)
+                  .fixedSize(horizontal: false, vertical: true)
+              }
+            }
           }
 
           if settings.shouldShowColorProfileOption {
