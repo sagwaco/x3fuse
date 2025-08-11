@@ -146,10 +146,17 @@ jobs:
           /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string ${{ steps.info.outputs.new_version }}" X3Fuse/Info.plist 2>/dev/null || \
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${{ steps.info.outputs.new_version }}" X3Fuse/Info.plist
 
-          # Update version in Xcode project - find current version first
-          CURRENT_VERSION=$(grep -o 'MARKETING_VERSION = [^;]*' X3Fuse.xcodeproj/project.pbxproj | head -1 | cut -d' ' -f3)
-          sed -i '' "s/MARKETING_VERSION = $CURRENT_VERSION/MARKETING_VERSION = ${{ steps.info.outputs.new_version }}/g" X3Fuse.xcodeproj/project.pbxproj
-          sed -i '' "s/CURRENT_PROJECT_VERSION = $CURRENT_VERSION/CURRENT_PROJECT_VERSION = ${{ steps.info.outputs.new_version }}/g" X3Fuse.xcodeproj/project.pbxproj
+          # Debug: Check current version format
+          echo "Current version entries in project file:"
+          grep "MARKETING_VERSION\|CURRENT_PROJECT_VERSION" X3Fuse.xcodeproj/project.pbxproj | head -5
+
+          # Update version in Xcode project - properly handle the semicolon
+          sed -i '' "s/MARKETING_VERSION = [0-9.]*;/MARKETING_VERSION = ${{ steps.info.outputs.new_version }};/g" X3Fuse.xcodeproj/project.pbxproj
+          sed -i '' "s/CURRENT_PROJECT_VERSION = [0-9.]*;/CURRENT_PROJECT_VERSION = ${{ steps.info.outputs.new_version }};/g" X3Fuse.xcodeproj/project.pbxproj
+
+          # Debug: Verify the replacements worked
+          echo "After replacement:"
+          grep "MARKETING_VERSION\|CURRENT_PROJECT_VERSION" X3Fuse.xcodeproj/project.pbxproj | head -5
 
       - name: Install the Apple certificate and provisioning profile
         env:
