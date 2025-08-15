@@ -1,3 +1,8 @@
+# 0.1.1 - Beta 1.1.1
+
+- Make RAW compression warning message easier on the eyes
+- Actually supports Intel Macs now...
+
 # 0.1.0 - Beta 1.1.0
 
 - Support Intel Macs. Intel and Apple Silicon macs on macOS 14+ are now supported.
