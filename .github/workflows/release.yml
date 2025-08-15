@@ -243,11 +243,26 @@ jobs:
             -scheme X3Fuse \
             -configuration Release \
             -archivePath X3Fuse \
+            ARCHS="x86_64 arm64" \
+            ONLY_ACTIVE_ARCH=NO \
             CODE_SIGN_STYLE=Manual \
             CODE_SIGN_IDENTITY="Developer ID Application" \
             DEVELOPMENT_TEAM="RPKWZLZ8NN" \
             PROVISIONING_PROFILE_SPECIFIER="$PROVISION_UUID" \
             OTHER_CODE_SIGN_FLAGS="--timestamp --options=runtime"
+
+      - name: Verify universal binary
+        run: |
+          echo "Checking main app binary architecture:"
+          lipo -info X3Fuse.xcarchive/Products/Applications/X3Fuse.app/Contents/MacOS/X3Fuse
+
+          # Fail if not universal
+          if ! lipo -info X3Fuse.xcarchive/Products/Applications/X3Fuse.app/Contents/MacOS/X3Fuse | grep -q "x86_64 arm64"; then
+            echo "ERROR: App is not a universal binary!"
+            exit 1
+          fi
+
+          echo "✅ App is correctly built as a universal binary for both Intel and Apple Silicon"
 
       - name: Export app
         run: |
