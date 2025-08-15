@@ -22,20 +22,24 @@ X3Fuse is a RAW conversion tool that converts your Sigma Merrill and Quattro X3F
 
 ## Supported Cameras
 
-X3Fuse supports X3F files from Sigma cameras including:
+X3Fuse supports X3F files from Sigma cameras including Merrill and Quattro series cameras.
 
-- Sigma Merrill series cameras
-- Sigma Quattro series cameras
+| Camera Model           | Tested | Untested |
+| ---------------------- | ------ | -------- |
+| **Merrill Generation** |        |          |
+| Sigma DP1 Merrill      | ✅     |          |
+| Sigma DP2 Merrill      | ✅     |          |
+| Sigma DP3 Merrill      | ✅     |          |
+| Sigma SD1 Merrill      | ✅     |          |
+| **Quattro Generation** |        |          |
+| Sigma DP0 Quattro      | ✅     |          |
+| Sigma DP1 Quattro      |        | 🚫       |
+| Sigma DP2 Quattro      | ✅     |          |
+| Sigma DP3 Quattro      | ✅     |          |
+| Sigma SD Quattro       |        | 🚫       |
+| Sigma SD Quattro H     | ✅     |          |
 
-This app has been tested with photos taken with various Sigma models, including:
-
-- Sigma DP2 Merrill
-- Sigma DP3 Merrill
-- Sigma DP0 Quattro
-- Sigma DP2 Quattro
-- Sigma SD Quattro H
-
-If you have a Sigma Foveon camera from the Merrill and Quattro generations that are not listed here, please let us know! We aim to support all Sigma X3F files and are actively looking for additional test files to improve compatibility.
+If you have a Sigma Foveon camera from the Merrill and Quattro generations that are not listed here, please let us know! We aim to support all Sigma Merrill and Quattro cameras and are actively looking for additional test files to improve compatibility.
 
 ## System Requirements
 
@@ -59,6 +63,16 @@ If you have a Sigma Foveon camera from the Merrill and Quattro generations that 
    ```
 2. Open `X3Fuse.xcodeproj` in Xcode
 3. Build and run the project (⌘+R)
+
+## Scripts
+
+### verify_universal_build.sh
+
+```bash
+./scripts/verify_universal_build.sh
+```
+
+This script verifies that the app and its components are properly built as universal binaries. It checks the architecture of the main app executable and any embedded binaries, ensuring they support both Intel and Apple Silicon architectures.
 
 ## Usage
 
@@ -88,7 +102,7 @@ DNGs that were created with the **RAW compression** setting enabled have reduced
 
 #### DNGs look broken in Quick Look
 
-Foveon cameras do not have a color filter array (CFA) like most other cameras, and the lack of a CFA, among other differences, can cause some applications like Quick Look to misinterpret the RAW data. If you encounter this issue, please use an alternative viewer or editor to confirm the integrity of the DNG files. The files should open correctly in applications like Adobe Lightroom or Capture One.
+Foveon cameras do not have a color filter array (CFA) like most other cameras, and the lack of a CFA, among other differences, can cause some applications like Quick Look to misinterpret the RAW data. If you encounter this issue, please use an alternative viewer or editor to confirm the integrity of the DNG files. The files should open correctly in applications like Adobe Lightroom, Adobe Photoshop, or Capture One.
 
 #### X3I files not supported
 
