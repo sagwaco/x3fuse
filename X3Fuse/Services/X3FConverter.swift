@@ -172,6 +172,14 @@ class X3FConverter {
       args.append(colorArg)
     }
 
+    // Super resolution (always use global settings, not file-specific)
+    if settings.superResolutionEnabled {
+      args.append("-sr")
+      args.append("\(settings.superResolutionScale)")
+      args.append("-sr-model")
+      args.append("cubic")
+    }
+
     return args
   }
 

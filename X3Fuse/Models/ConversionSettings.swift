@@ -21,6 +21,10 @@ class ConversionSettings {
   var debugLoggingEnabled: Bool = false
   var onlyProcessNewItems: Bool = true  // Only process files that are queued, not already converted
 
+  // Super resolution settings
+  var superResolutionEnabled: Bool = false
+  var superResolutionScale: Int = 2  // 2, 3, or 4
+
   // Sort preferences
   var sortField: String = "File Name"  // Store as string for persistence
   var sortAscending: Bool = true
@@ -67,6 +71,14 @@ class ConversionSettings {
       args.append(colorArg)
     }
 
+    // Super resolution
+    if superResolutionEnabled {
+      args.append("-sr")
+      args.append("\(superResolutionScale)")
+      args.append("-sr-model")
+      args.append("cubic")
+    }
+
     return args
   }
 
@@ -82,6 +94,8 @@ class ConversionSettings {
     outputDirectory = defaults.string(forKey: "outputDirectory")
     debugLoggingEnabled = defaults.bool(forKey: "debugLoggingEnabled")
     onlyProcessNewItems = defaults.object(forKey: "onlyProcessNewItems") as? Bool ?? true
+    superResolutionEnabled = defaults.bool(forKey: "superResolutionEnabled")
+    superResolutionScale = defaults.object(forKey: "superResolutionScale") as? Int ?? 2
     sortField = defaults.string(forKey: "sortField") ?? "File Name"
     sortAscending = defaults.object(forKey: "sortAscending") as? Bool ?? true
   }
@@ -97,6 +111,8 @@ class ConversionSettings {
     defaults.set(outputDirectory, forKey: "outputDirectory")
     defaults.set(debugLoggingEnabled, forKey: "debugLoggingEnabled")
     defaults.set(onlyProcessNewItems, forKey: "onlyProcessNewItems")
+    defaults.set(superResolutionEnabled, forKey: "superResolutionEnabled")
+    defaults.set(superResolutionScale, forKey: "superResolutionScale")
     defaults.set(sortField, forKey: "sortField")
     defaults.set(sortAscending, forKey: "sortAscending")
   }

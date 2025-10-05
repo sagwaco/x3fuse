@@ -193,23 +193,83 @@ class ExifService {
     
     func applyOpcodeToFile(_ file: X3FFile, opcodePath: String) async throws {
         logger.logDebug("Applying opcode to \(file.fileName): \(opcodePath)")
-        
+
         // The output file should already exist from x3f_extract in the effective output directory
         let outputFormat = file.outputFormat ?? ConversionSettings.shared.outputFormat
         let effectiveOutputDir = ConversionSettings.shared.effectiveOutputDirectory(for: file.url)
         let outputDirectory = URL(fileURLWithPath: effectiveOutputDir)
         let outputFileName = file.url.lastPathComponent + "." + String(outputFormat.fileExtension.dropFirst())
         let outputURL = outputDirectory.appendingPathComponent(outputFileName)
-        
+
         logger.logDebug("ExifService: Looking for output file at: \(outputURL.path)")
-        
+
         // Verify the DNG file exists
         guard FileManager.default.fileExists(atPath: outputURL.path) else {
             throw ExifServiceError.outputFileNotFound(outputURL.path)
         }
-        
-        // Based on the example script, the correct ExifTool command is:
-        // exiftool -overwrite_original -opcodelist3<="opcode_file" -n -tagsfromfile source.x3f -all -copyright="..." output.dng
+
+        // Check if super resolution is enabled and we need to scale the opcode
+        if ConversionSettings.shared.superResolutionEnabled {
+            let scale = ConversionSettings.shared.superResolutionScale
+            logger.logDebug("Super resolution enabled with scale \(scale)x - applying scaled opcode")
+            try await applyScaledOpcode(file: file, opcodePath: opcodePath, outputURL: outputURL, scale: scale)
+        } else {
+            // Apply opcode normally for native resolution
+            let arguments = [
+                "-overwrite_original",
+                "-opcodelist3<=\(opcodePath)",
+                "-n",
+                "-tagsfromfile",
+                file.url.path,
+                "-all",
+                outputURL.path
+            ]
+
+            do {
+                let output = try await runExifTool(arguments: arguments)
+                if !output.isEmpty {
+                    logger.logDebug("ExifTool output: \(output)")
+                }
+                logger.logDebug("Opcode and EXIF data applied successfully to \(file.fileName)")
+            } catch {
+                logger.logError("Failed to apply opcode: \(error)", file: file.fileName)
+                throw error
+            }
+        }
+    }
+
+    private func applyScaledOpcode(file: X3FFile, opcodePath: String, outputURL: URL, scale: Int) async throws {
+        // IMPORTANT: DNG opcodes contain gain maps with fixed grid dimensions that are calibrated
+        // for the native sensor resolution. When images are upscaled, these gain maps don't automatically
+        // scale to match the new dimensions. The opcode coordinates remain absolute, causing the
+        // correction to only apply to a portion of the upscaled image.
+
+        // Since properly scaling binary opcode data requires parsing and rewriting the gain map structure,
+        // which is complex and error-prone, we'll skip opcode application for upscaled images and warn the user.
+
+        logger.logDebug("[\(file.fileName)] Super resolution enabled (\(scale)x) - skipping opcode application")
+        logger.logDebug("[\(file.fileName)] Opcodes are calibrated for native resolution and cannot be properly scaled")
+
+        // Copy EXIF data without applying opcodes
+        try await copyExifData(from: file.url, to: outputURL)
+
+        // Add metadata to indicate this is an upscaled image without opcode correction
+        let metadataArgs = [
+            "-overwrite_original",
+            "-UserComment=Upscaled \(scale)x - Flat-field correction not applied (opcodes only work at native resolution)",
+            outputURL.path
+        ]
+
+        do {
+            _ = try await runExifTool(arguments: metadataArgs)
+            logger.logDebug("[\(file.fileName)] EXIF data copied to upscaled image (opcodes skipped)")
+        } catch {
+            logger.logError("Failed to update metadata for upscaled image: \(error)", file: file.fileName)
+        }
+    }
+
+    private func applyOpcodeWithoutScaling(file: X3FFile, opcodePath: String, outputURL: URL) async throws {
+        // Fallback method - apply opcode normally
         let arguments = [
             "-overwrite_original",
             "-opcodelist3<=\(opcodePath)",
@@ -219,17 +279,8 @@ class ExifService {
             "-all",
             outputURL.path
         ]
-        
-        do {
-            let output = try await runExifTool(arguments: arguments)
-            if !output.isEmpty {
-                logger.logDebug("ExifTool output: \(output)")
-            }
-            logger.logDebug("Opcode and EXIF data applied successfully to \(file.fileName)")
-        } catch {
-            logger.logError("Failed to apply opcode: \(error)", file: file.fileName)
-            throw error
-        }
+
+        _ = try await runExifTool(arguments: arguments)
     }
     
     // MARK: - EXIF Editing Support
