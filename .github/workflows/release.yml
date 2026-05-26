@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check permissions
-        uses: actions/github-script@v6
+        uses: actions/github-script@v7
         with:
           script: |
             const commenter = context.payload.comment.user.login;
@@ -43,7 +43,7 @@ jobs:
           comment-id: ${{ github.event.comment.id }}
           reactions: eyes
 
-      - uses: actions/github-script@v6
+      - uses: actions/github-script@v7
         with:
           result-encoding: string
           script: |
@@ -59,7 +59,7 @@ jobs:
       - uses: xt0rted/pull-request-comment-branch@v1
         id: comment-branch
 
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         if: success()
         with:
           ref: ${{ steps.comment-branch.outputs.head_ref }}
@@ -85,7 +85,7 @@ jobs:
           echo "Previous Version: $PREVIOUS_VERSION"
 
       - name: Save generated info
-        uses: actions/upload-artifact@master
+        uses: actions/upload-artifact@v4
         with:
           path: |
             new_version
@@ -106,10 +106,10 @@ jobs:
 
   archive:
     name: Build and export app
-    runs-on: macos-latest
+    runs-on: macos-26
     needs: preparation
     steps:
-      - uses: actions/download-artifact@master
+      - uses: actions/download-artifact@v4
         with:
           path: artifacts
 
@@ -156,7 +156,7 @@ jobs:
       - uses: xt0rted/pull-request-comment-branch@v1
         id: comment-branch
 
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         if: success()
         with:
           ref: ${{ steps.comment-branch.outputs.head_ref }}
@@ -321,7 +321,7 @@ jobs:
           cd ..
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@master
+        uses: actions/upload-artifact@v4
         with:
           name: app
           path: |
@@ -330,18 +330,18 @@ jobs:
 
   release:
     name: "Create Release"
-    runs-on: macos-latest
+    runs-on: macos-26
     needs: archive
     steps:
       - uses: xt0rted/pull-request-comment-branch@v1
         id: comment-branch
 
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         if: success()
         with:
           ref: ${{ steps.comment-branch.outputs.head_ref }}
 
-      - uses: actions/download-artifact@master
+      - uses: actions/download-artifact@v4
         with:
           path: artifacts
 
@@ -432,7 +432,7 @@ jobs:
       - uses: xt0rted/pull-request-comment-branch@v1
         id: comment-branch
 
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           ref: ${{ steps.comment-branch.outputs.head_ref }}
 

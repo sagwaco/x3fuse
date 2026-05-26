@@ -130,8 +130,9 @@ class X3FConverter {
     let outputFormat = file.outputFormat ?? settings.outputFormat
     let compress = file.compress ?? settings.compress
     let denoise = file.denoise ?? settings.denoise
-    let fasterProcessing = file.fasterProcessing ?? settings.fasterProcessing
     let colorProfile = file.colorProfile ?? settings.colorProfile
+    let dngHighlightRecovery = settings.dngHighlightRecovery
+    let cineon = settings.cineon
 
     // Specify output directory - use custom directory if set, otherwise use input file directory
     let outputDirectory = settings.effectiveOutputDirectory(for: file.url)
@@ -150,11 +151,6 @@ class X3FConverter {
       args.append("-compress")
     }
 
-    // OpenCL acceleration
-    if fasterProcessing {
-      args.append("-ocl")
-    }
-
     // Output format
     switch outputFormat {
     case .dng:
@@ -166,18 +162,30 @@ class X3FConverter {
       args.append("-tiff")
     }
 
+    // Merrill-generation DNG highlight recovery (DNG only)
+    if dngHighlightRecovery && outputFormat == .dng {
+      args.append("-dng-highlight-recovery")
+    }
+
+    // DNG lens-correction opcodes (DNG only). x3f_extract picks the matching
+    // flat-fielding opcode from the directory per file. Highlight recovery is
+    // incompatible with flat-fielding, so skip opcodes when it is enabled.
+    if outputFormat == .dng && !dngHighlightRecovery,
+      let opcodesDir = OpcodeManager.shared.opcodesDirectoryPath
+    {
+      args.append("-opcodes-dir")
+      args.append(opcodesDir)
+    }
+
+    // Cineon-style flat tone curve (TIFF only)
+    if cineon && outputFormat == .tiff {
+      args.append("-cineon")
+    }
+
     // Color profile
     if let colorArg = colorProfile.x3fArgument {
       args.append("-color")
       args.append(colorArg)
-    }
-
-    // Super resolution (always use global settings, not file-specific)
-    if settings.superResolutionEnabled {
-      args.append("-sr")
-      args.append("\(settings.superResolutionScale)")
-      args.append("-sr-model")
-      args.append("cubic")
     }
 
     return args

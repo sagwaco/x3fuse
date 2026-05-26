@@ -59,8 +59,11 @@
 "settings.color_profile" = "カラープロファイル";
 "settings.denoise" = "ノイズ除去";
 "settings.denoise.help" = "変換中にノイズ低減を適用する";
-"settings.faster_processing" = "高速処理";
-"settings.faster_processing.help" = "高速処理のためのOpenCLアクセラレーションを有効にする";
+"settings.dng_highlight_recovery" = "ハイライト復元（Merrill世代）";
+"settings.dng_highlight_recovery.help" = "Merrill世代のDNGで白飛びしたハイライトを復元します";
+"settings.dng_highlight_recovery.warning" = "ハイライト復元により、一部のアプリでDNGが正しく表示されない場合があります。問題が発生した場合は、復元を無効にしてください。";
+"settings.cineon" = "Cineon風トーンカーブを使用";
+"settings.cineon.help" = "TIFF出力にCineon風のフラットなトーンカーブを使用します";
 
 "settings.debug_logging" = "デバッグログ";
 "settings.debug_logging.help" = "トラブルシューティング用の詳細なデバッグログを有効にする";

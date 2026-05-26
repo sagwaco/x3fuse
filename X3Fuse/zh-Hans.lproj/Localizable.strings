@@ -59,8 +59,11 @@
 "settings.color_profile" = "色彩配置文件";
 "settings.denoise" = "降噪";
 "settings.denoise.help" = "在转换过程中应用降噪";
-"settings.faster_processing" = "更快的处理";
-"settings.faster_processing.help" = "启用 OpenCL 加速以加快处理速度";
+"settings.dng_highlight_recovery" = "高光恢复（Merrill 世代）";
+"settings.dng_highlight_recovery.help" = "恢复 Merrill 世代 DNG 中过曝的高光";
+"settings.dng_highlight_recovery.warning" = "高光恢复可能导致 DNG 在某些应用中无法正确显示。如果遇到问题，请禁用恢复。";
+"settings.cineon" = "使用 Cineon 风格色调曲线";
+"settings.cineon.help" = "为 TIFF 输出使用 Cineon 风格的平坦色调曲线";
 
 "settings.debug_logging" = "调试日志记录";
 "settings.debug_logging.help" = "启用详细的调试日志以进行故障排除";

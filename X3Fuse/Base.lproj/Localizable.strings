@@ -59,18 +59,11 @@
 "settings.color_profile" = "Color profile";
 "settings.denoise" = "Denoise";
 "settings.denoise.help" = "Apply noise reduction during conversion";
-"settings.faster_processing" = "Faster processing";
-"settings.faster_processing.help" = "Enable OpenCL acceleration for faster processing";
-"settings.super_resolution" = "Enable super resolution";
-"settings.super_resolution.help" = "Upscale images using super resolution (increases file size significantly)";
-"settings.super_resolution.scale" = "Upscale factor";
-"settings.super_resolution.scale.help" = "2x: 59MP-102MP, 3x: 132MP-230MP, 4x: 236MP-408MP. Upscaled images may be several gigabytes in size.";
-"settings.super_resolution.1x_supersample" = "1x Supersample";
-"settings.super_resolution.4x_upscale" = "4x Upscale";
-"settings.super_resolution.16x_upscale" = "16x Upscale";
-"settings.super_resolution.1x_description" = "Outputs a highly detailed image with remarkable details at the same dimensions as the original file.";
-"settings.super_resolution.4x_description" = "Outputs an upscaled image that has 4 times more pixels than the original file. Requires several hundred megabytes of disk space per image.";
-"settings.super_resolution.16x_description" = "Outputs an upscaled image that has 16 times more pixels than the original file. Requires several gigabytes of disk space per image.";
+"settings.dng_highlight_recovery" = "Highlight recovery (Merrill-generation)";
+"settings.dng_highlight_recovery.help" = "Recover blown highlights in Merrill-generation DNGs";
+"settings.dng_highlight_recovery.warning" = "Highlight recovery may cause DNGs to render incorrectly in some apps. If you encounter issues, disable recovery.";
+"settings.cineon" = "Use cineon-style tone curve";
+"settings.cineon.help" = "Use a Cineon-style flat tone curve for TIFF output";
 
 "settings.debug_logging" = "Debug logging";
 "settings.debug_logging.help" = "Enable detailed debug logging for troubleshooting";

@@ -125,6 +125,45 @@ struct SettingsView: View {
             }
           }
 
+          // Merrill-generation DNG highlight recovery (only shown for DNG)
+          if settings.shouldShowDngHighlightRecoveryOption {
+            VStack {
+              VStack(alignment: .leading) {
+                Toggle(
+                  LocalizationService.settingsDngHighlightRecovery,
+                  isOn: $settings.dngHighlightRecovery
+                )
+                .help(LocalizationService.settingsDngHighlightRecoveryHelp)
+              }
+              if settings.dngHighlightRecovery {
+                // Warning text for highlight recovery
+                HStack(alignment: .top, spacing: 4) {
+                  Image(systemName: "info.circle.fill")
+                    .foregroundColor(.secondary)
+                    .symbolRenderingMode(.hierarchical)
+                  Text(
+                    LocalizationService.settingsDngHighlightRecoveryWarning
+                  )
+                  .fixedSize(horizontal: false, vertical: true)
+                  .foregroundColor(.secondary)
+                  .font(.caption)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(8)
+                .background(
+                  RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.secondary.opacity(0.1))
+                )
+              }
+            }
+          }
+
+          // Cineon-style flat tone curve (only shown for TIFF)
+          if settings.shouldShowCineonOption {
+            Toggle(LocalizationService.settingsCineon, isOn: $settings.cineon)
+              .help(LocalizationService.settingsCineonHelp)
+          }
+
           if settings.shouldShowColorProfileOption {
             Picker(LocalizationService.settingsColorProfile, selection: $settings.colorProfile) {
               ForEach(ColorProfile.allCases, id: \.self) { profile in
@@ -135,65 +174,6 @@ struct SettingsView: View {
           }
           Toggle(LocalizationService.settingsDenoise, isOn: $settings.denoise)
             .help(LocalizationService.settingsDenoiseHelp)
-
-          Toggle(LocalizationService.settingsFasterProcessing, isOn: $settings.fasterProcessing)
-            .help(LocalizationService.settingsFasterProcessingHelp)
-
-          // Super resolution settings
-          VStack(spacing: 12) {
-            VStack(alignment: .leading) {
-              Toggle(
-                LocalizationService.settingsSuperResolution,
-                isOn: $settings.superResolutionEnabled
-              )
-              .help(LocalizationService.settingsSuperResolutionHelp)
-            }
-
-            if settings.superResolutionEnabled {
-              VStack(alignment: .leading, spacing: 12) {
-                Picker(LocalizationService.settingsSuperResolutionScale, selection: $settings.superResolutionScale) {
-                  Text(LocalizationService.settingsSuperResolution1xSupersample).tag(2)
-                  Text(LocalizationService.settingsSuperResolution4xUpscale).tag(4)
-                  Text(LocalizationService.settingsSuperResolution16xUpscale).tag(8)
-                }
-                .pickerStyle(MenuPickerStyle())
-
-                // Help text with size information
-                HStack(alignment: .top, spacing: 4) {
-                  Image(systemName: "info.circle.fill")
-                    .foregroundColor(.secondary)
-                    .symbolRenderingMode(.hierarchical)
-                  Text(superResolutionDescription)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .foregroundColor(.secondary)
-                    .font(.caption)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(8)
-                .background(
-                  RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.secondary.opacity(0.1))
-                )
-
-                // Warning about opcodes not working with upscaling
-                HStack(alignment: .top, spacing: 4) {
-                  Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundColor(.orange)
-                    .symbolRenderingMode(.hierarchical)
-                  Text("Note: Flat-field correction (opcodes) cannot be applied to upscaled images. Opcodes are calibrated for native sensor resolution only.")
-                    .fixedSize(horizontal: false, vertical: true)
-                    .foregroundColor(.orange)
-                    .font(.caption)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(8)
-                .background(
-                  RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.orange.opacity(0.1))
-                )
-              }
-            }
-          }
         }
 
         Section(LocalizationService.settingsSectionDebug) {
@@ -335,19 +315,6 @@ struct SettingsView: View {
     .onDisappear {
       // Auto-save settings when the window closes
       settings.saveSettings()
-    }
-  }
-
-  private var superResolutionDescription: String {
-    switch settings.superResolutionScale {
-    case 2:
-      return LocalizationService.settingsSuperResolution1xDescription
-    case 4:
-      return LocalizationService.settingsSuperResolution4xDescription
-    case 8:
-      return LocalizationService.settingsSuperResolution16xDescription
-    default:
-      return LocalizationService.settingsSuperResolution1xDescription
     }
   }
 

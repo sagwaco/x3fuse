@@ -204,31 +204,11 @@ class FileProcessor {
 
     logger.logDebug("[\(file.fileName)] Output file found at: \(outputURL.path)")
 
-    // Apply opcode if available (now handles upscaled images automatically)
-    if let opcodePath = opcodeManager.getOpcodeFile(for: file) {
-      logger.logDebug("[\(file.fileName)] Applying opcode: \(opcodePath)")
-      if settings.superResolutionEnabled {
-        logger.logDebug("[\(file.fileName)] Super resolution is enabled - opcode will be skipped")
-        // Apply the opcode handling (which will skip for upscaled images)
-        try await exifService.applyOpcodeToFile(file, opcodePath: opcodePath)
-        // Set warning status for upscaled images
-        let warningMessage = "Flat-field correction skipped - opcodes only work at native resolution (image was upscaled \(settings.superResolutionScale)x)"
-        logger.logError(warningMessage, file: file.fileName)
-        queue.updateFileStatus(file, status: .warning, message: warningMessage)
-      } else {
-        // Apply opcode normally for native resolution
-        try await exifService.applyOpcodeToFile(file, opcodePath: opcodePath)
-      }
-    } else {
-      // Still copy EXIF data even without opcode
-      logger.logDebug("[\(file.fileName)] No opcode found, copying EXIF data only")
-      try await exifService.copyExifData(from: file.url, to: outputURL)
-
-      // Log warning about missing opcode
-      let warningMessage = "No flat-fielding opcode found for this camera/lens/aperture combination"
-      logger.logError(warningMessage, file: file.fileName)
-      queue.updateFileStatus(file, status: .warning, message: warningMessage)
-    }
+    // Lens-correction opcodes are applied directly by x3f_extract via the
+    // -opcodes-dir flag (see X3FConverter), so here we only copy EXIF metadata
+    // from the source file onto the DNG.
+    logger.logDebug("[\(file.fileName)] Copying EXIF data to output")
+    try await exifService.copyExifData(from: file.url, to: outputURL)
   }
 
 
