@@ -8,14 +8,17 @@ name: "TEST: Tahoe runner + artifact v4 (scratch — delete before merge)"
 # universal-binary build, and the upload-artifact@v4 -> download-artifact@v4
 # subdirectory layout that release.yml's parse steps depend on.
 #
-# No signing secrets needed: the build is unsigned (CODE_SIGNING_ALLOWED=NO).
+# No signing secrets needed: the build is ad-hoc signed (CODE_SIGN_IDENTITY="-").
+# Ad-hoc (rather than unsigned) is required because the project has a Run Script
+# phase that re-signs the embedded x3f_extract/exiftool binaries; with
+# CODE_SIGNING_ALLOWED=NO that script gets an empty identity and fails.
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    name: Unsigned universal build on Tahoe
+    name: Ad-hoc universal build on Tahoe
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
@@ -32,7 +35,7 @@ jobs:
           echo "Selected Xcode version:"
           xcodebuild -version
 
-      - name: Unsigned universal build
+      - name: Ad-hoc universal build
         run: |
           xcodebuild clean build \
             -project X3Fuse.xcodeproj \
@@ -41,10 +44,10 @@ jobs:
             -derivedDataPath DerivedData \
             ARCHS="x86_64 arm64" \
             ONLY_ACTIVE_ARCH=NO \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            CODE_SIGN_ENTITLEMENTS=""
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="-" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            DEVELOPMENT_TEAM=""
 
       - name: Verify universal binary
         run: |
