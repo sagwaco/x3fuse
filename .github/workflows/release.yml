@@ -332,6 +332,8 @@ jobs:
     name: "Create Release"
     runs-on: macos-26
     needs: archive
+    outputs:
+      new_version: ${{ steps.info.outputs.new_version }}
     steps:
       - uses: xt0rted/pull-request-comment-branch@v1
         id: comment-branch
@@ -401,7 +403,7 @@ jobs:
           rm -rf appcast_temp
 
       - name: Create GitHub release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           name: v${{ steps.info.outputs.new_version }} - ${{ steps.info.outputs.title }}
           tag_name: v${{ steps.info.outputs.new_version }}
