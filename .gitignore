@@ -102,3 +102,4 @@ iOSInjectionProject/
 # Others
 *.swp
 *~.nib
+.claude/
