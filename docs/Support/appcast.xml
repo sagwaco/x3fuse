@@ -7,6 +7,15 @@
         <language>en</language>
         <!-- Sparkle will populate this with release items -->
         <item>
+            <title>0.1.2</title>
+            <pubDate>Tue, 26 May 2026 03:03:18 +0000</pubDate>
+            <link>https://github.com/sagwaco/x3fuse/releases</link>
+            <sparkle:version>0.1.2</sparkle:version>
+            <sparkle:shortVersionString>0.1.2</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/sagwaco/x3fuse/releases/download/v0.1.2/X3Fuse-App.zip" length="58213558" type="application/octet-stream" sparkle:edSignature="3fKLc1TbEEU9Y6AgjL3FRfHPVyLxMgZts6PYSV+o/l2uRHa/D5RtEF1uVWk+/ZEilEBXZxc5v9xOawLL7yHsAQ=="/>
+        </item>
+        <item>
             <title>0.1.1</title>
             <pubDate>Fri, 15 Aug 2025 16:06:16 +0000</pubDate>
             <link>https://github.com/sagwaco/x3fuse/releases</link>
@@ -23,15 +32,6 @@
             <sparkle:shortVersionString>0.1.0</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
             <enclosure url="https://github.com/sagwaco/x3fuse/releases/download/v0.1.0/X3Fuse-App.zip" length="59812898" type="application/octet-stream" sparkle:edSignature="r8BD6LqLQtumW4dgRdGcXWO+x5/PSEq24kIUJMtwNSL9kG2l0rpmasPMMasMPPYD394sS24YUSS9c/lQ4WicBw=="/>
-        </item>
-        <item>
-            <title>0.0.6</title>
-            <pubDate>Sat, 02 Aug 2025 15:35:01 +0000</pubDate>
-            <link>https://github.com/sagwaco/x3fuse/releases</link>
-            <sparkle:version>0.0.6</sparkle:version>
-            <sparkle:shortVersionString>0.0.6</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <enclosure url="https://github.com/sagwaco/x3fuse/releases/download/v0.0.6/X3Fuse-App.zip" length="57715319" type="application/octet-stream" sparkle:edSignature="UDtTDNcG9KSCucysMGhsqNi4ShHMXbpBWxa4nh2Cts4HRYe4gVWM7AndRxOnSlh5dNuGpA6T88/PA9v2Lsk2BA=="/>
         </item>
     </channel>
 </rss>
