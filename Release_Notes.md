@@ -1,3 +1,8 @@
+# 0.1.2 - Beta 1.1.2
+
+- Add highlight recovery option for Merrill DNGs, which prevents string hue shifts in extremely overexposed areas. This setting has only been tested to work with Adobe Camera RAW and LibRaw.
+- Add option to apply a flat cineon-like tone curve to tiffs.
+
 # 0.1.1 - Beta 1.1.1
 
 - Make RAW compression warning message easier on the eyes
