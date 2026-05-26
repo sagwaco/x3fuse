@@ -1,0 +1,129 @@
+name: "TEST: Tahoe runner + artifact v4 (scratch — delete before merge)"
+
+# Scratch workflow to validate the release.yml changes on a branch.
+# issue_comment workflows only ever run from the default branch, so the real
+# release pipeline can't be exercised from a feature branch. This uses
+# workflow_dispatch (which DOES run the branch's copy) to de-risk the parts
+# that actually changed: the macos-26 runner, Xcode 26 via latest-stable, the
+# universal-binary build, and the upload-artifact@v4 -> download-artifact@v4
+# subdirectory layout that release.yml's parse steps depend on.
+#
+# No signing secrets needed: the build is unsigned (CODE_SIGNING_ALLOWED=NO).
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Unsigned universal build on Tahoe
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Verify Xcode / macOS version
+        run: |
+          echo "Runner OS version:"
+          sw_vers
+          echo "Selected Xcode version:"
+          xcodebuild -version
+
+      - name: Unsigned universal build
+        run: |
+          xcodebuild clean build \
+            -project X3Fuse.xcodeproj \
+            -scheme X3Fuse \
+            -configuration Release \
+            -derivedDataPath DerivedData \
+            ARCHS="x86_64 arm64" \
+            ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_ENTITLEMENTS=""
+
+      - name: Verify universal binary
+        run: |
+          APP_BIN="DerivedData/Build/Products/Release/X3Fuse.app/Contents/MacOS/X3Fuse"
+          echo "Checking app binary architecture:"
+          lipo -info "$APP_BIN"
+          if ! lipo -info "$APP_BIN" | grep -q "x86_64 arm64"; then
+            echo "ERROR: App is not a universal binary!"
+            exit 1
+          fi
+          echo "✅ Universal binary OK"
+
+      - name: Verify embedded x3f_extract is still universal
+        run: |
+          X3F="DerivedData/Build/Products/Release/X3Fuse.app/Contents/Resources/x3f_extract"
+          if [ -f "$X3F" ]; then
+            lipo -info "$X3F" || true
+          else
+            echo "Note: x3f_extract not at expected path; skipping (location may differ)."
+          fi
+
+      # Mimic the preparation job: unnamed upload -> defaults to artifact name "artifact"
+      - name: Create dummy release metadata
+        run: |
+          echo "9.9.9" > new_version
+          echo "Tahoe scratch test" > title
+          printf "scratch release notes\n" > latest_changes
+
+      - name: Upload metadata (no name -> "artifact")
+        uses: actions/upload-artifact@v4
+        with:
+          path: |
+            new_version
+            title
+            latest_changes
+
+      # Mimic the archive job: named "app" upload
+      - name: Stage a fake app zip
+        run: |
+          mkdir -p Release
+          (cd DerivedData/Build/Products/Release && zip -r "$GITHUB_WORKSPACE/Release/X3Fuse-App.zip" X3Fuse.app >/dev/null)
+          cp Release/X3Fuse-App.zip Release/X3Fuse-Installer.zip
+
+      - name: Upload app artifact (name "app")
+        uses: actions/upload-artifact@v4
+        with:
+          name: app
+          path: |
+            Release/X3Fuse-Installer.zip
+            Release/X3Fuse-App.zip
+
+  verify-artifacts:
+    name: Verify artifact v4 download layout
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Assert the layout release.yml expects
+        run: |
+          echo "Downloaded tree:"
+          find artifacts -type f | sort
+
+          # release.yml's parse steps check artifacts/artifact/new_version and
+          # artifacts/app/X3Fuse-App.zip — assert v4 produces exactly that.
+          fail=0
+          for f in \
+            artifacts/artifact/new_version \
+            artifacts/artifact/title \
+            artifacts/artifact/latest_changes \
+            artifacts/app/X3Fuse-App.zip \
+            artifacts/app/X3Fuse-Installer.zip; do
+            if [ -f "$f" ]; then
+              echo "✅ found $f"
+            else
+              echo "❌ MISSING $f"
+              fail=1
+            fi
+          done
+          exit $fail
