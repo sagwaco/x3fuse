@@ -85,7 +85,6 @@ class X3FFile: NSObject, Identifiable {
   var outputFormat: OutputFormat?
   var compress: Bool?
   var denoise: Bool?
-  var fasterProcessing: Bool?
   var colorProfile: ColorProfile?
 
   init(url: URL) {

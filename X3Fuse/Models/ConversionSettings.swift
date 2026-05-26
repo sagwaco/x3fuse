@@ -15,8 +15,9 @@ class ConversionSettings {
   var outputFormat: OutputFormat = .dng
   var compress: Bool = false
   var denoise: Bool = true
-  var fasterProcessing: Bool = false  // OpenCL acceleration
   var colorProfile: ColorProfile = .sRGB
+  var dngHighlightRecovery: Bool = false  // Merrill-generation DNG highlight recovery (-dng-highlight-recovery)
+  var cineon: Bool = false  // Cineon-style flat tone curve for TIFF (-cineon)
   var outputDirectory: String? = nil  // nil = use input file directory, string = custom path
   var debugLoggingEnabled: Bool = false
   var onlyProcessNewItems: Bool = true  // Only process files that are queued, not already converted
@@ -45,11 +46,6 @@ class ConversionSettings {
       args.append("-compress")
     }
 
-    // OpenCL acceleration
-    if fasterProcessing {
-      args.append("-ocl")
-    }
-
     // Output format
     switch outputFormat {
     case .dng:
@@ -59,6 +55,16 @@ class ConversionSettings {
       args.append("-jpg")
     case .tiff:
       args.append("-tiff")
+    }
+
+    // Merrill-generation DNG highlight recovery (DNG only)
+    if dngHighlightRecovery && outputFormat == .dng {
+      args.append("-dng-highlight-recovery")
+    }
+
+    // Cineon-style flat tone curve (TIFF only)
+    if cineon && outputFormat == .tiff {
+      args.append("-cineon")
     }
 
     // Color profile
@@ -77,8 +83,9 @@ class ConversionSettings {
     outputFormat = OutputFormat(rawValue: defaults.integer(forKey: "outputFormat")) ?? .dng
     compress = defaults.object(forKey: "compress") as? Bool ?? false
     denoise = defaults.object(forKey: "denoise") as? Bool ?? true
-    fasterProcessing = defaults.bool(forKey: "fasterProcessing")
     colorProfile = ColorProfile(rawValue: defaults.integer(forKey: "colorProfile")) ?? .sRGB
+    dngHighlightRecovery = defaults.bool(forKey: "dngHighlightRecovery")
+    cineon = defaults.bool(forKey: "cineon")
     outputDirectory = defaults.string(forKey: "outputDirectory")
     debugLoggingEnabled = defaults.bool(forKey: "debugLoggingEnabled")
     onlyProcessNewItems = defaults.object(forKey: "onlyProcessNewItems") as? Bool ?? true
@@ -92,8 +99,9 @@ class ConversionSettings {
     defaults.set(outputFormat.rawValue, forKey: "outputFormat")
     defaults.set(compress, forKey: "compress")
     defaults.set(denoise, forKey: "denoise")
-    defaults.set(fasterProcessing, forKey: "fasterProcessing")
     defaults.set(colorProfile.rawValue, forKey: "colorProfile")
+    defaults.set(dngHighlightRecovery, forKey: "dngHighlightRecovery")
+    defaults.set(cineon, forKey: "cineon")
     defaults.set(outputDirectory, forKey: "outputDirectory")
     defaults.set(debugLoggingEnabled, forKey: "debugLoggingEnabled")
     defaults.set(onlyProcessNewItems, forKey: "onlyProcessNewItems")
@@ -109,6 +117,16 @@ class ConversionSettings {
   // Helper to determine if color profile should be shown
   var shouldShowColorProfileOption: Bool {
     return outputFormat == .embeddedJpg || outputFormat == .tiff
+  }
+
+  // Helper to determine if the DNG highlight recovery option should be shown
+  var shouldShowDngHighlightRecoveryOption: Bool {
+    return outputFormat == .dng
+  }
+
+  // Helper to determine if the Cineon tone curve option should be shown
+  var shouldShowCineonOption: Bool {
+    return outputFormat == .tiff
   }
 
   // Output directory helpers

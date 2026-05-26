@@ -125,6 +125,45 @@ struct SettingsView: View {
             }
           }
 
+          // Merrill-generation DNG highlight recovery (only shown for DNG)
+          if settings.shouldShowDngHighlightRecoveryOption {
+            VStack {
+              VStack(alignment: .leading) {
+                Toggle(
+                  LocalizationService.settingsDngHighlightRecovery,
+                  isOn: $settings.dngHighlightRecovery
+                )
+                .help(LocalizationService.settingsDngHighlightRecoveryHelp)
+              }
+              if settings.dngHighlightRecovery {
+                // Warning text for highlight recovery
+                HStack(alignment: .top, spacing: 4) {
+                  Image(systemName: "info.circle.fill")
+                    .foregroundColor(.secondary)
+                    .symbolRenderingMode(.hierarchical)
+                  Text(
+                    LocalizationService.settingsDngHighlightRecoveryWarning
+                  )
+                  .fixedSize(horizontal: false, vertical: true)
+                  .foregroundColor(.secondary)
+                  .font(.caption)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(8)
+                .background(
+                  RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.secondary.opacity(0.1))
+                )
+              }
+            }
+          }
+
+          // Cineon-style flat tone curve (only shown for TIFF)
+          if settings.shouldShowCineonOption {
+            Toggle(LocalizationService.settingsCineon, isOn: $settings.cineon)
+              .help(LocalizationService.settingsCineonHelp)
+          }
+
           if settings.shouldShowColorProfileOption {
             Picker(LocalizationService.settingsColorProfile, selection: $settings.colorProfile) {
               ForEach(ColorProfile.allCases, id: \.self) { profile in
@@ -135,9 +174,6 @@ struct SettingsView: View {
           }
           Toggle(LocalizationService.settingsDenoise, isOn: $settings.denoise)
             .help(LocalizationService.settingsDenoiseHelp)
-
-          Toggle(LocalizationService.settingsFasterProcessing, isOn: $settings.fasterProcessing)
-            .help(LocalizationService.settingsFasterProcessingHelp)
         }
 
         Section(LocalizationService.settingsSectionDebug) {

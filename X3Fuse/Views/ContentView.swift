@@ -8,7 +8,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-
 struct ContentView: View {
   @State private var queue = ConversionQueue.shared
   @State private var settings = ConversionSettings.shared
@@ -32,14 +31,15 @@ struct ContentView: View {
   }
 
   private var hasSelectedReconvertableFiles: Bool {
-    !queue.files.filter { 
-      selectedFileIDs.contains($0.id) && 
-      ($0.status == .completed || $0.status == .failed || $0.status == .warning) 
+    !queue.files.filter {
+      selectedFileIDs.contains($0.id)
+        && ($0.status == .completed || $0.status == .failed || $0.status == .warning)
     }.isEmpty
   }
 
   private var hasReconvertableFiles: Bool {
-    !queue.files.filter { $0.status == .completed || $0.status == .failed || $0.status == .warning }.isEmpty
+    !queue.files.filter { $0.status == .completed || $0.status == .failed || $0.status == .warning }
+      .isEmpty
   }
 
   private var canConvert: Bool {
@@ -81,7 +81,8 @@ struct ContentView: View {
     .onDisappear {
       removeNotificationObservers()
     }
-    .alert(LocalizationService.alertSetupIssuesTitle, isPresented: .constant(!setupIssues.isEmpty)) {
+    .alert(LocalizationService.alertSetupIssuesTitle, isPresented: .constant(!setupIssues.isEmpty))
+    {
       Button(LocalizationService.buttonOK) {
         setupIssues.removeAll()
       }
@@ -119,7 +120,10 @@ struct ContentView: View {
           .buttonStyle(.borderedProminent)
           .help(
             queue.files.isEmpty
-              ? LocalizationService.toolbarConvertAll : (!selectedFileIDs.isEmpty ? LocalizationService.toolbarConvertSelected : LocalizationService.toolbarConvertAll)
+              ? LocalizationService.toolbarConvertAll
+              : (!selectedFileIDs.isEmpty
+                ? LocalizationService.toolbarConvertSelected
+                : LocalizationService.toolbarConvertAll)
           )
           .disabled(!canConvert || queue.isProcessing)
           .keyboardShortcut(.defaultAction)
@@ -185,7 +189,7 @@ struct ContentView: View {
       Button(action: addFiles) {
         Image(systemName: "plus")
       }
-      .buttonStyle(.bordered)
+      .buttonStyle(.plain)
       .controlSize(.regular)
       .help(LocalizationService.buttonAddFiles)
 
@@ -211,12 +215,13 @@ struct ContentView: View {
       SettingsLink {
         Image(systemName: "gearshape")
       }
-      .buttonStyle(.bordered)
+      .buttonStyle(.plain)
       .controlSize(.regular)
       .help(LocalizationService.buttonSettings)
     }
     .frame(maxWidth: .infinity, maxHeight: 40)
-    .padding(.horizontal, 8)
+    .padding(.horizontal, 20)
+    .padding(.vertical, 4)
     .background(Color(NSColor.windowBackgroundColor))
     .overlay(
       Rectangle()
@@ -281,10 +286,10 @@ struct ContentView: View {
     if !selectedFileIDs.isEmpty {
       // Check if any selected files need reconversion confirmation (have existing output)
       let selectedFiles = queue.files.filter { selectedFileIDs.contains($0.id) }
-      let reconvertableFiles = selectedFiles.filter { 
-        $0.status == .completed || $0.status == .failed || $0.status == .warning 
+      let reconvertableFiles = selectedFiles.filter {
+        $0.status == .completed || $0.status == .failed || $0.status == .warning
       }
-      
+
       if !reconvertableFiles.isEmpty {
         // Use reconversion flow which will check for existing output files and show confirmation if needed
         handleReconversion(for: selectedFileIDs)
@@ -297,10 +302,10 @@ struct ContentView: View {
     } else {
       // No specific selection, process all files
       // Check if any files need reconversion confirmation
-      let reconvertableFiles = queue.files.filter { 
-        $0.status == .completed || $0.status == .failed || $0.status == .warning 
+      let reconvertableFiles = queue.files.filter {
+        $0.status == .completed || $0.status == .failed || $0.status == .warning
       }
-      
+
       if !reconvertableFiles.isEmpty {
         // Some files may need reconversion confirmation
         let allFileIDs = Set(queue.files.map { $0.id })

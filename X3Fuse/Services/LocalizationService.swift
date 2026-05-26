@@ -65,9 +65,12 @@ struct LocalizationService {
     static let settingsColorProfile = NSLocalizedString("settings.color_profile", comment: "Color profile setting")
     static let settingsDenoise = NSLocalizedString("settings.denoise", comment: "Denoise setting")
     static let settingsDenoiseHelp = NSLocalizedString("settings.denoise.help", comment: "Denoise help text")
-    static let settingsFasterProcessing = NSLocalizedString("settings.faster_processing", comment: "Faster processing setting")
-    static let settingsFasterProcessingHelp = NSLocalizedString("settings.faster_processing.help", comment: "Faster processing help text")
-    
+    static let settingsDngHighlightRecovery = NSLocalizedString("settings.dng_highlight_recovery", comment: "DNG highlight recovery setting")
+    static let settingsDngHighlightRecoveryHelp = NSLocalizedString("settings.dng_highlight_recovery.help", comment: "DNG highlight recovery help text")
+    static let settingsDngHighlightRecoveryWarning = NSLocalizedString("settings.dng_highlight_recovery.warning", comment: "DNG highlight recovery warning text")
+    static let settingsCineon = NSLocalizedString("settings.cineon", comment: "Cineon tone curve setting")
+    static let settingsCineonHelp = NSLocalizedString("settings.cineon.help", comment: "Cineon tone curve help text")
+
     static let settingsDebugLogging = NSLocalizedString("settings.debug_logging", comment: "Debug logging setting")
     static let settingsDebugLoggingHelp = NSLocalizedString("settings.debug_logging.help", comment: "Debug logging help text")
     static let settingsDebugLogs = NSLocalizedString("settings.debug_logs", comment: "Debug logs label")

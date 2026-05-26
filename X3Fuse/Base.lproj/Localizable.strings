@@ -59,8 +59,11 @@
 "settings.color_profile" = "Color profile";
 "settings.denoise" = "Denoise";
 "settings.denoise.help" = "Apply noise reduction during conversion";
-"settings.faster_processing" = "Faster processing";
-"settings.faster_processing.help" = "Enable OpenCL acceleration for faster processing";
+"settings.dng_highlight_recovery" = "Highlight recovery (Merrill-generation)";
+"settings.dng_highlight_recovery.help" = "Recover blown highlights in Merrill-generation DNGs";
+"settings.dng_highlight_recovery.warning" = "Highlight recovery may cause DNGs to render incorrectly in some apps. If you encounter issues, disable recovery.";
+"settings.cineon" = "Use cineon-style tone curve";
+"settings.cineon.help" = "Use a Cineon-style flat tone curve for TIFF output";
 
 "settings.debug_logging" = "Debug logging";
 "settings.debug_logging.help" = "Enable detailed debug logging for troubleshooting";

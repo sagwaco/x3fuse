@@ -191,47 +191,6 @@ class ExifService {
         return output
     }
     
-    func applyOpcodeToFile(_ file: X3FFile, opcodePath: String) async throws {
-        logger.logDebug("Applying opcode to \(file.fileName): \(opcodePath)")
-        
-        // The output file should already exist from x3f_extract in the effective output directory
-        let outputFormat = file.outputFormat ?? ConversionSettings.shared.outputFormat
-        let effectiveOutputDir = ConversionSettings.shared.effectiveOutputDirectory(for: file.url)
-        let outputDirectory = URL(fileURLWithPath: effectiveOutputDir)
-        let outputFileName = file.url.lastPathComponent + "." + String(outputFormat.fileExtension.dropFirst())
-        let outputURL = outputDirectory.appendingPathComponent(outputFileName)
-        
-        logger.logDebug("ExifService: Looking for output file at: \(outputURL.path)")
-        
-        // Verify the DNG file exists
-        guard FileManager.default.fileExists(atPath: outputURL.path) else {
-            throw ExifServiceError.outputFileNotFound(outputURL.path)
-        }
-        
-        // Based on the example script, the correct ExifTool command is:
-        // exiftool -overwrite_original -opcodelist3<="opcode_file" -n -tagsfromfile source.x3f -all -copyright="..." output.dng
-        let arguments = [
-            "-overwrite_original",
-            "-opcodelist3<=\(opcodePath)",
-            "-n",
-            "-tagsfromfile",
-            file.url.path,
-            "-all",
-            outputURL.path
-        ]
-        
-        do {
-            let output = try await runExifTool(arguments: arguments)
-            if !output.isEmpty {
-                logger.logDebug("ExifTool output: \(output)")
-            }
-            logger.logDebug("Opcode and EXIF data applied successfully to \(file.fileName)")
-        } catch {
-            logger.logError("Failed to apply opcode: \(error)", file: file.fileName)
-            throw error
-        }
-    }
-    
     // MARK: - EXIF Editing Support
     
     func updateExifField(for files: [X3FFile], field: String, value: String) {
