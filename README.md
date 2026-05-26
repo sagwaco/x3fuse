@@ -6,7 +6,7 @@ A modern macOS app for converting Sigma Merrill and Quattro X3F RAW files.
 
 ## Overview
 
-X3Fuse is a RAW conversion tool that converts your Sigma Merrill and Quattro X3F files into practical, compatible formats like DNG, TIFF, and JPEG. It's an essential bridge between your Sigma cameras and your preferred editing suite. Works best with Lightroom and Capture One.
+X3Fuse is a RAW conversion tool that converts your Sigma Merrill and Quattro X3F files into practical, compatible formats like DNG, TIFF, and JPEG. It's an essential bridge between your Sigma cameras and your preferred editing suite. Works best with Lightroom.
 
 ## Features
 
@@ -33,10 +33,10 @@ X3Fuse supports X3F files from Sigma cameras including Merrill and Quattro serie
 | Sigma SD1 Merrill      | ✅     |          |
 | **Quattro Generation** |        |          |
 | Sigma DP0 Quattro      | ✅     |          |
-| Sigma DP1 Quattro      |        | 🚫       |
+| Sigma DP1 Quattro      | ✅     |          |
 | Sigma DP2 Quattro      | ✅     |          |
 | Sigma DP3 Quattro      | ✅     |          |
-| Sigma SD Quattro       |        | 🚫       |
+| Sigma SD Quattro       | ✅     |          |
 | Sigma SD Quattro H     | ✅     |          |
 
 If you have a Sigma Foveon camera from the Merrill and Quattro generations that are not listed here, please let us know! We aim to support all Sigma Merrill and Quattro cameras and are actively looking for additional test files to improve compatibility.
@@ -79,12 +79,10 @@ This script verifies that the app and its components are properly built as unive
 1. **Launch X3Fuse** from your Applications folder
 
 2. **Add Files**:
-
    - Drag and drop X3F files onto the app window
    - Or use File → Open to browse for files
 
 3. **Configure Settings**:
-
    - Choose your output format (DNG, TIFF, or JPEG)
    - Set output directory preferences
    - Adjust conversion options as needed
@@ -96,13 +94,17 @@ This script verifies that the app and its components are properly built as unive
 
 ## Known Issues
 
-#### Compatibility issues with RAW compression on DNGs
+#### Compatibility issues with RAW decoders (Quick Look, Capture One, etc.)
+
+Foveon cameras do not have a color filter array (CFA) like most other cameras, and the lack of a CFA, among other differences, can cause some applications to misinterpret the RAW data. If you encounter this issue, please use an alternative viewer or editor to confirm the integrity of the DNG files. The files should open correctly in applications that use Adobe Camera RAW (Adobe Lightroom, Adobe Photoshop).
+
+#### Compatibility issues when DNG RAW compression is enabled
 
 DNGs that were created with the **RAW compression** setting enabled have reduced compatibility and may not open reliably in applications that do not use the Capture One or Adobe Camera Raw (Photoshop, Lightroom) decoders. If you encounter this issue, try disabling RAW compression in the application settings.
 
-#### DNGs look broken in Quick Look
+#### Compatibility issues when DNG Merrill highlight recovery is enabled
 
-Foveon cameras do not have a color filter array (CFA) like most other cameras, and the lack of a CFA, among other differences, can cause some applications like Quick Look to misinterpret the RAW data. If you encounter this issue, please use an alternative viewer or editor to confirm the integrity of the DNG files. The files should open correctly in applications like Adobe Lightroom, Adobe Photoshop, or Capture One.
+DNGs that were created with the **Merrill highlight recovery** setting enabled have reduced compatibility and may not open reliably in applications that do not use LibRaw or Adobe Camera Raw (Photoshop, Lightroom) decoders. If you encounter issues, try disabling Merrill highlight recovery in the application settings.
 
 #### X3I files not supported
 
@@ -112,20 +114,18 @@ X3I files generated in Quattro Super fine detail (SFD) mode are not supported. A
 
 X3Fuse leverages:
 
-- **x3f_tools**: Core X3F file processing engine
-- **ExifTool**: Comprehensive metadata handling
+- **x3fuse-core**: Core X3F file processing engine: https://github.com/sagwaco/x3fuse-core
+- **ExifTool**: EXIF Metadata handling
 
 ## Acknowledgements
 
-Thank you to the kalpanika team for x3f_tools https://github.com/Kalpanika/x3f:
-
-- Roland Karlsson (roland@proxel.se)
-- Erik Karlsson (erik.r.karlsson@gmail.com)
-- Mark Roden (mmroden@gmail.com) - [anisotropic filtering parts]
+[x3fuse-core](https://github.com/sagwaco/x3fuse-core), which powers the x3f processing in x3fuse is based on [x3f_tools](https://github.com/Kalpanika/x3f). This project is not affiliated with nor endorsed by the creators of x3f_tools.
 
 ## License
 
 This project is licensed under the terms specified in the [LICENSE](LICENSE) file.
+
+This project is not affiliated nor endorsed by Sigma Corporation. Sigma and Foveon are trademarks of Sigma Corporation.
 
 ## Contributing
 
