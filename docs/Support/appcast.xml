@@ -7,6 +7,15 @@
         <language>en</language>
         <!-- Sparkle will populate this with release items -->
         <item>
+            <title>0.1.3</title>
+            <pubDate>Wed, 27 May 2026 19:09:17 +0000</pubDate>
+            <link>https://github.com/sagwaco/x3fuse/releases</link>
+            <sparkle:version>0.1.3</sparkle:version>
+            <sparkle:shortVersionString>0.1.3</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/sagwaco/x3fuse/releases/download/v0.1.3/X3Fuse-App.zip" length="58222290" type="application/octet-stream" sparkle:edSignature="Tj0TZM0iuk7cYccXfuzmgGfxXauXHrHtJX7UhmwJA4i/s5XM6ZN38Q7LTLdKzGJ+mU+UCHx9m+hHSU1HoQG/Cg=="/>
+        </item>
+        <item>
             <title>0.1.2</title>
             <pubDate>Tue, 26 May 2026 03:03:18 +0000</pubDate>
             <link>https://github.com/sagwaco/x3fuse/releases</link>
@@ -23,15 +32,6 @@
             <sparkle:shortVersionString>0.1.1</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
             <enclosure url="https://github.com/sagwaco/x3fuse/releases/download/v0.1.1/X3Fuse-App.zip" length="60087750" type="application/octet-stream" sparkle:edSignature="V+S7G7O/ifLZ/5gc2m+z2JC/Gb5ULQgq1Q62QI+DAKu0K4jN/WRHQ0TD7kw10H7pGeKUdWJeZIWG1qt8PH7jDg=="/>
-        </item>
-        <item>
-            <title>0.1.0</title>
-            <pubDate>Mon, 11 Aug 2025 06:51:12 +0000</pubDate>
-            <link>https://github.com/sagwaco/x3fuse/releases</link>
-            <sparkle:version>0.1.0</sparkle:version>
-            <sparkle:shortVersionString>0.1.0</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <enclosure url="https://github.com/sagwaco/x3fuse/releases/download/v0.1.0/X3Fuse-App.zip" length="59812898" type="application/octet-stream" sparkle:edSignature="r8BD6LqLQtumW4dgRdGcXWO+x5/PSEq24kIUJMtwNSL9kG2l0rpmasPMMasMPPYD394sS24YUSS9c/lQ4WicBw=="/>
         </item>
     </channel>
 </rss>

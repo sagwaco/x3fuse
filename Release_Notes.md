@@ -1,3 +1,7 @@
+# 0.1.3 - Beta 1.1.3
+
+- Add a denoise slider to control denoising intensity. The maximum value matches the previous default, the minimum is 1, and denoising can be toggled off entirely to disable it.
+
 # 0.1.2 - Beta 1.1.2
 
 - Add highlight recovery option for Merrill DNGs, which prevents string hue shifts in extremely overexposed areas. This setting has only been tested to work with Adobe Camera RAW and LibRaw.
