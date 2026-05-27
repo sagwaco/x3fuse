@@ -58,7 +58,11 @@
 "settings.raw_compression.warning" = "RAW Compressed DNGs may not open in some apps. If you encounter issues, disable compression.";
 "settings.color_profile" = "Color profile";
 "settings.denoise" = "Denoise";
-"settings.denoise.help" = "Apply noise reduction during conversion";
+"settings.denoise.help" = "Enable or disable noise reduction during conversion";
+"settings.denoise.off" = "Off";
+"settings.denoise.intensity" = "Denoise intensity";
+"settings.denoise.intensity.less" = "Less";
+"settings.denoise.intensity.more" = "More";
 "settings.dng_highlight_recovery" = "Highlight recovery (Merrill-generation)";
 "settings.dng_highlight_recovery.help" = "Recover blown highlights in Merrill-generation DNGs";
 "settings.dng_highlight_recovery.warning" = "Highlight recovery may cause DNGs to render incorrectly in some apps. If you encounter issues, disable recovery.";

@@ -11,6 +11,7 @@ import SwiftUI
 struct SettingsView: View {
   @State private var settings = ConversionSettings.shared
   @State private var loggingService = LoggingService.shared
+  @State private var lastDenoiseIntensity: Int = 10
   @EnvironmentObject private var updaterService: UpdaterService
 
   var body: some View {
@@ -172,8 +173,61 @@ struct SettingsView: View {
             }
             .pickerStyle(MenuPickerStyle())
           }
-          Toggle(LocalizationService.settingsDenoise, isOn: $settings.denoise)
+          VStack(alignment: .leading, spacing: 10) {
+            Toggle(
+              LocalizationService.settingsDenoise,
+              isOn: Binding(
+                get: { settings.denoiseIntensity > 0 },
+                set: { enabled in
+                  if enabled {
+                    settings.denoiseIntensity = lastDenoiseIntensity
+                  } else {
+                    lastDenoiseIntensity = settings.denoiseIntensity
+                    settings.denoiseIntensity = 0
+                  }
+                }
+              )
+            )
             .help(LocalizationService.settingsDenoiseHelp)
+
+            if settings.denoiseIntensity > 0 {
+              LabeledContent(LocalizationService.settingsDenoiseIntensity) {
+                VStack(spacing: 2) {
+                  Slider(
+                    value: Binding(
+                      get: { Double(settings.denoiseIntensity) },
+                      set: {
+                        let value = Int($0.rounded())
+                        settings.denoiseIntensity = value
+                        lastDenoiseIntensity = value
+                      }
+                    ),
+                    in: 1...10,
+                    step: 1
+                  )
+                  HStack {
+                    Text("settings.denoise.intensity.less")
+                      .font(.caption)
+                      .foregroundColor(.secondary)
+                      .bold()
+                    Spacer()
+                    Text("settings.denoise.intensity.more")
+                      .font(.caption)
+                      .foregroundColor(.secondary)
+                      .bold()
+                  }
+                }
+                .alignmentGuide(VerticalAlignment.center) { d in
+                  d[.top] + 11
+                }
+              }
+            }
+          }
+          .onAppear {
+            if settings.denoiseIntensity > 0 {
+              lastDenoiseIntensity = settings.denoiseIntensity
+            }
+          }
         }
 
         Section(LocalizationService.settingsSectionDebug) {

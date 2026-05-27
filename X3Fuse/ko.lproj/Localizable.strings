@@ -58,7 +58,11 @@
 "settings.raw_compression.warning" = "RAW 압축 DNG는 일부 앱에서 열리지 않을 수 있습니다. 문제가 발생하면 압축을 비활성화하십시오.";
 "settings.color_profile" = "색상 프로파일";
 "settings.denoise" = "노이즈 제거";
-"settings.denoise.help" = "변환 중 노이즈 감소를 적용합니다";
+"settings.denoise.help" = "변환 중 노이즈 감소를 활성화 또는 비활성화합니다";
+"settings.denoise.off" = "끔";
+"settings.denoise.intensity" = "노이즈 제거 강도";
+"settings.denoise.intensity.less" = "낮음";
+"settings.denoise.intensity.more" = "높음";
 "settings.dng_highlight_recovery" = "하이라이트 복구 (Merrill 세대)";
 "settings.dng_highlight_recovery.help" = "Merrill 세대 DNG에서 날아간 하이라이트를 복구합니다";
 "settings.dng_highlight_recovery.warning" = "하이라이트 복구로 인해 일부 앱에서 DNG가 올바르게 표시되지 않을 수 있습니다. 문제가 발생하면 복구를 비활성화하십시오.";

@@ -84,7 +84,7 @@ class X3FFile: NSObject, Identifiable {
   // Conversion settings override (if different from global settings)
   var outputFormat: OutputFormat?
   var compress: Bool?
-  var denoise: Bool?
+  var denoiseIntensity: Int?
   var colorProfile: ColorProfile?
 
   init(url: URL) {

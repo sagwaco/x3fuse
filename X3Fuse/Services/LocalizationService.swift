@@ -65,6 +65,8 @@ struct LocalizationService {
     static let settingsColorProfile = NSLocalizedString("settings.color_profile", comment: "Color profile setting")
     static let settingsDenoise = NSLocalizedString("settings.denoise", comment: "Denoise setting")
     static let settingsDenoiseHelp = NSLocalizedString("settings.denoise.help", comment: "Denoise help text")
+    static let settingsDenoiseOff = NSLocalizedString("settings.denoise.off", comment: "Denoise off label")
+    static let settingsDenoiseIntensity = NSLocalizedString("settings.denoise.intensity", comment: "Denoise intensity slider label")
     static let settingsDngHighlightRecovery = NSLocalizedString("settings.dng_highlight_recovery", comment: "DNG highlight recovery setting")
     static let settingsDngHighlightRecoveryHelp = NSLocalizedString("settings.dng_highlight_recovery.help", comment: "DNG highlight recovery help text")
     static let settingsDngHighlightRecoveryWarning = NSLocalizedString("settings.dng_highlight_recovery.warning", comment: "DNG highlight recovery warning text")
