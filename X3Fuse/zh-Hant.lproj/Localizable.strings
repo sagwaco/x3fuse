@@ -58,7 +58,11 @@
 "settings.raw_compression.warning" = "RAW 壓縮的 DNG 可能無法在某些應用程式中開啟。如果遇到問題，請停用壓縮。";
 "settings.color_profile" = "色彩設定檔";
 "settings.denoise" = "降噪";
-"settings.denoise.help" = "在轉換過程中套用降噪";
+"settings.denoise.help" = "啟用或停用轉換過程中的降噪";
+"settings.denoise.off" = "關閉";
+"settings.denoise.intensity" = "降噪強度";
+"settings.denoise.intensity.less" = "弱";
+"settings.denoise.intensity.more" = "強";
 "settings.dng_highlight_recovery" = "高光復原（Merrill 世代）";
 "settings.dng_highlight_recovery.help" = "復原 Merrill 世代 DNG 中過曝的高光";
 "settings.dng_highlight_recovery.warning" = "高光復原可能導致 DNG 在某些應用程式中無法正確顯示。如果遇到問題，請停用復原。";

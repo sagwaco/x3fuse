@@ -129,7 +129,7 @@ class X3FConverter {
     // Use file-specific settings if available, otherwise use global settings
     let outputFormat = file.outputFormat ?? settings.outputFormat
     let compress = file.compress ?? settings.compress
-    let denoise = file.denoise ?? settings.denoise
+    let denoiseIntensity = file.denoiseIntensity ?? settings.denoiseIntensity
     let colorProfile = file.colorProfile ?? settings.colorProfile
     let dngHighlightRecovery = settings.dngHighlightRecovery
     let cineon = settings.cineon
@@ -141,9 +141,10 @@ class X3FConverter {
 
     args.append("-v")
 
-    // Denoise setting (default is enabled, so add -no-denoise if disabled)
-    if !denoise {
-      args.append("-no-denoise")
+    // Denoise intensity (default is 10/full strength, so only pass when it differs)
+    if denoiseIntensity != 10 {
+      args.append("-denoise")
+      args.append(String(denoiseIntensity))
     }
 
     // Compression (only for DNG and TIFF)

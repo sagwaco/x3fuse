@@ -14,7 +14,7 @@ class ConversionSettings {
   // Settings that match the requirements
   var outputFormat: OutputFormat = .dng
   var compress: Bool = false
-  var denoise: Bool = true
+  var denoiseIntensity: Int = 10  // OpenCV NLM denoise intensity, 0 = off ... 10 = full strength
   var colorProfile: ColorProfile = .sRGB
   var dngHighlightRecovery: Bool = false  // Merrill-generation DNG highlight recovery (-dng-highlight-recovery)
   var cineon: Bool = false  // Cineon-style flat tone curve for TIFF (-cineon)
@@ -34,9 +34,10 @@ class ConversionSettings {
   func buildX3FArguments() -> [String] {
     var args: [String] = []
 
-    // Denoise setting (default is enabled, so add -no-denoise if disabled)
-    if !denoise {
-      args.append("-no-denoise")
+    // Denoise intensity (default is 10/full strength, so only pass when it differs)
+    if denoiseIntensity != 10 {
+      args.append("-denoise")
+      args.append(String(denoiseIntensity))
     }
 
     args.append("-sgain")
@@ -82,7 +83,15 @@ class ConversionSettings {
 
     outputFormat = OutputFormat(rawValue: defaults.integer(forKey: "outputFormat")) ?? .dng
     compress = defaults.object(forKey: "compress") as? Bool ?? false
-    denoise = defaults.object(forKey: "denoise") as? Bool ?? true
+    if defaults.object(forKey: "denoiseIntensity") != nil {
+      denoiseIntensity = defaults.integer(forKey: "denoiseIntensity")
+    } else if let legacyDenoise = defaults.object(forKey: "denoise") as? Bool {
+      // Migrate the old on/off toggle: enabled -> full strength, disabled -> off
+      denoiseIntensity = legacyDenoise ? 10 : 0
+    } else {
+      denoiseIntensity = 10
+    }
+    denoiseIntensity = min(max(denoiseIntensity, 0), 10)
     colorProfile = ColorProfile(rawValue: defaults.integer(forKey: "colorProfile")) ?? .sRGB
     dngHighlightRecovery = defaults.bool(forKey: "dngHighlightRecovery")
     cineon = defaults.bool(forKey: "cineon")
@@ -98,7 +107,7 @@ class ConversionSettings {
 
     defaults.set(outputFormat.rawValue, forKey: "outputFormat")
     defaults.set(compress, forKey: "compress")
-    defaults.set(denoise, forKey: "denoise")
+    defaults.set(denoiseIntensity, forKey: "denoiseIntensity")
     defaults.set(colorProfile.rawValue, forKey: "colorProfile")
     defaults.set(dngHighlightRecovery, forKey: "dngHighlightRecovery")
     defaults.set(cineon, forKey: "cineon")
