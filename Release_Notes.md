@@ -1,3 +1,8 @@
+# 0.1.4 - Beta 1.1.4
+
+- The app is now notarized by Apple, so it launches without Gatekeeper warnings, and is installable via Homebrew with `brew install --cask sagwaco/tap/x3fuse`. No functional changes from 0.1.3.
+- Packaging-only release; see 0.1.3 for the latest features.
+
 # 0.1.3 - Beta 1.1.3
 
 - Add a denoise slider to control denoising intensity. The maximum value matches the previous default, the minimum is 1, and denoising can be toggled off entirely to disable it.
