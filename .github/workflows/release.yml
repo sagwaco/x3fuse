@@ -339,7 +339,10 @@ jobs:
       - name: Create ZIP archives
         run: |
           cd Release
-          zip -r X3Fuse-App.zip X3Fuse.app
+          # Use ditto (not `zip -r`) for the .app: it preserves the framework
+          # symlinks that plain zip would dereference, which would otherwise
+          # break the nested code signature and invalidate notarization.
+          ditto -c -k --keepParent X3Fuse.app X3Fuse-App.zip
           zip -r X3Fuse-Installer.zip X3Fuse.pkg
           cd ..
 
