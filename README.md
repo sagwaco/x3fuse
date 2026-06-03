@@ -48,13 +48,21 @@ If you have a Sigma Foveon camera from the Merrill and Quattro generations that 
 
 ## Installation
 
-### Option 1: Download Release
+### Option 1: Homebrew (recommended)
+
+```bash
+brew install --cask sagwaco/tap/x3fuse
+```
+
+Upgrade later with `brew upgrade --cask x3fuse` (the app also self-updates in-app via Sparkle).
+
+### Option 2: Download Release
 
 1. Download the latest .zip from the [Releases](https://github.com/sagwaco/x3fuse/releases) page
 2. Extract the .zip file and move the `X3Fuse.app` to your Applications folder.
 3. Launch `X3Fuse.app` from your Applications folder.
 
-### Option 2: Build from Source
+### Option 3: Build from Source
 
 1. Clone the repository:
    ```bash
