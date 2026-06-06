@@ -123,8 +123,8 @@ X3I files generated in Quattro Super fine detail (SFD) mode are not supported. A
 
 X3Fuse leverages:
 
-- **x3fuse-core**: Core X3F file processing engine: https://github.com/sagwaco/x3fuse-core
-- **ExifTool**: EXIF Metadata handling
+- [**x3fuse-core**](https://github.com/sagwaco/x3fuse-core): Core X3F file processing engine
+- [**ExifTool**](https://github.com/exiftool/exiftool): EXIF Metadata handling
 
 ## Acknowledgements
 
