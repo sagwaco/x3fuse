@@ -1,0 +1,11 @@
+node_modules/
+out/
+dist/
+.vite/
+*.log
+
+# Bundled native binaries / large assets are sync-populated (see resources/README.md),
+# produced by CI / build scripts, not committed here.
+resources/binaries/
+resources/exiftool/
+resources/opcodes/
