@@ -20,7 +20,8 @@ import { MAX_CONCURRENCY } from './concurrency'
 // Legacy Int rawValue order (Swift OutputFormat/ColorProfile).
 const OUTPUT_FORMATS: OutputFormat[] = ['dng', 'embeddedJpg', 'tiff']
 const COLOR_PROFILES: ColorProfile[] = ['sRGB', 'adobeRGB', 'proPhotoRGB', 'none']
-const SORT_FIELDS: SortField[] = ['File Name', 'Status', 'Date', 'Size']
+// 'Status' (a Swift-app sort option with no UI here) coerces to the default.
+const SORT_FIELDS: SortField[] = ['File Name', 'Date', 'Size']
 const VIEW_MODES: QueueViewMode[] = ['list', 'grid', 'filmstrip']
 
 function asBool(v: unknown, fallback: boolean): boolean {

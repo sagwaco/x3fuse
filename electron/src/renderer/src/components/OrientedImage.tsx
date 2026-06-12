@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { ImageOff, Loader2 } from 'lucide-react'
 import type { X3FFileDTO } from '@shared/types'
-import { previewUrl, type PreviewVariant } from '../lib/previewUrl'
+import { previewUrl, type PreviewVariant } from '@shared/preview'
 import { drawImageWithOrientation, shouldUseCanvas } from '../lib/orientation'
 import { cn } from '../lib/cn'
 

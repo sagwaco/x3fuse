@@ -1,17 +1,8 @@
 import { stat } from 'fs/promises'
+import type { PreviewVariant } from '@shared/preview'
 import type { BinaryResolver } from './BinaryResolver'
 import { spawnCaptureBinary } from './ProcessRunner'
 import { logger } from './Logger'
-
-/**
- * Which embedded JPEG to pull out of an X3F file:
- *   - 'preview' — the small embedded preview (~640x480), for thumbnails + histogram
- *   - 'full'    — the full-resolution embedded JPEG, for the large filmstrip preview
- *
- * Sigma X3F files embed several JPEGs; we try them in a quality order per variant
- * and fall back gracefully if a tag is absent.
- */
-export type PreviewVariant = 'preview' | 'full'
 
 const TAG_CHAIN: Record<PreviewVariant, string[]> = {
   preview: ['PreviewImage', 'ThumbnailImage', 'JpgFromRaw'],

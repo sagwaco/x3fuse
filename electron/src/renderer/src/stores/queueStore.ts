@@ -87,6 +87,11 @@ export const useQueueStore = create<QueueState>((set, get) => {
   function beginConversion(targets: X3FFileDTO[]): void {
     if (get().isProcessing || targets.length === 0) return
     const targetIds = new Set(targets.map((f) => f.id))
+    // Re-resolve against live state: every caller may have awaited (reconversion
+    // check, settings fetch, open dialog) since capturing `targets`, and rows
+    // removed in the meantime must not be sent for conversion.
+    const live = get().files.filter((f) => targetIds.has(f.id))
+    if (live.length === 0) return
     set((s) => ({
       pendingReconversion: null,
       isProcessing: true,
@@ -98,8 +103,13 @@ export const useQueueStore = create<QueueState>((set, get) => {
       )
     }))
     ipc
-      .invoke('convert:start', { files: targets.map(toConvertFile) })
-      .catch((e: unknown) => console.error('convert:start failed', e))
+      .invoke('convert:start', { files: live.map(toConvertFile) })
+      .catch((e: unknown) => {
+        console.error('convert:start failed', e)
+        // No batch:complete will arrive for a rejected start; release the
+        // processing state so the UI can recover and retry.
+        set({ isProcessing: false, isCancelling: false })
+      })
   }
 
   /**

@@ -1,5 +1,5 @@
 import type { X3FFileDTO } from '@shared/types'
-import type { PreviewVariant } from '../lib/previewUrl'
+import type { PreviewVariant } from '@shared/preview'
 import { OrientedImage } from './OrientedImage'
 
 /**

@@ -7,7 +7,7 @@
  * aspect-ratio letterbox bars (see aspectCrop) when a target aspect is given.
  */
 import { cropRect } from './aspectCrop'
-import type { PreviewVariant } from './previewUrl'
+import type { PreviewVariant } from '@shared/preview'
 
 export interface DrawOptions {
   /** Cap the longest displayed edge (keeps rotated full-res previews to a sane size). */

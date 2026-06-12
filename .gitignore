@@ -103,3 +103,5 @@ iOSInjectionProject/
 *.swp
 *~.nib
 .claude/
+# Node
+node_modules/

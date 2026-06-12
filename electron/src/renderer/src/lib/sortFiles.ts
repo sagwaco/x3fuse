@@ -1,10 +1,9 @@
 import type { SortField, X3FFileDTO } from '@shared/types'
-import { statusLabel } from './fileStatus'
 
 /**
- * Sort the queue, porting FileQueueSortingUtilities.sortFiles. File Name and
- * Status use case-insensitive locale compare; Date/Size compare the nullable
- * fields with distant-past / 0 fallbacks (sortableCapturedDate / sortableFileSize).
+ * Sort the queue, porting FileQueueSortingUtilities.sortFiles. File Name uses
+ * case-insensitive locale compare; Date/Size compare the nullable fields with
+ * distant-past / 0 fallbacks (sortableCapturedDate / sortableFileSize).
  */
 export function sortFiles(
   files: X3FFileDTO[],
@@ -17,8 +16,6 @@ export function sortFiles(
 
 function compare(a: X3FFileDTO, b: X3FFileDTO, field: SortField): number {
   switch (field) {
-    case 'Status':
-      return ci(statusLabel(a.status), statusLabel(b.status))
     case 'Date':
       return capturedMs(a) - capturedMs(b)
     case 'Size':

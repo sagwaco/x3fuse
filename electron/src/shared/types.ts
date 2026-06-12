@@ -18,7 +18,7 @@ export type OutputFormat = 'dng' | 'embeddedJpg' | 'tiff'
 /** Was Swift `ColorProfile` Int rawValue 0..3. */
 export type ColorProfile = 'sRGB' | 'adobeRGB' | 'proPhotoRGB' | 'none'
 
-export type SortField = 'File Name' | 'Status' | 'Date' | 'Size'
+export type SortField = 'File Name' | 'Date' | 'Size'
 
 /** How the queue is presented (Electron-only QoL addition, not in the Swift app). */
 export type QueueViewMode = 'list' | 'grid' | 'filmstrip'

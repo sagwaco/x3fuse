@@ -1,21 +1,14 @@
 import { protocol } from 'electron'
-import type { PreviewService, PreviewVariant } from './services/PreviewService'
+import { PREVIEW_SCHEME, type PreviewVariant } from '@shared/preview'
+import type { PreviewService } from './services/PreviewService'
 import { logger } from './services/Logger'
 
 /**
- * Custom scheme that streams embedded X3F JPEG previews to the renderer.
+ * Serves the x3f-preview:// scheme (see shared/preview.ts for the URL shape).
  * Registered as privileged + standard + CORS-enabled (see registerPreviewScheme)
  * so `<img src>` and `fetch()` (for the histogram) both work and the resulting
  * canvas stays untainted.
- *
- * URL shape:  x3f-preview://img/?p=<encodeURIComponent(absPath)>&v=preview|full
  */
-export const PREVIEW_SCHEME = 'x3f-preview'
-
-/** Build a `x3f-preview://` URL for an absolute file path. Mirrored in the renderer. */
-export function previewUrl(path: string, variant: PreviewVariant = 'preview'): string {
-  return `${PREVIEW_SCHEME}://img/?p=${encodeURIComponent(path)}&v=${variant}`
-}
 
 /** Must run before `app.ready` (top of main). Marks the scheme secure/standard. */
 export function registerPreviewScheme(): void {
@@ -35,6 +28,12 @@ export function registerPreviewProtocol(preview: PreviewService): void {
       const path = url.searchParams.get('p')
       const variant = (url.searchParams.get('v') as PreviewVariant) ?? 'preview'
       if (!path) return new Response('missing path', { status: 400 })
+      // Only X3F sources are previewable (same filter as queue:add); refusing
+      // everything else keeps this scheme from reading arbitrary files on
+      // behalf of a compromised renderer.
+      if (!path.toLowerCase().endsWith('.x3f')) {
+        return new Response('forbidden', { status: 403 })
+      }
 
       const bytes = await preview.getJpeg(path, variant === 'full' ? 'full' : 'preview')
       if (!bytes) return new Response('no preview', { status: 404 })

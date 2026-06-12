@@ -1,6 +1,6 @@
+import { previewUrl } from '@shared/preview'
 import { useQueueStore } from '../stores/queueStore'
 import { useExif } from '../hooks/useExif'
-import { previewUrl } from '../lib/previewUrl'
 import { t } from '../lib/strings'
 import { Histogram } from './Histogram'
 import { OrientedImage } from './OrientedImage'
@@ -11,9 +11,11 @@ import { OrientedImage } from './OrientedImage'
  * with nothing selected it shows an empty state.
  */
 export function Inspector(): React.JSX.Element {
-  const files = useQueueStore((s) => s.files)
-  const activeId = useQueueStore((s) => s.activeId)
-  const active = files.find((f) => f.id === activeId)
+  // Select just the active file: its reference only changes when that file's
+  // row changes, so other files' progress ticks don't re-render the inspector.
+  const active = useQueueStore((s) =>
+    s.activeId ? s.files.find((f) => f.id === s.activeId) : undefined
+  )
 
   return (
     <aside className="flex w-[300px] shrink-0 flex-col border-l border-white/10 bg-neutral-900/30">

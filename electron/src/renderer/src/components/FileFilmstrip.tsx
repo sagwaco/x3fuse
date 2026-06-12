@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useRef, type MouseEvent } from 'react'
+import { memo, useEffect, useMemo, useRef } from 'react'
 import type { X3FFileDTO } from '@shared/types'
 import { useQueueStore } from '../stores/queueStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useFileDrop } from '../hooks/useFileDrop'
-import { useQueueSelection } from '../hooks/useQueueSelection'
+import { useQueueSelection, type QueueSelection } from '../hooks/useQueueSelection'
 import { sortFiles } from '../lib/sortFiles'
 import { cn } from '../lib/cn'
 import { StatusIcon } from './StatusIcon'
@@ -54,11 +54,10 @@ export function FileFilmstrip(): React.JSX.Element {
               <FilmstripCell
                 key={file.id}
                 file={file}
+                index={i}
                 selected={selectedIds.has(file.id)}
                 active={active?.id === file.id}
-                onClick={(e) => sel.handleItemClick(e, file.id, i)}
-                onDoubleClick={() => sel.handleItemDoubleClick(file.id)}
-                onContextMenu={() => sel.handleItemContextMenu(file.id)}
+                sel={sel}
               />
             ))}
           </div>
@@ -81,23 +80,25 @@ function LargePreview({ file }: { file: X3FFileDTO }): React.JSX.Element {
   return <OrientedImage file={file} variant="full" containerClassName="h-full w-full" maxEdge={2400} />
 }
 
-function FilmstripCell({
+// Memoized so high-frequency progress events only re-render the cell whose
+// file object actually changed (sel and the other props are stable).
+const FilmstripCell = memo(function FilmstripCell({
   file,
+  index,
   selected,
   active,
-  onClick,
-  onDoubleClick,
-  onContextMenu
+  sel
 }: {
   file: X3FFileDTO
+  index: number
   selected: boolean
   active: boolean
-  onClick: (e: MouseEvent) => void
-  onDoubleClick: () => void
-  onContextMenu: () => void
+  sel: QueueSelection
 }): React.JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
 
+  // The strip isn't virtualized, so the cell scrolls itself into view when it
+  // becomes the cursor (the virtualized views use useScrollToActive instead).
   useEffect(() => {
     if (active) ref.current?.scrollIntoView({ inline: 'nearest', block: 'nearest' })
   }, [active])
@@ -105,9 +106,9 @@ function FilmstripCell({
   return (
     <div
       ref={ref}
-      onClick={onClick}
-      onDoubleClick={onDoubleClick}
-      onContextMenu={onContextMenu}
+      onClick={(e) => sel.handleItemClick(e, file.id, index)}
+      onDoubleClick={() => sel.handleItemDoubleClick(file.id)}
+      onContextMenu={() => sel.handleItemContextMenu(file.id)}
       title={file.fileName}
       className={cn(
         'relative h-[76px] w-[76px] shrink-0 cursor-default overflow-hidden rounded-md border',
@@ -124,4 +125,4 @@ function FilmstripCell({
       </div>
     </div>
   )
-}
+})

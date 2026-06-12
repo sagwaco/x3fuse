@@ -1,10 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { existsSync } from 'fs'
 import { mkdtemp, rm, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { basename, join } from 'path'
 import type { ChildProcess } from 'child_process'
 import type { RunResult } from '../src/main/services/ProcessRunner'
 import { spawnCapture } from '../src/main/services/ProcessRunner'
+import { runWithConcurrency } from '../src/main/services/concurrency'
 import { ConversionService } from '../src/main/services/ConversionService'
 import { createCollectingSink } from '../src/main/services/events'
 import type { BinaryResolver } from '../src/main/services/BinaryResolver'
@@ -12,6 +14,11 @@ import type { ExifService } from '../src/main/services/ExifService'
 import { DEFAULT_SETTINGS, type ConversionSettings } from '@shared/types'
 
 vi.mock('../src/main/services/ProcessRunner', () => ({ spawnCapture: vi.fn() }))
+// Real pool behavior by default; individual tests can force a pool-level failure.
+vi.mock('../src/main/services/concurrency', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/main/services/concurrency')>()
+  return { ...actual, runWithConcurrency: vi.fn(actual.runWithConcurrency) }
+})
 
 /**
  * Pool behavior of ConversionService with a mocked x3f_extract: spawnCapture
@@ -180,11 +187,18 @@ describe('ConversionService pool', () => {
     const run = service.convert(files, settings())
 
     await until(() => spawns.length === 3, 'three spawns')
-    await writeIntermediate(outDir, spawns[0].inputPath)
-    spawns[0].exit({})
-    spawns[1].exit({ code: 1, stderr: 'boom' })
-    await writeIntermediate(outDir, spawns[2].inputPath)
-    spawns[2].exit({})
+    // Lanes spawn in whatever order their pre-steps resolve, so match by input
+    // path rather than spawn index.
+    const spawnFor = (name: string): FakeSpawn => {
+      const s = spawns.find((sp) => basename(sp.inputPath) === name)
+      if (!s) throw new Error(`no spawn for ${name}`)
+      return s
+    }
+    await writeIntermediate(outDir, spawnFor('IMG0000.X3F').inputPath)
+    spawnFor('IMG0000.X3F').exit({})
+    spawnFor('IMG0001.X3F').exit({ code: 1, stderr: 'boom' })
+    await writeIntermediate(outDir, spawnFor('IMG0002.X3F').inputPath)
+    spawnFor('IMG0002.X3F').exit({})
 
     const result = await run
     expect(result).toMatchObject({ completed: 2, failed: 1, total: 3 })
@@ -214,6 +228,53 @@ describe('ConversionService pool', () => {
 
     const result = await run
     expect(result).toMatchObject({ completed: 2, failed: 0, total: 2 })
+  })
+
+  it('removes the partial intermediate output when a conversion is cancelled', async () => {
+    process.env.X3FUSE_CONCURRENCY = '1'
+    const file = { id: 'f0', path: '/in/IMG0000.X3F' }
+    const { service, sink } = makeService()
+    const run = service.convert([file], settings())
+
+    await until(() => spawns.length === 1, 'spawn')
+    // x3f_extract wrote (part of) its output before being killed.
+    await writeIntermediate(outDir, spawns[0].inputPath)
+    const intermediate = join(outDir, `${basename(file.path)}.dng`)
+    service.stop()
+    spawns[0].exit({ code: null, signal: 'SIGTERM' })
+    await run
+
+    expect(statusesFor(sink, 'f0').at(-1)).toBe('queued')
+    expect(existsSync(intermediate)).toBe(false)
+  })
+
+  it('rejects a second convert() while one is running', async () => {
+    process.env.X3FUSE_CONCURRENCY = '1'
+    const { service, sink } = makeService()
+    const run = service.convert([{ id: 'f0', path: '/in/IMG0000.X3F' }], settings())
+
+    await until(() => spawns.length === 1, 'first spawn')
+    await expect(
+      service.convert([{ id: 'g0', path: '/in/IMG0009.X3F' }], settings())
+    ).rejects.toThrow('already running')
+
+    await writeIntermediate(outDir, spawns[0].inputPath)
+    spawns[0].exit({})
+    await run
+    // The refused call must not have emitted a second batch:complete.
+    const batches = sink.events.filter((e) => e.channel === 'batch:complete')
+    expect(batches).toHaveLength(1)
+  })
+
+  it('emits batch:complete even when the worker pool itself rejects', async () => {
+    const { service, sink } = makeService()
+    vi.mocked(runWithConcurrency).mockRejectedValueOnce(new Error('pool blew up'))
+
+    await expect(
+      service.convert([{ id: 'f0', path: '/in/IMG0000.X3F' }], settings())
+    ).rejects.toThrow('pool blew up')
+    expect(sink.events.filter((e) => e.channel === 'batch:complete')).toHaveLength(1)
+    expect(service.isRunning).toBe(false)
   })
 
   it('serializes files that share an output target', async () => {

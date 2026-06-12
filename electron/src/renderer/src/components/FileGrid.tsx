@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef, type MouseEvent } from 'react'
+import { memo, useEffect, useMemo, useRef } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import type { X3FFileDTO } from '@shared/types'
 import { useQueueStore } from '../stores/queueStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useFileDrop } from '../hooks/useFileDrop'
-import { useQueueSelection } from '../hooks/useQueueSelection'
+import { useQueueSelection, type QueueSelection } from '../hooks/useQueueSelection'
+import { useScrollToActive } from '../hooks/useScrollToActive'
 import { useElementWidth } from '../hooks/useElementWidth'
 import { sortFiles } from '../lib/sortFiles'
 import { cn } from '../lib/cn'
@@ -52,13 +53,7 @@ export function FileGrid(): React.JSX.Element {
   // Focus the surface on mount so arrow-key navigation works without a click.
   useEffect(() => parentRef.current?.focus(), [])
 
-  // Keep the keyboard cursor (active cell's row) scrolled into view.
-  useEffect(() => {
-    if (!activeId) return
-    const idx = sorted.findIndex((f) => f.id === activeId)
-    if (idx >= 0) virtualizer.scrollToIndex(Math.floor(idx / columns), { align: 'auto' })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeId, columns])
+  useScrollToActive(virtualizer, sorted, activeId, columns)
 
   return (
     <QueueContextMenu>
@@ -95,11 +90,10 @@ export function FileGrid(): React.JSX.Element {
                   <GridCell
                     key={file.id}
                     file={file}
+                    index={start + c}
                     selected={selectedIds.has(file.id)}
                     active={activeId === file.id}
-                    onClick={(e) => sel.handleItemClick(e, file.id, start + c)}
-                    onDoubleClick={() => sel.handleItemDoubleClick(file.id)}
-                    onContextMenu={() => sel.handleItemContextMenu(file.id)}
+                    sel={sel}
                   />
                 ))}
               </div>
@@ -115,26 +109,26 @@ export function FileGrid(): React.JSX.Element {
   )
 }
 
-function GridCell({
+// Memoized so high-frequency progress events only re-render the cell whose
+// file object actually changed (sel and the other props are stable).
+const GridCell = memo(function GridCell({
   file,
+  index,
   selected,
   active,
-  onClick,
-  onDoubleClick,
-  onContextMenu
+  sel
 }: {
   file: X3FFileDTO
+  index: number
   selected: boolean
   active: boolean
-  onClick: (e: MouseEvent) => void
-  onDoubleClick: () => void
-  onContextMenu: () => void
+  sel: QueueSelection
 }): React.JSX.Element {
   return (
     <div
-      onClick={onClick}
-      onDoubleClick={onDoubleClick}
-      onContextMenu={onContextMenu}
+      onClick={(e) => sel.handleItemClick(e, file.id, index)}
+      onDoubleClick={() => sel.handleItemDoubleClick(file.id)}
+      onContextMenu={() => sel.handleItemContextMenu(file.id)}
       title={file.fileName}
       className="flex cursor-default flex-col"
       style={{ height: THUMB_H + LABEL_H }}
@@ -162,4 +156,4 @@ function GridCell({
       </span>
     </div>
   )
-}
+})

@@ -88,6 +88,12 @@ export class ConversionService implements ConversionBackend {
     files: ConversionInputFile[],
     settings: ConversionSettings
   ): Promise<BatchResult> {
+    // The renderer's isProcessing flag is client state (lost on reload), so
+    // re-entry must be refused here too: two batches would share cancelling/
+    // activeChildren and could write the same outputs.
+    if (this.running) {
+      throw new ConversionError('conversionFailed', 'A conversion is already running')
+    }
     this.cancelling = false
     this.running = true
     const result: BatchResult = { completed: 0, failed: 0, warnings: 0, total: files.length }
@@ -122,9 +128,11 @@ export class ConversionService implements ConversionBackend {
     } finally {
       this.running = false
       this.activeChildren.clear()
+      // Emitted even when the pool throws: this event is what releases the
+      // renderer's isProcessing state.
+      this.sink.emit('batch:complete', result)
     }
 
-    this.sink.emit('batch:complete', result)
     return result
   }
 
@@ -168,64 +176,86 @@ export class ConversionService implements ConversionBackend {
     const ext = OUTPUT_EXTENSION[outputFormat].slice(1)
     const intermediateOutput = join(outputDir, `${name}.${ext}`)
 
-    this.checkCancel()
-
-    // Step 0: ensure output directory exists.
-    await mkdir(outputDir, { recursive: true })
-
-    // Step 1 (0.10): extract EXIF. Informational only (opcode selection happens
-    // inside x3f_extract), so a failure here is non-fatal — mirrors the Swift
-    // fallback that logs and continues.
-    this.setProgress(file.id, 0.1)
-    this.checkCancel()
+    // Once x3f_extract has run, cancellation leaves a partial/unrenamed
+    // intermediate behind, which the catch below removes (port of
+    // ConversionQueue.cleanupTemporaryFilesForFile). Before that point an
+    // existing intermediate is a previous conversion's output, not ours to delete.
+    let extractRan = false
     try {
-      const exif = await this.exif.extract(file.path)
-      logger.debug(
-        `EXIF ${name}: model=${exif.cameraModel ?? '?'} aperture=${exif.aperture ?? '?'} lens=${exif.lensId ?? '?'}`
-      )
-    } catch (e) {
-      logger.error(`EXIF extraction failed (continuing): ${String(e)}`, name)
-    }
+      this.checkCancel()
 
-    // Step 2 (0.30): run x3f_extract.
-    this.setProgress(file.id, 0.3)
-    this.checkCancel()
-    await this.runX3FExtract(file, settings, outputDir)
+      // Step 0: ensure output directory exists.
+      await mkdir(outputDir, { recursive: true })
 
-    // Step 3 (0.70): copy EXIF onto the DNG (DNG only).
-    this.setProgress(file.id, 0.7)
-    this.checkCancel()
-    if (outputFormat === 'dng') {
-      if (!existsSync(intermediateOutput)) {
-        throw new ConversionError('missingOutputFile', `Output file not found: ${intermediateOutput}`)
-      }
-      await this.exif.copyAllTags(file.path, intermediateOutput)
-    }
-
-    // Step 4 (0.90): validate output (exists & size > 0).
-    this.setProgress(file.id, 0.9)
-    this.checkCancel()
-    await this.validateOutput(intermediateOutput)
-
-    // Step 5: best-effort 0o644 permissions (unix only; non-fatal).
-    if (process.platform !== 'win32') {
+      // Step 1 (0.10): extract EXIF. Informational only (opcode selection happens
+      // inside x3f_extract), so a failure here is non-fatal — mirrors the Swift
+      // fallback that logs and continues.
+      this.setProgress(file.id, 0.1)
+      this.checkCancel()
       try {
-        await chmod(intermediateOutput, 0o644)
+        const exif = await this.exif.extract(file.path)
+        logger.debug(
+          `EXIF ${name}: model=${exif.cameraModel ?? '?'} aperture=${exif.aperture ?? '?'} lens=${exif.lensId ?? '?'}`
+        )
       } catch (e) {
-        logger.error(`Failed to set output permissions: ${String(e)}`, name)
+        logger.error(`EXIF extraction failed (continuing): ${String(e)}`, name)
       }
-    }
 
-    // Step 6: rename "<name>.X3F.dng" -> "<base>.dng" (DNG only).
-    let finalOutput = intermediateOutput
-    if (outputFormat === 'dng') {
-      finalOutput = await this.renameDngOutput(file.path, outputDir, ext)
-    }
+      // Step 2 (0.30): run x3f_extract.
+      this.setProgress(file.id, 0.3)
+      this.checkCancel()
+      extractRan = true
+      await this.runX3FExtract(file, settings, outputDir)
 
-    this.setProgress(file.id, 1.0)
-    this.setStatus(file.id, 'completed', undefined, finalOutput)
-    logger.conversion(`Conversion completed -> ${basename(finalOutput)}`, name)
-    return 'completed'
+      // Step 3 (0.70): copy EXIF onto the DNG (DNG only).
+      this.setProgress(file.id, 0.7)
+      this.checkCancel()
+      if (outputFormat === 'dng') {
+        if (!existsSync(intermediateOutput)) {
+          throw new ConversionError('missingOutputFile', `Output file not found: ${intermediateOutput}`)
+        }
+        await this.exif.copyAllTags(file.path, intermediateOutput)
+      }
+
+      // Step 4 (0.90): validate output (exists & size > 0).
+      this.setProgress(file.id, 0.9)
+      this.checkCancel()
+      await this.validateOutput(intermediateOutput)
+
+      // Last cancellation point: past here the validated output is kept and the
+      // file completes even if a cancel arrives mid-rename.
+      this.checkCancel()
+
+      // Step 5: best-effort 0o644 permissions (unix only; non-fatal).
+      if (process.platform !== 'win32') {
+        try {
+          await chmod(intermediateOutput, 0o644)
+        } catch (e) {
+          logger.error(`Failed to set output permissions: ${String(e)}`, name)
+        }
+      }
+
+      // Step 6: rename "<name>.X3F.dng" -> "<base>.dng" (DNG only).
+      let finalOutput = intermediateOutput
+      if (outputFormat === 'dng') {
+        finalOutput = await this.renameDngOutput(file.path, outputDir, ext)
+      }
+
+      this.setProgress(file.id, 1.0)
+      this.setStatus(file.id, 'completed', undefined, finalOutput)
+      logger.conversion(`Conversion completed -> ${basename(finalOutput)}`, name)
+      return 'completed'
+    } catch (e) {
+      if (isCancellation(e) && extractRan) {
+        try {
+          await rm(intermediateOutput, { force: true })
+          logger.conversion(`Removed partial output ${basename(intermediateOutput)}`, name)
+        } catch (cleanupError) {
+          logger.error(`Failed to remove partial output: ${String(cleanupError)}`, name)
+        }
+      }
+      throw e
+    }
   }
 
   private async runX3FExtract(

@@ -92,7 +92,9 @@ export class ExifService {
         }
       }
     } catch (e) {
-      logger.debug(`displayMeta failed: ${String(e)}`)
+      // Swallowed by design (the queue still works without orientation /
+      // aspect), but loudly: a parse failure here silently blanks the UI.
+      logger.error(`displayMeta failed: ${String(e)}`)
     }
     return map
   }
@@ -124,7 +126,7 @@ export class ExifService {
         return [{ label, value }]
       })
     } catch (e) {
-      logger.debug(`fullMetadata failed for ${filePath}: ${String(e)}`)
+      logger.error(`fullMetadata failed for ${filePath}: ${String(e)}`)
       return []
     }
   }

@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useRef, type MouseEvent } from 'react'
+import { memo, useEffect, useMemo, useRef } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { ChevronDown, ChevronUp } from 'lucide-react'
 import type { SortField, X3FFileDTO } from '@shared/types'
 import { useQueueStore } from '../stores/queueStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useFileDrop } from '../hooks/useFileDrop'
-import { useQueueSelection } from '../hooks/useQueueSelection'
+import { useQueueSelection, type QueueSelection } from '../hooks/useQueueSelection'
+import { useScrollToActive } from '../hooks/useScrollToActive'
 import { sortFiles } from '../lib/sortFiles'
 import { formatBytes, formatDateWithOrdinal } from '../lib/format'
 import { t } from '../lib/strings'
@@ -44,13 +45,7 @@ export function FileQueue(): React.JSX.Element {
   // Focus the surface on mount so arrow-key navigation works without a click.
   useEffect(() => parentRef.current?.focus(), [])
 
-  // Keep the keyboard cursor (active row) scrolled into view.
-  useEffect(() => {
-    if (!activeId) return
-    const idx = sorted.findIndex((f) => f.id === activeId)
-    if (idx >= 0) virtualizer.scrollToIndex(idx, { align: 'auto' })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeId])
+  useScrollToActive(virtualizer, sorted, activeId)
 
   function toggleSort(field: SortField): void {
     if (sortField === field) void updateSettings({ sortAscending: !sortAscending })
@@ -80,19 +75,12 @@ export function FileQueue(): React.JSX.Element {
                 <Row
                   key={file.id}
                   file={file}
+                  index={vi.index}
                   selected={selectedIds.has(file.id)}
                   active={activeId === file.id}
-                  style={{
-                    position: 'absolute',
-                    top: 0,
-                    left: 0,
-                    width: '100%',
-                    height: vi.size,
-                    transform: `translateY(${vi.start}px)`
-                  }}
-                  onClick={(e) => sel.handleItemClick(e, file.id, vi.index)}
-                  onDoubleClick={() => sel.handleItemDoubleClick(file.id)}
-                  onContextMenu={() => sel.handleItemContextMenu(file.id)}
+                  height={vi.size}
+                  translateY={vi.start}
+                  sel={sel}
                 />
               )
             })}
@@ -171,29 +159,39 @@ function SortableHeader({
   )
 }
 
-function Row({
+// Memoized so high-frequency progress events only re-render the row whose file
+// object actually changed; geometry comes in as primitives so the comparison
+// isn't defeated by a fresh style object per render.
+const Row = memo(function Row({
   file,
+  index,
   selected,
   active,
-  style,
-  onClick,
-  onDoubleClick,
-  onContextMenu
+  height,
+  translateY,
+  sel
 }: {
   file: X3FFileDTO
+  index: number
   selected: boolean
   active: boolean
-  style: React.CSSProperties
-  onClick: (e: MouseEvent) => void
-  onDoubleClick: () => void
-  onContextMenu: () => void
+  height: number
+  translateY: number
+  sel: QueueSelection
 }): React.JSX.Element {
   return (
     <div
-      style={style}
-      onClick={onClick}
-      onDoubleClick={onDoubleClick}
-      onContextMenu={onContextMenu}
+      style={{
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        width: '100%',
+        height,
+        transform: `translateY(${translateY}px)`
+      }}
+      onClick={(e) => sel.handleItemClick(e, file.id, index)}
+      onDoubleClick={() => sel.handleItemDoubleClick(file.id)}
+      onContextMenu={() => sel.handleItemContextMenu(file.id)}
       className={cn(
         GRID,
         'cursor-default text-sm',
@@ -227,7 +225,7 @@ function Row({
       </span>
     </div>
   )
-}
+})
 
 /** Shimmer bar standing in for a metadata cell that hasn't loaded yet. */
 function Skeleton({ className }: { className?: string }): React.JSX.Element {
