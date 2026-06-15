@@ -151,6 +151,23 @@ When cancellation is requested:
 
 - Uses Sparkle framework for updates
 - UpdaterService configured on app launch (X3FuseApp.swift:16)
+- Uses Sparkle's standard update window (`SPUStandardUpdaterController`), which already
+  renders each appcast item's `<description>` in its notes pane and provides the
+  Install / Remind Me Later / Skip This Version buttons — no custom update UI.
+
+#### Release notes in the update prompt
+
+- `Release_Notes.md` is the single source of truth for per-version notes (one `# <version> - <title>`
+  header per release, followed by `-` bullets).
+- `generate_appcast` (CI) omits release notes, so the update window's notes pane would be blank.
+  `Configuration/inject_release_notes.py` post-processes `docs/Support/appcast.xml`, embedding each
+  version's notes as inline HTML in the matching `<item>`'s `<description>` (CDATA). It is idempotent
+  and replaces existing descriptions, keeping `Release_Notes.md` canonical.
+- The release workflow runs the script right after the "Update appcast" step
+  (.github/workflows/release.yml), and `docs/Support/appcast.xml` is already in the auto-commit list,
+  so every release ships notes automatically.
+- To refresh the checked-in appcast by hand (e.g. after editing `Release_Notes.md`):
+  `python3 Configuration/inject_release_notes.py` (then commit `docs/Support/appcast.xml`).
 
 ## File Structure Patterns
 
