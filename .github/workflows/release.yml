@@ -11,8 +11,8 @@ permissions:
   actions: write
 
 concurrency:
-  group: publish-release${{ github.ref }}
-  cancel-in-progress: true
+  group: publish-release-${{ github.event.issue.pull_request != null && contains(github.event.comment.body, '/release') && 'release' || github.run_id }}
+  cancel-in-progress: ${{ github.event.issue.pull_request != null && contains(github.event.comment.body, '/release') }}
 
 jobs:
   preparation:
@@ -497,7 +497,7 @@ jobs:
 
   ending:
     name: Ending job
-    if: always()
+    if: ${{ always() && github.event.issue.pull_request != null && contains(github.event.comment.body, '/release') }}
     runs-on: ubuntu-latest
     needs: [preparation, archive, release]
     steps:
