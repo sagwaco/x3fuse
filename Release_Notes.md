@@ -1,3 +1,11 @@
+# 0.1.5 - Beta 1.1.5
+
+- Update the core converter to x3fuse-core 0.1.2, improving compatibility of converted DNGs (including compressed DNGs) with software powered by Apple RAW and LibRaw, and improving Capture One compatibility for Merrill-generation files.
+- Fix highlights clipping prematurely near white on some files, caused by DigitalISOGain scaling during preprocessing.
+- Add Spanish (es) localization.
+- Fix the denoise slider labels in Settings showing raw localization keys instead of translated text.
+- The in-app update prompt now displays release notes, so you can see what changed before updating.
+
 # 0.1.4 - Beta 1.1.4
 
 - The app is now notarized by Apple, so it launches without Gatekeeper warnings, and is installable via Homebrew with `brew install --cask sagwaco/tap/x3fuse`. No functional changes from 0.1.3.
