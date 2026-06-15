@@ -6,7 +6,7 @@ A modern macOS app for converting Sigma Merrill and Quattro X3F RAW files.
 
 ## Overview
 
-X3Fuse is a RAW conversion tool that converts your Sigma Merrill and Quattro X3F files into practical, compatible formats like DNG, TIFF, and JPEG. It's an essential bridge between your Sigma cameras and your preferred editing suite. Works best with Lightroom.
+X3Fuse is a RAW conversion tool that converts your Sigma Merrill and Quattro X3F files into practical, compatible formats like DNG, TIFF, and JPEG. It's an essential bridge between your Sigma cameras and your preferred editing suite, including apps that use Adobe Camera Raw (Lightroom, Photoshop), LibRaw (Darktable, RawTherapee, RapidRAW), and Apple's RAW engine (Pixelmator, Photomator, Preview).
 
 ## Features
 
@@ -14,6 +14,7 @@ X3Fuse is a RAW conversion tool that converts your Sigma Merrill and Quattro X3F
 - **Batch Processing**: Process multiple files at once with an intuitive queue system
 - **Native macOS App**: Built with SwiftUI for a seamless macOS experience
 - **EXIF Data Preservation**: Attempts to preserve metadata like preferred aspect ratio
+- **Broad DNG Compatibility**: Merrill and Quattro DNGs are tested with Adobe, LibRaw, and Apple RAW-based workflows
 - **Multi-language Support**: Available in English, Japanese, Korean, and Chinese\*
 - **Drag & Drop Interface**: Simple file management with drag and drop support
 - **Conversion Settings**: Customizable output options for your workflow
@@ -101,19 +102,20 @@ This script verifies that the app and its components are properly built as unive
    - Monitor progress in the queue view
    - Converted files will be saved to your specified location
 
+## DNG Compatibility
+
+X3Fuse creates DNGs that are designed to work across common RAW decoding engines, not only Adobe Camera Raw. Merrill and Quattro files, including DNGs created with **RAW compression** and/or **Merrill highlight recovery** enabled, have been tested successfully in:
+
+- Adobe Lightroom and Adobe Photoshop
+- Darktable
+- RawTherapee
+- RapidRAW
+- Pixelmator and Photomator
+- Preview on macOS
+
+Foveon cameras do not have a color filter array (CFA) like most other cameras, so some RAW applications may still have Foveon-specific rendering differences. If you encounter an issue with a particular editor, please open a GitHub issue with the camera model, conversion settings, and target application.
+
 ## Known Issues
-
-#### Compatibility issues with RAW decoders (Quick Look, Capture One, etc.)
-
-Foveon cameras do not have a color filter array (CFA) like most other cameras, and the lack of a CFA, among other differences, can cause some applications to misinterpret the RAW data. If you encounter this issue, please use an alternative viewer or editor to confirm the integrity of the DNG files. The files should open correctly in applications that use Adobe Camera RAW (Adobe Lightroom, Adobe Photoshop).
-
-#### Compatibility issues when DNG RAW compression is enabled
-
-DNGs that were created with the **RAW compression** setting enabled have reduced compatibility and may not open reliably in applications that do not use the Capture One or Adobe Camera Raw (Photoshop, Lightroom) decoders. If you encounter this issue, try disabling RAW compression in the application settings.
-
-#### Compatibility issues when DNG Merrill highlight recovery is enabled
-
-DNGs that were created with the **Merrill highlight recovery** setting enabled have reduced compatibility and may not open reliably in applications that do not use LibRaw or Adobe Camera Raw (Photoshop, Lightroom) decoders. If you encounter issues, try disabling Merrill highlight recovery in the application settings.
 
 #### X3I files not supported
 
