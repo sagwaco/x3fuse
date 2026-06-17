@@ -11,8 +11,8 @@ permissions:
   actions: write
 
 concurrency:
-  group: publish-release${{ github.ref }}
-  cancel-in-progress: true
+  group: publish-release-${{ github.event.issue.pull_request != null && contains(github.event.comment.body, '/release') && 'release' || github.run_id }}
+  cancel-in-progress: ${{ github.event.issue.pull_request != null && contains(github.event.comment.body, '/release') }}
 
 jobs:
   preparation:
@@ -433,6 +433,13 @@ jobs:
           # Clean up temporary directory and key file
           rm -rf appcast_temp
 
+      - name: Embed release notes in appcast
+        run: |
+          # generate_appcast omits release notes, so the Sparkle update window's
+          # notes pane would be blank. Backfill each item's <description> from
+          # Release_Notes.md so users can read what changed before updating.
+          python3 Configuration/inject_release_notes.py
+
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
@@ -490,7 +497,7 @@ jobs:
 
   ending:
     name: Ending job
-    if: always()
+    if: ${{ always() && github.event.issue.pull_request != null && contains(github.event.comment.body, '/release') }}
     runs-on: ubuntu-latest
     needs: [preparation, archive, release]
     steps:

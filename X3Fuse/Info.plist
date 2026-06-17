@@ -25,5 +25,14 @@
 	<true/>
 	<key>SUScheduledCheckInterval</key>
 	<integer>86400</integer>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<!-- Allows the debug-only local update-test server
+		     (Configuration/serve_test_appcast.py) to serve the appcast over
+		     http://localhost. Loopback/local only; does not relax security for
+		     internet connections. -->
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
 </dict>
 </plist>

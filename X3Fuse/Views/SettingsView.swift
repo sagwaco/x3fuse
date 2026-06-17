@@ -206,12 +206,12 @@ struct SettingsView: View {
                     step: 1
                   )
                   HStack {
-                    Text("settings.denoise.intensity.less")
+                    Text(LocalizationService.settingsDenoiseIntensityLess)
                       .font(.caption)
                       .foregroundColor(.secondary)
                       .bold()
                     Spacer()
-                    Text("settings.denoise.intensity.more")
+                    Text(LocalizationService.settingsDenoiseIntensityMore)
                       .font(.caption)
                       .foregroundColor(.secondary)
                       .bold()

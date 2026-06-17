@@ -1,0 +1,160 @@
+/*
+  Localizable.strings
+  X3Fuse
+
+  Created by Cline on 7/18/25.
+*/
+
+// MARK: - App Title
+"app.title" = "X3Fuse BETA";
+
+// MARK: - Buttons
+"button.convert" = "Convertir";
+"button.stop" = "Detener";
+"button.add_files" = "Añadir archivos";
+"button.settings" = "Ajustes";
+"button.ok" = "Aceptar";
+"button.cancel" = "Cancelar";
+"button.done" = "Listo";
+"button.browse" = "Examinar...";
+"button.overwrite" = "Sobrescribir";
+
+// MARK: - Toolbar and Menu
+"toolbar.stop_conversion" = "Detener conversión";
+"toolbar.convert_all" = "Convertir todo";
+"toolbar.convert_selected" = "Convertir selección";
+
+// MARK: - Footer
+"footer.output_directory" = "Directorio de salida";
+"footer.alongside_original" = "Junto al archivo original";
+
+// MARK: - File Selection Dialog
+"dialog.select_x3f_files.title" = "Seleccionar archivos X3F";
+"dialog.select_x3f_files.message" = "Elige los archivos X3F que quieres convertir";
+"dialog.select_output_directory.title" = "Seleccionar directorio de salida";
+"dialog.select_output_directory.message" = "Elige dónde se guardarán los archivos convertidos";
+
+// MARK: - Alerts
+"alert.setup_issues.title" = "Problemas de configuración";
+
+// MARK: - Settings View
+"settings.section.output" = "Ajustes de salida";
+"settings.section.conversion" = "Ajustes de conversión";
+"settings.section.debug" = "Depuración";
+"settings.section.updates" = "Actualizaciones";
+"settings.section.about" = "Acerca de";
+
+"settings.save_alongside_original" = "Guardar junto al archivo original";
+"settings.save_alongside_original.help" = "Si está activado, los archivos convertidos se guardarán junto a los archivos originales.";
+"settings.save_alongside_original.description" = "Desactívalo para elegir un directorio de salida personalizado.";
+
+"settings.output_location" = "Ubicación de salida";
+"settings.only_convert_new" = "Convertir solo elementos nuevos de la cola";
+"settings.only_convert_new.help" = "Si está activado, \"Convertir todo\" solo procesará los archivos que aún no se hayan convertido. Si está desactivado, procesará todos los archivos de la cola, incluidos los ya convertidos.";
+
+"settings.conversion_format" = "Formato de conversión";
+"settings.raw_compression" = "Compresión RAW";
+"settings.raw_compression.help" = "Activa la compresión sin pérdida para DNG y TIFF";
+"settings.raw_compression.warning" = "Es posible que algunas apps no puedan abrir los DNG RAW comprimidos. Si encuentras problemas, desactiva la compresión.";
+"settings.color_profile" = "Perfil de color";
+"settings.denoise" = "Reducción de ruido";
+"settings.denoise.help" = "Activa o desactiva la reducción de ruido durante la conversión";
+"settings.denoise.off" = "Desactivado";
+"settings.denoise.intensity" = "Intensidad de reducción de ruido";
+"settings.denoise.intensity.less" = "Menos";
+"settings.denoise.intensity.more" = "Más";
+"settings.dng_highlight_recovery" = "Recuperación de altas luces (generación Merrill)";
+"settings.dng_highlight_recovery.help" = "Recupera altas luces sobreexpuestas en DNG de generación Merrill";
+"settings.dng_highlight_recovery.warning" = "La recuperación de altas luces puede hacer que los DNG no se muestren correctamente en algunas apps. Si encuentras problemas, desactiva la recuperación.";
+"settings.cineon" = "Usar curva de tonos estilo Cineon";
+"settings.cineon.help" = "Usa una curva de tonos plana estilo Cineon para la salida TIFF";
+
+"settings.debug_logging" = "Registro de depuración";
+"settings.debug_logging.help" = "Activa el registro de depuración detallado para diagnosticar problemas";
+"settings.debug_logs" = "Registros de depuración";
+"settings.open_logs_folder" = "Abrir carpeta de registros";
+"settings.clear_logs" = "Borrar registros";
+
+"settings.log.conversion" = "Registro de conversión:";
+"settings.log.error" = "Registro de errores:";
+"settings.log.debug" = "Registro de depuración:";
+
+"settings.version" = "Versión";
+"settings.build" = "Compilación";
+"settings.acknowledgements" = "Agradecimientos";
+"settings.view_licenses" = "Ver licencias";
+
+// MARK: - Menu Commands
+"menu.help.X3Fuse_help" = "Ayuda de X3Fuse";
+"menu.help.show_debug_logs" = "Mostrar registros de depuración";
+"menu.help.clear_debug_logs" = "Borrar registros de depuración";
+
+"menu.file.add_x3f_files" = "Añadir archivos X3F...";
+"menu.file.settings" = "Ajustes";
+
+"menu.edit.select_all_files" = "Seleccionar todos los archivos";
+"menu.edit.deselect_all_files" = "Deseleccionar todos los archivos";
+"menu.edit.remove_selected_files" = "Quitar archivos seleccionados";
+
+"menu.conversion.title" = "Conversión";
+"menu.conversion.convert_all_files" = "Convertir todos los archivos";
+"menu.conversion.stop_conversion" = "Detener conversión";
+"menu.conversion.clear_queue" = "Vaciar cola";
+"menu.conversion.remove_failed_files" = "Quitar archivos con error";
+"menu.conversion.remove_completed_files" = "Quitar archivos completados";
+
+// MARK: - File Queue View
+"queue.column.name" = "Nombre";
+"queue.column.date" = "Fecha";
+"queue.column.size" = "Tamaño";
+
+"queue.empty.title" = "No hay archivos en la cola";
+"queue.empty.message" = "Arrastra y suelta archivos X3F aquí para añadirlos a la cola de conversión";
+
+// MARK: - Context Menu
+"context.convert" = "Convertir";
+"context.convert_selected" = "Convertir selección";
+"context.reconvert" = "Volver a convertir";
+"context.reconvert_selected" = "Volver a convertir selección";
+"context.stop_conversion" = "Detener conversión";
+"context.remove" = "Quitar";
+"context.remove_selected" = "Quitar selección";
+"context.show_in_finder" = "Mostrar en el Finder";
+"context.open_converted_in_finder" = "Mostrar archivo convertido en el Finder";
+"context.open_converted_in_finder_multiple" = "Mostrar archivos convertidos en el Finder";
+"context.remove_failed_file" = "Quitar archivo con error";
+"context.remove_failed_files" = "Quitar archivos con error";
+"context.remove_completed_file" = "Quitar archivo completado";
+"context.remove_completed_files" = "Quitar archivos completados";
+"context.deselect_all" = "Deseleccionar todo";
+"context.convert_all" = "Convertir todo";
+"context.remove_all" = "Quitar todo";
+
+// MARK: - Reconversion Confirmation
+"reconversion.title" = "¿Sobrescribir archivos existentes?";
+"reconversion.message" = "Se sobrescribirán los siguientes archivos:";
+"reconversion.warning" = "Esta acción no se puede deshacer. Los archivos convertidos existentes se reemplazarán de forma permanente.";
+"reconversion.location_prefix" = "en ";
+
+// MARK: - File Status
+"status.queued" = "En cola";
+"status.processing" = "Procesando";
+"status.completed" = "Completado";
+"status.failed" = "Error";
+"status.warning" = "Advertencia";
+"status.conversion_failed" = "Error de conversión";
+"status.conversion_completed_with_warnings" = "Conversión completada con advertencias";
+
+// MARK: - Updates
+"updates.check_for_updates" = "Buscar actualizaciones…";
+"updates.checking_for_updates" = "Buscando actualizaciones…";
+"updates.automatic_updates" = "Buscar actualizaciones automáticamente";
+"updates.automatic_updates.help" = "Busca actualizaciones automáticamente en segundo plano";
+"updates.automatic_download" = "Descargar actualizaciones automáticamente";
+"updates.automatic_download.help" = "Descarga automáticamente las actualizaciones disponibles";
+"updates.last_checked" = "Última comprobación";
+"updates.never" = "Nunca";
+"updates.current_version" = "Versión actual";
+
+// MARK: - Placeholders
+"placeholder.dash" = "—";

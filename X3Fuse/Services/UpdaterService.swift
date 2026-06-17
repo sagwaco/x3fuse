@@ -14,7 +14,12 @@ final class UpdaterService: ObservableObject {
     static let shared = UpdaterService()
     
     private let updaterController: SPUStandardUpdaterController
-    
+
+    #if DEBUG
+    /// Held strongly because `SPUStandardUpdaterController` keeps its delegate weak.
+    private let debugUpdaterDelegate = DebugUpdaterDelegate()
+    #endif
+
     @Published var canCheckForUpdates = false
     @Published var isCheckingForUpdates = false
     @Published var lastUpdateCheckDate: Date?
@@ -22,13 +27,23 @@ final class UpdaterService: ObservableObject {
     private static let lastUpdateCheckDateKey = "X3Fuse.lastUpdateCheckDate"
     
     private init() {
-        // Initialize Sparkle updater
+        // Initialize Sparkle updater. In debug builds a delegate redirects Sparkle
+        // to a local test appcast so the update window can be previewed without
+        // publishing a release (see Configuration/serve_test_appcast.py).
+        #if DEBUG
+        updaterController = SPUStandardUpdaterController(
+            startingUpdater: true,
+            updaterDelegate: debugUpdaterDelegate,
+            userDriverDelegate: nil
+        )
+        #else
         updaterController = SPUStandardUpdaterController(
             startingUpdater: true,
             updaterDelegate: nil,
             userDriverDelegate: nil
         )
-        
+        #endif
+
         // Load persisted last update check date
         loadLastUpdateCheckDate()
         
@@ -146,3 +161,19 @@ extension UpdaterService {
         updaterController.updater.updateCheckInterval = 86400
     }
 }
+
+#if DEBUG
+// MARK: - Debug Update Testing
+
+/// Debug-only Sparkle delegate that points the updater at a local test appcast so
+/// the update window (and its release-notes pane) can be previewed without
+/// publishing a release. Override the feed with the `X3FUSE_TEST_FEED_URL`
+/// environment variable; otherwise it defaults to the local server started by
+/// `Configuration/serve_test_appcast.py`.
+private final class DebugUpdaterDelegate: NSObject, SPUUpdaterDelegate {
+    func feedURLString(for updater: SPUUpdater) -> String? {
+        ProcessInfo.processInfo.environment["X3FUSE_TEST_FEED_URL"]
+            ?? "http://localhost:8000/appcast-test.xml"
+    }
+}
+#endif

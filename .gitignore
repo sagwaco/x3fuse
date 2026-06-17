@@ -103,5 +103,12 @@ iOSInjectionProject/
 *.swp
 *~.nib
 .claude/
+
 # Node
 node_modules/
+
+# Local Sparkle update-window testing (Configuration/serve_test_appcast.py)
+docs/Support/appcast-test.xml
+__pycache__/
+*.pyc
+_local/
