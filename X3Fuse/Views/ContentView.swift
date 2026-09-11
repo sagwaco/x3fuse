@@ -19,6 +19,7 @@ struct ContentView: View {
   @State private var selectedFileIDs = Set<X3FFile.ID>()
   @State private var showingReconversionConfirmation = false
   @State private var filesToReconvert: [X3FFile] = []
+  @State private var fileIDsToReconvert = Set<X3FFile.ID>()
 
   // MARK: - Computed Properties
 
@@ -118,13 +119,7 @@ struct ContentView: View {
             }
           }
           .buttonStyle(.borderedProminent)
-          .help(
-            queue.files.isEmpty
-              ? LocalizationService.toolbarConvertAll
-              : (!selectedFileIDs.isEmpty
-                ? LocalizationService.toolbarConvertSelected
-                : LocalizationService.toolbarConvertAll)
-          )
+          .help(LocalizationService.toolbarConvertAll)
           .disabled(!canConvert || queue.isProcessing)
           .keyboardShortcut(.defaultAction)
         }
@@ -141,6 +136,7 @@ struct ContentView: View {
               .onTapGesture {
                 showingReconversionConfirmation = false
                 filesToReconvert.removeAll()
+                fileIDsToReconvert.removeAll()
               }
 
             ReconversionConfirmationView(
@@ -151,6 +147,7 @@ struct ContentView: View {
               onCancel: {
                 showingReconversionConfirmation = false
                 filesToReconvert.removeAll()
+                fileIDsToReconvert.removeAll()
               }
             )
             .transition(.scale.combined(with: .opacity))
@@ -283,38 +280,19 @@ struct ContentView: View {
   }
 
   private func convertAll() {
-    if !selectedFileIDs.isEmpty {
-      // Check if any selected files need reconversion confirmation (have existing output)
-      let selectedFiles = queue.files.filter { selectedFileIDs.contains($0.id) }
-      let reconvertableFiles = selectedFiles.filter {
-        $0.status == .completed || $0.status == .failed || $0.status == .warning
-      }
+    // The primary Convert button always processes the whole queue. A macOS Table may
+    // automatically select one row after a multi-file drop; treating that incidental
+    // selection as the conversion scope caused only one of the dropped files to run.
+    let reconvertableFiles = queue.files.filter {
+      $0.status == .completed || $0.status == .failed || $0.status == .warning
+    }
 
-      if !reconvertableFiles.isEmpty {
-        // Use reconversion flow which will check for existing output files and show confirmation if needed
-        handleReconversion(for: selectedFileIDs)
-      } else {
-        // All selected files are queued or processing, proceed with regular conversion
-        Task {
-          await fileProcessor.processSelectedFiles(selectedFileIDs)
-        }
-      }
+    if !reconvertableFiles.isEmpty {
+      let allFileIDs = Set(queue.files.map { $0.id })
+      handleReconversion(for: allFileIDs)
     } else {
-      // No specific selection, process all files
-      // Check if any files need reconversion confirmation
-      let reconvertableFiles = queue.files.filter {
-        $0.status == .completed || $0.status == .failed || $0.status == .warning
-      }
-
-      if !reconvertableFiles.isEmpty {
-        // Some files may need reconversion confirmation
-        let allFileIDs = Set(queue.files.map { $0.id })
-        handleReconversion(for: allFileIDs)
-      } else {
-        // All files are queued, proceed with regular conversion
-        Task {
-          await fileProcessor.processAllFiles()
-        }
+      Task {
+        await fileProcessor.processAllFiles()
       }
     }
   }
@@ -446,12 +424,13 @@ struct ContentView: View {
     } else {
       // Show confirmation dialog for files with existing output
       filesToReconvert = conflictingFiles
+      fileIDsToReconvert = fileIDs
       showingReconversionConfirmation = true
     }
   }
 
   private func confirmReconversion() {
-    let fileIDs = Set(filesToReconvert.map { $0.id })
+    let fileIDs = fileIDsToReconvert
 
     // Reset files for reconversion
     queue.resetFilesForReconversion(fileIDs)
@@ -459,6 +438,7 @@ struct ContentView: View {
     // Hide confirmation dialog
     showingReconversionConfirmation = false
     filesToReconvert.removeAll()
+    fileIDsToReconvert.removeAll()
 
     // Start reconversion
     Task {
