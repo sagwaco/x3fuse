@@ -1,3 +1,9 @@
+# 0.1.6 - Beta 1.1.6
+
+- Update the core converter to x3fuse-core 0.1.4.
+- Improve Quattro and Merrill DNG compatibility and color calibration in Apple RAW, Adobe Camera Raw, and LibRaw.
+- Improve color highlight recovery.
+
 # 0.1.5 - Beta 1.1.5
 
 - Update the core converter to x3fuse-core 0.1.2, improving compatibility of converted DNGs (including compressed DNGs) with software powered by Apple RAW and LibRaw, and improving Capture One compatibility for Merrill-generation files.
