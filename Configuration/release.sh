@@ -10,7 +10,7 @@ LATEST_VERSION=$(grep -m 1 '^# ' Release_Notes.md | sed 's/^# \([0-9.]*\) - .*/\
 LATEST_TITLE=$(grep -m 1 '^# ' Release_Notes.md | sed 's/^# [0-9.]* - \(.*\)/\1/')
 
 # Extract release notes for the latest version
-RELEASE_NOTES=$(awk '/^# [0-9.]*/{if(NR>1)exit} NR>1' Release_Notes.md | sed '/^$/d' | head -n -1)
+RELEASE_NOTES=$(awk '/^# [0-9.]*/{if(NR>1)exit} NR>1' Release_Notes.md | sed '/^$/d')
 
 # Extract previous version (second line that starts with #)
 PREVIOUS_VERSION=$(grep '^# ' Release_Notes.md | sed -n '2p' | sed 's/^# \([0-9.]*\) - .*/\1/')
