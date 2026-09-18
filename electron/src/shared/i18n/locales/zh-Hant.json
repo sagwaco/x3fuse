@@ -128,5 +128,17 @@
   "inspector.no_selection": "選擇檔案以檢視詳細資訊",
   "inspector.no_preview": "無可用預覽",
   "inspector.no_metadata": "無可用中繼資料",
-  "placeholder.dash": "—"
+  "export.title": "匯出",
+  "export.back": "返回",
+  "export.images_heading": "要轉換的圖像",
+  "export.settings_heading": "輸出與轉換設定",
+  "export.empty": "沒有可匯出的圖像",
+  "placeholder.dash": "—",
+  "preview.image": "影像預覽",
+  "preview.zoom_controls": "縮放控制項",
+  "preview.zoom_in": "放大",
+  "preview.zoom_out": "縮小",
+  "preview.fit": "符合視窗",
+  "preview.zoom_level": "縮放比例",
+  "preview.minimap": "預覽導覽圖"
 }

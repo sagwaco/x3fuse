@@ -128,5 +128,17 @@
   "inspector.no_selection": "选择文件以查看其详细信息",
   "inspector.no_preview": "无可用预览",
   "inspector.no_metadata": "无可用元数据",
-  "placeholder.dash": "—"
+  "export.title": "导出",
+  "export.back": "返回",
+  "export.images_heading": "要转换的图像",
+  "export.settings_heading": "输出与转换设置",
+  "export.empty": "没有可导出的图像",
+  "placeholder.dash": "—",
+  "preview.image": "图像预览",
+  "preview.zoom_controls": "缩放控件",
+  "preview.zoom_in": "放大",
+  "preview.zoom_out": "缩小",
+  "preview.fit": "适合窗口",
+  "preview.zoom_level": "缩放比例",
+  "preview.minimap": "预览导航图"
 }

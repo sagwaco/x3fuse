@@ -1,12 +1,11 @@
 import { memo, useEffect, useMemo, useRef } from 'react'
-import { useVirtualizer } from '@tanstack/react-virtual'
 import type { X3FFileDTO } from '@shared/types'
 import { useQueueStore } from '../stores/queueStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useFileDrop } from '../hooks/useFileDrop'
 import { useQueueSelection, type QueueSelection } from '../hooks/useQueueSelection'
 import { useScrollToActive } from '../hooks/useScrollToActive'
-import { useElementWidth } from '../hooks/useElementWidth'
+import { useVirtualGrid } from '../hooks/useVirtualGrid'
 import { sortFiles } from '../lib/sortFiles'
 import { cn } from '../lib/cn'
 import { StatusIcon } from './StatusIcon'
@@ -34,21 +33,14 @@ export function FileGrid(): React.JSX.Element {
   )
 
   const parentRef = useRef<HTMLDivElement>(null)
-  const width = useElementWidth(parentRef)
   const { isDragOver, dropHandlers } = useFileDrop()
-
-  const columns =
-    width > 0 ? Math.max(1, Math.floor((width - 2 * PADDING + GAP) / (MIN_CELL + GAP))) : 1
-  const rowCount = Math.ceil(sorted.length / columns)
-
-  const sel = useQueueSelection(sorted, { mode: 'grid', columns })
-
-  const virtualizer = useVirtualizer({
-    count: rowCount,
-    getScrollElement: () => parentRef.current,
-    estimateSize: () => ROW_HEIGHT,
-    overscan: 4
+  const { columns, virtualizer } = useVirtualGrid(parentRef, sorted.length, {
+    padding: PADDING,
+    gap: GAP,
+    minCell: MIN_CELL,
+    rowHeight: ROW_HEIGHT
   })
+  const sel = useQueueSelection(sorted, { mode: 'grid', columns })
 
   // Focus the surface on mount so arrow-key navigation works without a click.
   useEffect(() => parentRef.current?.focus(), [])

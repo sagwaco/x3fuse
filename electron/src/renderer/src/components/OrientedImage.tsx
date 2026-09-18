@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactEventHandler } from 'react'
 import { ImageOff, Loader2 } from 'lucide-react'
 import type { X3FFileDTO } from '@shared/types'
 import { previewUrl, type PreviewVariant } from '@shared/preview'
@@ -36,13 +36,15 @@ export function OrientedImage({
   variant = 'preview',
   containerClassName,
   className,
-  maxEdge
+  maxEdge,
+  onLoad
 }: {
   file: X3FFileDTO
   variant?: PreviewVariant
   containerClassName?: string
   className?: string
   maxEdge?: number
+  onLoad?: ReactEventHandler<HTMLImageElement>
 }): React.JSX.Element {
   const orientation = file.orientation ?? 1
   const aspectRatio = file.aspectRatio
@@ -113,7 +115,10 @@ export function OrientedImage({
           alt={file.fileName}
           loading="lazy"
           draggable={false}
-          onLoad={() => setStatus('ok')}
+          onLoad={(event) => {
+            setStatus('ok')
+            onLoad?.(event)
+          }}
           onError={() => setStatus('error')}
           className={cn(
             'max-h-full max-w-full transition-opacity',

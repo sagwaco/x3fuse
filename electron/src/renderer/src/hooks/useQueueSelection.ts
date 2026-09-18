@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useRef, type KeyboardEvent, type MouseEvent } from 'react'
 import type { X3FFileDTO } from '@shared/types'
 import { useQueueStore } from '../stores/queueStore'
+import { useSettingsStore } from '../stores/settingsStore'
 import { arrowTargetIndex, type ArrowNav } from '../lib/queueNavigation'
 
 export interface QueueSelection {
@@ -13,9 +14,8 @@ export interface QueueSelection {
 
 /**
  * Shared selection + interaction behavior for every queue view (list, grid,
- * filmstrip), so cmd/shift multi-select, the active-item tracking, double-click
- * convert, the row-vs-empty-space context menu, and arrow-key navigation all
- * behave identically.
+ * filmstrip): selection, context menus, and arrow-key navigation. Double-click
+ * opens list/grid items in the filmstrip; filmstrip cells retain quick conversion.
  *
  * `ordered` is the files in their on-screen order (post-sort); shift-range, the
  * anchor, and arrow movement are computed against it. `nav` describes how arrow
@@ -58,6 +58,11 @@ export function useQueueSelection(ordered: X3FFileDTO[], nav?: ArrowNav): QueueS
   const handleItemDoubleClick = useCallback((id: string): void => {
     const store = useQueueStore.getState()
     const target = store.selectedIds.has(id) ? store.selectedIds : new Set([id])
+    if (navRef.current?.mode === 'vertical' || navRef.current?.mode === 'grid') {
+      store.setSelection(target, id)
+      void useSettingsStore.getState().update({ queueViewMode: 'filmstrip' })
+      return
+    }
     void store.doubleClickConvert(target)
   }, [])
 

@@ -3,7 +3,7 @@ import { useQueueStore } from '../stores/queueStore'
 import { useExif } from '../hooks/useExif'
 import { t } from '../lib/strings'
 import { Histogram } from './Histogram'
-import { OrientedImage } from './OrientedImage'
+import { PreviewMinimap } from './PreviewMinimap'
 
 /**
  * Collapsible right sidebar showing the active file's RGB histogram and EXIF
@@ -36,11 +36,7 @@ export function Inspector(): React.JSX.Element {
           </div>
 
           <div className="border-b border-white/10 p-3">
-            <OrientedImage
-              file={active}
-              variant="preview"
-              containerClassName="h-44 w-full rounded-md border border-white/10 bg-neutral-900"
-            />
+            <PreviewMinimap key={active.id} file={active} />
           </div>
 
           <Section title={t('inspector.histogram')}>

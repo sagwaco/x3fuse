@@ -128,5 +128,17 @@
   "inspector.no_selection": "ファイルを選択すると詳細が表示されます",
   "inspector.no_preview": "プレビューを利用できません",
   "inspector.no_metadata": "メタデータがありません",
-  "placeholder.dash": "—"
+  "export.title": "書き出し",
+  "export.back": "戻る",
+  "export.images_heading": "変換する画像",
+  "export.settings_heading": "出力・変換設定",
+  "export.empty": "書き出す画像がありません",
+  "placeholder.dash": "—",
+  "preview.image": "画像プレビュー",
+  "preview.zoom_controls": "ズームコントロール",
+  "preview.zoom_in": "拡大",
+  "preview.zoom_out": "縮小",
+  "preview.fit": "全体表示",
+  "preview.zoom_level": "ズーム倍率",
+  "preview.minimap": "プレビューミニマップ"
 }

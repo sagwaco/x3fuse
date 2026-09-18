@@ -128,5 +128,17 @@
   "inspector.no_selection": "Select a file to see its details",
   "inspector.no_preview": "No preview available",
   "inspector.no_metadata": "No metadata available",
-  "placeholder.dash": "—"
+  "export.title": "Export",
+  "export.back": "Back",
+  "export.images_heading": "Images to convert",
+  "export.settings_heading": "Output & conversion settings",
+  "export.empty": "No images to export",
+  "placeholder.dash": "—",
+  "preview.image": "Image preview",
+  "preview.zoom_controls": "Zoom controls",
+  "preview.zoom_in": "Zoom in",
+  "preview.zoom_out": "Zoom out",
+  "preview.fit": "Fit",
+  "preview.zoom_level": "Zoom level",
+  "preview.minimap": "Preview minimap"
 }

@@ -1,4 +1,4 @@
-import { Film, Grid3x3, List, PanelRight } from 'lucide-react'
+import { Film, Grid3x3, List } from 'lucide-react'
 import type { QueueViewMode } from '@shared/types'
 import { useSettingsStore } from '../stores/settingsStore'
 import { t } from '../lib/strings'
@@ -10,10 +10,9 @@ const MODES: { mode: QueueViewMode; icon: typeof List; labelKey: string }[] = [
   { mode: 'filmstrip', icon: Film, labelKey: 'view.filmstrip' }
 ]
 
-/** Segmented queue-view switch + info-sidebar toggle, shown in the toolbar. */
+/** Segmented queue-view switch, shown in the toolbar. */
 export function ViewControls(): React.JSX.Element {
   const viewMode = useSettingsStore((s) => s.settings.queueViewMode)
-  const inspectorOpen = useSettingsStore((s) => s.settings.inspectorOpen)
   const update = useSettingsStore((s) => s.update)
 
   return (
@@ -37,21 +36,6 @@ export function ViewControls(): React.JSX.Element {
           </button>
         ))}
       </div>
-
-      <button
-        type="button"
-        title={t('inspector.toggle')}
-        aria-pressed={inspectorOpen}
-        onClick={() => void update({ inspectorOpen: !inspectorOpen })}
-        className={cn(
-          'rounded-md border border-white/10 p-1.5 transition-colors',
-          inspectorOpen
-            ? 'bg-white/15 text-neutral-100'
-            : 'text-neutral-400 hover:text-neutral-200'
-        )}
-      >
-        <PanelRight className="h-4 w-4" />
-      </button>
     </div>
   )
 }

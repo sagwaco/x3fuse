@@ -4,6 +4,8 @@ import type { ConvertFile } from '@shared/ipc'
 import { ipc } from '../lib/ipc'
 import { basename } from '../lib/path'
 import { isQueued, isReconvertable } from '../lib/fileStatus'
+import { resolveConvertTargets } from '../lib/convertTargets'
+import { useSettingsStore } from './settingsStore'
 
 /** Mint a stable client-side id for an optimistic placeholder row. */
 const newPlaceholderId = (): string => crypto.randomUUID()
@@ -171,7 +173,13 @@ export const useQueueStore = create<QueueState>((set, get) => {
         pending: true
       }))
       const placeholderIds = placeholders.map((p) => p.id)
-      set((s) => ({ files: [...s.files, ...placeholders] }))
+      set((s) => ({
+        files: [...s.files, ...placeholders],
+        // Give the preview and Info panel the same subject on the first import.
+        ...(s.files.length === 0
+          ? { selectedIds: new Set([placeholders[0].id]), activeId: placeholders[0].id }
+          : {})
+      }))
 
       let added: X3FFileDTO[]
       try {
@@ -200,6 +208,8 @@ export const useQueueStore = create<QueueState>((set, get) => {
       // Any placeholders main didn't return for (shouldn't happen) get dropped.
       const unresolved = new Set(placeholderIds.filter((id) => !metaById.has(id)))
       set((s) => ({
+        selectedIds: new Set([...s.selectedIds].filter((id) => !unresolved.has(id))),
+        activeId: s.activeId && unresolved.has(s.activeId) ? null : s.activeId,
         files: s.files.flatMap((f) => {
           if (unresolved.has(f.id)) return []
           const dto = metaById.get(f.id)
@@ -284,14 +294,14 @@ export const useQueueStore = create<QueueState>((set, get) => {
     async convertToolbar() {
       const { files, selectedIds, isProcessing } = get()
       if (isProcessing) return
-      if (selectedIds.size > 0) {
-        const selected = files.filter((f) => selectedIds.has(f.id))
-        if (selected.some(isReconvertable)) await startWithReconversionCheck(selected)
-        else beginConversion(selected)
-      } else {
-        if (files.some(isReconvertable)) await startWithReconversionCheck(files)
-        else beginConversion(files.filter(isQueued))
-      }
+      // Same target set the Export screen previews (see resolveConvertTargets).
+      const targets = resolveConvertTargets(
+        files,
+        selectedIds,
+        useSettingsStore.getState().settings.onlyProcessNewItems
+      )
+      if (targets.some(isReconvertable)) await startWithReconversionCheck(targets)
+      else beginConversion(targets)
     },
 
     async convertAllMenu() {

@@ -8,7 +8,7 @@ import { sortFiles } from '../lib/sortFiles'
 import { cn } from '../lib/cn'
 import { StatusIcon } from './StatusIcon'
 import { Thumbnail } from './Thumbnail'
-import { OrientedImage } from './OrientedImage'
+import { ZoomablePreview } from './ZoomablePreview'
 import { QueueContextMenu } from './QueueContextMenu'
 
 /** Filmstrip view: a large preview of the active file above a scrollable strip. */
@@ -45,7 +45,7 @@ export function FileFilmstrip(): React.JSX.Element {
         className="relative flex min-h-0 min-w-0 flex-1 flex-col outline-none"
       >
         <div className="flex min-h-0 min-w-0 flex-1 items-center justify-center bg-neutral-950 p-4">
-          {active ? <LargePreview file={active} /> : null}
+          {active ? <ZoomablePreview key={active.id} file={active} /> : null}
         </div>
 
         <div className="h-[104px] shrink-0 overflow-x-auto overflow-y-hidden border-t border-white/10 bg-neutral-900/40">
@@ -69,15 +69,6 @@ export function FileFilmstrip(): React.JSX.Element {
       </div>
     </QueueContextMenu>
   )
-}
-
-/**
- * Large preview of the active file. Requests the full-resolution embedded JPEG
- * (the PreviewService falls back to the smaller preview internally) and applies
- * the file's EXIF orientation.
- */
-function LargePreview({ file }: { file: X3FFileDTO }): React.JSX.Element {
-  return <OrientedImage file={file} variant="full" containerClassName="h-full w-full" maxEdge={2400} />
 }
 
 // Memoized so high-frequency progress events only re-render the cell whose
