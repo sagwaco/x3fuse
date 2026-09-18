@@ -21,9 +21,7 @@ const resources = {
   'zh-Hant': { translation: zhHant }
 }
 
-const lng: Locale = detectLanguage(
-  typeof navigator !== 'undefined' ? navigator.language : 'en'
-)
+const lng: Locale = detectLanguage(typeof navigator !== 'undefined' ? navigator.language : 'en')
 
 void i18n.use(initReactI18next).init({
   resources,
@@ -34,5 +32,6 @@ void i18n.use(initReactI18next).init({
   interpolation: { escapeValue: false }
 })
 
-export const t = (key: string): string => i18n.t(key)
+export const t = (key: string, options?: Record<string, string | number>): string =>
+  i18n.t(key, options)
 export default i18n

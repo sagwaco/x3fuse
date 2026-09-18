@@ -10,9 +10,7 @@ import { usePreviewStore } from '../src/renderer/src/stores/previewStore'
 const file: X3FFileDTO = {
   id: 'a',
   path: '/photos/a.X3F',
-  fileName: 'a.X3F',
-  status: 'queued',
-  progress: 0
+  fileName: 'a.X3F'
 }
 let resize: (width: number, height: number) => void
 

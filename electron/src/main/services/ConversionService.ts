@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto'
 import { chmod, mkdir, rename, rm, stat } from 'fs/promises'
 import { existsSync } from 'fs'
 import { basename, dirname, extname, join } from 'path'
@@ -6,7 +7,7 @@ import {
   OUTPUT_EXTENSION,
   effectiveOutputDirectory,
   resolveSetting,
-  type ConversionSettings,
+  type BatchConversionSettings,
   type ConversionStatus,
   type FileOverrides
 } from '@shared/types'
@@ -27,6 +28,8 @@ export interface ConversionInputFile {
 }
 
 export interface BatchResult {
+  batchId: string
+  cancelled: boolean
   completed: number
   failed: number
   warnings: number
@@ -40,7 +43,11 @@ const SIGTERM_EXIT_CODE = 15
  * a native (napi-rs/FFI) implementation without touching callers.
  */
 export interface ConversionBackend {
-  convert(files: ConversionInputFile[], settings: ConversionSettings): Promise<BatchResult>
+  convert(
+    files: ConversionInputFile[],
+    settings: BatchConversionSettings,
+    batchId?: string
+  ): Promise<BatchResult>
   stop(): void
   readonly isRunning: boolean
 }
@@ -52,6 +59,7 @@ export interface ConversionBackend {
  * Swift pipeline (0.1, 0.3, 0.7, 0.9, 1.0).
  */
 export class ConversionService implements ConversionBackend {
+  private batchId = ''
   private cancelling = false
   private running = false
   private readonly activeChildren = new Set<ChildProcess>()
@@ -86,7 +94,8 @@ export class ConversionService implements ConversionBackend {
 
   async convert(
     files: ConversionInputFile[],
-    settings: ConversionSettings
+    settings: BatchConversionSettings,
+    batchId: string = randomUUID()
   ): Promise<BatchResult> {
     // The renderer's isProcessing flag is client state (lost on reload), so
     // re-entry must be refused here too: two batches would share cancelling/
@@ -94,9 +103,18 @@ export class ConversionService implements ConversionBackend {
     if (this.running) {
       throw new ConversionError('conversionFailed', 'A conversion is already running')
     }
+    this.batchId = batchId
     this.cancelling = false
     this.running = true
-    const result: BatchResult = { completed: 0, failed: 0, warnings: 0, total: files.length }
+    this.sink.emit('batch:started', { batchId, settings })
+    const result: BatchResult = {
+      batchId,
+      cancelled: false,
+      completed: 0,
+      failed: 0,
+      warnings: 0,
+      total: files.length
+    }
     const groups = this.groupByOutputTarget(files, settings)
     const limit = resolveConcurrency(settings.concurrency)
     logger.conversion(`Converting ${files.length} file(s), concurrency ${limit}`)
@@ -126,6 +144,7 @@ export class ConversionService implements ConversionBackend {
         }
       })
     } finally {
+      result.cancelled = this.cancelling
       this.running = false
       this.activeChildren.clear()
       // Emitted even when the pool throws: this event is what releases the
@@ -146,7 +165,7 @@ export class ConversionService implements ConversionBackend {
    */
   private groupByOutputTarget(
     files: ConversionInputFile[],
-    settings: ConversionSettings
+    settings: BatchConversionSettings
   ): ConversionInputFile[][] {
     const groups = new Map<string, ConversionInputFile[]>()
     for (const file of files) {
@@ -163,7 +182,7 @@ export class ConversionService implements ConversionBackend {
 
   private async processFile(
     file: ConversionInputFile,
-    settings: ConversionSettings
+    settings: BatchConversionSettings
   ): Promise<'completed' | 'warning'> {
     const name = basename(file.path)
     logger.conversion('Starting conversion', name)
@@ -212,7 +231,10 @@ export class ConversionService implements ConversionBackend {
       this.checkCancel()
       if (outputFormat === 'dng') {
         if (!existsSync(intermediateOutput)) {
-          throw new ConversionError('missingOutputFile', `Output file not found: ${intermediateOutput}`)
+          throw new ConversionError(
+            'missingOutputFile',
+            `Output file not found: ${intermediateOutput}`
+          )
         }
         await this.exif.copyAllTags(file.path, intermediateOutput)
       }
@@ -260,7 +282,7 @@ export class ConversionService implements ConversionBackend {
 
   private async runX3FExtract(
     file: ConversionInputFile,
-    settings: ConversionSettings,
+    settings: BatchConversionSettings,
     outputDir: string
   ): Promise<void> {
     const name = basename(file.path)
@@ -334,7 +356,10 @@ export class ConversionService implements ConversionBackend {
 
     if (current === final) return final
     if (!existsSync(current)) {
-      throw new ConversionError('missingOutputFile', `Output file not found for renaming: ${current}`)
+      throw new ConversionError(
+        'missingOutputFile',
+        `Output file not found for renaming: ${current}`
+      )
     }
     if (existsSync(final)) {
       await rm(final, { force: true })
@@ -355,10 +380,10 @@ export class ConversionService implements ConversionBackend {
     message?: string,
     outputPath?: string
   ): void {
-    this.sink.emit('file:status', { id, status, message, outputPath })
+    this.sink.emit('file:status', { batchId: this.batchId, id, status, message, outputPath })
   }
 
   private setProgress(id: string, progress: number): void {
-    this.sink.emit('file:progress', { id, progress })
+    this.sink.emit('file:progress', { batchId: this.batchId, id, progress })
   }
 }

@@ -131,6 +131,19 @@ exit code `15`/`SIGTERM` is treated as a user cancel, not a failure.
 `ConversionService` runs behind a `ConversionBackend` interface so a future
 napi-rs/FFI backend is a swap, not a rewrite.
 
+### Batch conversion
+
+Select images and choose **Convert** to review a fixed batch in the export screen.
+Conversion settings and destination are edited there; **Back** discards the draft.
+Committing saves the last-used configuration, including across app launches. The
+adjacent dropdown's **Convert with Previous Settings** skips review after the first
+committed batch. Both paths confirm existing or shared output destinations.
+
+A radial progress indicator appears beside Convert, followed by a result icon.
+Open **Conversion status** to stop a running batch, inspect row-status tooltips,
+or reveal outputs with the folder buttons. List, grid, and filmstrip images carry
+no conversion status. App Settings retains debug/update preferences.
+
 ### Queue views & inspector
 
 The queue renders in three switchable modes (toolbar control, persisted in
@@ -162,7 +175,7 @@ electron/
 │  │                             #   LogService, FileMetadata, ProcessRunner, …
 │  ├─ preload/                   # contextBridge → window.x3f (typed, allow-listed)
 │  ├─ renderer/src/              # React UI
-│  │  ├─ components/             #   MainWindow, FileQueue, Toolbar, Footer,
+│  │  ├─ components/             #   MainWindow, FileQueue, Toolbar,
 │  │  │  └─ ui/                  #   SettingsWindow, ReconversionDialog, + Radix prims
 │  │  ├─ stores/                 #   Zustand queueStore / settingsStore
 │  │  ├─ hooks/                  #   useIpcEvents, useFileDrop

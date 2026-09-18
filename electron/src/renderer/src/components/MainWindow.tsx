@@ -5,7 +5,6 @@ import { useSettingsStore } from '../stores/settingsStore'
 import { useNavStore } from '../stores/navStore'
 import { useIpcEvents } from '../hooks/useIpcEvents'
 import { Toolbar } from './Toolbar'
-import { Footer } from './Footer'
 import { DropZone } from './DropZone'
 import { FileQueue } from './FileQueue'
 import { FileGrid } from './FileGrid'
@@ -24,8 +23,7 @@ export function MainWindow(): React.JSX.Element {
   // main->renderer events + native menu command bus
   useIpcEvents()
 
-  // Load settings on mount, and refresh on focus so footer/output-dir stay in
-  // sync after edits made in the Settings window (M3 adds a push channel).
+  // Refresh app preferences on focus. Export drafts keep their own snapshot.
   useEffect(() => {
     void useSettingsStore.getState().load()
     const refresh = (): void => void useSettingsStore.getState().load()
@@ -55,7 +53,6 @@ export function MainWindow(): React.JSX.Element {
             </div>
             {inspectorOpen && <Inspector />}
           </div>
-          <Footer />
         </>
       )}
       <ReconversionDialog />

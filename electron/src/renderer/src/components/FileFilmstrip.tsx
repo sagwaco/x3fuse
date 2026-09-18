@@ -6,7 +6,6 @@ import { useFileDrop } from '../hooks/useFileDrop'
 import { useQueueSelection, type QueueSelection } from '../hooks/useQueueSelection'
 import { sortFiles } from '../lib/sortFiles'
 import { cn } from '../lib/cn'
-import { StatusIcon } from './StatusIcon'
 import { Thumbnail } from './Thumbnail'
 import { ZoomablePreview } from './ZoomablePreview'
 import { QueueContextMenu } from './QueueContextMenu'
@@ -48,8 +47,8 @@ export function FileFilmstrip(): React.JSX.Element {
           {active ? <ZoomablePreview key={active.id} file={active} /> : null}
         </div>
 
-        <div className="h-[104px] shrink-0 overflow-x-auto overflow-y-hidden border-t border-white/10 bg-neutral-900/40">
-          <div className="flex h-full items-center gap-2 px-3">
+        <div className="h-[104px] shrink-0 scroll-px-3 overflow-x-auto overflow-y-hidden border-t border-white/10 bg-neutral-900/40">
+          <div className="flex h-full w-max min-w-full items-center gap-2 px-3">
             {sorted.map((file, i) => (
               <FilmstripCell
                 key={file.id}
@@ -71,8 +70,7 @@ export function FileFilmstrip(): React.JSX.Element {
   )
 }
 
-// Memoized so high-frequency progress events only re-render the cell whose
-// file object actually changed (sel and the other props are stable).
+// Keep unchanged cells stable while browsing.
 const FilmstripCell = memo(function FilmstripCell({
   file,
   index,
@@ -111,9 +109,6 @@ const FilmstripCell = memo(function FilmstripCell({
       )}
     >
       <Thumbnail file={file} className="h-full w-full" />
-      <div className="absolute right-0.5 top-0.5 rounded bg-black/55 p-0.5">
-        <StatusIcon file={file} />
-      </div>
     </div>
   )
 })

@@ -6,7 +6,6 @@ import { formatBytes } from '../lib/format'
 import { t } from '../lib/strings'
 import { Button } from './ui/button'
 import { Row, Section, ToggleRow } from './ui/settingsLayout'
-import { ConversionSettingsForm } from './ConversionSettingsForm'
 
 /** Settings window (port of SettingsView). Backed by the main-process SettingsService. */
 export function SettingsWindow(): React.JSX.Element {
@@ -37,9 +36,6 @@ export function SettingsWindow(): React.JSX.Element {
   return (
     <div className="h-full overflow-y-auto bg-neutral-950 px-6 py-5 text-neutral-100">
       <div className="mx-auto flex max-w-xl flex-col gap-6">
-        {/* Output + Conversion (shared with the Export screen) */}
-        <ConversionSettingsForm />
-
         {/* Debug */}
         <Section title={t('settings.section.debug')}>
           <ToggleRow

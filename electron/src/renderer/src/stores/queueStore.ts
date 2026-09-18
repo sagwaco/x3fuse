@@ -1,77 +1,74 @@
 import { create } from 'zustand'
-import type { ConversionStatus, X3FFileDTO } from '@shared/types'
-import type { ConvertFile } from '@shared/ipc'
+import {
+  batchSettings,
+  type BatchConversionSettings,
+  type ConversionStatus,
+  type X3FFileDTO
+} from '@shared/types'
+import type { BatchSummary, IpcEventMap, OutputConflict } from '@shared/ipc'
 import { ipc } from '../lib/ipc'
 import { basename } from '../lib/path'
-import { isQueued, isReconvertable } from '../lib/fileStatus'
-import { resolveConvertTargets } from '../lib/convertTargets'
+import { outputFileName } from '../lib/outputName'
+import { sortFiles } from '../lib/sortFiles'
 import { useSettingsStore } from './settingsStore'
+import { useNavStore } from './navStore'
 
-/** Mint a stable client-side id for an optimistic placeholder row. */
 const newPlaceholderId = (): string => crypto.randomUUID()
 
-/** Files queued for reconversion confirmation (the Radix dialog reads this). */
-interface PendingReconversion {
-  /** Files whose output already exists (shown in the dialog). */
-  conflicts: X3FFileDTO[]
-  /** The full set to convert once confirmed (may include non-conflicting files). */
-  targets: X3FFileDTO[]
+export interface ExportDraft {
+  files: X3FFileDTO[]
+  settings: BatchConversionSettings
+}
+
+export interface BatchFileResult {
+  file: X3FFileDTO
+  outputFileName: string
+  status: ConversionStatus | 'cancelled' | 'unstarted'
+  progress: number
+  message?: string
+  outputPath?: string
+}
+
+export interface ConversionBatch {
+  id: string
+  results: BatchFileResult[]
+  summary: BatchSummary | null
 }
 
 interface QueueState {
   files: X3FFileDTO[]
   selectedIds: Set<string>
-  /** The "primary" selection — the inspector + filmstrip preview subject. */
   activeId: string | null
   isProcessing: boolean
   isCancelling: boolean
-  pendingReconversion: PendingReconversion | null
-
-  // Selection
+  isPreparing: boolean
+  draft: ExportDraft | null
+  pendingReconversion: OutputConflict[] | null
+  batch: ConversionBatch | null
+  error: string | null
   setSelection: (ids: Set<string>, active?: string | null) => void
   selectAll: () => void
   deselectAll: () => void
-
-  // Queue management
   addFiles: (paths: string[]) => Promise<void>
   removeFiles: (ids: Set<string>) => void
   removeSelected: () => void
   clearQueue: () => void
-  removeFailed: () => void
-  removeCompleted: () => void
-
-  // Event-driven updates (from main)
-  applyStatus: (p: {
-    id: string
-    status: ConversionStatus
-    message?: string
-    outputPath?: string
-  }) => void
-  applyProgress: (p: { id: string; progress: number }) => void
-  onBatchComplete: () => void
-
-  // Conversion triggers (ported from ContentView / FileProcessor)
-  convertToolbar: () => Promise<void>
-  convertAllMenu: () => Promise<void>
-  convertSelected: (ids: Set<string>) => Promise<void>
-  reconvertSelected: (ids: Set<string>) => Promise<void>
-  doubleClickConvert: (ids: Set<string>) => Promise<void>
+  openExport: (ids?: Set<string>) => void
+  updateDraft: (patch: Partial<BatchConversionSettings>) => void
+  cancelExport: () => void
+  commitExport: () => Promise<void>
+  convertPrevious: () => Promise<void>
+  convertAllMenu: () => void
+  applyStatus: (p: IpcEventMap['file:status']) => void
+  applyProgress: (p: IpcEventMap['file:progress']) => void
+  onBatchStarted: (p: IpcEventMap['batch:started']) => void
+  onBatchComplete: (p: BatchSummary) => void
+  dismissBatch: () => void
   stop: () => void
   confirmReconversion: () => void
   cancelReconversion: () => void
 }
 
-const toConvertFile = (f: X3FFileDTO): ConvertFile => ({
-  id: f.id,
-  path: f.path,
-  overrides: f.overrides
-})
-
-/**
- * Resolve the active (primary) id after a selection change: prefer the caller's
- * pick, then keep the current one if still selected, else the first selected,
- * else none.
- */
 function pickActive(
   ids: Set<string>,
   preferred: string | null | undefined,
@@ -82,62 +79,76 @@ function pickActive(
   return ids.size > 0 ? (ids.values().next().value as string) : null
 }
 
-const canCancelNow = (s: QueueState): boolean => s.isProcessing && !s.isCancelling
-
 export const useQueueStore = create<QueueState>((set, get) => {
-  /** Reset the given files to `queued`, then start a sequential conversion. */
-  function beginConversion(targets: X3FFileDTO[]): void {
-    if (get().isProcessing || targets.length === 0) return
-    const targetIds = new Set(targets.map((f) => f.id))
-    // Re-resolve against live state: every caller may have awaited (reconversion
-    // check, settings fetch, open dialog) since capturing `targets`, and rows
-    // removed in the meantime must not be sent for conversion.
-    const live = get().files.filter((f) => targetIds.has(f.id))
-    if (live.length === 0) return
-    set((s) => ({
-      pendingReconversion: null,
-      isProcessing: true,
-      isCancelling: false,
-      files: s.files.map((f) =>
-        targetIds.has(f.id)
-          ? { ...f, status: 'queued', progress: 0, errorMessage: undefined, warningMessage: undefined }
-          : f
-      )
-    }))
-    ipc
-      .invoke('convert:start', { files: live.map(toConvertFile) })
-      .catch((e: unknown) => {
-        console.error('convert:start failed', e)
-        // No batch:complete will arrive for a rejected start; release the
-        // processing state so the UI can recover and retry.
-        set({ isProcessing: false, isCancelling: false })
-      })
+  function capture(ids: Set<string>): ExportDraft | null {
+    const settings = useSettingsStore.getState()
+    if (!settings.loaded) return null
+    const files = sortFiles(
+      get().files.filter((f) => ids.has(f.id)),
+      settings.settings.sortField,
+      settings.settings.sortAscending
+    )
+    if (!files.length || files.some((f) => f.pending)) return null
+    return { files, settings: batchSettings(settings.settings) }
   }
 
-  /**
-   * If any target is already converted and its output exists, surface the
-   * reconversion dialog (over the conflicts) before starting; otherwise begin.
-   * On confirm we convert the *full* target set — unlike the Swift app, which
-   * dropped non-conflicting files; converting them is what "Convert All" implies.
-   */
-  async function startWithReconversionCheck(targets: X3FFileDTO[]): Promise<void> {
-    if (get().isProcessing || targets.length === 0) return
-    const reconvertable = targets.filter(isReconvertable)
-    if (reconvertable.length > 0) {
-      const conflictIds = await ipc.invoke('queue:existingOutputs', {
-        files: reconvertable.map(toConvertFile)
-      })
-      const conflictSet = new Set(conflictIds)
-      const conflicts = reconvertable.filter((f) => conflictSet.has(f.id))
-      if (conflicts.length > 0) {
-        set({ pendingReconversion: { conflicts, targets } })
-        return
-      }
+  function beginConversion(replaceExisting: boolean): void {
+    const draft = get().draft
+    if (!draft || get().isProcessing) return
+    const previousBatch = get().batch
+    const batch: ConversionBatch = {
+      id: crypto.randomUUID(),
+      summary: null,
+      results: draft.files.map((file) => ({
+        file,
+        outputFileName: outputFileName(file, draft.settings),
+        status: 'queued',
+        progress: 0
+      }))
     }
-    beginConversion(targets)
+    set({
+      batch,
+      isProcessing: true,
+      isPreparing: true,
+      isCancelling: false,
+      pendingReconversion: null,
+      error: null
+    })
+    void ipc
+      .invoke('convert:start', {
+        batchId: batch.id,
+        files: draft.files.map(({ id, path }) => ({ id, path })),
+        settings: draft.settings,
+        replaceExisting
+      })
+      .catch((error: unknown) => {
+        if (get().batch?.id !== batch.id) return
+        set({
+          isProcessing: false,
+          isPreparing: false,
+          isCancelling: false,
+          error: String(error),
+          ...(get().draft ? { batch: previousBatch } : {})
+        })
+        if (get().draft) useNavStore.getState().goToExport()
+      })
   }
 
-  const byIds = (ids: Set<string>): X3FFileDTO[] => get().files.filter((f) => ids.has(f.id))
+  async function checkAndStart(): Promise<void> {
+    const draft = get().draft
+    if (!draft || get().isProcessing || get().isPreparing) return
+    set({ isPreparing: true, error: null })
+    try {
+      const conflicts = await ipc.invoke('queue:existingOutputs', {
+        files: draft.files.map(({ id, path }) => ({ id, path })),
+        settings: draft.settings
+      })
+      if (conflicts.length) set({ pendingReconversion: conflicts })
+      else beginConversion(false)
+    } catch (error) {
+      set({ isPreparing: false, error: String(error) })
+    }
+  }
 
   return {
     files: [],
@@ -145,7 +156,11 @@ export const useQueueStore = create<QueueState>((set, get) => {
     activeId: null,
     isProcessing: false,
     isCancelling: false,
+    isPreparing: false,
+    draft: null,
     pendingReconversion: null,
+    batch: null,
+    error: null,
 
     setSelection: (ids, active) =>
       set((s) => ({ selectedIds: ids, activeId: pickActive(ids, active, s.activeId) })),
@@ -168,8 +183,6 @@ export const useQueueStore = create<QueueState>((set, get) => {
         id: newPlaceholderId(),
         path,
         fileName: basename(path),
-        status: 'queued',
-        progress: 0,
         pending: true
       }))
       const placeholderIds = placeholders.map((p) => p.id)
@@ -196,10 +209,7 @@ export const useQueueStore = create<QueueState>((set, get) => {
         return
       }
 
-      // Fold the freshly-read metadata into each placeholder, keeping its id so
-      // selection survives, and clearing `pending`. We merge into the *live* row
-      // rather than replacing it so a status/progress the row may have gained
-      // mid-import (e.g. the user converted it) isn't clobbered back to queued.
+      // Fold metadata into surviving placeholders, keeping selection IDs stable.
       const metaById = new Map<string, X3FFileDTO>()
       added.forEach((dto, i) => {
         const id = placeholderIds[i]
@@ -229,7 +239,7 @@ export const useQueueStore = create<QueueState>((set, get) => {
     },
 
     removeFiles(ids) {
-      if (get().isProcessing) return
+      if (get().isProcessing || get().isPreparing || get().draft) return
       set((s) => ({
         files: s.files.filter((f) => !ids.has(f.id)),
         selectedIds: new Set([...s.selectedIds].filter((id) => !ids.has(id))),
@@ -242,108 +252,148 @@ export const useQueueStore = create<QueueState>((set, get) => {
     },
 
     clearQueue() {
-      if (get().isProcessing) return
+      if (get().isProcessing || get().isPreparing || get().draft) return
       set({ files: [], selectedIds: new Set(), activeId: null })
     },
 
-    removeFailed() {
-      if (get().isProcessing) return
-      const drop = new Set(get().files.filter((f) => f.status === 'failed').map((f) => f.id))
-      get().removeFiles(drop)
+    openExport(ids = get().selectedIds) {
+      if (get().isProcessing || get().isPreparing || get().draft) return
+      const draft = capture(ids)
+      if (!draft) return
+      set({ draft, error: null })
+      useNavStore.getState().goToExport()
     },
 
-    removeCompleted() {
-      if (get().isProcessing) return
-      const drop = new Set(
-        get()
-          .files.filter((f) => f.status === 'completed' || f.status === 'warning')
-          .map((f) => f.id)
-      )
-      get().removeFiles(drop)
-    },
-
-    applyStatus({ id, status, message, outputPath }) {
+    updateDraft(patch) {
+      if (get().isPreparing || get().isProcessing) return
       set((s) => ({
-        files: s.files.map((f) => {
-          if (f.id !== id) return f
-          const next: X3FFileDTO = { ...f, status }
-          if (status === 'failed') next.errorMessage = message
-          if (status === 'warning') next.warningMessage = message
-          if (status === 'completed') {
-            next.progress = 1
-            if (outputPath) next.outputPath = outputPath
+        draft: s.draft ? { ...s.draft, settings: { ...s.draft.settings, ...patch } } : null
+      }))
+    },
+
+    cancelExport() {
+      if (get().isPreparing || get().isProcessing) return
+      set({ draft: null, error: null })
+      useNavStore.getState().goToQueue()
+    },
+
+    commitExport: checkAndStart,
+
+    async convertPrevious() {
+      if (
+        get().isProcessing ||
+        get().isPreparing ||
+        get().draft ||
+        !useSettingsStore.getState().settings.hasPreviousConversion
+      )
+        return
+      const draft = capture(get().selectedIds)
+      if (!draft) return
+      set({ draft })
+      await checkAndStart()
+      // A failed shortcut can be corrected in the ordinary export screen.
+      if (get().error) useNavStore.getState().goToExport()
+    },
+
+    convertAllMenu() {
+      if (get().isProcessing || get().isPreparing || get().draft) return
+      get().selectAll()
+      get().openExport()
+    },
+
+    applyStatus({ batchId, id, status, message, outputPath }) {
+      set((s) => {
+        if (!s.isProcessing || s.batch?.id !== batchId) return s
+        return {
+          batch: {
+            ...s.batch,
+            results: s.batch.results.map((r) =>
+              r.file.id !== id
+                ? r
+                : {
+                    ...r,
+                    status: status === 'queued' ? 'cancelled' : status,
+                    progress: ['completed', 'failed', 'warning'].includes(status) ? 1 : r.progress,
+                    message: message ?? r.message,
+                    outputPath: outputPath ?? r.outputPath
+                  }
+            )
           }
-          if (status === 'queued') next.progress = 0
-          return next
-        })
-      }))
+        }
+      })
     },
 
-    applyProgress({ id, progress }) {
-      set((s) => ({
-        files: s.files.map((f) => (f.id === id ? { ...f, progress } : f))
-      }))
-    },
-
-    onBatchComplete() {
-      set({ isProcessing: false, isCancelling: false })
-    },
-
-    // --- Conversion triggers ---
-
-    async convertToolbar() {
-      const { files, selectedIds, isProcessing } = get()
-      if (isProcessing) return
-      // Same target set the Export screen previews (see resolveConvertTargets).
-      const targets = resolveConvertTargets(
-        files,
-        selectedIds,
-        useSettingsStore.getState().settings.onlyProcessNewItems
+    applyProgress({ batchId, id, progress }) {
+      set((s) =>
+        !s.isProcessing || s.batch?.id !== batchId
+          ? s
+          : {
+              batch: {
+                ...s.batch,
+                results: s.batch.results.map((r) =>
+                  r.file.id === id
+                    ? { ...r, progress: Math.max(r.progress, Math.min(1, Math.max(0, progress))) }
+                    : r
+                )
+              }
+            }
       )
-      if (targets.some(isReconvertable)) await startWithReconversionCheck(targets)
-      else beginConversion(targets)
     },
 
-    async convertAllMenu() {
-      if (get().isProcessing) return
-      // The menu command bypasses the reconversion dialog (matches Swift
-      // processAllFiles) and honours onlyProcessNewItems, read fresh from main.
-      const settings = await ipc.invoke('settings:get')
-      const { files } = get()
-      const targets = settings.onlyProcessNewItems ? files.filter(isQueued) : files
-      beginConversion(targets)
+    onBatchStarted({ batchId, settings }) {
+      if (get().batch?.id !== batchId) return
+      useSettingsStore.setState((s) => ({
+        settings: { ...s.settings, ...settings, hasPreviousConversion: true }
+      }))
+      set({ draft: null, isPreparing: false })
+      useNavStore.getState().goToQueue()
     },
 
-    async convertSelected(ids) {
-      beginConversion(byIds(ids))
+    onBatchComplete(summary) {
+      set((s) =>
+        s.batch?.id !== summary.batchId
+          ? s
+          : {
+              isProcessing: false,
+              isCancelling: false,
+              isPreparing: false,
+              batch: {
+                ...s.batch,
+                summary,
+                results: s.batch.results.map((r) => ({
+                  ...r,
+                  status:
+                    r.status === 'queued'
+                      ? 'unstarted'
+                      : r.status === 'processing' && summary.cancelled
+                        ? 'cancelled'
+                        : r.status
+                }))
+              }
+            }
+      )
     },
 
-    async reconvertSelected(ids) {
-      await startWithReconversionCheck(byIds(ids))
-    },
-
-    async doubleClickConvert(ids) {
-      if (get().isProcessing) return
-      const target = byIds(ids)
-      if (target.length === 0) return
-      if (target.some(isReconvertable)) await startWithReconversionCheck(target)
-      else beginConversion(target)
+    dismissBatch() {
+      if (!get().isProcessing) set({ batch: null, error: null })
     },
 
     stop() {
-      if (!canCancelNow(get())) return
+      if (!get().isProcessing || get().isPreparing || get().isCancelling) return
       set({ isCancelling: true })
-      ipc.invoke('convert:stop').catch((e: unknown) => console.error('convert:stop failed', e))
+      const batchId = get().batch?.id
+      void ipc.invoke('convert:stop').catch((error: unknown) => {
+        if (get().batch?.id === batchId) set({ isCancelling: false, error: String(error) })
+      })
     },
 
     confirmReconversion() {
-      const pending = get().pendingReconversion
-      if (!pending) return
-      beginConversion(pending.targets)
+      if (get().pendingReconversion) beginConversion(true)
     },
 
     cancelReconversion() {
-      set({ pendingReconversion: null })
+      set({ pendingReconversion: null, isPreparing: false })
+      if (useNavStore.getState().screen === 'queue') set({ draft: null })
     }
   }
 })

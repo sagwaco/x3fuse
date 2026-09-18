@@ -1,10 +1,11 @@
 import { app, dialog, ipcMain, shell, type OpenDialogOptions } from 'electron'
-import { existsSync } from 'fs'
 import type { IpcPayload, IpcRequestChannel, IpcResult } from '@shared/ipc'
 import type { AppContext } from '../context'
 import type { WindowManager } from '../windows'
 import type { Translate } from '../i18n'
-import { buildFileDTO, outputFilePath } from '../services/queueHelpers'
+import { buildFileDTO } from '../services/queueHelpers'
+import { validateBatch } from '../services/batchValidation'
+import { batchSettings } from '@shared/types'
 
 type Handler<C extends IpcRequestChannel> = (
   payload: IpcPayload<C>
@@ -15,11 +16,7 @@ function handle<C extends IpcRequestChannel>(channel: C, handler: Handler<C>): v
 }
 
 /** Registers all request/response IPC handlers. */
-export function registerIpcHandlers(
-  ctx: AppContext,
-  windows: WindowManager,
-  t: Translate
-): void {
+export function registerIpcHandlers(ctx: AppContext, windows: WindowManager, t: Translate): void {
   // --- Settings ---
   handle('settings:get', () => ctx.settings.get())
   handle('settings:set', (patch) => {
@@ -44,17 +41,21 @@ export function registerIpcHandlers(
     return dtos
   })
 
-  handle('queue:existingOutputs', ({ files }) => {
-    const settings = ctx.settings.get()
-    return files
-      .filter((f) => existsSync(outputFilePath(settings, f.path, f.overrides)))
-      .map((f) => f.id)
-  })
+  handle('queue:existingOutputs', ({ files, settings }) => validateBatch(files, settings))
 
-  // --- Conversion ---
-  handle('convert:start', async ({ files }) => {
-    const settings = ctx.settings.get()
-    await ctx.conversion.convert(files, settings)
+  // Main owns admission and persists only a committed batch configuration.
+  handle('convert:start', async ({ batchId, files, settings, replaceExisting }) => {
+    if (typeof batchId !== 'string' || !batchId || typeof replaceExisting !== 'boolean') {
+      throw new Error('Invalid conversion request')
+    }
+    const snapshot = batchSettings(settings)
+    const inputs = files.map(({ id, path }) => ({ id, path }))
+    const conflicts = await validateBatch(inputs, snapshot)
+    if (ctx.conversion.isRunning) throw new Error('A conversion is already running')
+    if (conflicts.length && !replaceExisting)
+      throw new Error('Output files already exist. Review and confirm replacement.')
+    ctx.settings.set({ ...snapshot, hasPreviousConversion: true })
+    await ctx.conversion.convert(inputs, snapshot, batchId)
   })
   handle('convert:stop', () => ctx.conversion.stop())
 

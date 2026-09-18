@@ -58,7 +58,11 @@ export function buildAppMenu(actions: MenuActions, t: Translate): void {
     {
       label: 'File',
       submenu: [
-        { label: `${t('menu.file.add_x3f_files')}`, accelerator: 'CmdOrCtrl+O', click: cmd('addFiles') },
+        {
+          label: `${t('menu.file.add_x3f_files')}`,
+          accelerator: 'CmdOrCtrl+O',
+          click: cmd('addFiles')
+        },
         ...(isMac
           ? []
           : [
@@ -83,7 +87,11 @@ export function buildAppMenu(actions: MenuActions, t: Translate): void {
         { role: 'copy' },
         { role: 'paste' },
         { type: 'separator' },
-        { label: t('menu.edit.select_all_files'), accelerator: 'CmdOrCtrl+A', click: cmd('selectAll') },
+        {
+          label: t('menu.edit.select_all_files'),
+          accelerator: 'CmdOrCtrl+A',
+          click: cmd('selectAll')
+        },
         {
           label: t('menu.edit.deselect_all_files'),
           accelerator: 'CmdOrCtrl+D',
@@ -111,10 +119,7 @@ export function buildAppMenu(actions: MenuActions, t: Translate): void {
           label: t('menu.conversion.clear_queue'),
           accelerator: 'CmdOrCtrl+K',
           click: cmd('clearQueue')
-        },
-        { type: 'separator' },
-        { label: t('menu.conversion.remove_failed_files'), click: cmd('removeFailed') },
-        { label: t('menu.conversion.remove_completed_files'), click: cmd('removeCompleted') }
+        }
       ]
     },
     { role: 'windowMenu' },

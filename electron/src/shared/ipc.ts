@@ -12,15 +12,14 @@
  *
  * Architecture note: the renderer owns the queue (queueStore) and decides which
  * files to convert; the main process is stateless about the queue and simply
- * executes the file list it is handed, reading global options from
- * SettingsService. Status/progress flow back as events keyed by file id.
+ * executes the file list it is handed, using the supplied batch settings snapshot. Status/progress flow back as events keyed by file id.
  */
 
 import type {
   ConversionSettings,
   ConversionStatus,
   ExifPair,
-  FileOverrides,
+  BatchConversionSettings,
   X3FFileDTO
 } from './types'
 
@@ -29,14 +28,20 @@ export interface ConvertFile {
   id: string
   /** Absolute path to the source .X3F file. */
   path: string
-  overrides?: FileOverrides
 }
 
 export interface BatchSummary {
+  batchId: string
+  cancelled: boolean
   completed: number
   failed: number
   warnings: number
   total: number
+}
+
+export interface OutputConflict {
+  id: string
+  outputPath: string
 }
 
 export interface LogSizes {
@@ -54,8 +59,6 @@ export type MenuCommand =
   | 'convertAll'
   | 'stop'
   | 'clearQueue'
-  | 'removeFailed'
-  | 'removeCompleted'
   | 'showLogs'
   | 'checkForUpdates'
 
@@ -66,10 +69,21 @@ export interface IpcRequestMap {
 
   'queue:add': { payload: { paths: string[] }; result: X3FFileDTO[] }
   /** Returns the subset of ids whose computed output file already exists on disk. */
-  'queue:existingOutputs': { payload: { files: ConvertFile[] }; result: string[] }
+  'queue:existingOutputs': {
+    payload: { files: ConvertFile[]; settings: BatchConversionSettings }
+    result: OutputConflict[]
+  }
 
-  /** Convert the given files sequentially. Global options come from SettingsService. */
-  'convert:start': { payload: { files: ConvertFile[] }; result: void }
+  /** Convert a fixed batch using the supplied settings snapshot. */
+  'convert:start': {
+    payload: {
+      batchId: string
+      files: ConvertFile[]
+      settings: BatchConversionSettings
+      replaceExisting: boolean
+    }
+    result: void
+  }
   'convert:stop': { payload: void; result: void }
 
   /** Full, display-ready EXIF for the inspector panel (curated, ordered). */
@@ -99,13 +113,15 @@ export type IpcResult<C extends IpcRequestChannel> = IpcRequestMap[C]['result']
 /** Main -> renderer event channels: channel -> payload. */
 export interface IpcEventMap {
   /** `outputPath` is set on the terminal `completed` status (used for reveal). */
+  'batch:started': { batchId: string; settings: BatchConversionSettings }
   'file:status': {
+    batchId: string
     id: string
     status: ConversionStatus
     message?: string
     outputPath?: string
   }
-  'file:progress': { id: string; progress: number }
+  'file:progress': { batchId: string; id: string; progress: number }
   'queue:overallProgress': { progress: number }
   'batch:complete': BatchSummary
   'update:available': { version: string }
@@ -136,6 +152,7 @@ export const IPC_REQUEST_CHANNELS: IpcRequestChannel[] = [
 ]
 
 export const IPC_EVENT_CHANNELS: IpcEventChannel[] = [
+  'batch:started',
   'file:status',
   'file:progress',
   'queue:overallProgress',

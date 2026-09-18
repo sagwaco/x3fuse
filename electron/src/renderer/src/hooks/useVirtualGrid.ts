@@ -24,6 +24,8 @@ export function useVirtualGrid(
     count: Math.ceil(itemCount / columns),
     getScrollElement: () => parentRef.current,
     estimateSize: () => rowHeight,
+    paddingStart: itemCount > 0 ? padding : 0,
+    scrollPaddingStart: padding,
     overscan: 4
   })
   return { columns, virtualizer }

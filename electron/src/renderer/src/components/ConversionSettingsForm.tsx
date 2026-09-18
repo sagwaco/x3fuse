@@ -4,12 +4,12 @@ import {
   shouldShowColorProfileOption,
   shouldShowCompressionOption,
   shouldShowDngHighlightRecoveryOption,
+  type BatchConversionSettings,
   type ColorProfile,
   type OutputFormat
 } from '@shared/types'
 import { autoConcurrency, MAX_CONCURRENCY } from '@shared/concurrency'
 import { ipc } from '../lib/ipc'
-import { useSettingsStore } from '../stores/settingsStore'
 import { basename } from '../lib/path'
 import { t } from '../lib/strings'
 import { Button } from './ui/button'
@@ -45,15 +45,15 @@ function concurrencyOptions(): { value: string; label: string }[] {
 }
 
 /**
- * The Output + Conversion settings sections, backed by the main-process
- * SettingsService. Shared by the Settings window (alongside Debug/Updates/About)
- * and the Export screen's sidebar so both edit the same authoritative settings
- * with identical controls.
+ * Edits only the current export draft; persistence happens on commit.
  */
-export function ConversionSettingsForm(): React.JSX.Element {
-  const settings = useSettingsStore((s) => s.settings)
-  const update = useSettingsStore((s) => s.update)
-
+export function ConversionSettingsForm({
+  settings,
+  update
+}: {
+  settings: BatchConversionSettings
+  update: (patch: Partial<BatchConversionSettings>) => void
+}): React.JSX.Element {
   // Remember the last non-zero denoise intensity so toggling Off→On restores it.
   const lastDenoise = useRef(settings.denoiseIntensity > 0 ? settings.denoiseIntensity : 10)
 
@@ -66,22 +66,22 @@ export function ConversionSettingsForm(): React.JSX.Element {
 
   async function pickOutputDir(): Promise<void> {
     const dir = await ipc.invoke('dialog:pickOutputDir')
-    if (dir) await update({ outputDirectory: dir })
+    if (dir) update({ outputDirectory: dir })
   }
 
   async function onSaveAlongsideChange(useSame: boolean): Promise<void> {
     if (useSame) {
-      await update({ outputDirectory: null })
+      update({ outputDirectory: null })
     } else if (settings.outputDirectory === null) {
       await pickOutputDir()
     }
   }
 
   function setDenoiseEnabled(enabled: boolean): void {
-    if (enabled) void update({ denoiseIntensity: lastDenoise.current || 10 })
+    if (enabled) update({ denoiseIntensity: lastDenoise.current || 10 })
     else {
       lastDenoise.current = settings.denoiseIntensity
-      void update({ denoiseIntensity: 0 })
+      update({ denoiseIntensity: 0 })
     }
   }
 
@@ -114,14 +114,6 @@ export function ConversionSettingsForm(): React.JSX.Element {
             </div>
           </div>
         )}
-
-        <Divider />
-
-        <ToggleRow
-          label={t('settings.only_convert_new')}
-          checked={settings.onlyProcessNewItems}
-          onChange={(v) => void update({ onlyProcessNewItems: v })}
-        />
       </Section>
 
       {/* Conversion */}
@@ -130,7 +122,7 @@ export function ConversionSettingsForm(): React.JSX.Element {
           <Select
             value={format}
             options={FORMAT_OPTIONS}
-            onValueChange={(v) => void update({ outputFormat: v })}
+            onValueChange={(v) => update({ outputFormat: v })}
           />
         </Row>
 
@@ -139,7 +131,7 @@ export function ConversionSettingsForm(): React.JSX.Element {
             <ToggleRow
               label={t('settings.raw_compression')}
               checked={settings.compress}
-              onChange={(v) => void update({ compress: v })}
+              onChange={(v) => update({ compress: v })}
             />
             {settings.compress && <Callout text={t('settings.raw_compression.warning')} />}
           </>
@@ -150,7 +142,7 @@ export function ConversionSettingsForm(): React.JSX.Element {
             <ToggleRow
               label={t('settings.dng_highlight_recovery')}
               checked={settings.dngHighlightRecovery}
-              onChange={(v) => void update({ dngHighlightRecovery: v })}
+              onChange={(v) => update({ dngHighlightRecovery: v })}
             />
             {settings.dngHighlightRecovery && (
               <Callout text={t('settings.dng_highlight_recovery.warning')} />
@@ -162,7 +154,7 @@ export function ConversionSettingsForm(): React.JSX.Element {
           <ToggleRow
             label={t('settings.cineon')}
             checked={settings.cineon}
-            onChange={(v) => void update({ cineon: v })}
+            onChange={(v) => update({ cineon: v })}
           />
         )}
 
@@ -171,7 +163,7 @@ export function ConversionSettingsForm(): React.JSX.Element {
             <Select
               value={settings.colorProfile}
               options={COLOR_OPTIONS}
-              onValueChange={(v) => void update({ colorProfile: v })}
+              onValueChange={(v) => update({ colorProfile: v })}
             />
           </Row>
         )}
@@ -190,7 +182,7 @@ export function ConversionSettingsForm(): React.JSX.Element {
               value={settings.denoiseIntensity}
               min={1}
               max={10}
-              onValueChange={(v) => void update({ denoiseIntensity: v })}
+              onValueChange={(v) => update({ denoiseIntensity: v })}
             />
             <div className="flex justify-between text-xs font-semibold text-neutral-500">
               <span>{t('settings.denoise.intensity.less')}</span>
@@ -205,7 +197,7 @@ export function ConversionSettingsForm(): React.JSX.Element {
           <Select
             value={String(settings.concurrency)}
             options={concurrencyOptions()}
-            onValueChange={(v) => void update({ concurrency: Number(v) })}
+            onValueChange={(v) => update({ concurrency: Number(v) })}
           />
         </Row>
         <p className="text-xs text-neutral-500">{t('settings.concurrency.help')}</p>

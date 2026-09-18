@@ -67,8 +67,8 @@ export interface ConversionSettings {
   /** null = write next to each input file; string = custom output directory. */
   outputDirectory: string | null
   debugLoggingEnabled: boolean
-  /** Only process files still in the `queued` state, not already-converted ones. */
-  onlyProcessNewItems: boolean
+  /** True after a batch configuration has been committed. */
+  hasPreviousConversion: boolean
   /** Simultaneous conversions: 0 = auto (CPU-derived), 1..MAX_CONCURRENCY = manual. */
   concurrency: number
   sortField: SortField
@@ -91,7 +91,7 @@ export const DEFAULT_SETTINGS: ConversionSettings = {
   cineon: false,
   outputDirectory: null,
   debugLoggingEnabled: false,
-  onlyProcessNewItems: true,
+  hasPreviousConversion: false,
   concurrency: 0,
   sortField: 'File Name',
   sortAscending: true,
@@ -112,16 +112,13 @@ export interface FileOverrides {
 /**
  * Serializable representation of an X3F file in the queue (port of X3FFile).
  * Crosses the IPC boundary, so it carries no AppKit/SwiftUI-only fields —
- * status color/icon are a presentation concern resolved in the renderer.
+ * Conversion results belong to a batch, not to these browsing records.
  */
 export interface X3FFileDTO {
   id: string
   /** Absolute path to the source .X3F file. */
   path: string
   fileName: string
-  status: ConversionStatus
-  /** 0.0 – 1.0 */
-  progress: number
   /**
    * True for an optimistic placeholder row shown the instant a file is dropped,
    * before main has finished reading its metadata (size, date, orientation,
@@ -129,11 +126,6 @@ export interface X3FFileDTO {
    * cleared once `queue:add` resolves. Renderer-only — never crosses from main.
    */
   pending?: boolean
-  errorMessage?: string
-  warningMessage?: string
-  /** Absolute path of the produced output file, set when status becomes `completed`. */
-  outputPath?: string
-
   // EXIF metadata, populated during/after conversion.
   cameraModel?: string
   lensId?: string
@@ -158,32 +150,33 @@ export interface X3FFileDTO {
    * use the preview as-is.
    */
   aspectRatio?: number
-
-  overrides?: FileOverrides
 }
 
 /** Resolve an effective setting value: per-file override wins over global. */
 export function resolveSetting<K extends keyof FileOverrides>(
-  settings: ConversionSettings,
+  settings: BatchConversionSettings,
   overrides: FileOverrides | undefined,
   key: K
-): ConversionSettings[K & keyof ConversionSettings] {
+): BatchConversionSettings[K & keyof BatchConversionSettings] {
   const override = overrides?.[key]
   if (override !== undefined) {
-    return override as ConversionSettings[K & keyof ConversionSettings]
+    return override as BatchConversionSettings[K & keyof BatchConversionSettings]
   }
-  return settings[key as keyof ConversionSettings] as ConversionSettings[K & keyof ConversionSettings]
+  return settings[key as keyof BatchConversionSettings] as BatchConversionSettings[K &
+    keyof BatchConversionSettings]
 }
 
 /** mirrors ConversionSettings.effectiveOutputDirectory(for:) */
-export function effectiveOutputDirectory(settings: ConversionSettings, inputDir: string): string {
+export function effectiveOutputDirectory(
+  settings: BatchConversionSettings,
+  inputDir: string
+): string {
   return settings.outputDirectory ?? inputDir
 }
 
 // --- Format-dependent option visibility (ConversionSettings.swift:122-139) ---
 
-export const shouldShowCompressionOption = (f: OutputFormat): boolean =>
-  f === 'dng' || f === 'tiff'
+export const shouldShowCompressionOption = (f: OutputFormat): boolean => f === 'dng' || f === 'tiff'
 
 export const shouldShowColorProfileOption = (f: OutputFormat): boolean =>
   f === 'embeddedJpg' || f === 'tiff'
@@ -191,3 +184,44 @@ export const shouldShowColorProfileOption = (f: OutputFormat): boolean =>
 export const shouldShowDngHighlightRecoveryOption = (f: OutputFormat): boolean => f === 'dng'
 
 export const shouldShowCineonOption = (f: OutputFormat): boolean => f === 'tiff'
+
+/** Options captured once for a conversion batch. */
+export type BatchConversionSettings = Pick<
+  ConversionSettings,
+  | 'outputFormat'
+  | 'compress'
+  | 'denoiseIntensity'
+  | 'colorProfile'
+  | 'dngHighlightRecovery'
+  | 'cineon'
+  | 'outputDirectory'
+  | 'concurrency'
+>
+
+export function batchSettings(settings: BatchConversionSettings): BatchConversionSettings {
+  const {
+    outputFormat,
+    compress,
+    denoiseIntensity,
+    colorProfile,
+    dngHighlightRecovery,
+    cineon,
+    outputDirectory,
+    concurrency
+  } = settings
+  return {
+    outputFormat,
+    compress,
+    denoiseIntensity,
+    colorProfile,
+    dngHighlightRecovery,
+    cineon,
+    outputDirectory,
+    concurrency
+  }
+}
+
+/** The converter preserves .X3F in JPEG/TIFF names; DNG drops it. */
+export function outputName(fileName: string, format: OutputFormat): string {
+  return (format === 'dng' ? fileName.replace(/\.x3f$/i, '') : fileName) + OUTPUT_EXTENSION[format]
+}

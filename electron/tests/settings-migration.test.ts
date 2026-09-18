@@ -60,8 +60,8 @@ describe('normalizeSettings', () => {
 
   it('coerces invalid booleans to their defaults', () => {
     expect(normalizeSettings({ compress: 'yes' }).compress).toBe(DEFAULT_SETTINGS.compress)
-    expect(normalizeSettings({ onlyProcessNewItems: 0 }).onlyProcessNewItems).toBe(
-      DEFAULT_SETTINGS.onlyProcessNewItems
+    expect(normalizeSettings({ hasPreviousConversion: 0 }).hasPreviousConversion).toBe(
+      DEFAULT_SETTINGS.hasPreviousConversion
     )
   })
 })

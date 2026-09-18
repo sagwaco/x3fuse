@@ -1,10 +1,10 @@
 import { randomUUID } from 'crypto'
-import { basename, dirname, extname, join } from 'path'
+import { basename, dirname, join } from 'path'
 import {
-  OUTPUT_EXTENSION,
+  outputName,
   effectiveOutputDirectory,
   resolveSetting,
-  type ConversionSettings,
+  type BatchConversionSettings,
   type FileOverrides,
   type X3FFileDTO
 } from '@shared/types'
@@ -21,8 +21,6 @@ export async function buildFileDTO(path: string): Promise<X3FFileDTO> {
     id: randomUUID(),
     path,
     fileName: basename(path),
-    status: 'queued',
-    progress: 0,
     fileSize: meta.fileSize,
     capturedDate: meta.capturedDate
   }
@@ -36,16 +34,11 @@ export async function buildFileDTO(path: string): Promise<X3FFileDTO> {
  * mis-reported JPG/TIFF existence — corrected here.)
  */
 export function outputFilePath(
-  settings: ConversionSettings,
+  settings: BatchConversionSettings,
   path: string,
   overrides?: FileOverrides
 ): string {
   const format = resolveSetting(settings, overrides, 'outputFormat')
   const dir = effectiveOutputDirectory(settings, dirname(path))
-  const ext = OUTPUT_EXTENSION[format]
-  if (format === 'dng') {
-    const base = basename(path, extname(path))
-    return join(dir, `${base}${ext}`)
-  }
-  return join(dir, `${basename(path)}${ext}`)
+  return join(dir, outputName(basename(path), format))
 }

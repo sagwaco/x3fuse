@@ -13,9 +13,10 @@ export function useIpcEvents(): void {
     const q = useQueueStore.getState
 
     const unsubscribers = [
+      ipc.on('batch:started', (p) => q().onBatchStarted(p)),
       ipc.on('file:status', (p) => q().applyStatus(p)),
       ipc.on('file:progress', (p) => q().applyProgress(p)),
-      ipc.on('batch:complete', () => q().onBatchComplete()),
+      ipc.on('batch:complete', (p) => q().onBatchComplete(p)),
       ipc.on('menu:command', ({ name }) => handleMenuCommand(name))
     ]
 
@@ -46,12 +47,6 @@ function handleMenuCommand(name: MenuCommand): void {
       break
     case 'clearQueue':
       q.clearQueue()
-      break
-    case 'removeFailed':
-      q.removeFailed()
-      break
-    case 'removeCompleted':
-      q.removeCompleted()
       break
     case 'showLogs':
       void ipc.invoke('logs:open')

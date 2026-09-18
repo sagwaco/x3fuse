@@ -27,12 +27,12 @@
 import {
   COLOR_PROFILE_ARG,
   resolveSetting,
-  type ConversionSettings,
+  type BatchConversionSettings,
   type FileOverrides
 } from './types'
 
 export interface BuildArgsInput {
-  settings: ConversionSettings
+  settings: BatchConversionSettings
   /** Absolute path to the source .X3F file (appended last). */
   inputPath: string
   /** Effective output directory (already resolved via effectiveOutputDirectory). */

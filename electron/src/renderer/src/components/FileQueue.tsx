@@ -11,11 +11,10 @@ import { sortFiles } from '../lib/sortFiles'
 import { formatBytes, formatDateWithOrdinal } from '../lib/format'
 import { t } from '../lib/strings'
 import { cn } from '../lib/cn'
-import { StatusIcon } from './StatusIcon'
 import { QueueContextMenu } from './QueueContextMenu'
 
 const ROW_HEIGHT = 30
-const GRID = 'grid grid-cols-[28px_minmax(0,1fr)_220px_110px] items-center gap-2 px-3'
+const GRID = 'grid grid-cols-[minmax(0,1fr)_220px_110px] items-center gap-2 px-3'
 
 /** Virtualized queue table (port of FileQueueView): selection, sort, drag-drop. */
 export function FileQueue(): React.JSX.Element {
@@ -112,7 +111,6 @@ function QueueHeader({
         '[scrollbar-gutter:stable]'
       )}
     >
-      <span />
       <SortableHeader
         label={t('queue.column.name')}
         active={sortField === 'File Name'}
@@ -159,7 +157,7 @@ function SortableHeader({
   )
 }
 
-// Memoized so high-frequency progress events only re-render the row whose file
+// Memoized so only rows whose file
 // object actually changed; geometry comes in as primitives so the comparison
 // isn't defeated by a fresh style object per render.
 const Row = memo(function Row({
@@ -199,9 +197,6 @@ const Row = memo(function Row({
         active && 'ring-1 ring-inset ring-blue-400/40'
       )}
     >
-      <span className="flex items-center justify-center">
-        <StatusIcon file={file} />
-      </span>
       <span className="truncate" title={file.fileName}>
         {file.fileName}
       </span>

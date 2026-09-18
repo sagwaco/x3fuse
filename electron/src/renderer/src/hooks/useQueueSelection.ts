@@ -15,7 +15,7 @@ export interface QueueSelection {
 /**
  * Shared selection + interaction behavior for every queue view (list, grid,
  * filmstrip): selection, context menus, and arrow-key navigation. Double-click
- * opens list/grid items in the filmstrip; filmstrip cells retain quick conversion.
+ * opens list/grid items in the filmstrip; filmstrip cells open batch settings.
  *
  * `ordered` is the files in their on-screen order (post-sort); shift-range, the
  * anchor, and arrow movement are computed against it. `nav` describes how arrow
@@ -63,7 +63,7 @@ export function useQueueSelection(ordered: X3FFileDTO[], nav?: ArrowNav): QueueS
       void useSettingsStore.getState().update({ queueViewMode: 'filmstrip' })
       return
     }
-    void store.doubleClickConvert(target)
+    store.openExport(target)
   }, [])
 
   const handleItemContextMenu = useCallback((id: string): void => {

@@ -17,7 +17,7 @@ it.each([
     initialProps: { count: 5 }
   })
   expect(result.current.columns).toBe(1)
-  expect(result.current.virtualizer.getTotalSize()).toBe(5 * layout.rowHeight)
+  expect(result.current.virtualizer.getTotalSize()).toBe(5 * layout.rowHeight + layout.padding)
 
   const twoColumns = 2 * layout.padding + 2 * layout.minCell + layout.gap
   vi.mocked(useElementWidth).mockReturnValue(twoColumns - 1)
@@ -26,7 +26,7 @@ it.each([
   vi.mocked(useElementWidth).mockReturnValue(twoColumns)
   rerender({ count: 5 })
   expect(result.current.columns).toBe(2)
-  expect(result.current.virtualizer.getTotalSize()).toBe(3 * layout.rowHeight)
+  expect(result.current.virtualizer.getTotalSize()).toBe(3 * layout.rowHeight + layout.padding)
   rerender({ count: 0 })
   expect(result.current.virtualizer.getTotalSize()).toBe(0)
 })

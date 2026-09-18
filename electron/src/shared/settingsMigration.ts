@@ -81,7 +81,7 @@ export function normalizeSettings(raw: unknown): ConversionSettings {
     cineon: asBool(r.cineon, DEFAULT_SETTINGS.cineon),
     outputDirectory: coerceOutputDir(r.outputDirectory),
     debugLoggingEnabled: asBool(r.debugLoggingEnabled, DEFAULT_SETTINGS.debugLoggingEnabled),
-    onlyProcessNewItems: asBool(r.onlyProcessNewItems, DEFAULT_SETTINGS.onlyProcessNewItems),
+    hasPreviousConversion: asBool(r.hasPreviousConversion, false),
     concurrency: coerceConcurrency(r.concurrency),
     sortField: coerceSortField(r.sortField),
     sortAscending: asBool(r.sortAscending, DEFAULT_SETTINGS.sortAscending),

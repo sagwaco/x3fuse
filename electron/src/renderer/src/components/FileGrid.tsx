@@ -8,7 +8,6 @@ import { useScrollToActive } from '../hooks/useScrollToActive'
 import { useVirtualGrid } from '../hooks/useVirtualGrid'
 import { sortFiles } from '../lib/sortFiles'
 import { cn } from '../lib/cn'
-import { StatusIcon } from './StatusIcon'
 import { Thumbnail } from './Thumbnail'
 import { QueueContextMenu } from './QueueContextMenu'
 
@@ -101,8 +100,7 @@ export function FileGrid(): React.JSX.Element {
   )
 }
 
-// Memoized so high-frequency progress events only re-render the cell whose
-// file object actually changed (sel and the other props are stable).
+// Keep unchanged cells stable while browsing.
 const GridCell = memo(function GridCell({
   file,
   index,
@@ -134,9 +132,6 @@ const GridCell = memo(function GridCell({
         style={{ height: THUMB_H }}
       >
         <Thumbnail file={file} className="h-full w-full rounded-md" />
-        <div className="absolute right-1 top-1 rounded bg-black/55 p-0.5">
-          <StatusIcon file={file} />
-        </div>
       </div>
       <span
         className={cn(

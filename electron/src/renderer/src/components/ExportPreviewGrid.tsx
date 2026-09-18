@@ -1,11 +1,9 @@
 import { memo, useRef } from 'react'
 import { ArrowRight } from 'lucide-react'
-import type { ConversionSettings, X3FFileDTO } from '@shared/types'
-import { useSettingsStore } from '../stores/settingsStore'
+import type { BatchConversionSettings, X3FFileDTO } from '@shared/types'
 import { useVirtualGrid } from '../hooks/useVirtualGrid'
 import { outputFileName } from '../lib/outputName'
 import { Thumbnail } from './Thumbnail'
-import { StatusIcon } from './StatusIcon'
 
 const PADDING = 16
 const GAP = 16
@@ -20,11 +18,13 @@ const ROW_HEIGHT = THUMB_H + LABEL_H + GAP
  * every preview at once) but carries no selection/drag/context-menu behavior;
  * each cell also shows the resolved output filename for the current settings.
  */
-export function ExportPreviewGrid({ files }: { files: X3FFileDTO[] }): React.JSX.Element {
-  // Read settings so each cell's output name (extension) updates live when the
-  // user changes the format in the sidebar.
-  const settings = useSettingsStore((s) => s.settings)
-
+export function ExportPreviewGrid({
+  files,
+  settings
+}: {
+  files: X3FFileDTO[]
+  settings: BatchConversionSettings
+}): React.JSX.Element {
   const parentRef = useRef<HTMLDivElement>(null)
   const { columns, virtualizer } = useVirtualGrid(parentRef, files.length, {
     padding: PADDING,
@@ -73,16 +73,13 @@ const ExportCell = memo(function ExportCell({
   settings
 }: {
   file: X3FFileDTO
-  settings: ConversionSettings
+  settings: BatchConversionSettings
 }): React.JSX.Element {
   const outputName = outputFileName(file, settings)
   return (
     <div className="flex flex-col" style={{ height: THUMB_H + LABEL_H }} title={file.fileName}>
       <div className="relative rounded-md border border-white/10" style={{ height: THUMB_H }}>
         <Thumbnail file={file} className="h-full w-full rounded-md" />
-        <div className="absolute right-1 top-1 rounded bg-black/55 p-0.5">
-          <StatusIcon file={file} />
-        </div>
       </div>
       <div className="flex flex-col items-center px-1 pt-1">
         <span className="max-w-full truncate text-xs text-neutral-400" title={file.fileName}>

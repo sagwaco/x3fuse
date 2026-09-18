@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, afterEach } from 'vitest'
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 import { render, renderHook, screen, cleanup, fireEvent, act } from '@testing-library/react'
 import { DEFAULT_SETTINGS, type X3FFileDTO } from '@shared/types'
 
@@ -48,6 +48,24 @@ if (!window.matchMedia) {
     }) as unknown as MediaQueryList
 }
 
+beforeEach(async () => {
+  const { useQueueStore } = await import('../src/renderer/src/stores/queueStore')
+  const { useNavStore } = await import('../src/renderer/src/stores/navStore')
+  useQueueStore.setState({
+    files: [],
+    selectedIds: new Set(),
+    activeId: null,
+    draft: null,
+    batch: null,
+    error: null,
+    isProcessing: false,
+    isCancelling: false,
+    isPreparing: false,
+    pendingReconversion: null
+  })
+  useNavStore.setState({ screen: 'queue' })
+  invoke.mockClear()
+})
 afterEach(() => cleanup())
 
 describe('renderer smoke', () => {
@@ -62,8 +80,6 @@ describe('renderer smoke', () => {
       id: 'from-main',
       path: '/photos/first.X3F',
       fileName: 'first.X3F',
-      status: 'queued',
-      progress: 0,
       fileSize: 1000
     }
     let finishImport!: (files: X3FFileDTO[]) => void
@@ -125,9 +141,7 @@ describe('renderer smoke', () => {
       const files: X3FFileDTO[] = ['a', 'b'].map((id) => ({
         id,
         path: `/photos/${id}.X3F`,
-        fileName: `${id}.X3F`,
-        status: 'queued',
-        progress: 0
+        fileName: `${id}.X3F`
       }))
       useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, queueViewMode: mode } })
       useQueueStore.setState({
@@ -159,7 +173,7 @@ describe('renderer smoke', () => {
     const { useQueueStore } = await import('../src/renderer/src/stores/queueStore')
     const { useSettingsStore } = await import('../src/renderer/src/stores/settingsStore')
     useQueueStore.setState({
-      files: [{ id: 'a', path: '/a.X3F', fileName: 'a.X3F', status: 'queued', progress: 0 }]
+      files: [{ id: 'a', path: '/a.X3F', fileName: 'a.X3F' }]
     })
     useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, inspectorOpen: false } })
     const { container } = render(<Toolbar />)
@@ -167,7 +181,8 @@ describe('renderer smoke', () => {
       (element) =>
         element.getAttribute('aria-label') ??
         element.getAttribute('title') ??
-        element.getAttribute('role')
+        element.getAttribute('role') ??
+        element.textContent
     )
     expect(order).toEqual([
       'List view',
@@ -177,7 +192,8 @@ describe('renderer smoke', () => {
       'Zoom out',
       'Zoom in',
       'Zoom level',
-      'Convert all',
+      'Convert selected',
+      'Conversion options',
       'Toggle info panel'
     ])
     expect((screen.getByRole('combobox') as HTMLSelectElement).disabled).toBe(true)
@@ -196,6 +212,8 @@ describe('renderer smoke', () => {
     expect(screen.getByText('No files in queue')).toBeTruthy()
     expect(screen.getByText('Convert')).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Toggle info panel' })).toBeNull()
+    expect(screen.queryByTitle('Add files')).toBeNull()
+    expect(screen.queryByTitle('Settings')).toBeNull()
   })
 
   it('navigates to the Export screen when the toolbar Convert is clicked', async () => {
@@ -205,12 +223,10 @@ describe('renderer smoke', () => {
     const file: X3FFileDTO = {
       id: 'a',
       path: '/photos/IMG_0001.X3F',
-      fileName: 'IMG_0001.X3F',
-      status: 'queued',
-      progress: 0
+      fileName: 'IMG_0001.X3F'
     }
     const { useQueueStore } = await import('../src/renderer/src/stores/queueStore')
-    useQueueStore.setState({ files: [file], selectedIds: new Set(), activeId: null })
+    useQueueStore.setState({ files: [file], selectedIds: new Set(['a']), activeId: 'a' })
 
     const { useNavStore } = await import('../src/renderer/src/stores/navStore')
     useNavStore.setState({ screen: 'queue' })
@@ -230,19 +246,18 @@ describe('renderer smoke', () => {
     const file: X3FFileDTO = {
       id: 'a',
       path: '/photos/IMG_0001.X3F',
-      fileName: 'IMG_0001.X3F',
-      status: 'queued',
-      progress: 0
+      fileName: 'IMG_0001.X3F'
     }
     const { useQueueStore } = await import('../src/renderer/src/stores/queueStore')
-    useQueueStore.setState({ files: [file], selectedIds: new Set(), activeId: null })
+    useQueueStore.setState({ files: [file], selectedIds: new Set(['a']), activeId: 'a' })
 
     const { useNavStore } = await import('../src/renderer/src/stores/navStore')
-    useNavStore.setState({ screen: 'export' })
+    useQueueStore.getState().openExport()
+    expect(useNavStore.getState().screen).toBe('export')
 
     const { MainWindow } = await import('../src/renderer/src/components/MainWindow')
     render(<MainWindow />)
-    expect(screen.getByText('Export')).toBeTruthy()
+    expect(screen.queryByText('Export')).toBeNull()
     expect(screen.getByText('Images to convert')).toBeTruthy()
     expect(screen.getByText('Output & conversion settings')).toBeTruthy()
   })
@@ -254,57 +269,10 @@ describe('renderer smoke', () => {
 
     const { SettingsWindow } = await import('../src/renderer/src/components/SettingsWindow')
     render(<SettingsWindow />)
-    expect(screen.getByText('Output settings')).toBeTruthy()
-    expect(screen.getByText('Conversion settings')).toBeTruthy()
+    expect(screen.queryByText('Output settings')).toBeNull()
+    expect(screen.queryByText('Conversion settings')).toBeNull()
+    expect(screen.getByText('Debug')).toBeTruthy()
   })
-
-  it.each([
-    [false, false, 3],
-    [false, true, 2],
-    [true, false, 2],
-    [true, true, 2]
-  ])(
-    'exports the previewed targets (selection=%s, only new=%s)',
-    async (selected, onlyNew, count) => {
-      const { useSettingsStore } = await import('../src/renderer/src/stores/settingsStore')
-      const { useQueueStore } = await import('../src/renderer/src/stores/queueStore')
-      const { ExportScreen } = await import('../src/renderer/src/components/ExportScreen')
-      const files: X3FFileDTO[] = ['queued', 'completed', 'queued'].map((status, i) => ({
-        id: String(i),
-        path: `/photos/${i}.X3F`,
-        fileName: `${i}.X3F`,
-        status: status as X3FFileDTO['status'],
-        progress: 0
-      }))
-      useSettingsStore.setState({
-        settings: { ...DEFAULT_SETTINGS, onlyProcessNewItems: !onlyNew },
-        loaded: true
-      })
-      useQueueStore.setState({
-        files,
-        selectedIds: new Set(selected ? ['0', '1'] : []),
-        isProcessing: false,
-        pendingReconversion: null
-      })
-      render(<ExportScreen />)
-      act(() =>
-        useSettingsStore.setState({
-          settings: { ...DEFAULT_SETTINGS, onlyProcessNewItems: Boolean(onlyNew) }
-        })
-      )
-      expect(screen.getByText(`${count} ${count === 1 ? 'image' : 'images'}`)).toBeTruthy()
-
-      invoke.mockClear()
-      await act(async () => fireEvent.click(screen.getByText('Convert')))
-      const expected = files.filter((f) =>
-        selected ? f.id !== '2' : !onlyNew || f.status === 'queued'
-      )
-      expect(invoke).toHaveBeenCalledWith('convert:start', {
-        files: expected.map(({ id, path }) => ({ id, path, overrides: undefined }))
-      })
-      useQueueStore.getState().onBatchComplete()
-    }
-  )
 
   it('refreshes an existing Settings window on focus and unsubscribes on unmount', async () => {
     const { useSettingsStore } = await import('../src/renderer/src/stores/settingsStore')
@@ -315,7 +283,7 @@ describe('renderer smoke', () => {
 
     invoke.mockResolvedValueOnce({ ...DEFAULT_SETTINGS, outputFormat: 'tiff' })
     await act(async () => fireEvent.focus(window))
-    expect(screen.getByText('TIFF')).toBeTruthy()
+    expect(useSettingsStore.getState().settings.outputFormat).toBe('tiff')
 
     view.unmount()
     invoke.mockClear()
