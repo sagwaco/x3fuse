@@ -54,7 +54,7 @@ function coerceSortField(v: unknown): SortField {
     : DEFAULT_SETTINGS.sortField
 }
 
-function coerceOutputDir(v: unknown): string | null {
+function coerceDirectory(v: unknown): string | null {
   return typeof v === 'string' && v.length > 0 ? v : null
 }
 
@@ -79,7 +79,7 @@ export function normalizeSettings(raw: unknown): ConversionSettings {
     colorProfile: coerceColorProfile(r.colorProfile),
     dngHighlightRecovery: asBool(r.dngHighlightRecovery, DEFAULT_SETTINGS.dngHighlightRecovery),
     cineon: asBool(r.cineon, DEFAULT_SETTINGS.cineon),
-    outputDirectory: coerceOutputDir(r.outputDirectory),
+    outputDirectory: coerceDirectory(r.outputDirectory),
     debugLoggingEnabled: asBool(r.debugLoggingEnabled, DEFAULT_SETTINGS.debugLoggingEnabled),
     hasPreviousConversion: asBool(r.hasPreviousConversion, false),
     concurrency: coerceConcurrency(r.concurrency),
@@ -88,6 +88,7 @@ export function normalizeSettings(raw: unknown): ConversionSettings {
     autoCheckUpdates: asBool(r.autoCheckUpdates, DEFAULT_SETTINGS.autoCheckUpdates),
     autoDownloadUpdates: asBool(r.autoDownloadUpdates, DEFAULT_SETTINGS.autoDownloadUpdates),
     queueViewMode: coerceViewMode(r.queueViewMode),
-    inspectorOpen: asBool(r.inspectorOpen, DEFAULT_SETTINGS.inspectorOpen)
+    inspectorOpen: asBool(r.inspectorOpen, DEFAULT_SETTINGS.inspectorOpen),
+    lastImportDirectory: coerceDirectory(r.lastImportDirectory)
   }
 }

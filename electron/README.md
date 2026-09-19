@@ -29,7 +29,7 @@ Electron app is the orchestration + UI layer around them.
 
 ## Requirements
 
-- **Node.js ≥ 18** (20+ recommended) and npm
+- **Node.js ≥ 22.12** (required by Electron 44) and npm
 - **macOS 14+** for development today (the dev binary sync pulls the macOS slice)
 - A checkout of the Swift app at `../X3Fuse` (sibling dir) to populate dev binaries
 - *(optional)* `../x3fuse-core` checkout for the gated integration tests

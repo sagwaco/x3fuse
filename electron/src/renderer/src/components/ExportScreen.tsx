@@ -24,7 +24,7 @@ export function ExportScreen(): React.JSX.Element {
   return (
     <div className="flex h-full min-h-0 flex-col bg-neutral-950 text-neutral-100">
       {/* Header: back · convert */}
-      <div className="flex h-12 shrink-0 items-center justify-between border-b border-white/10 px-3">
+      <div className="window-toolbar flex h-12 shrink-0 items-center justify-between border-b border-white/10 px-3">
         <div className="flex items-center gap-1.5">
           <Button
             variant="ghost"

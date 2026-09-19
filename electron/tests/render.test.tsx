@@ -168,16 +168,17 @@ describe('renderer smoke', () => {
     }
   )
 
-  it('places zoom out, zoom in, and zoom level after the view divider, with Info after Convert', async () => {
+  it('keeps toolbar controls in order and disables them when the queue empties', async () => {
     const { Toolbar } = await import('../src/renderer/src/components/Toolbar')
     const { useQueueStore } = await import('../src/renderer/src/stores/queueStore')
     const { useSettingsStore } = await import('../src/renderer/src/stores/settingsStore')
-    useQueueStore.setState({
-      files: [{ id: 'a', path: '/a.X3F', fileName: 'a.X3F' }]
+    useSettingsStore.setState({
+      settings: { ...DEFAULT_SETTINGS, inspectorOpen: false },
+      loaded: true
     })
-    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, inspectorOpen: false } })
     const { container } = render(<Toolbar />)
-    const order = Array.from(container.querySelectorAll('button, select, [role="separator"]')).map(
+    const controls = Array.from(container.querySelectorAll('button, [role="separator"]'))
+    const order = controls.map(
       (element) =>
         element.getAttribute('aria-label') ??
         element.getAttribute('title') ??
@@ -196,14 +197,49 @@ describe('renderer smoke', () => {
       'Conversion options',
       'Toggle info panel'
     ])
-    expect((screen.getByRole('combobox') as HTMLSelectElement).disabled).toBe(true)
+    const buttons = screen.getAllByRole('button') as HTMLButtonElement[]
+    for (const button of buttons) {
+      expect(button.disabled).toBe(true)
+      fireEvent.click(button)
+    }
+    expect(invoke).not.toHaveBeenCalled()
+    expect(useSettingsStore.getState().settings).toEqual({
+      ...DEFAULT_SETTINGS,
+      inspectorOpen: false
+    })
+
+    act(() =>
+      useQueueStore.setState({
+        files: [{ id: 'a', path: '/a.X3F', fileName: 'a.X3F' }],
+        selectedIds: new Set(['a']),
+        activeId: 'a'
+      })
+    )
+    for (const title of [
+      'List view',
+      'Grid view',
+      'Filmstrip view',
+      'Convert selected',
+      'Toggle info panel'
+    ]) {
+      expect((screen.getByTitle(title) as HTMLButtonElement).disabled).toBe(false)
+    }
+    expect(
+      (screen.getByRole('button', { name: 'Conversion options' }) as HTMLButtonElement).disabled
+    ).toBe(false)
+    expect((screen.getByRole('button', { name: 'Zoom level' }) as HTMLButtonElement).disabled).toBe(
+      true
+    )
     invoke.mockResolvedValueOnce({ ...DEFAULT_SETTINGS, inspectorOpen: true })
     await act(async () =>
       fireEvent.click(screen.getByRole('button', { name: 'Toggle info panel' }))
     )
     expect(useSettingsStore.getState().settings.inspectorOpen).toBe(true)
-    useQueueStore.setState({ files: [] })
-    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS } })
+    act(() => useQueueStore.getState().clearQueue())
+    expect(Array.from(container.querySelectorAll('button, [role="separator"]'))).toEqual(controls)
+    expect(buttons.every((button) => button.disabled)).toBe(true)
+    expect(useSettingsStore.getState().settings.inspectorOpen).toBe(true)
+    expect(useSettingsStore.getState().settings.queueViewMode).toBe(DEFAULT_SETTINGS.queueViewMode)
   })
 
   it('mounts MainWindow with the empty drop zone', async () => {
@@ -211,7 +247,9 @@ describe('renderer smoke', () => {
     render(<MainWindow />)
     expect(screen.getByText('No files in queue')).toBeTruthy()
     expect(screen.getByText('Convert')).toBeTruthy()
-    expect(screen.queryByRole('button', { name: 'Toggle info panel' })).toBeNull()
+    expect(
+      (screen.getByRole('button', { name: 'Toggle info panel' }) as HTMLButtonElement).disabled
+    ).toBe(true)
     expect(screen.queryByTitle('Add files')).toBeNull()
     expect(screen.queryByTitle('Settings')).toBeNull()
   })

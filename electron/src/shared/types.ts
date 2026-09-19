@@ -80,6 +80,8 @@ export interface ConversionSettings {
   queueViewMode: QueueViewMode
   /** Whether the right-hand info inspector (histogram + EXIF) is open. */
   inspectorOpen: boolean
+  /** Last directory confirmed in the X3F import dialog. */
+  lastImportDirectory: string | null
 }
 
 export const DEFAULT_SETTINGS: ConversionSettings = {
@@ -98,7 +100,8 @@ export const DEFAULT_SETTINGS: ConversionSettings = {
   autoCheckUpdates: true,
   autoDownloadUpdates: false,
   queueViewMode: 'list',
-  inspectorOpen: false
+  inspectorOpen: false,
+  lastImportDirectory: null
 }
 
 /** Per-file overrides; when a field is undefined the global setting is used. */

@@ -1,4 +1,5 @@
 import { app, dialog, ipcMain, shell, type OpenDialogOptions } from 'electron'
+import { dirname } from 'path'
 import type { IpcPayload, IpcRequestChannel, IpcResult } from '@shared/ipc'
 import type { AppContext } from '../context'
 import type { WindowManager } from '../windows'
@@ -68,13 +69,18 @@ export function registerIpcHandlers(ctx: AppContext, windows: WindowManager, t: 
     const options: OpenDialogOptions = {
       title: t('dialog.select_x3f_files.title'),
       message: t('dialog.select_x3f_files.message'),
+      defaultPath: ctx.settings.get().lastImportDirectory ?? undefined,
       properties: ['openFile', 'multiSelections'],
       filters: [{ name: 'X3F RAW', extensions: ['x3f', 'X3F'] }]
     }
     const res = win
       ? await dialog.showOpenDialog(win, options)
       : await dialog.showOpenDialog(options)
-    return res.canceled ? [] : res.filePaths
+    if (res.canceled) return []
+    if (res.filePaths.length > 0) {
+      ctx.settings.set({ lastImportDirectory: dirname(res.filePaths[0]) })
+    }
+    return res.filePaths
   })
 
   handle('dialog:pickOutputDir', async () => {

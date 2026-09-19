@@ -43,7 +43,7 @@ export function FileFilmstrip(): React.JSX.Element {
         {...dropHandlers}
         className="relative flex min-h-0 min-w-0 flex-1 flex-col outline-none"
       >
-        <div className="flex min-h-0 min-w-0 flex-1 items-center justify-center bg-neutral-950 p-4">
+        <div className="flex min-h-0 min-w-0 flex-1 items-center justify-center bg-neutral-950">
           {active ? <ZoomablePreview key={active.id} file={active} /> : null}
         </div>
 

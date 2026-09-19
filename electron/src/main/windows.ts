@@ -36,6 +36,10 @@ export class WindowManager {
       show: false,
       title: 'X3Fuse',
       backgroundColor: '#0a0a0a',
+      // Center the 14px native buttons in the 48px toolbar.
+      ...(process.platform === 'darwin'
+        ? { titleBarStyle: 'hidden' as const, trafficLightPosition: { x: 12, y: 16 } }
+        : {}),
       webPreferences: commonWebPreferences
     })
 
@@ -44,8 +48,9 @@ export class WindowManager {
       shell.openExternal(url)
       return { action: 'deny' }
     })
+    const webContents = win.webContents
     win.on('closed', () => {
-      this.sink.detach(win.webContents)
+      this.sink.detach(webContents)
       this.mainWindow = null
     })
 

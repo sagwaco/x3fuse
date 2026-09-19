@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { X3FFileDTO } from '@shared/types'
 import { ZoomablePreview } from '../src/renderer/src/components/ZoomablePreview'
 import { ZoomControls } from '../src/renderer/src/components/ZoomControls'
@@ -15,19 +15,24 @@ const file: X3FFileDTO = {
 let resize: (width: number, height: number) => void
 
 beforeEach(() => {
+  Object.defineProperty(Element.prototype, 'getAnimations', {
+    configurable: true,
+    value: vi.fn(() => [])
+  })
   vi.stubGlobal(
     'ResizeObserver',
     class {
-      constructor(callback: ResizeObserverCallback) {
+      constructor(private callback: ResizeObserverCallback) {}
+      observe(target: Element): void {
+        if (target.getAttribute('aria-label') !== 'Image preview') return
         resize = (width, height) =>
-          callback(
-            [{ contentRect: { width, height } } as ResizeObserverEntry],
+          this.callback(
+            [{ target, contentRect: { width, height } } as ResizeObserverEntry],
             this as unknown as ResizeObserver
           )
-      }
-      observe(): void {
         resize(800, 600)
       }
+      unobserve(): void {}
       disconnect(): void {}
     }
   )
@@ -48,6 +53,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup()
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
 })
 
 function loadImage(width = 1600, height = 1200): HTMLImageElement {
@@ -87,73 +93,140 @@ function setup(width = 1600, height = 1200) {
   return { ...result, image, surface, media }
 }
 
+async function chooseZoom(value: string): Promise<void> {
+  const trigger = screen.getByRole('button', { name: 'Zoom level' })
+  fireEvent.keyDown(trigger, { key: 'ArrowDown' })
+  fireEvent.click(
+    await screen.findByRole('menuitemradio', { name: value === 'fit' ? 'Fit' : `${value}%` })
+  )
+  await waitFor(() => expect(document.activeElement).toBe(trigger))
+}
+
 describe('filmstrip zoom preview', () => {
-  it('steps from below Fit to Fit to 100%, and returns any zoom at or above 100% to Fit', () => {
+  it('centers the clicked image point and updates the minimap, then returns to Fit', () => {
     const { surface, media } = setup()
-    const dropdown = screen.getByRole('combobox') as HTMLSelectElement
-    fireEvent.change(dropdown, { target: { value: '25' } })
-    fireEvent.click(surface)
-    expect(dropdown.value).toBe('fit')
-    expect(media.style.width).toBe('800px')
-    fireEvent.click(surface)
-    expect(dropdown.value).toBe('100')
-    fireEvent.click(surface)
-    expect(dropdown.value).toBe('fit')
+    surface.getBoundingClientRect = () =>
+      ({ left: 100, top: 80, width: 800, height: 600 }) as DOMRect
+    fireEvent.click(surface, { clientX: 650, clientY: 430, detail: 1 })
+    expect(media.style.transform).toBe('translate(-300px, -100px) scale(1)')
+    expect(usePreviewStore.getState().minimap).toMatchObject({
+      x: 0.4375,
+      width: 0.5,
+      height: 0.5
+    })
+    fireEvent.click(surface, { clientX: 650, clientY: 430, detail: 1 })
+    expect(media.style.transform).toBe('translate(0px, 0px) scale(0.5)')
+  })
 
-    // Numeric Fit and intermediate zoom levels also advance to 100%.
-    for (const value of ['50', '75']) {
-      fireEvent.change(dropdown, { target: { value } })
+  it('clamps click centering at image edges and centers a fully visible axis', () => {
+    const { surface, media } = setup(600, 1600)
+    fireEvent.click(surface, { clientX: 500, clientY: 590, detail: 1 })
+    expect(media.style.transform).toBe('translate(0px, -500px) scale(1)')
+    fireEvent.click(surface, { clientX: 500, clientY: 590, detail: 1 })
+    fireEvent.click(surface, { clientX: 400, clientY: 360, detail: 1 })
+    expect(media.style.transform).toBe('translate(0px, -160px) scale(1)')
+  })
+
+  it('eases discrete zooms using only transforms and keeps gestures and resize immediate', () => {
+    const { surface, media } = setup()
+    expect(media.style.width).toBe('1600px')
+    expect(media.style.height).toBe('1200px')
+    expect(media.dataset.zoomAnimated).toBe('false')
+    fireEvent.click(surface)
+    expect(media.dataset.zoomAnimated).toBe('true')
+    expect(media.style.width).toBe('1600px')
+    expect(media.style.height).toBe('1200px')
+    fireEvent.wheel(surface, { deltaX: 20, deltaY: 10 })
+    expect(media.dataset.zoomAnimated).toBe('false')
+    fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }))
+    expect(media.dataset.zoomAnimated).toBe('true')
+    fireEvent.wheel(surface, { ctrlKey: true, deltaY: 10 })
+    expect(media.dataset.zoomAnimated).toBe('false')
+    fireEvent.keyDown(surface, { key: '0' })
+    expect(media.dataset.zoomAnimated).toBe('true')
+    act(() => resize(640, 480))
+    expect(media.dataset.zoomAnimated).toBe('false')
+    expect(media.style.transform).toContain('scale(0.4)')
+  })
+
+  it('continues panning from the displayed position when interrupting an eased zoom', () => {
+    const { surface, media } = setup()
+    fireEvent.click(surface)
+    vi.mocked(media.getAnimations).mockReturnValueOnce([{} as Animation])
+    vi.spyOn(window, 'getComputedStyle').mockReturnValue({
+      transform: 'matrix(0.75, 0, 0, 0.75, 40, 20)'
+    } as CSSStyleDeclaration)
+    const matrix = vi.fn(() => ({ a: 0.75, e: 40, f: 20 }))
+    vi.stubGlobal('DOMMatrixReadOnly', matrix)
+    fireEvent.wheel(surface, { deltaX: 10, deltaY: 5 })
+    expect(matrix).toHaveBeenCalledWith('matrix(0.75, 0, 0, 0.75, 40, 20)')
+    expect(media.style.transform).toBe('translate(30px, 15px) scale(0.75)')
+    expect(media.dataset.zoomAnimated).toBe('false')
+    expect(usePreviewStore.getState().controls!.scale).toBe(0.75)
+  })
+
+  it('steps from below Fit to Fit to 100%, and returns any zoom above Fit to Fit', async () => {
+    const { surface, media } = setup()
+    const dropdown = screen.getByRole('button', { name: 'Zoom level' })
+    await chooseZoom('25')
+    fireEvent.click(surface)
+    expect(dropdown.textContent).toBe('Fit')
+    expect(media.style.transform).toContain('scale(0.5)')
+    fireEvent.click(surface)
+    expect(dropdown.textContent).toBe('100%')
+    fireEvent.click(surface)
+    expect(dropdown.textContent).toBe('Fit')
+
+    // A numeric zoom equal to Fit still advances to 100%.
+    await chooseZoom('50')
+    fireEvent.click(surface)
+    expect(dropdown.textContent).toBe('100%')
+
+    for (const value of ['75', '100', '125', '200']) {
+      await chooseZoom(value)
       fireEvent.click(surface)
-      expect(dropdown.value).toBe('100')
-    }
-    for (const value of ['100', '125', '200']) {
-      fireEvent.change(dropdown, { target: { value } })
-      fireEvent.click(surface)
-      expect(dropdown.value).toBe('fit')
+      expect(dropdown.textContent).toBe('Fit')
+      expect(media.style.transform).toContain('scale(0.5)')
     }
   })
 
-  it('returns to Fit when the image fits at its natural size', () => {
+  it('returns to Fit when the image fits at its natural size', async () => {
     const { surface } = setup(400, 300)
-    const dropdown = screen.getByRole('combobox') as HTMLSelectElement
-    fireEvent.change(dropdown, { target: { value: '50' } })
+    const dropdown = screen.getByRole('button', { name: 'Zoom level' })
+    await chooseZoom('50')
     fireEvent.click(surface)
-    expect(dropdown.value).toBe('fit')
-    fireEvent.change(dropdown, { target: { value: '200' } })
+    expect(dropdown.textContent).toBe('Fit')
+    await chooseZoom('200')
     fireEvent.click(surface)
-    expect(dropdown.value).toBe('fit')
+    expect(dropdown.textContent).toBe('Fit')
   })
 
-  it('fits the JPEG, toggles true 100%, and keeps toolbar controls separate from gestures', () => {
+  it('fits the JPEG, toggles true 100%, and keeps toolbar controls separate from gestures', async () => {
     const { surface, media } = setup()
-    expect(media.style.width).toBe('800px')
+    expect(media.style.transform).toContain('scale(0.5)')
     expect(surface.style.cursor).toBe('zoom-in')
     expect(
       screen.getAllByRole('button').map((button) => button.getAttribute('aria-label'))
-    ).toEqual(['Zoom out', 'Zoom in'])
-    expect(
-      Array.from((screen.getByRole('combobox') as HTMLSelectElement).options).map(
-        (option) => option.value
-      )
-    ).toEqual(['fit', '25', '50', '75', '100', '125', '150', '175', '200'])
-    expect((screen.getByRole('combobox') as HTMLSelectElement).value).toBe('fit')
+    ).toEqual(['Zoom out', 'Zoom in', 'Zoom level'])
+    const dropdown = screen.getByRole('button', { name: 'Zoom level' })
+    expect(dropdown.textContent).toBe('Fit')
     fireEvent.click(surface)
-    expect(media.style.width).toBe('1600px')
+    expect(media.style.transform).toContain('scale(1)')
     expect(surface.style.cursor).toBe('grab')
-    expect((screen.getByRole('combobox') as HTMLSelectElement).value).toBe('100')
+    expect(dropdown.textContent).toBe('100%')
     fireEvent.click(surface)
-    expect(media.style.width).toBe('800px')
+    expect(media.style.transform).toContain('scale(0.5)')
 
     fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }))
-    expect(media.style.width).toBe('1000px')
+    expect(media.style.transform).toContain('scale(0.625)')
     fireEvent.click(screen.getByRole('button', { name: 'Zoom out' }))
-    expect(media.style.width).toBe('800px')
+    expect(media.style.transform).toContain('scale(0.5)')
     fireEvent.doubleClick(screen.getByRole('group'))
-    expect(media.style.width).toBe('800px')
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: '100' } })
-    expect(media.style.width).toBe('1600px')
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'fit' } })
-    expect((screen.getByRole('combobox') as HTMLSelectElement).value).toBe('fit')
+    expect(media.style.transform).toContain('scale(0.5)')
+    await chooseZoom('100')
+    expect(media.style.transform).toContain('scale(1)')
+    await chooseZoom('fit')
+    expect(dropdown.textContent).toBe('Fit')
   })
 
   it('anchors pinch zoom at the pointer, pans with two-finger scrolling, and clamps the edges', () => {
@@ -168,7 +241,7 @@ describe('filmstrip zoom preview', () => {
     })
     fireEvent(surface, pinch)
     expect(pinch.defaultPrevented).toBe(true)
-    expect(media.style.width).toBe('1600px')
+    expect(media.style.transform).toContain('scale(1)')
     expect(media.style.transform).toContain('translate(-200px, -100px)')
     fireEvent.wheel(surface, { deltaX: 50, deltaY: 80 })
     expect(media.style.transform).toContain('translate(-250px, -180px)')
@@ -192,7 +265,7 @@ describe('filmstrip zoom preview', () => {
     fireEvent.pointerUp(surface)
     expect(surface.releasePointerCapture).toHaveBeenCalledWith(1)
     fireEvent.click(surface)
-    expect(media.style.width).toBe('1600px')
+    expect(media.style.transform).toContain('scale(1)')
     fireEvent.pointerMove(surface, { clientX: 500, clientY: 500 })
     expect(media.style.transform).toContain('translate(100px, 50px)')
     fireEvent.pointerDown(surface, { button: 0 })
@@ -206,12 +279,11 @@ describe('filmstrip zoom preview', () => {
 
   it('recomputes Fit on resize and resets it when a different file is selected', () => {
     const { surface, media, rerender } = setup(1200, 1600)
-    expect(media.style.height).toBe('600px')
-    expect(media.style.width).toBe('450px')
+    expect(media.style.transform).toContain('scale(0.375)')
     act(() => resize(400, 300))
-    expect(media.style.height).toBe('300px')
+    expect(media.style.transform).toContain('scale(0.1875)')
     fireEvent.click(surface)
-    expect(media.style.width).toBe('1200px')
+    expect(media.style.transform).toContain('scale(1)')
     fireEvent.wheel(surface, { deltaX: 500, deltaY: 500 })
     act(() => resize(2000, 2000))
     expect(media.style.transform).toContain('translate(0px, 0px)')
@@ -219,29 +291,29 @@ describe('filmstrip zoom preview', () => {
     expect(media.style.transform).toContain('translate(0px, 0px)')
     rerender(<PreviewWithControls key="b" file={{ ...file, id: 'b', path: '/photos/b.X3F' }} />)
     loadImage()
-    expect((screen.getByRole('combobox') as HTMLSelectElement).value).toBe('fit')
+    expect(screen.getByRole('button', { name: 'Zoom level' }).textContent).toBe('Fit')
   })
 
   it('supports keyboard zoom and bounds extreme gestures', () => {
     const { surface, media } = setup()
     fireEvent.keyDown(surface, { key: '1' })
-    expect(media.style.width).toBe('1600px')
+    expect(media.style.transform).toContain('scale(1)')
     fireEvent.keyDown(surface, { key: '+' })
-    expect(media.style.width).toBe('2000px')
+    expect(media.style.transform).toContain('scale(1.25)')
     fireEvent.keyDown(surface, { key: '-' })
-    expect(media.style.width).toBe('1600px')
+    expect(media.style.transform).toContain('scale(1)')
     fireEvent.wheel(surface, { ctrlKey: true, deltaY: -100000 })
     expect((screen.getByRole('button', { name: 'Zoom in' }) as HTMLButtonElement).disabled).toBe(
       true
     )
-    expect(media.style.width).toBe('12800px')
+    expect(media.style.transform).toContain('scale(8)')
     fireEvent.wheel(surface, { ctrlKey: true, deltaY: 100000 })
     expect((screen.getByRole('button', { name: 'Zoom out' }) as HTMLButtonElement).disabled).toBe(
       true
     )
-    expect(media.style.width).toBe('160px')
+    expect(media.style.transform).toContain('scale(0.1)')
     fireEvent.keyDown(surface, { key: '0' })
-    expect((screen.getByRole('combobox') as HTMLSelectElement).value).toBe('fit')
+    expect(screen.getByRole('button', { name: 'Zoom level' }).textContent).toBe('Fit')
   })
 
   it('disables controls until a preview loads, including pending and failed previews', () => {
@@ -257,23 +329,64 @@ describe('filmstrip zoom preview', () => {
     ).toBe(true)
   })
 
-  it('offers each zoom preset and preserves the current percentage after gesture zoom', () => {
+  it('offers each zoom preset and preserves the current percentage after gesture zoom', async () => {
     const { media } = setup()
-    const select = screen.getByRole('combobox') as HTMLSelectElement
+    const dropdown = screen.getByRole('button', { name: 'Zoom level' })
+    fireEvent.keyDown(dropdown, { key: 'ArrowDown' })
+    expect(screen.getAllByRole('menuitemradio').map((item) => item.textContent)).toEqual([
+      'Fit',
+      '25%',
+      '50%',
+      '75%',
+      '100%',
+      '125%',
+      '150%',
+      '175%',
+      '200%'
+    ])
+    expect(screen.getByRole('menuitemradio', { checked: true }).textContent).toBe('Fit')
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' })
+    await waitFor(() => expect(document.activeElement).toBe(dropdown))
     for (const percent of [25, 50, 75, 100, 125, 150, 175, 200]) {
-      fireEvent.change(select, { target: { value: String(percent) } })
-      expect(media.style.width).toBe(`${(1600 * percent) / 100}px`)
+      await chooseZoom(String(percent))
+      expect(media.style.transform).toContain(`scale(${percent / 100})`)
     }
-    fireEvent.change(select, { target: { value: 'fit' } })
+    await chooseZoom('fit')
     fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }))
-    expect(select.selectedOptions[0].text).toBe('63%')
-    expect(select.selectedOptions[0].disabled).toBe(true)
+    expect(dropdown.textContent).toBe('63%')
     const queueNavigation = vi.fn()
     // Dropdown keys must not reach the filmstrip's queue navigation.
     document.addEventListener('keydown', queueNavigation)
-    fireEvent.keyDown(select, { key: 'ArrowDown' })
-    expect(queueNavigation).not.toHaveBeenCalled()
-    document.removeEventListener('keydown', queueNavigation)
+    try {
+      fireEvent.keyDown(dropdown, { key: 'ArrowDown' })
+      const custom = screen.getByRole('menuitemradio', { name: '63%', checked: true })
+      expect(custom.getAttribute('aria-disabled')).toBe('true')
+      fireEvent.click(custom)
+      expect(media.style.transform).toContain('scale(0.625)')
+      const fit = screen.getByRole('menuitemradio', { name: 'Fit' })
+      await waitFor(() => expect(document.activeElement).toBe(fit))
+      fireEvent.keyDown(fit, { key: 'ArrowDown' })
+      const firstPreset = screen.getByRole('menuitemradio', { name: '25%' })
+      await waitFor(() => expect(document.activeElement).toBe(firstPreset))
+      fireEvent.keyDown(firstPreset, { key: 'Enter' })
+      expect(media.style.transform).toContain('scale(0.25)')
+      await waitFor(() => expect(document.activeElement).toBe(dropdown))
+      expect(queueNavigation).not.toHaveBeenCalled()
+    } finally {
+      document.removeEventListener('keydown', queueNavigation)
+    }
+  })
+
+  it('closes the zoom menu when its preview becomes unavailable', () => {
+    const { container } = setup()
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Zoom level' }), { button: 0 })
+    expect(container.contains(screen.getByRole('menu'))).toBe(false)
+    act(() => usePreviewStore.setState({ controls: null }))
+    expect(screen.queryByRole('menu')).toBeNull()
+    const dropdown = screen.getByRole('button', { name: 'Zoom level' }) as HTMLButtonElement
+    expect(dropdown.disabled).toBe(true)
+    fireEvent.keyDown(dropdown, { key: 'Enter' })
+    expect(screen.queryByRole('menu')).toBeNull()
   })
 
   it('keeps the Info minimap in sync and lets users drag the window without jumping', () => {
@@ -302,7 +415,7 @@ describe('filmstrip zoom preview', () => {
     fireEvent.pointerUp(minimap)
     fireEvent.pointerMove(minimap, { clientX: 200, clientY: 150 })
     expect(parseFloat(rectangle.style.left)).toBeCloseTo(35)
-    expect(media.style.width).toBe('1600px')
+    expect(media.style.transform).toContain('scale(1)')
 
     // Clicking outside recenters, with both the image and map clamped at the edge.
     fireEvent.pointerDown(minimap, { button: 0, clientX: 199, clientY: 149 })

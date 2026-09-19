@@ -1,9 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
-import {
-  IPC_EVENT_CHANNELS,
-  type IpcEventChannel,
-  type IpcRequestChannel
-} from '@shared/ipc'
+import { IPC_EVENT_CHANNELS, type IpcEventChannel, type IpcRequestChannel } from '@shared/ipc'
 
 /**
  * Minimal, safe bridge exposed on `window.x3f`. The renderer is fully typed
@@ -11,6 +7,7 @@ import {
  * and validates event channel names against the shared allowlist.
  */
 const bridge = {
+  platform: process.platform,
   invoke(channel: IpcRequestChannel, payload?: unknown): Promise<unknown> {
     return ipcRenderer.invoke(channel, payload)
   },

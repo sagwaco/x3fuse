@@ -9,11 +9,13 @@ import type { WindowManager } from '../src/main/windows'
 
 const mocks = vi.hoisted(() => ({
   disk: {} as Record<string, unknown>,
+  showOpenDialog: vi.fn(),
+  getMain: vi.fn(),
   handlers: new Map<string, (event: unknown, payload: unknown) => unknown>()
 }))
 vi.mock('electron', () => ({
   app: {},
-  dialog: {},
+  dialog: { showOpenDialog: mocks.showOpenDialog },
   shell: {},
   ipcMain: {
     handle: (channel: string, handler: (event: unknown, payload: unknown) => unknown) =>
@@ -37,6 +39,8 @@ beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), 'x3f-ipc-'))
   mocks.disk = { ...DEFAULT_SETTINGS, onlyProcessNewItems: true, outputFormat: 'tiff' }
   mocks.handlers.clear()
+  mocks.showOpenDialog.mockReset()
+  mocks.getMain.mockReset()
 })
 afterEach(async () => {
   await rm(directory, { recursive: true, force: true })
@@ -50,7 +54,7 @@ function setup(running = false): {
   const convert = vi.fn(async () => undefined)
   registerIpcHandlers(
     { settings, conversion: { convert, isRunning: running } } as unknown as AppContext,
-    {} as WindowManager,
+    { getMain: mocks.getMain } as unknown as WindowManager,
     (key) => key
   )
   return { settings, convert }
@@ -68,6 +72,51 @@ function request() {
 }
 
 describe('batch IPC and persistence', () => {
+  it('remembers the last selected import directory across settings changes and relaunch', async () => {
+    const { settings } = setup()
+    const paths = [join(directory, 'a.X3F'), join(directory, 'b.X3F')]
+    mocks.showOpenDialog.mockResolvedValueOnce({ canceled: false, filePaths: paths })
+    await expect(invoke('dialog:pickFiles', undefined)).resolves.toEqual(paths)
+    expect(mocks.showOpenDialog).toHaveBeenLastCalledWith(
+      expect.objectContaining({ defaultPath: undefined })
+    )
+    expect(settings.get().lastImportDirectory).toBe(directory)
+    settings.set({ inspectorOpen: true })
+
+    const relaunched = setup().settings
+    const parent = { id: 'main-window' }
+    mocks.getMain.mockReturnValue(parent)
+    const next = join(directory, 'next')
+    mocks.showOpenDialog.mockResolvedValueOnce({
+      canceled: false,
+      filePaths: [join(next, 'c.X3F')]
+    })
+    await invoke('dialog:pickFiles', undefined)
+    expect(mocks.showOpenDialog).toHaveBeenLastCalledWith(
+      parent,
+      expect.objectContaining({ defaultPath: directory })
+    )
+    expect(relaunched.get().lastImportDirectory).toBe(next)
+    expect(new SettingsService().get().lastImportDirectory).toBe(next)
+  })
+
+  it('keeps the import directory when canceling or choosing an output directory', async () => {
+    const { settings } = setup()
+    settings.set({ lastImportDirectory: directory })
+    for (const result of [
+      { canceled: true, filePaths: [join(directory, 'other', 'a.X3F')] },
+      { canceled: false, filePaths: [] }
+    ]) {
+      mocks.showOpenDialog.mockResolvedValueOnce(result)
+      await expect(invoke('dialog:pickFiles', undefined)).resolves.toEqual([])
+      expect(settings.get().lastImportDirectory).toBe(directory)
+    }
+    const output = join(directory, 'output')
+    mocks.showOpenDialog.mockResolvedValueOnce({ canceled: false, filePaths: [output] })
+    await expect(invoke('dialog:pickOutputDir', undefined)).resolves.toBe(output)
+    expect(settings.get().lastImportDirectory).toBe(directory)
+  })
+
   it('migrates old preferences without inventing a previous batch, and persists an accepted snapshot across relaunch', async () => {
     const { settings, convert } = setup()
     expect(settings.get().outputFormat).toBe('tiff')

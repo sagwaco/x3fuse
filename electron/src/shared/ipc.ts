@@ -164,6 +164,7 @@ export const IPC_EVENT_CHANNELS: IpcEventChannel[] = [
 
 /** The API surface exposed on `window.x3f` by the preload bridge. */
 export interface X3FBridge {
+  readonly platform: NodeJS.Platform
   invoke<C extends IpcRequestChannel>(
     channel: C,
     ...args: IpcPayload<C> extends void ? [] : [payload: IpcPayload<C>]

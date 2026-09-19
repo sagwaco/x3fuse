@@ -61,9 +61,11 @@ export function BatchProgress(): React.JSX.Element | null {
     <Tooltip.Provider delayDuration={200}>
       <Dialog.Root open={open} onOpenChange={setOpen}>
         <Dialog.Trigger asChild>
-          <button
+          <Button
             type="button"
-            className="flex h-7 shrink-0 items-center gap-2 rounded px-1 text-xs tabular-nums text-neutral-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400"
+            variant="ghost"
+            size={isProcessing ? 'md' : 'icon'}
+            className="shrink-0 text-xs tabular-nums"
             title={title}
             aria-label={`${t('batch.details')}: ${title}`}
           >
@@ -71,7 +73,7 @@ export function BatchProgress(): React.JSX.Element | null {
               <>
                 <svg
                   viewBox="0 0 24 24"
-                  className="h-5 w-5 -rotate-90"
+                  className="h-4 w-4 -rotate-90"
                   role="progressbar"
                   aria-label={t('batch.progress_label')}
                   aria-valuemin={0}
@@ -106,13 +108,13 @@ export function BatchProgress(): React.JSX.Element | null {
             ) : (
               <ResultIcon
                 aria-hidden="true"
-                className={`h-5 w-5 ${hasIssues ? 'text-red-400' : summary?.cancelled ? 'text-neutral-400' : 'text-green-400'}`}
+                className={`h-4 w-4 ${hasIssues ? 'text-red-400' : summary?.cancelled ? 'text-neutral-400' : 'text-green-400'}`}
               />
             )}
             <span role="status" className="sr-only">
               {title}
             </span>
-          </button>
+          </Button>
         </Dialog.Trigger>
         <Dialog.Portal>
           <Dialog.Overlay className="fixed inset-0 z-40 bg-black/50" />

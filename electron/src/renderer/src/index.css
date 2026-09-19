@@ -29,6 +29,67 @@ body {
   overflow: hidden;
 }
 
+.preview-image {
+  transition: none;
+}
+
+/* Keep the active JPEG on its own layer so first-zoom image preparation does
+   not hold up the container's transform animation. */
+.preview-image img {
+  will-change: transform;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .preview-image[data-zoom-animated='true'] {
+    transition: transform 240ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+}
+
+/* Native traffic lights share the 48px main-window and Export headers. */
+html[data-platform='darwin'] .window-toolbar {
+  padding-left: 88px;
+  -webkit-app-region: drag;
+}
+
+html[data-platform='darwin'] .window-toolbar > div,
+html[data-platform='darwin'] .window-toolbar [role='menu'] {
+  -webkit-app-region: no-drag;
+}
+
+/* Draggable regions swallow pointer events. The first title-bar press dismisses
+   an open menu; dragging resumes once the menu closes. */
+html[data-platform='darwin']:has(.toolbar-dropdown[data-state='open']) .window-toolbar {
+  -webkit-app-region: no-drag;
+}
+
+html[data-platform='darwin'] .toolbar-dropdown {
+  padding: 6px;
+  border-radius: 12px;
+  border-color: rgb(255 255 255 / 20%);
+  background: linear-gradient(135deg, rgb(255 255 255 / 9%), rgb(255 255 255 / 2%))
+    rgb(28 28 30 / 72%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  backdrop-filter: blur(24px) saturate(160%);
+  box-shadow:
+    0 12px 36px rgb(0 0 0 / 40%),
+    0 2px 8px rgb(0 0 0 / 20%),
+    inset 0 1px 0 rgb(255 255 255 / 14%),
+    inset 0 -1px 0 rgb(255 255 255 / 4%);
+}
+
+html[data-platform='darwin'] .toolbar-dropdown [role^='menuitem'] {
+  border-radius: 6px;
+}
+
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  html[data-platform='darwin'] .toolbar-dropdown {
+    background: rgb(36 36 38);
+    border-color: rgb(255 255 255 / 40%);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
 /* Thin, unobtrusive scrollbars to match a native desktop feel. */
 ::-webkit-scrollbar {
   width: 10px;
