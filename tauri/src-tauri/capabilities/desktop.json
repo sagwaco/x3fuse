@@ -1,0 +1,13 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "desktop",
+  "description": "Local application windows; filesystem and subprocess work stays in Rust.",
+  "windows": ["main", "settings"],
+  "permissions": [
+    "core:event:allow-listen", "core:event:allow-unlisten",
+    "core:window:allow-start-dragging",
+    "core:window:allow-internal-toggle-maximize",
+    "core:menu:allow-new", "core:menu:allow-popup",
+    "core:resources:allow-close"
+  ]
+}

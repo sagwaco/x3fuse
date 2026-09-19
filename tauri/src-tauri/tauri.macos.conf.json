@@ -1,0 +1,8 @@
+{
+  "app": {"windows": [{
+    "label": "main", "title": "X3Fuse", "width": 960, "height": 680,
+    "minWidth": 720, "minHeight": 480, "backgroundColor": "#0a0a0a",
+    "dragDropEnabled": true, "titleBarStyle": "Overlay", "hiddenTitle": true,
+    "trafficLightPosition": {"x": 12, "y": 26}
+  }]}
+}

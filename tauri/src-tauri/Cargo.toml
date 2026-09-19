@@ -1,0 +1,34 @@
+[package]
+name = "x3fuse-tauri"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-only"
+default-run = "x3fuse-tauri"
+
+[lib]
+name = "x3fuse_app"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# Apply backgroundColor to WKWebView's backing surface during live resizing.
+tauri = { version = "2", features = ["macos-private-api"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["process", "io-util", "sync", "time", "macros"] }
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+base64 = "0.22"
+percent-encoding = "2"
+url = "2"
+tempfile = "3"
+sys-locale = "0.3"
+x3f-core = "0.1.5"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

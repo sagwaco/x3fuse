@@ -1,0 +1,101 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  /* Paint the document canvas before React and between WebKit resize frames. */
+  background-color: #0a0a0a;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family:
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    'Helvetica Neue',
+    Arial,
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  /* The whole app is a desktop chrome; never rubber-band / text-select chrome. */
+  user-select: none;
+  cursor: default;
+  overflow: hidden;
+}
+
+.preview-image {
+  transition: none;
+}
+
+.preview-skeleton {
+  --gray-a3: rgb(255 255 255 / 0.06);
+  --gray-a4: rgb(255 255 255 / 0.1);
+  --radius-1: 4px;
+  background-color: var(--gray-a3);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .preview-skeleton {
+    animation: none !important;
+  }
+}
+
+/* Keep the active JPEG on its own layer so first-zoom image preparation does
+   not hold up the container's transform animation. */
+.preview-image img {
+  will-change: transform;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .preview-image[data-zoom-animated='true'] {
+    transition: transform 240ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+}
+
+/* Native traffic lights share the 48px main-window and Export headers;
+   keep their inset in tauri.macos.conf.json aligned with this height. */
+html[data-platform='darwin'] .window-toolbar {
+  padding-left: 88px;
+}
+
+/* Keep filenames readable when a sidebar narrows the list pane. */
+.file-queue {
+  container: file-queue / inline-size;
+}
+
+@container file-queue (max-width: 560px) {
+  .file-queue-row {
+    grid-template-columns: minmax(0, 1fr) min(25%, 110px);
+  }
+
+  .file-queue-row > :nth-child(2) {
+    display: none;
+  }
+}
+
+/* Thin, unobtrusive scrollbars to match a native desktop feel. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.28);
+  background-clip: content-box;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
