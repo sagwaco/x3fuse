@@ -9,6 +9,8 @@
  */
 import {
   DEFAULT_SETTINGS,
+  SCOPE_MODES,
+  type ScopeMode,
   type ColorProfile,
   type ConversionSettings,
   type OutputFormat,
@@ -89,6 +91,9 @@ export function normalizeSettings(raw: unknown): ConversionSettings {
     autoDownloadUpdates: asBool(r.autoDownloadUpdates, DEFAULT_SETTINGS.autoDownloadUpdates),
     queueViewMode: coerceViewMode(r.queueViewMode),
     inspectorOpen: asBool(r.inspectorOpen, DEFAULT_SETTINGS.inspectorOpen),
+    inspectorScopeMode: SCOPE_MODES.includes(r.inspectorScopeMode as ScopeMode)
+      ? (r.inspectorScopeMode as ScopeMode)
+      : DEFAULT_SETTINGS.inspectorScopeMode,
     lastImportDirectory: coerceDirectory(r.lastImportDirectory)
   }
 }

@@ -23,6 +23,9 @@ export type SortField = 'File Name' | 'Date' | 'Size'
 /** How the queue is presented (Electron-only QoL addition, not in the Swift app). */
 export type QueueViewMode = 'list' | 'grid' | 'filmstrip'
 
+export const SCOPE_MODES = ['histogram', 'rgbParade', 'waveform', 'vectorscope'] as const
+export type ScopeMode = (typeof SCOPE_MODES)[number]
+
 /** One labelled metadata row for the inspector's EXIF panel. */
 export interface ExifPair {
   label: string
@@ -80,6 +83,7 @@ export interface ConversionSettings {
   queueViewMode: QueueViewMode
   /** Whether the right-hand info inspector (histogram + EXIF) is open. */
   inspectorOpen: boolean
+  inspectorScopeMode: ScopeMode
   /** Last directory confirmed in the X3F import dialog. */
   lastImportDirectory: string | null
 }
@@ -101,6 +105,7 @@ export const DEFAULT_SETTINGS: ConversionSettings = {
   autoDownloadUpdates: false,
   queueViewMode: 'list',
   inspectorOpen: false,
+  inspectorScopeMode: 'rgbParade',
   lastImportDirectory: null
 }
 
@@ -125,8 +130,8 @@ export interface X3FFileDTO {
   /**
    * True for an optimistic placeholder row shown the instant a file is dropped,
    * before main has finished reading its metadata (size, date, orientation,
-   * aspect ratio). The UI renders a spinner/skeleton for these; the flag is
-   * cleared once `queue:add` resolves. Renderer-only — never crosses from main.
+   * aspect ratio). Small previews show a skeleton until their import batch
+   * resolves; full JPEGs can load independently. Renderer-only.
    */
   pending?: boolean
   // EXIF metadata, populated during/after conversion.

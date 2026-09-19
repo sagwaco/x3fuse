@@ -1,15 +1,12 @@
 import { useEffect } from 'react'
-import type { QueueViewMode } from '@shared/types'
 import { useQueueStore } from '../stores/queueStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useNavStore } from '../stores/navStore'
 import { useIpcEvents } from '../hooks/useIpcEvents'
 import { Toolbar } from './Toolbar'
 import { DropZone } from './DropZone'
-import { FileQueue } from './FileQueue'
-import { FileGrid } from './FileGrid'
-import { FileFilmstrip } from './FileFilmstrip'
 import { Inspector } from './Inspector'
+import { QueueView } from './QueueView'
 import { ExportScreen } from './ExportScreen'
 import { ReconversionDialog } from './ReconversionDialog'
 
@@ -58,15 +55,4 @@ export function MainWindow(): React.JSX.Element {
       <ReconversionDialog />
     </div>
   )
-}
-
-function QueueView({ mode }: { mode: QueueViewMode }): React.JSX.Element {
-  switch (mode) {
-    case 'grid':
-      return <FileGrid />
-    case 'filmstrip':
-      return <FileFilmstrip />
-    default:
-      return <FileQueue />
-  }
 }

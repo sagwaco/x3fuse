@@ -62,8 +62,25 @@ export type MenuCommand =
   | 'showLogs'
   | 'checkForUpdates'
 
+export interface NativeMenuItem {
+  value: string
+  label: string
+  disabled?: boolean
+  checked?: boolean
+}
+
+export interface NativeMenuRequest {
+  id: string
+  items: NativeMenuItem[]
+  /** Anchor in renderer CSS pixels, relative to the window content. */
+  x: number
+  y: number
+}
+
 /** Request/response channels: channel -> { payload, result }. */
 export interface IpcRequestMap {
+  'menu:popup': { payload: NativeMenuRequest; result: string | null }
+  'menu:close': { payload: string; result: void }
   'settings:get': { payload: void; result: ConversionSettings }
   'settings:set': { payload: Partial<ConversionSettings>; result: ConversionSettings }
 
@@ -133,6 +150,8 @@ export type IpcEventChannel = keyof IpcEventMap
 export type IpcEventPayload<C extends IpcEventChannel> = IpcEventMap[C]
 
 export const IPC_REQUEST_CHANNELS: IpcRequestChannel[] = [
+  'menu:popup',
+  'menu:close',
   'settings:get',
   'settings:set',
   'queue:add',

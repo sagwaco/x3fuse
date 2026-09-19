@@ -6,7 +6,14 @@ import { QueueContextMenuItems } from './QueueContextMenuItems'
  * child (the surface element) becomes the trigger via `asChild`, so list, grid,
  * and filmstrip all share one menu definition.
  */
-export function QueueContextMenu({ children }: { children: React.ReactElement }): React.JSX.Element {
+export function QueueContextMenu({
+  children,
+  disabled = false
+}: {
+  children: React.ReactElement
+  disabled?: boolean
+}): React.JSX.Element {
+  if (disabled) return children
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>

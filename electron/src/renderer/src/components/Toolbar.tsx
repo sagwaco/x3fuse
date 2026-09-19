@@ -1,5 +1,3 @@
-import { useEffect } from 'react'
-import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { ChevronDown, PanelRight } from 'lucide-react'
 import { useQueueStore } from '../stores/queueStore'
 import { t } from '../lib/strings'
@@ -8,9 +6,9 @@ import { Button } from './ui/button'
 import { ViewControls } from './ViewControls'
 import { ZoomControls } from './ZoomControls'
 import { useSettingsStore } from '../stores/settingsStore'
-import { useDropdownMenuState } from '../hooks/useDropdownMenuState'
+import { NativeMenuButton } from './ui/nativeMenuButton'
 
-/** Browsing controls, conversion status, and the split Convert button. */
+/** Browsing controls, export status, and the split Export button. */
 export function Toolbar(): React.JSX.Element {
   const fileCount = useQueueStore((s) => s.files.length)
   const isProcessing = useQueueStore((s) => s.isProcessing)
@@ -34,14 +32,9 @@ export function Toolbar(): React.JSX.Element {
     !isPreparing &&
     !hasDraft
 
-  const [menuOpen, setMenuOpen] = useDropdownMenuState()
-  useEffect(() => {
-    if (!canConvert) setMenuOpen(false)
-  }, [canConvert, setMenuOpen])
-
   return (
     <div className="window-toolbar flex h-12 shrink-0 items-center justify-between border-b border-white/10 px-3">
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-2">
         <span className="text-xs tabular-nums text-neutral-500">
           {fileCount > 0 ? `${fileCount} ${fileCount === 1 ? 'file' : 'files'}` : ''}
         </span>
@@ -67,35 +60,19 @@ export function Toolbar(): React.JSX.Element {
           >
             {t('button.convert')}
           </Button>
-          <DropdownMenu.Root open={menuOpen && canConvert} onOpenChange={setMenuOpen} modal={false}>
-            <DropdownMenu.Trigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="w-6 rounded-l-none border-r border-t border-b border-white/10"
-                disabled={!canConvert}
-                aria-label={t('batch.convert_options')}
-              >
-                <ChevronDown className="h-4 w-4" aria-hidden="true" />
-              </Button>
-            </DropdownMenu.Trigger>
-            <DropdownMenu.Portal>
-              <DropdownMenu.Content
-                align="end"
-                sideOffset={4}
-                aria-label={t('batch.convert_options')}
-                className="toolbar-dropdown z-30 w-max rounded-md border border-white/15 bg-neutral-900 p-1 text-neutral-100 shadow-xl outline-none [-webkit-app-region:no-drag]"
-              >
-                <DropdownMenu.Item
-                  disabled={!hasPrevious}
-                  className="rounded px-3 py-2 text-sm outline-none data-[highlighted]:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400 data-[disabled]:pointer-events-none data-[disabled]:opacity-40"
-                  onSelect={() => void convertPrevious()}
-                >
-                  {t('batch.convert_previous')}
-                </DropdownMenu.Item>
-              </DropdownMenu.Content>
-            </DropdownMenu.Portal>
-          </DropdownMenu.Root>
+          <NativeMenuButton
+            variant="ghost"
+            size="icon"
+            className="w-6 rounded-l-none border-r border-t border-b border-white/10"
+            disabled={!canConvert}
+            aria-label={t('batch.convert_options')}
+            items={[
+              { value: 'previous', label: t('batch.convert_previous'), disabled: !hasPrevious }
+            ]}
+            onSelect={() => void convertPrevious()}
+          >
+            <ChevronDown className="h-4 w-4" aria-hidden="true" />
+          </NativeMenuButton>
         </div>
         <Button
           variant="ghost"

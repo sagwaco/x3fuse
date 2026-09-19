@@ -267,12 +267,13 @@ export function ZoomablePreview({ file }: { file: X3FFileDTO }): React.JSX.Eleme
           <OrientedImage
             file={file}
             variant="full"
+            loading="eager"
             containerClassName="h-full w-full"
             className="h-full w-full object-contain"
-            onLoad={(event) =>
+            onLoad={(image) =>
               setImage({
-                width: event.currentTarget.naturalWidth,
-                height: event.currentTarget.naturalHeight
+                width: image.naturalWidth,
+                height: image.naturalHeight
               })
             }
           />

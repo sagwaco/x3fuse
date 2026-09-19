@@ -61,8 +61,8 @@ describe('batch workflow', () => {
   it('requires a ready selection and a previous commit for the shortcut', () => {
     store.setState({ selectedIds: new Set() })
     render(<Toolbar />)
-    expect((screen.getByText('Convert') as HTMLButtonElement).disabled).toBe(true)
-    const dropdown = screen.getByRole('button', { name: 'Conversion options' }) as HTMLButtonElement
+    expect((screen.getByText('Export') as HTMLButtonElement).disabled).toBe(true)
+    const dropdown = screen.getByRole('button', { name: 'Export options' }) as HTMLButtonElement
     expect(dropdown.disabled).toBe(true)
     fireEvent.keyDown(dropdown, { key: 'Enter' })
     expect(screen.queryByRole('menu')).toBeNull()
@@ -74,121 +74,65 @@ describe('batch workflow', () => {
         files: files.map((f) => ({ ...f, pending: true }))
       })
     )
-    expect((screen.getByText('Convert') as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByText('Export') as HTMLButtonElement).disabled).toBe(true)
   })
 
-  it('opens the joined dropdown with the keyboard and disables both halves while converting', async () => {
-    const { container } = render(<Toolbar />)
-    const dropdown = screen.getByRole('button', { name: 'Conversion options' }) as HTMLButtonElement
-    const convert = screen.getByText('Convert') as HTMLButtonElement
-    expect(dropdown.disabled).toBe(false)
+  it('opens the native export menu with the keyboard and closes it when conversion starts', async () => {
+    let dismiss!: (value: string | null) => void
+    invoke.mockReturnValueOnce(
+      new Promise((resolve) => {
+        dismiss = resolve
+      })
+    )
+    render(<Toolbar />)
+    const dropdown = screen.getByRole('button', { name: 'Export options' }) as HTMLButtonElement
+    const convert = screen.getByText('Export') as HTMLButtonElement
     expect(dropdown.previousElementSibling).toBe(convert)
     fireEvent.keyDown(dropdown, { key: 'ArrowDown' })
-    const menu = await screen.findByRole('menu')
-    expect(container.contains(menu)).toBe(false)
-    expect(dropdown.getAttribute('aria-controls')).toBe(menu.id)
-    const previous = screen.getByRole('menuitem', { name: 'Convert with Previous Settings' })
-    expect(previous.getAttribute('aria-disabled')).toBe('true')
-    fireEvent.click(previous)
-    expect(invoke).not.toHaveBeenCalled()
-    fireEvent.keyDown(menu, { key: 'Escape' })
-    expect(screen.queryByRole('menu')).toBeNull()
-    await waitFor(() => expect(document.activeElement).toBe(dropdown))
-    act(() =>
-      useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, hasPreviousConversion: true } })
+    expect(invoke).toHaveBeenCalledWith(
+      'menu:popup',
+      expect.objectContaining({
+        items: [{ value: 'previous', label: 'Export with Previous Settings', disabled: true }]
+      })
     )
-    fireEvent.keyDown(dropdown, { key: 'Enter' })
-    const enabledPrevious = await screen.findByRole('menuitem')
-    expect(enabledPrevious.getAttribute('aria-disabled')).not.toBe('true')
-    await waitFor(() => expect(document.activeElement).toBe(enabledPrevious))
+    const request = invoke.mock.calls[0][1] as { id: string }
+    expect(dropdown.getAttribute('aria-expanded')).toBe('true')
     act(() => store.setState({ isProcessing: true }))
     expect(convert.disabled).toBe(true)
     expect(dropdown.disabled).toBe(true)
-    expect(screen.queryByRole('menu')).toBeNull()
-    act(() => store.setState({ isProcessing: false }))
-    expect(screen.queryByRole('menu')).toBeNull()
+    expect(invoke).toHaveBeenCalledWith('menu:close', request.id)
+    await act(async () => dismiss(null))
+    expect(dropdown.getAttribute('aria-expanded')).toBe('false')
   })
 
-  it('opens with a pointer and dismisses without consuming the primary action', async () => {
+  it('dismisses a native popup without consuming the primary action', async () => {
+    invoke.mockResolvedValueOnce(null)
     render(<Toolbar />)
-    const dropdown = screen.getByRole('button', { name: 'Conversion options' })
-    // jsdom has no PointerEvent constructor; MouseEvent supplies the button fields.
-    fireEvent(dropdown, new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
-    await screen.findByRole('menu')
-    // Radix defers installing its outside-pointer listener until the next task.
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 0))
-    })
-    const convert = screen.getByText('Convert')
-    fireEvent(convert, new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
-    expect(screen.queryByRole('menu')).toBeNull()
-    act(() => convert.focus())
-    fireEvent.click(convert)
+    const dropdown = screen.getByRole('button', { name: 'Export options' })
+    fireEvent.click(dropdown)
+    await waitFor(() => expect(dropdown.getAttribute('aria-expanded')).toBe('false'))
+    expect(store.getState().draft).toBeNull()
+    expect(invoke).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByText('Export'))
     expect(useNavStore.getState().screen).toBe('export')
     expect(store.getState().draft?.files).toHaveLength(2)
-    expect(invoke).not.toHaveBeenCalled()
   })
 
-  it.each(['Conversion options', 'Zoom level'])(
-    'dismisses %s on outside and title-bar presses, window blur, and resize',
-    async (name) => {
-      usePreviewStore.setState({
-        controls: {
-          fileId: 'a',
-          zoom: null,
-          scale: 1,
-          minZoom: 0.1,
-          maxZoom: 8,
-          zoomTo: vi.fn()
-        }
-      })
-      const { container } = render(<Toolbar />)
-      const trigger = screen.getByRole('button', { name })
-      const titlebar = container.querySelector('.window-toolbar')!
-
-      for (const dismiss of [
-        () => fireEvent(document.body, new MouseEvent('pointerdown', { bubbles: true, button: 0 })),
-        () => fireEvent(titlebar, new MouseEvent('pointerdown', { bubbles: true, button: 0 })),
-        () => fireEvent.blur(window),
-        () => fireEvent.resize(window)
-      ]) {
-        fireEvent.keyDown(trigger, { key: 'ArrowDown' })
-        await screen.findByRole('menu')
-        // Allow Radix's deferred outside-pointer listener and focus cleanup to run.
-        await act(async () => {
-          await new Promise((resolve) => setTimeout(resolve, 0))
-        })
-        dismiss()
-        expect(screen.queryByRole('menu')).toBeNull()
-        expect(trigger.getAttribute('aria-expanded')).toBe('false')
-        await act(async () => {
-          await new Promise((resolve) => setTimeout(resolve, 0))
-        })
-      }
-      expect(invoke).not.toHaveBeenCalled()
-    }
-  )
-
-  it('runs the previous-settings action once when selected with the keyboard', async () => {
-    useSettingsStore.setState({
-      settings: { ...DEFAULT_SETTINGS, hasPreviousConversion: true }
-    })
+  it('runs the previous-settings action once when chosen in the native menu', async () => {
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, hasPreviousConversion: true } })
+    invoke.mockResolvedValueOnce('previous')
     render(<Toolbar />)
-    fireEvent.keyDown(screen.getByRole('button', { name: 'Conversion options' }), { key: ' ' })
-    const previous = await screen.findByRole('menuitem', { name: 'Convert with Previous Settings' })
-    await waitFor(() => expect(document.activeElement).toBe(previous))
-    fireEvent.keyDown(previous, { key: 'Enter' })
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Export options' }), { key: ' ' })
     await waitFor(() => expect(store.getState().isProcessing).toBe(true))
-    expect(invoke).toHaveBeenCalledTimes(2)
+    expect(invoke).toHaveBeenCalledTimes(3)
     expect(invoke).toHaveBeenLastCalledWith('convert:start', expect.any(Object))
-    expect(screen.queryByRole('menu')).toBeNull()
   })
 
   it('shows radial progress and a short counter, with Stop only inside the modal', async () => {
     await start()
     render(<Toolbar />)
     expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull()
-    const trigger = screen.getByRole('button', { name: 'Conversion status: 0 of 2' })
+    const trigger = screen.getByRole('button', { name: 'Export status: 0 of 2' })
     expect(trigger.querySelector('svg[role="progressbar"]')).not.toBeNull()
     fireEvent.click(trigger)
     const stop = screen.getByRole('button', { name: 'Stop' })
@@ -207,7 +151,7 @@ describe('batch workflow', () => {
     store.setState({ files: largeBatch, selectedIds: new Set(largeBatch.map((f) => f.id)) })
     const batchId = await start()
     render(<BatchProgress />)
-    fireEvent.click(screen.getByRole('button', { name: 'Conversion status: 0 of 1000' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Export status: 0 of 1000' }))
     const list = screen.getByRole('list')
     const viewport = list.parentElement!
     expect(screen.getAllByRole('listitem').length).toBeLessThan(25)
@@ -354,7 +298,7 @@ describe('batch workflow', () => {
       // Later preferences must not rename an existing batch's rows.
       useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, outputFormat: 'embeddedJpg' } })
       render(<BatchProgress />)
-      fireEvent.click(screen.getByRole('button', { name: 'Conversion status: 0 of 2' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Export status: 0 of 2' }))
       expect(screen.getByText(expected)).toBeTruthy()
       expect(screen.queryByText('a.X3F')).toBeNull()
       expect(store.getState().files).toBe(files)
@@ -392,11 +336,11 @@ describe('batch workflow', () => {
     expect(store.getState().files).toBe(files)
     expect(screen.queryByRole('progressbar')).toBeNull()
     const trigger = screen.getByRole('button', {
-      name: 'Conversion status: 1 converted · 1 failed · 0 warnings'
+      name: 'Export status: 1 exported · 1 failed · 0 warnings'
     })
     expect(trigger.querySelector('.lucide-triangle-alert')).not.toBeNull()
     fireEvent.click(trigger)
-    expect(screen.getByRole('dialog', { name: 'Conversion status' })).toBeTruthy()
+    expect(screen.getByRole('dialog', { name: 'Export status' })).toBeTruthy()
     const status = screen.getByRole('img', { name: 'Failed: Broken input' })
     act(() => status.focus())
     expect((await screen.findByRole('tooltip')).textContent).toContain('Failed: Broken input')
@@ -437,7 +381,7 @@ describe('batch workflow', () => {
     expect(store.getState().files).toBe(files)
   })
 
-  it('routes Convert All through the export screen', () => {
+  it('routes Export All through the export screen', () => {
     store.getState().convertAllMenu()
     expect(store.getState().selectedIds.size).toBe(3)
     expect(store.getState().draft?.files).toHaveLength(3)

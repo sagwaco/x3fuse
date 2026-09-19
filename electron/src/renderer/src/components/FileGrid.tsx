@@ -1,6 +1,7 @@
 import { memo, useEffect, useMemo, useRef } from 'react'
 import type { X3FFileDTO } from '@shared/types'
-import { useQueueStore } from '../stores/queueStore'
+import { useQueueStore, type ExportDraft } from '../stores/queueStore'
+import { outputFileName } from '../lib/outputName'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useFileDrop } from '../hooks/useFileDrop'
 import { useQueueSelection, type QueueSelection } from '../hooks/useQueueSelection'
@@ -19,8 +20,8 @@ const LABEL_H = 34
 const ROW_HEIGHT = THUMB_H + LABEL_H + GAP
 
 /** Thumbnail grid view: virtualized rows of embedded-preview cells. */
-export function FileGrid(): React.JSX.Element {
-  const files = useQueueStore((s) => s.files)
+export function FileGrid({ draft }: { draft?: ExportDraft }): React.JSX.Element {
+  const files = useQueueStore((s) => draft?.files ?? s.files)
   const selectedIds = useQueueStore((s) => s.selectedIds)
   const activeId = useQueueStore((s) => s.activeId)
   const sortField = useSettingsStore((s) => s.settings.sortField)
@@ -47,13 +48,13 @@ export function FileGrid(): React.JSX.Element {
   useScrollToActive(virtualizer, sorted, activeId, columns)
 
   return (
-    <QueueContextMenu>
+    <QueueContextMenu disabled={!!draft}>
       <div
         ref={parentRef}
         tabIndex={0}
         onKeyDown={sel.handleKeyDown}
         onContextMenu={sel.handleContainerContextMenu}
-        {...dropHandlers}
+        {...(draft ? {} : dropHandlers)}
         className="relative min-h-0 flex-1 overflow-auto outline-none"
       >
         <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
@@ -81,6 +82,7 @@ export function FileGrid(): React.JSX.Element {
                   <GridCell
                     key={file.id}
                     file={file}
+                    outputName={draft ? outputFileName(file, draft.settings) : undefined}
                     index={start + c}
                     selected={selectedIds.has(file.id)}
                     active={activeId === file.id}
@@ -92,7 +94,7 @@ export function FileGrid(): React.JSX.Element {
           })}
         </div>
 
-        {isDragOver && (
+        {!draft && isDragOver && (
           <div className="pointer-events-none absolute inset-0 rounded-md ring-2 ring-inset ring-blue-500/40 bg-blue-500/5" />
         )}
       </div>
@@ -103,12 +105,14 @@ export function FileGrid(): React.JSX.Element {
 // Keep unchanged cells stable while browsing.
 const GridCell = memo(function GridCell({
   file,
+  outputName,
   index,
   selected,
   active,
   sel
 }: {
   file: X3FFileDTO
+  outputName?: string
   index: number
   selected: boolean
   active: boolean
@@ -141,6 +145,11 @@ const GridCell = memo(function GridCell({
       >
         {file.fileName}
       </span>
+      {outputName && (
+        <span className="truncate px-1 text-center text-xs text-neutral-200" title={outputName}>
+          → {outputName}
+        </span>
+      )}
     </div>
   )
 })

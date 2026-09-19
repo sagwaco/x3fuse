@@ -104,9 +104,11 @@ never touches a raw channel string — it goes through the typed `window.x3f` br
   `menu:command`, `update:available/downloaded`
 - **`x3f-preview://` custom protocol:** streams an X3F's embedded JPEG preview
   (`?p=<path>&v=preview|full`) to the renderer for thumbnails, the filmstrip
-  preview, and the histogram — extracted on demand by `exiftool -b` and cached in
-  a byte-budgeted LRU (`PreviewService`). Registered secure + CORS-enabled so the
-  histogram canvas stays untainted.
+  preview, and scopes. Imports hydrate in batches of eight, extracting small
+  JPEGs alongside metadata and seeding the byte-budgeted LRU (`PreviewService`).
+  Full JPEGs load on demand, with a small-preview fallback after one second.
+  Duplicate requests share extraction work, with at most four on-demand
+  extractions at once. Registered secure + CORS-enabled so scope canvases stay untainted.
 
 The renderer owns the queue; the main process is stateless about it and simply runs
 the file list it is handed, reading global options from `SettingsService`.

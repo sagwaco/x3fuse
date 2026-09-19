@@ -7,6 +7,9 @@ import { ZoomControls } from '../src/renderer/src/components/ZoomControls'
 import { PreviewMinimap } from '../src/renderer/src/components/PreviewMinimap'
 import { usePreviewStore } from '../src/renderer/src/stores/previewStore'
 
+const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }))
+vi.mock('../src/renderer/src/lib/ipc', () => ({ ipc: { invoke } }))
+
 const file: X3FFileDTO = {
   id: 'a',
   path: '/photos/a.X3F',
@@ -15,6 +18,7 @@ const file: X3FFileDTO = {
 let resize: (width: number, height: number) => void
 
 beforeEach(() => {
+  invoke.mockReset().mockResolvedValue(null)
   Object.defineProperty(Element.prototype, 'getAnimations', {
     configurable: true,
     value: vi.fn(() => [])
@@ -57,7 +61,7 @@ afterEach(() => {
 })
 
 function loadImage(width = 1600, height = 1200): HTMLImageElement {
-  const image = screen.getByRole('img') as HTMLImageElement
+  const image = document.querySelector('img[src$="v=full"]') as HTMLImageElement
   Object.defineProperties(image, {
     naturalWidth: { value: width, configurable: true },
     naturalHeight: { value: height, configurable: true }
@@ -95,11 +99,9 @@ function setup(width = 1600, height = 1200) {
 
 async function chooseZoom(value: string): Promise<void> {
   const trigger = screen.getByRole('button', { name: 'Zoom level' })
+  invoke.mockResolvedValueOnce(value)
   fireEvent.keyDown(trigger, { key: 'ArrowDown' })
-  fireEvent.click(
-    await screen.findByRole('menuitemradio', { name: value === 'fit' ? 'Fit' : `${value}%` })
-  )
-  await waitFor(() => expect(document.activeElement).toBe(trigger))
+  await waitFor(() => expect(trigger.getAttribute('aria-expanded')).toBe('false'))
 }
 
 describe('filmstrip zoom preview', () => {
@@ -319,21 +321,38 @@ describe('filmstrip zoom preview', () => {
   it('disables controls until a preview loads, including pending and failed previews', () => {
     const result = render(<PreviewWithControls key="pending" file={{ ...file, pending: true }} />)
     expect(screen.queryByRole('img')).toBeNull()
+    expect(document.querySelector('img[src$="v=full"]')?.getAttribute('loading')).toBe('eager')
     expect(
       screen.getAllByRole('button').every((button) => (button as HTMLButtonElement).disabled)
     ).toBe(true)
     result.rerender(<PreviewWithControls key="failed" file={file} />)
-    fireEvent.error(screen.getByRole('img'))
+    // A usable small image never enables full-resolution zoom controls.
+    fireEvent.error(document.querySelector('img[src$="v=full"]')!)
+    fireEvent.load(screen.getByRole('img'))
+    expect(screen.getByRole('img').getAttribute('src')).toContain('v=preview')
     expect(
       screen.getAllByRole('button').every((button) => (button as HTMLButtonElement).disabled)
     ).toBe(true)
   })
 
-  it('offers each zoom preset and preserves the current percentage after gesture zoom', async () => {
+  it('enables full-image zoom before metadata arrives and keeps it ready afterward', () => {
+    const result = render(<PreviewWithControls file={{ ...file, pending: true }} />)
+    loadImage()
+    expect(usePreviewStore.getState().controls?.fileId).toBe(file.id)
+    result.rerender(
+      <PreviewWithControls file={{ ...file, pending: false, orientation: 6, aspectRatio: 1 }} />
+    )
+    expect(usePreviewStore.getState().controls?.fileId).toBe(file.id)
+    expect(document.querySelector('.rt-Skeleton')).toBeNull()
+    expect(screen.getByRole('img').getAttribute('src')).toContain('v=full')
+  })
+
+  it('offers native zoom presets and preserves a custom percentage after gesture zoom', async () => {
     const { media } = setup()
     const dropdown = screen.getByRole('button', { name: 'Zoom level' })
     fireEvent.keyDown(dropdown, { key: 'ArrowDown' })
-    expect(screen.getAllByRole('menuitemradio').map((item) => item.textContent)).toEqual([
+    const request = invoke.mock.calls.at(-1)![1]
+    expect(request.items.map((item: { label: string }) => item.label)).toEqual([
       'Fit',
       '25%',
       '50%',
@@ -344,9 +363,8 @@ describe('filmstrip zoom preview', () => {
       '175%',
       '200%'
     ])
-    expect(screen.getByRole('menuitemradio', { checked: true }).textContent).toBe('Fit')
-    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' })
-    await waitFor(() => expect(document.activeElement).toBe(dropdown))
+    expect(request.items[0].checked).toBe(true)
+    await waitFor(() => expect(dropdown.getAttribute('aria-expanded')).toBe('false'))
     for (const percent of [25, 50, 75, 100, 125, 150, 175, 200]) {
       await chooseZoom(String(percent))
       expect(media.style.transform).toContain(`scale(${percent / 100})`)
@@ -355,38 +373,43 @@ describe('filmstrip zoom preview', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }))
     expect(dropdown.textContent).toBe('63%')
     const queueNavigation = vi.fn()
-    // Dropdown keys must not reach the filmstrip's queue navigation.
     document.addEventListener('keydown', queueNavigation)
     try {
       fireEvent.keyDown(dropdown, { key: 'ArrowDown' })
-      const custom = screen.getByRole('menuitemradio', { name: '63%', checked: true })
-      expect(custom.getAttribute('aria-disabled')).toBe('true')
-      fireEvent.click(custom)
+      expect(invoke.mock.calls.at(-1)![1].items.at(-1)).toEqual({
+        value: '62.5',
+        label: '63%',
+        checked: true,
+        disabled: true
+      })
+      await waitFor(() => expect(dropdown.getAttribute('aria-expanded')).toBe('false'))
       expect(media.style.transform).toContain('scale(0.625)')
-      const fit = screen.getByRole('menuitemradio', { name: 'Fit' })
-      await waitFor(() => expect(document.activeElement).toBe(fit))
-      fireEvent.keyDown(fit, { key: 'ArrowDown' })
-      const firstPreset = screen.getByRole('menuitemradio', { name: '25%' })
-      await waitFor(() => expect(document.activeElement).toBe(firstPreset))
-      fireEvent.keyDown(firstPreset, { key: 'Enter' })
+      await chooseZoom('25')
       expect(media.style.transform).toContain('scale(0.25)')
-      await waitFor(() => expect(document.activeElement).toBe(dropdown))
       expect(queueNavigation).not.toHaveBeenCalled()
     } finally {
       document.removeEventListener('keydown', queueNavigation)
     }
   })
 
-  it('closes the zoom menu when its preview becomes unavailable', () => {
-    const { container } = setup()
-    fireEvent.pointerDown(screen.getByRole('button', { name: 'Zoom level' }), { button: 0 })
-    expect(container.contains(screen.getByRole('menu'))).toBe(false)
+  it('closes the native zoom menu when its preview becomes unavailable', async () => {
+    let dismiss!: (value: null) => void
+    invoke.mockReturnValueOnce(
+      new Promise((resolve) => {
+        dismiss = resolve
+      })
+    )
+    setup()
+    fireEvent.click(screen.getByRole('button', { name: 'Zoom level' }))
+    const id = invoke.mock.calls.at(-1)![1].id
     act(() => usePreviewStore.setState({ controls: null }))
-    expect(screen.queryByRole('menu')).toBeNull()
+    expect(invoke).toHaveBeenCalledWith('menu:close', id)
     const dropdown = screen.getByRole('button', { name: 'Zoom level' }) as HTMLButtonElement
     expect(dropdown.disabled).toBe(true)
+    const calls = invoke.mock.calls.length
     fireEvent.keyDown(dropdown, { key: 'Enter' })
-    expect(screen.queryByRole('menu')).toBeNull()
+    expect(invoke).toHaveBeenCalledTimes(calls)
+    await act(async () => dismiss(null))
   })
 
   it('keeps the Info minimap in sync and lets users drag the window without jumping', () => {

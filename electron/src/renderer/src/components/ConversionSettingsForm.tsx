@@ -15,7 +15,8 @@ import { t } from '../lib/strings'
 import { Button } from './ui/button'
 import { Slider } from './ui/slider'
 import { Select } from './ui/select'
-import { Callout, Divider, Row, Section, ToggleRow } from './ui/settingsLayout'
+import { Divider, Row, ToggleRow } from './ui/settingsLayout'
+import { PanelSection as Section } from './ui/panelSection'
 
 const FORMAT_OPTIONS: { value: OutputFormat; label: string }[] = [
   { value: 'dng', label: 'DNG (default)' },
@@ -89,118 +90,129 @@ export function ConversionSettingsForm({
     <>
       {/* Output */}
       <Section title={t('settings.section.output')}>
-        <ToggleRow
-          label={t('settings.save_alongside_original')}
-          checked={saveAlongside}
-          onChange={(v) => void onSaveAlongsideChange(v)}
-        />
-        {saveAlongside ? (
-          <p className="text-xs text-neutral-500">
-            {t('settings.save_alongside_original.description')}
-          </p>
-        ) : (
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-sm text-neutral-300">{t('settings.output_location')}</span>
-            <div className="flex min-w-0 items-center gap-2">
-              <span
-                className="truncate font-mono text-xs text-neutral-400"
-                title={settings.outputDirectory ?? ''}
-              >
-                {settings.outputDirectory ? basename(settings.outputDirectory) : '—'}
-              </span>
-              <Button variant="bordered" size="sm" onClick={() => void pickOutputDir()}>
-                {t('button.browse')}
-              </Button>
+        <div className="flex flex-col gap-3">
+          <ToggleRow
+            labelClassName="text-xs text-neutral-300"
+            label={t('settings.save_alongside_original')}
+            help={`${t('settings.save_alongside_original.help')} ${t('settings.save_alongside_original.description')}`}
+            checked={saveAlongside}
+            onChange={(v) => void onSaveAlongsideChange(v)}
+          />
+          {!saveAlongside && (
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-xs text-neutral-300">{t('settings.output_location')}</span>
+              <div className="flex min-w-0 items-center gap-2">
+                <span
+                  className="truncate font-mono text-xs text-neutral-400"
+                  title={settings.outputDirectory ?? ''}
+                >
+                  {settings.outputDirectory ? basename(settings.outputDirectory) : '—'}
+                </span>
+                <Button variant="bordered" size="sm" onClick={() => void pickOutputDir()}>
+                  {t('button.browse')}
+                </Button>
+              </div>
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </Section>
 
       {/* Conversion */}
       <Section title={t('settings.section.conversion')}>
-        <Row label={t('settings.conversion_format')}>
-          <Select
-            value={format}
-            options={FORMAT_OPTIONS}
-            onValueChange={(v) => update({ outputFormat: v })}
-          />
-        </Row>
+        <div className="flex flex-col gap-3">
+          <Row labelClassName="text-xs text-neutral-300" label={t('settings.conversion_format')}>
+            <Select
+              className="text-xs text-neutral-200"
+              aria-label={t('settings.conversion_format')}
+              value={format}
+              options={FORMAT_OPTIONS}
+              onValueChange={(v) => update({ outputFormat: v })}
+            />
+          </Row>
 
-        {shouldShowCompressionOption(format) && (
-          <>
+          {shouldShowCompressionOption(format) && (
             <ToggleRow
+              labelClassName="text-xs text-neutral-300"
               label={t('settings.raw_compression')}
+              help={t('settings.raw_compression.warning')}
               checked={settings.compress}
               onChange={(v) => update({ compress: v })}
             />
-            {settings.compress && <Callout text={t('settings.raw_compression.warning')} />}
-          </>
-        )}
+          )}
 
-        {shouldShowDngHighlightRecoveryOption(format) && (
-          <>
+          {shouldShowDngHighlightRecoveryOption(format) && (
             <ToggleRow
+              labelClassName="text-xs text-neutral-300"
               label={t('settings.dng_highlight_recovery')}
+              help={t('settings.dng_highlight_recovery.warning')}
               checked={settings.dngHighlightRecovery}
               onChange={(v) => update({ dngHighlightRecovery: v })}
             />
-            {settings.dngHighlightRecovery && (
-              <Callout text={t('settings.dng_highlight_recovery.warning')} />
-            )}
-          </>
-        )}
+          )}
 
-        {shouldShowCineonOption(format) && (
+          {shouldShowCineonOption(format) && (
+            <ToggleRow
+              labelClassName="text-xs text-neutral-300"
+              label={t('settings.cineon')}
+              help={t('settings.cineon.help')}
+              checked={settings.cineon}
+              onChange={(v) => update({ cineon: v })}
+            />
+          )}
+
+          {shouldShowColorProfileOption(format) && (
+            <Row labelClassName="text-xs text-neutral-300" label={t('settings.color_profile')}>
+              <Select
+                className="text-xs text-neutral-200"
+                aria-label={t('settings.color_profile')}
+                value={settings.colorProfile}
+                options={COLOR_OPTIONS}
+                onValueChange={(v) => update({ colorProfile: v })}
+              />
+            </Row>
+          )}
+
+          <Divider />
+
           <ToggleRow
-            label={t('settings.cineon')}
-            checked={settings.cineon}
-            onChange={(v) => update({ cineon: v })}
+            labelClassName="text-xs text-neutral-300"
+            label={t('settings.denoise')}
+            help={t('settings.denoise.help')}
+            checked={settings.denoiseIntensity > 0}
+            onChange={setDenoiseEnabled}
           />
-        )}
+          {settings.denoiseIntensity > 0 && (
+            <div className="flex flex-col gap-1.5">
+              <span className="text-xs text-neutral-300">{t('settings.denoise.intensity')}</span>
+              <Slider
+                value={settings.denoiseIntensity}
+                min={1}
+                max={10}
+                onValueChange={(v) => update({ denoiseIntensity: v })}
+              />
+              <div className="flex justify-between text-xs font-semibold text-neutral-500">
+                <span>{t('settings.denoise.intensity.less')}</span>
+                <span>{t('settings.denoise.intensity.more')}</span>
+              </div>
+            </div>
+          )}
 
-        {shouldShowColorProfileOption(format) && (
-          <Row label={t('settings.color_profile')}>
+          <Divider />
+
+          <Row
+            labelClassName="text-xs text-neutral-300"
+            label={t('settings.concurrency')}
+            help={t('settings.concurrency.help')}
+          >
             <Select
-              value={settings.colorProfile}
-              options={COLOR_OPTIONS}
-              onValueChange={(v) => update({ colorProfile: v })}
+              className="text-xs text-neutral-200"
+              aria-label={t('settings.concurrency')}
+              value={String(settings.concurrency)}
+              options={concurrencyOptions()}
+              onValueChange={(v) => update({ concurrency: Number(v) })}
             />
           </Row>
-        )}
-
-        <Divider />
-
-        <ToggleRow
-          label={t('settings.denoise')}
-          checked={settings.denoiseIntensity > 0}
-          onChange={setDenoiseEnabled}
-        />
-        {settings.denoiseIntensity > 0 && (
-          <div className="flex flex-col gap-1.5">
-            <span className="text-sm text-neutral-300">{t('settings.denoise.intensity')}</span>
-            <Slider
-              value={settings.denoiseIntensity}
-              min={1}
-              max={10}
-              onValueChange={(v) => update({ denoiseIntensity: v })}
-            />
-            <div className="flex justify-between text-xs font-semibold text-neutral-500">
-              <span>{t('settings.denoise.intensity.less')}</span>
-              <span>{t('settings.denoise.intensity.more')}</span>
-            </div>
-          </div>
-        )}
-
-        <Divider />
-
-        <Row label={t('settings.concurrency')}>
-          <Select
-            value={String(settings.concurrency)}
-            options={concurrencyOptions()}
-            onValueChange={(v) => update({ concurrency: Number(v) })}
-          />
-        </Row>
-        <p className="text-xs text-neutral-500">{t('settings.concurrency.help')}</p>
+        </div>
       </Section>
     </>
   )

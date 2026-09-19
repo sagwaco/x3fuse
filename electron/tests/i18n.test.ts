@@ -53,9 +53,18 @@ describe('locale bundles', () => {
   })
 
   it('carries real translations (spot check)', () => {
-    expect(ja['button.convert']).toBe('変換')
-    expect(ko['button.convert']).toBe('변환')
-    expect(zhHans['button.convert']).toBe('转换')
-    expect(zhHant['button.convert']).toBe('轉換')
+    expect(en['button.convert']).toBe('Export')
+    expect(ja['button.convert']).toBe('書き出し')
+    expect(ko['button.convert']).toBe('내보내기')
+    expect(zhHans['button.convert']).toBe('导出')
+    expect(zhHant['button.convert']).toBe('匯出')
+  })
+
+  it('uses export wording throughout every locale', () => {
+    for (const [lng, bundle] of Object.entries(bundles)) {
+      for (const [key, value] of Object.entries(bundle)) {
+        expect(value, `${lng}:${key}`).not.toMatch(/convert|conversion|変換|변환|转换|轉換/i)
+      }
+    }
   })
 })

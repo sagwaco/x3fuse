@@ -13,6 +13,7 @@ export function PreviewMinimap({ file }: { file: X3FFileDTO }): React.JSX.Elemen
       <OrientedImage
         file={file}
         variant="preview"
+        loading="eager"
         containerClassName="h-44 w-full rounded-md border border-white/10 bg-neutral-900"
       />
     )
@@ -40,6 +41,7 @@ export function PreviewMinimap({ file }: { file: X3FFileDTO }): React.JSX.Elemen
         <OrientedImage
           file={file}
           variant="full"
+          loading="eager"
           containerClassName="absolute inset-0"
           className="h-full w-full object-contain"
         />

@@ -1,133 +1,222 @@
-import { useEffect, useRef, useState, type ReactEventHandler } from 'react'
-import { ImageOff, Loader2 } from 'lucide-react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { ImageOff } from 'lucide-react'
+import { Skeleton } from '@radix-ui/themes/components/skeleton'
+import '@radix-ui/themes/src/components/skeleton.css'
 import type { X3FFileDTO } from '@shared/types'
 import { previewUrl, type PreviewVariant } from '@shared/preview'
 import { drawImageWithOrientation, shouldUseCanvas } from '../lib/orientation'
 import { cn } from '../lib/cn'
+import { t } from '../lib/strings'
+import { useDelayedLoading } from '../hooks/useDelayedLoading'
 
 type Status = 'loading' | 'ok' | 'error'
 
-/** Centered spinner over a dim wash, shared by the importing + preview-loading states. */
-function SpinnerOverlay(): React.JSX.Element {
-  return (
-    <div className="absolute inset-0 flex items-center justify-center bg-neutral-900/40">
-      <Loader2 className="h-5 w-5 animate-spin text-neutral-400" />
-    </div>
-  )
+// Retain only small, already-oriented canvases; full JPEGs use Chromium's cache.
+const canvasCache = new Map<string, HTMLCanvasElement>()
+const CANVAS_BUDGET = 16 * 1024 * 1024
+let cachedCanvasBytes = 0
+
+function cacheCanvas(key: string, canvas: HTMLCanvasElement): void {
+  const previous = canvasCache.get(key)
+  if (previous) cachedCanvasBytes -= previous.width * previous.height * 4
+  canvasCache.delete(key)
+  canvasCache.set(key, canvas)
+  cachedCanvasBytes += canvas.width * canvas.height * 4
+  while (cachedCanvasBytes > CANVAS_BUDGET) {
+    const oldest = canvasCache.keys().next().value!
+    const evicted = canvasCache.get(oldest)!
+    cachedCanvasBytes -= evicted.width * evicted.height * 4
+    canvasCache.delete(oldest)
+  }
 }
 
-/**
- * Displays an X3F's embedded preview. The two variants are sourced and oriented
- * differently:
- *   - `full`    — the full-res JpgFromRaw, which embeds its *own* EXIF Orientation
- *                 and is already cropped to its final aspect ratio. It renders as a
- *                 plain lazy `<img>` and the browser orients it (image-orientation:
- *                 from-image). No manual rotation/crop — that would double-rotate it.
- *   - `preview` — the small 4:3 PreviewImage, which carries no orientation and
- *                 letterboxes non-4:3 crops. We fetch the bytes and bake the X3F's
- *                 EXIF rotation + the letterbox crop into a `<canvas>`.
- * Bytes come from the x3f-preview:// custom protocol.
- *
- * The media element fits inside the box via max-width/height + flex centering,
- * which works uniformly for both `<img>` and `<canvas>`.
- */
-export function OrientedImage({
-  file,
-  variant = 'preview',
-  containerClassName,
-  className,
-  maxEdge,
-  onLoad
-}: {
+interface ImageProps {
   file: X3FFileDTO
   variant?: PreviewVariant
   containerClassName?: string
   className?: string
   maxEdge?: number
-  onLoad?: ReactEventHandler<HTMLImageElement>
-}): React.JSX.Element {
-  const orientation = file.orientation ?? 1
-  const aspectRatio = file.aspectRatio
-  const url = previewUrl(file.path, variant)
-  // While importing we don't yet know the orientation/crop, so hold off fetching
-  // and just show a spinner; the row re-renders with the real preview once ready.
-  const pending = file.pending ?? false
+  loading?: 'lazy' | 'eager'
+  onLoad?: (image: HTMLImageElement) => void
+}
 
-  // Only the small preview JPEG needs manual rotation/crop on a canvas; the
-  // self-orienting, pre-cropped full-res JpgFromRaw renders as a plain <img>.
+/** Reset image state when its source changes, without resetting a full JPEG
+ * when import metadata arrives: that JPEG carries its own orientation/crop. */
+export function OrientedImage(props: ImageProps): React.JSX.Element {
+  const { file, variant = 'preview', maxEdge } = props
+  const key = JSON.stringify([
+    file.id,
+    file.path,
+    variant,
+    ...(variant === 'preview'
+      ? [file.pending ?? false, file.orientation ?? 1, file.aspectRatio, maxEdge]
+      : [])
+  ])
+  return <ImageContent key={key} cacheKey={key} {...props} />
+}
+
+function ImageContent({
+  cacheKey,
+  file,
+  variant = 'preview',
+  containerClassName,
+  className,
+  maxEdge,
+  loading = 'lazy',
+  onLoad
+}: ImageProps & { cacheKey: string }): React.JSX.Element {
+  const orientation = variant === 'preview' ? (file.orientation ?? 1) : 1
+  const aspectRatio = variant === 'preview' ? file.aspectRatio : undefined
+  const url = previewUrl(file.path, variant, file.id)
+  // Small previews need metadata before they can be oriented and cropped.
+  const pending = variant === 'preview' && !!file.pending
   const useCanvas = shouldUseCanvas(variant, orientation, aspectRatio)
-
   const [status, setStatus] = useState<Status>('loading')
+  const [visible, setVisible] = useState(loading === 'eager')
+  const showSkeleton = useDelayedLoading(pending || status === 'loading', cacheKey)
+  const containerRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const imageRef = useRef<HTMLImageElement>(null)
+  const mediaReady = useRef(false)
+
+  const reportLoad = useCallback(
+    (image: HTMLImageElement) => {
+      if (mediaReady.current) return
+      mediaReady.current = true
+      setStatus('ok')
+      onLoad?.(image)
+    },
+    [onLoad]
+  )
+
+  // Cached media must be ready before paint, including the parent's zoom sizing.
+  useLayoutEffect(() => {
+    if (pending || status !== 'loading') return
+    if (!useCanvas) {
+      const image = imageRef.current
+      if (image?.complete && image.naturalWidth > 0) reportLoad(image)
+      return
+    }
+    const cached = canvasCache.get(cacheKey)
+    const canvas = canvasRef.current
+    if (!cached || !canvas) return
+    try {
+      // StrictMode replays this effect; resizing the cached canvas itself clears it.
+      if (cached !== canvas) {
+        const context = canvas.getContext('2d')
+        if (!context) throw new Error('no 2d context')
+        canvas.width = cached.width
+        canvas.height = cached.height
+        context.drawImage(cached, 0, 0)
+        cacheCanvas(cacheKey, canvas)
+      }
+      mediaReady.current = true
+      setStatus('ok')
+    } catch {
+      setStatus('error')
+    }
+  }, [pending, status, useCanvas, cacheKey, reportLoad])
 
   useEffect(() => {
-    if (pending) return // nothing to fetch yet; the spinner overlay is shown below
-    setStatus('loading')
-    if (!useCanvas) return // the <img> below drives its own load/error events
+    if (!useCanvas || visible || loading === 'eager' || pending || mediaReady.current) return
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setVisible(true)
+          observer.disconnect()
+        }
+      },
+      { rootMargin: '200px' }
+    )
+    observer.observe(containerRef.current!)
+    return () => observer.disconnect()
+  }, [useCanvas, visible, loading, pending])
 
-    let cancelled = false
+  useEffect(() => {
+    if (pending || !useCanvas || mediaReady.current || (!visible && loading !== 'eager')) return
+    const controller = new AbortController()
     void (async () => {
       try {
-        const res = await fetch(url)
+        const res = await fetch(url, { signal: controller.signal })
         if (!res.ok) throw new Error(`preview ${res.status}`)
-        // Canvas is only used for the small PreviewImage, which carries no EXIF
-        // orientation, so the default decode gives raw pixels and we apply the
-        // X3F's authoritative `orientation` ourselves. (The full-res JpgFromRaw
-        // embeds its own EXIF and never reaches this path — it renders as an
-        // <img> the browser orients; routing it here would double-rotate it.)
         const bitmap = await createImageBitmap(await res.blob())
-        if (cancelled) {
+        try {
+          if (controller.signal.aborted) return
+          const canvas = canvasRef.current
+          if (!canvas?.getContext('2d')) throw new Error('no 2d context')
+          drawImageWithOrientation(canvas, bitmap, orientation, { maxEdge, aspectRatio })
+          cacheCanvas(cacheKey, canvas)
+          mediaReady.current = true
+          setStatus('ok')
+        } finally {
           bitmap.close()
-          return
         }
-        const canvas = canvasRef.current
-        if (canvas) drawImageWithOrientation(canvas, bitmap, orientation, { maxEdge, aspectRatio })
-        bitmap.close()
-        if (!cancelled) setStatus('ok')
       } catch {
-        if (!cancelled) setStatus('error')
+        if (!controller.signal.aborted) setStatus('error')
       }
     })()
-    return () => {
-      cancelled = true
-    }
-  }, [url, useCanvas, orientation, aspectRatio, maxEdge, pending])
+    return () => controller.abort()
+  }, [url, useCanvas, orientation, aspectRatio, maxEdge, pending, visible, loading, cacheKey])
 
   return (
     <div
+      ref={containerRef}
+      aria-busy={pending || status === 'loading'}
       className={cn(
         'relative flex items-center justify-center overflow-hidden',
         containerClassName
       )}
     >
-      {pending ? null : status === 'error' ? (
-        <div className="flex h-full w-full items-center justify-center text-neutral-600">
-          <ImageOff className="h-5 w-5" />
-        </div>
-      ) : useCanvas ? (
+      {pending || status === 'error' ? null : useCanvas ? (
         <canvas
           ref={canvasRef}
-          className={cn('max-h-full max-w-full', status === 'ok' ? 'opacity-100' : 'opacity-0', className)}
+          role="img"
+          aria-label={file.fileName}
+          className={cn(
+            'max-h-full max-w-full',
+            status === 'ok' ? 'opacity-100' : 'opacity-0',
+            className
+          )}
         />
       ) : (
         <img
+          ref={imageRef}
           src={url}
           alt={file.fileName}
-          loading="lazy"
+          aria-hidden={variant === 'full' && status !== 'ok' ? true : undefined}
+          loading={loading}
+          decoding={variant === 'full' ? 'sync' : 'async'}
           draggable={false}
-          onLoad={(event) => {
-            setStatus('ok')
-            onLoad?.(event)
-          }}
+          onLoad={(event) => reportLoad(event.currentTarget)}
           onError={() => setStatus('error')}
           className={cn(
-            'max-h-full max-w-full transition-opacity',
+            'max-h-full max-w-full',
             status === 'ok' ? 'opacity-100' : 'opacity-0',
             className
           )}
         />
       )}
-      {(pending || status === 'loading') && <SpinnerOverlay />}
+      {/* Avoid a brief low-res flash when the full JPEG loads within a second. */}
+      {variant === 'full' && (showSkeleton || status === 'error') ? (
+        <OrientedImage
+          file={file}
+          variant="preview"
+          loading={loading}
+          containerClassName="absolute inset-0"
+          className={className}
+          maxEdge={maxEdge}
+        />
+      ) : showSkeleton ? (
+        <Skeleton className="preview-skeleton absolute inset-0 h-full w-full" />
+      ) : status === 'error' ? (
+        <div
+          role="img"
+          aria-label={t('inspector.no_preview')}
+          className="flex h-full w-full items-center justify-center text-neutral-600"
+        >
+          <ImageOff className="h-5 w-5" />
+        </div>
+      ) : null}
     </div>
   )
 }

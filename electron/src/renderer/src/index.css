@@ -33,6 +33,19 @@ body {
   transition: none;
 }
 
+.preview-skeleton {
+  --gray-a3: rgb(255 255 255 / 0.06);
+  --gray-a4: rgb(255 255 255 / 0.1);
+  --radius-1: 4px;
+  background-color: var(--gray-a3);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .preview-skeleton {
+    animation: none !important;
+  }
+}
+
 /* Keep the active JPEG on its own layer so first-zoom image preparation does
    not hold up the container's transform animation. */
 .preview-image img {
@@ -51,42 +64,22 @@ html[data-platform='darwin'] .window-toolbar {
   -webkit-app-region: drag;
 }
 
-html[data-platform='darwin'] .window-toolbar > div,
-html[data-platform='darwin'] .window-toolbar [role='menu'] {
+html[data-platform='darwin'] .window-toolbar > div {
   -webkit-app-region: no-drag;
 }
 
-/* Draggable regions swallow pointer events. The first title-bar press dismisses
-   an open menu; dragging resumes once the menu closes. */
-html[data-platform='darwin']:has(.toolbar-dropdown[data-state='open']) .window-toolbar {
-  -webkit-app-region: no-drag;
+/* Keep filenames readable when a sidebar narrows the list pane. */
+.file-queue {
+  container: file-queue / inline-size;
 }
 
-html[data-platform='darwin'] .toolbar-dropdown {
-  padding: 6px;
-  border-radius: 12px;
-  border-color: rgb(255 255 255 / 20%);
-  background: linear-gradient(135deg, rgb(255 255 255 / 9%), rgb(255 255 255 / 2%))
-    rgb(28 28 30 / 72%);
-  -webkit-backdrop-filter: blur(24px) saturate(160%);
-  backdrop-filter: blur(24px) saturate(160%);
-  box-shadow:
-    0 12px 36px rgb(0 0 0 / 40%),
-    0 2px 8px rgb(0 0 0 / 20%),
-    inset 0 1px 0 rgb(255 255 255 / 14%),
-    inset 0 -1px 0 rgb(255 255 255 / 4%);
-}
+@container file-queue (max-width: 560px) {
+  .file-queue-row {
+    grid-template-columns: minmax(0, 1fr) min(25%, 110px);
+  }
 
-html[data-platform='darwin'] .toolbar-dropdown [role^='menuitem'] {
-  border-radius: 6px;
-}
-
-@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
-  html[data-platform='darwin'] .toolbar-dropdown {
-    background: rgb(36 36 38);
-    border-color: rgb(255 255 255 / 40%);
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
+  .file-queue-row > :nth-child(2) {
+    display: none;
   }
 }
 

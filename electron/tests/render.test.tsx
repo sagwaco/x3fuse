@@ -97,6 +97,7 @@ describe('renderer smoke', () => {
     expect(activeId).toBe(useQueueStore.getState().files[0].id)
     expect(useQueueStore.getState().selectedIds).toEqual(new Set([activeId]))
     expect(screen.getByText('first.X3F')).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Scopes' })).toBeTruthy()
     expect(screen.getByText('Sigma DP2 Merrill')).toBeTruthy()
 
     await act(async () => {
@@ -193,8 +194,8 @@ describe('renderer smoke', () => {
       'Zoom out',
       'Zoom in',
       'Zoom level',
-      'Convert selected',
-      'Conversion options',
+      'Export selected',
+      'Export options',
       'Toggle info panel'
     ])
     const buttons = screen.getAllByRole('button') as HTMLButtonElement[]
@@ -219,13 +220,13 @@ describe('renderer smoke', () => {
       'List view',
       'Grid view',
       'Filmstrip view',
-      'Convert selected',
+      'Export selected',
       'Toggle info panel'
     ]) {
       expect((screen.getByTitle(title) as HTMLButtonElement).disabled).toBe(false)
     }
     expect(
-      (screen.getByRole('button', { name: 'Conversion options' }) as HTMLButtonElement).disabled
+      (screen.getByRole('button', { name: 'Export options' }) as HTMLButtonElement).disabled
     ).toBe(false)
     expect((screen.getByRole('button', { name: 'Zoom level' }) as HTMLButtonElement).disabled).toBe(
       true
@@ -246,7 +247,7 @@ describe('renderer smoke', () => {
     const { MainWindow } = await import('../src/renderer/src/components/MainWindow')
     render(<MainWindow />)
     expect(screen.getByText('No files in queue')).toBeTruthy()
-    expect(screen.getByText('Convert')).toBeTruthy()
+    expect(screen.getByText('Export')).toBeTruthy()
     expect(
       (screen.getByRole('button', { name: 'Toggle info panel' }) as HTMLButtonElement).disabled
     ).toBe(true)
@@ -254,7 +255,7 @@ describe('renderer smoke', () => {
     expect(screen.queryByTitle('Settings')).toBeNull()
   })
 
-  it('navigates to the Export screen when the toolbar Convert is clicked', async () => {
+  it('navigates to the Export screen when the toolbar Export is clicked', async () => {
     const { useSettingsStore } = await import('../src/renderer/src/stores/settingsStore')
     useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS }, loaded: true })
 
@@ -270,10 +271,10 @@ describe('renderer smoke', () => {
     useNavStore.setState({ screen: 'queue' })
 
     // Render the toolbar in isolation so the test doesn't depend on the queue
-    // body's virtualization; clicking Convert should flip the nav store.
+    // body's virtualization; clicking Export should flip the nav store.
     const { Toolbar } = await import('../src/renderer/src/components/Toolbar')
     render(<Toolbar />)
-    fireEvent.click(screen.getByText('Convert'))
+    fireEvent.click(screen.getByText('Export'))
     expect(useNavStore.getState().screen).toBe('export')
   })
 
@@ -295,9 +296,9 @@ describe('renderer smoke', () => {
 
     const { MainWindow } = await import('../src/renderer/src/components/MainWindow')
     render(<MainWindow />)
-    expect(screen.queryByText('Export')).toBeNull()
-    expect(screen.getByText('Images to convert')).toBeTruthy()
-    expect(screen.getByText('Output & conversion settings')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Export' })).toBeTruthy()
+    expect(screen.getByText('Images to export')).toBeTruthy()
+    expect(screen.getByText('Output & export settings')).toBeTruthy()
   })
 
   it('mounts the Settings window with its sections', async () => {
@@ -308,7 +309,7 @@ describe('renderer smoke', () => {
     const { SettingsWindow } = await import('../src/renderer/src/components/SettingsWindow')
     render(<SettingsWindow />)
     expect(screen.queryByText('Output settings')).toBeNull()
-    expect(screen.queryByText('Conversion settings')).toBeNull()
+    expect(screen.queryByText('Export settings')).toBeNull()
     expect(screen.getByText('Debug')).toBeTruthy()
   })
 

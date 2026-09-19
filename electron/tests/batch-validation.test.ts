@@ -54,15 +54,15 @@ describe('batch preflight', () => {
       validateBatch([file], { ...settings(), outputDirectory: join(directory, 'not-a-directory') })
     ).rejects.toThrow('Not a directory')
     await expect(validateBatch([file], { ...settings(), denoiseIntensity: NaN })).rejects.toThrow(
-      'Invalid conversion setting'
+      'Invalid export setting'
     )
     await expect(validateBatch([file], { ...settings(), concurrency: 99 })).rejects.toThrow(
-      'Invalid conversion setting'
+      'Invalid export setting'
     )
     await expect(validateBatch([{ id: 'a', path: 'relative.X3F' }], settings())).rejects.toThrow(
-      'Invalid conversion file'
+      'Invalid export file'
     )
-    await expect(validateBatch([file, file], settings())).rejects.toThrow('Invalid conversion file')
+    await expect(validateBatch([file, file], settings())).rejects.toThrow('Invalid export file')
   })
 
   it('resolves alongside-source destinations separately', async () => {

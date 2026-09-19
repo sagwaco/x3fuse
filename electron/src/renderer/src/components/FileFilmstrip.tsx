@@ -1,6 +1,7 @@
 import { memo, useEffect, useMemo, useRef } from 'react'
 import type { X3FFileDTO } from '@shared/types'
-import { useQueueStore } from '../stores/queueStore'
+import { useQueueStore, type ExportDraft } from '../stores/queueStore'
+import { outputFileName } from '../lib/outputName'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useFileDrop } from '../hooks/useFileDrop'
 import { useQueueSelection, type QueueSelection } from '../hooks/useQueueSelection'
@@ -11,8 +12,8 @@ import { ZoomablePreview } from './ZoomablePreview'
 import { QueueContextMenu } from './QueueContextMenu'
 
 /** Filmstrip view: a large preview of the active file above a scrollable strip. */
-export function FileFilmstrip(): React.JSX.Element {
-  const files = useQueueStore((s) => s.files)
+export function FileFilmstrip({ draft }: { draft?: ExportDraft }): React.JSX.Element {
+  const files = useQueueStore((s) => draft?.files ?? s.files)
   const selectedIds = useQueueStore((s) => s.selectedIds)
   const activeId = useQueueStore((s) => s.activeId)
   const sortField = useSettingsStore((s) => s.settings.sortField)
@@ -34,18 +35,24 @@ export function FileFilmstrip(): React.JSX.Element {
   useEffect(() => rootRef.current?.focus(), [])
 
   return (
-    <QueueContextMenu>
+    <QueueContextMenu disabled={!!draft}>
       <div
         ref={rootRef}
         tabIndex={0}
         onKeyDown={sel.handleKeyDown}
         onContextMenu={sel.handleContainerContextMenu}
-        {...dropHandlers}
+        {...(draft ? {} : dropHandlers)}
         className="relative flex min-h-0 min-w-0 flex-1 flex-col outline-none"
       >
         <div className="flex min-h-0 min-w-0 flex-1 items-center justify-center bg-neutral-950">
           {active ? <ZoomablePreview key={active.id} file={active} /> : null}
         </div>
+
+        {draft && active && (
+          <p className="truncate px-3 py-1 text-center text-xs text-neutral-300">
+            {active.fileName} → {outputFileName(active, draft.settings)}
+          </p>
+        )}
 
         <div className="h-[104px] shrink-0 scroll-px-3 overflow-x-auto overflow-y-hidden border-t border-white/10 bg-neutral-900/40">
           <div className="flex h-full w-max min-w-full items-center gap-2 px-3">
@@ -62,7 +69,7 @@ export function FileFilmstrip(): React.JSX.Element {
           </div>
         </div>
 
-        {isDragOver && (
+        {!draft && isDragOver && (
           <div className="pointer-events-none absolute inset-0 rounded-md ring-2 ring-inset ring-blue-500/40 bg-blue-500/5" />
         )}
       </div>

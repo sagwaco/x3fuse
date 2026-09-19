@@ -6,6 +6,7 @@ import type { WindowManager } from '../windows'
 import type { Translate } from '../i18n'
 import { buildFileDTO } from '../services/queueHelpers'
 import { validateBatch } from '../services/batchValidation'
+import { registerNativeMenuHandlers } from './nativeMenu'
 import { batchSettings } from '@shared/types'
 
 type Handler<C extends IpcRequestChannel> = (
@@ -18,6 +19,8 @@ function handle<C extends IpcRequestChannel>(channel: C, handler: Handler<C>): v
 
 /** Registers all request/response IPC handlers. */
 export function registerIpcHandlers(ctx: AppContext, windows: WindowManager, t: Translate): void {
+  registerNativeMenuHandlers()
+
   // --- Settings ---
   handle('settings:get', () => ctx.settings.get())
   handle('settings:set', (patch) => {
@@ -38,6 +41,7 @@ export function registerIpcHandlers(ctx: AppContext, windows: WindowManager, t: 
       if (!m) continue
       if (m.orientation && m.orientation !== 1) dto.orientation = m.orientation
       if (m.aspectRatio && m.aspectRatio > 0) dto.aspectRatio = m.aspectRatio
+      if (m.preview) await ctx.preview.prime(dto.path, m.preview)
     }
     return dtos
   })
@@ -47,12 +51,12 @@ export function registerIpcHandlers(ctx: AppContext, windows: WindowManager, t: 
   // Main owns admission and persists only a committed batch configuration.
   handle('convert:start', async ({ batchId, files, settings, replaceExisting }) => {
     if (typeof batchId !== 'string' || !batchId || typeof replaceExisting !== 'boolean') {
-      throw new Error('Invalid conversion request')
+      throw new Error('Invalid export request')
     }
     const snapshot = batchSettings(settings)
     const inputs = files.map(({ id, path }) => ({ id, path }))
     const conflicts = await validateBatch(inputs, snapshot)
-    if (ctx.conversion.isRunning) throw new Error('A conversion is already running')
+    if (ctx.conversion.isRunning) throw new Error('An export is already running')
     if (conflicts.length && !replaceExisting)
       throw new Error('Output files already exist. Review and confirm replacement.')
     ctx.settings.set({ ...snapshot, hasPreviousConversion: true })

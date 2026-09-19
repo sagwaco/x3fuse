@@ -12,6 +12,13 @@ export interface ExtractedExif {
   raw: Record<string, unknown>
 }
 
+interface DisplayMetadata {
+  orientation?: number
+  aspectRatio?: number
+  /** Extracted alongside metadata to avoid another exiftool process per thumbnail. */
+  preview?: Buffer
+}
+
 /**
  * Curated, ordered tags shown in the inspector's metadata panel. Labels stay in
  * English (tag-like, matching how most metadata viewers present EXIF); only
@@ -56,20 +63,21 @@ export class ExifService {
 
   /**
    * Per-file display metadata used by the queue UI — numeric EXIF Orientation
-   * (1–8) and the intended aspect ratio (stored width / height) — for many files
-   * in a single exiftool call, keyed by the path as passed (exiftool's
+   * (1–8), intended aspect ratio (stored width / height), and small JPEG — for
+   * many files in a single exiftool call, keyed by the path as passed (exiftool's
    * `SourceFile`). Never throws; returns the partial map on failure.
    */
-  async displayMeta(
-    paths: string[]
-  ): Promise<Map<string, { orientation?: number; aspectRatio?: number }>> {
-    const map = new Map<string, { orientation?: number; aspectRatio?: number }>()
+  async displayMeta(paths: string[]): Promise<Map<string, DisplayMetadata>> {
+    const map = new Map<string, DisplayMetadata>()
     if (paths.length === 0) return map
     try {
       const out = await this.run([
         '-Orientation',
         '-ImageWidth',
         '-ImageHeight',
+        '-PreviewImage',
+        '-ThumbnailImage',
+        '-b',
         '-n',
         '-json',
         ...paths
@@ -78,7 +86,7 @@ export class ExifService {
       if (Array.isArray(parsed)) {
         for (const obj of parsed as Record<string, unknown>[]) {
           if (typeof obj.SourceFile !== 'string') continue
-          const entry: { orientation?: number; aspectRatio?: number } = {}
+          const entry: DisplayMetadata = {}
           if (typeof obj.Orientation === 'number') entry.orientation = obj.Orientation
           if (
             typeof obj.ImageWidth === 'number' &&
@@ -87,6 +95,14 @@ export class ExifService {
             obj.ImageHeight > 0
           ) {
             entry.aspectRatio = obj.ImageWidth / obj.ImageHeight
+          }
+          for (const image of [obj.PreviewImage, obj.ThumbnailImage]) {
+            if (typeof image !== 'string' || !image.startsWith('base64:')) continue
+            const bytes = Buffer.from(image.slice(7), 'base64')
+            if (bytes.length > 2 && bytes[0] === 0xff && bytes[1] === 0xd8) {
+              entry.preview = bytes
+              break
+            }
           }
           map.set(obj.SourceFile, entry)
         }

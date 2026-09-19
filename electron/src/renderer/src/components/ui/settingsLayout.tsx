@@ -1,4 +1,5 @@
-import { TriangleAlert } from 'lucide-react'
+import * as Tooltip from '@radix-ui/react-tooltip'
+import { Info } from 'lucide-react'
 import { cn } from '../../lib/cn'
 import { Switch } from './switch'
 
@@ -26,15 +27,22 @@ export function Section({
 
 export function Row({
   label,
-  children
+  children,
+  labelClassName,
+  help
 }: {
   label: string
   children: React.ReactNode
+  labelClassName?: string
+  help?: string
 }): React.JSX.Element {
   return (
     <div className="flex items-center justify-between gap-3">
-      <span className="text-sm text-neutral-300">{label}</span>
-      {children}
+      <span className={cn('text-sm text-neutral-300', labelClassName)}>{label}</span>
+      <div className="flex shrink-0 items-center gap-2">
+        {help && <HelpTooltip label={label} text={help} />}
+        {children}
+      </div>
     </div>
   )
 }
@@ -42,15 +50,19 @@ export function Row({
 export function ToggleRow({
   label,
   checked,
-  onChange
+  onChange,
+  labelClassName,
+  help
 }: {
   label: string
   checked: boolean
   onChange: (checked: boolean) => void
+  labelClassName?: string
+  help?: string
 }): React.JSX.Element {
   return (
-    <Row label={label}>
-      <Switch checked={checked} onCheckedChange={onChange} />
+    <Row label={label} labelClassName={labelClassName} help={help}>
+      <Switch aria-label={label} checked={checked} onCheckedChange={onChange} />
     </Row>
   )
 }
@@ -59,11 +71,31 @@ export function Divider(): React.JSX.Element {
   return <div className="h-px bg-white/10" />
 }
 
-export function Callout({ text }: { text: string }): React.JSX.Element {
+function HelpTooltip({ label, text }: { label: string; text: string }): React.JSX.Element {
   return (
-    <div className={cn('flex items-start gap-2 rounded-md bg-white/5 px-3 py-2')}>
-      <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-400/80" />
-      <span className="text-xs text-neutral-400">{text}</span>
-    </div>
+    <Tooltip.Provider delayDuration={200}>
+      <Tooltip.Root>
+        <Tooltip.Trigger asChild>
+          <button
+            type="button"
+            aria-label={label}
+            className="rounded text-neutral-400 hover:text-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60"
+          >
+            <Info className="h-3.5 w-3.5" aria-hidden="true" />
+          </button>
+        </Tooltip.Trigger>
+        <Tooltip.Portal>
+          <Tooltip.Content
+            side="left"
+            sideOffset={8}
+            collisionPadding={12}
+            className="z-50 max-w-72 rounded-md border border-white/15 bg-neutral-800 px-3 py-2 text-xs leading-relaxed text-neutral-200 shadow-xl"
+          >
+            {text}
+            <Tooltip.Arrow className="fill-neutral-800" />
+          </Tooltip.Content>
+        </Tooltip.Portal>
+      </Tooltip.Root>
+    </Tooltip.Provider>
   )
 }

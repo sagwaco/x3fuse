@@ -12,10 +12,10 @@ export async function validateBatch(
   settings: BatchConversionSettings
 ): Promise<OutputConflict[]> {
   if (!settings || typeof settings !== 'object' || !Array.isArray(files) || files.length === 0)
-    throw new Error('Invalid conversion batch')
+    throw new Error('Invalid export batch')
   const normalized = batchSettings(normalizeSettings(settings))
   for (const key of Object.keys(normalized) as (keyof BatchConversionSettings)[]) {
-    if (settings[key] !== normalized[key]) throw new Error(`Invalid conversion setting: ${key}`)
+    if (settings[key] !== normalized[key]) throw new Error(`Invalid export setting: ${key}`)
   }
   if (settings.outputDirectory !== null && !isAbsolute(settings.outputDirectory)) {
     throw new Error('Output directory must be an absolute path')
@@ -32,7 +32,7 @@ export async function validateBatch(
       !isAbsolute(file.path) ||
       !file.path.toLowerCase().endsWith('.x3f')
     )
-      throw new Error('Invalid conversion file')
+      throw new Error('Invalid export file')
     ids.add(file.id)
     directories.add(settings.outputDirectory ?? dirname(file.path))
   }

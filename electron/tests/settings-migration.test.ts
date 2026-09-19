@@ -1,8 +1,16 @@
 import { describe, it, expect } from 'vitest'
 import { normalizeSettings } from '../src/shared/settingsMigration'
-import { DEFAULT_SETTINGS } from '@shared/types'
+import { DEFAULT_SETTINGS, SCOPE_MODES } from '@shared/types'
 
 describe('normalizeSettings', () => {
+  it('remembers valid scope modes and defaults old or invalid settings to RGB parade', () => {
+    for (const inspectorScopeMode of SCOPE_MODES) {
+      expect(normalizeSettings({ inspectorScopeMode }).inspectorScopeMode).toBe(inspectorScopeMode)
+    }
+    for (const inspectorScopeMode of [undefined, null, 'bogus', 3]) {
+      expect(normalizeSettings({ inspectorScopeMode }).inspectorScopeMode).toBe('rgbParade')
+    }
+  })
   it('returns defaults for empty / non-object input', () => {
     expect(normalizeSettings(undefined)).toEqual(DEFAULT_SETTINGS)
     expect(normalizeSettings(null)).toEqual(DEFAULT_SETTINGS)

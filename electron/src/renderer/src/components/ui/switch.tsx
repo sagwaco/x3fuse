@@ -6,12 +6,20 @@ export interface SwitchProps {
   onCheckedChange: (checked: boolean) => void
   disabled?: boolean
   id?: string
+  'aria-label'?: string
 }
 
-export function Switch({ checked, onCheckedChange, disabled, id }: SwitchProps): React.JSX.Element {
+export function Switch({
+  checked,
+  onCheckedChange,
+  disabled,
+  id,
+  'aria-label': label
+}: SwitchProps): React.JSX.Element {
   return (
     <SwitchPrimitive.Root
       id={id}
+      aria-label={label}
       checked={checked}
       onCheckedChange={onCheckedChange}
       disabled={disabled}

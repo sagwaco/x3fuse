@@ -185,7 +185,6 @@ export const useQueueStore = create<QueueState>((set, get) => {
         fileName: basename(path),
         pending: true
       }))
-      const placeholderIds = placeholders.map((p) => p.id)
       set((s) => ({
         files: [...s.files, ...placeholders],
         // Give the preview and Info panel the same subject on the first import.
@@ -194,48 +193,54 @@ export const useQueueStore = create<QueueState>((set, get) => {
           : {})
       }))
 
-      let added: X3FFileDTO[]
-      try {
-        added = await ipc.invoke('queue:add', { paths: x3f })
-      } catch (e) {
-        console.error('queue:add failed', e)
-        // Roll back the optimistic rows (and any selection of them) on failure.
-        const stale = new Set(placeholderIds)
-        set((s) => ({
-          files: s.files.filter((f) => !stale.has(f.id)),
-          selectedIds: new Set([...s.selectedIds].filter((id) => !stale.has(id))),
-          activeId: s.activeId && stale.has(s.activeId) ? null : s.activeId
-        }))
-        return
-      }
+      // Hydrate the active preview and visible sort order without waiting for
+      // metadata from the entire import before any thumbnail can load.
+      const { sortField, sortAscending } = useSettingsStore.getState().settings
+      const ordered = sortFiles(placeholders, sortField, sortAscending)
+      const activeIndex = ordered.findIndex((file) => file.id === get().activeId)
+      if (activeIndex > 0) ordered.unshift(...ordered.splice(activeIndex, 1))
 
-      // Fold metadata into surviving placeholders, keeping selection IDs stable.
-      const metaById = new Map<string, X3FFileDTO>()
-      added.forEach((dto, i) => {
-        const id = placeholderIds[i]
-        if (id) metaById.set(id, dto)
-      })
-      // Any placeholders main didn't return for (shouldn't happen) get dropped.
-      const unresolved = new Set(placeholderIds.filter((id) => !metaById.has(id)))
-      set((s) => ({
-        selectedIds: new Set([...s.selectedIds].filter((id) => !unresolved.has(id))),
-        activeId: s.activeId && unresolved.has(s.activeId) ? null : s.activeId,
-        files: s.files.flatMap((f) => {
-          if (unresolved.has(f.id)) return []
-          const dto = metaById.get(f.id)
-          if (!dto) return [f]
-          return [
-            {
-              ...f,
-              fileSize: dto.fileSize,
-              capturedDate: dto.capturedDate,
-              orientation: dto.orientation,
-              aspectRatio: dto.aspectRatio,
-              pending: false
-            }
-          ]
+      for (let offset = 0; offset < ordered.length; offset += 8) {
+        const survivingIds = new Set(get().files.map((file) => file.id))
+        const chunk = ordered.slice(offset, offset + 8).filter((file) => survivingIds.has(file.id))
+        if (!chunk.length) continue
+        let added: X3FFileDTO[] = []
+        try {
+          added = await ipc.invoke('queue:add', { paths: chunk.map((file) => file.path) })
+        } catch (e) {
+          console.error('queue:add failed', e)
+        }
+
+        // Fold each chunk into surviving placeholders, keeping selection IDs stable.
+        const metaById = new Map<string, X3FFileDTO>()
+        added.forEach((dto, i) => {
+          const id = chunk[i]?.id
+          if (id) metaById.set(id, dto)
         })
-      }))
+        // Failed or missing results only roll back this chunk's optimistic rows.
+        const unresolved = new Set(
+          chunk.filter((file) => !metaById.has(file.id)).map((file) => file.id)
+        )
+        set((s) => ({
+          selectedIds: new Set([...s.selectedIds].filter((id) => !unresolved.has(id))),
+          activeId: s.activeId && unresolved.has(s.activeId) ? null : s.activeId,
+          files: s.files.flatMap((f) => {
+            if (unresolved.has(f.id)) return []
+            const dto = metaById.get(f.id)
+            if (!dto) return [f]
+            return [
+              {
+                ...f,
+                fileSize: dto.fileSize,
+                capturedDate: dto.capturedDate,
+                orientation: dto.orientation,
+                aspectRatio: dto.aspectRatio,
+                pending: false
+              }
+            ]
+          })
+        }))
+      }
     },
 
     removeFiles(ids) {

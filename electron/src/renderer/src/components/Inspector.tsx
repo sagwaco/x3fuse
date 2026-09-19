@@ -1,16 +1,23 @@
 import { previewUrl } from '@shared/preview'
 import { useQueueStore } from '../stores/queueStore'
 import { useExif } from '../hooks/useExif'
+import { useDelayedLoading } from '../hooks/useDelayedLoading'
+import { Skeleton } from '@radix-ui/themes/components/skeleton'
+import '@radix-ui/themes/src/components/skeleton.css'
 import { t } from '../lib/strings'
-import { Histogram } from './Histogram'
+import { ColorScope } from './ColorScope'
+import { ScopeMenu } from './ScopeMenu'
+import { useSettingsStore } from '../stores/settingsStore'
 import { PreviewMinimap } from './PreviewMinimap'
+import { PanelSection as Section } from './ui/panelSection'
 
 /**
- * Collapsible right sidebar showing the active file's RGB histogram and EXIF
+ * Collapsible right sidebar showing the active file's color scope and EXIF
  * metadata. The "active" file is the primary selection (queueStore.activeId);
  * with nothing selected it shows an empty state.
  */
 export function Inspector(): React.JSX.Element {
+  const scopeMode = useSettingsStore((s) => s.settings.inspectorScopeMode)
   // Select just the active file: its reference only changes when that file's
   // row changes, so other files' progress ticks don't re-render the inspector.
   const active = useQueueStore((s) =>
@@ -39,12 +46,19 @@ export function Inspector(): React.JSX.Element {
             <PreviewMinimap key={active.id} file={active} />
           </div>
 
-          <Section title={t('inspector.histogram')}>
-            <Histogram url={previewUrl(active.path, 'preview')} aspectRatio={active.aspectRatio} />
+          <Section title={t('inspector.scopes')} action={<ScopeMenu />}>
+            <ColorScope
+              url={active.pending ? undefined : previewUrl(active.path, 'preview', active.id)}
+              fileId={active.id}
+              pending={active.pending}
+              aspectRatio={active.aspectRatio}
+              orientation={active.orientation}
+              mode={scopeMode}
+            />
           </Section>
 
           <Section title={t('inspector.metadata')}>
-            <ExifTable path={active.path} />
+            <ExifTable path={active.path} fileId={active.id} />
           </Section>
         </div>
       )}
@@ -52,32 +66,17 @@ export function Inspector(): React.JSX.Element {
   )
 }
 
-function Section({
-  title,
-  children
-}: {
-  title: string
-  children: React.ReactNode
-}): React.JSX.Element {
-  return (
-    <div className="border-b border-white/10 px-3 py-3">
-      <h3 className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-neutral-500">
-        {title}
-      </h3>
-      {children}
-    </div>
-  )
-}
-
-function ExifTable({ path }: { path: string }): React.JSX.Element {
-  const data = useExif(path)
+function ExifTable({ path, fileId }: { path: string; fileId: string }): React.JSX.Element {
+  const data = useExif(path, fileId)
+  const showLoading = useDelayedLoading(data === 'loading', fileId)
 
   if (data === 'loading') {
     return (
-      <div className="space-y-1.5">
-        {Array.from({ length: 6 }).map((_, i) => (
-          <div key={i} className="h-3.5 animate-pulse rounded bg-neutral-800/50" />
-        ))}
+      <div className="h-[114px] space-y-1.5" aria-busy="true">
+        {showLoading &&
+          Array.from({ length: 6 }).map((_, i) => (
+            <Skeleton key={i} className="preview-skeleton h-3.5 w-full rounded" />
+          ))}
       </div>
     )
   }

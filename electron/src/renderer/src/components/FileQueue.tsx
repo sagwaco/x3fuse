@@ -2,7 +2,8 @@ import { memo, useEffect, useMemo, useRef } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { ChevronDown, ChevronUp } from 'lucide-react'
 import type { SortField, X3FFileDTO } from '@shared/types'
-import { useQueueStore } from '../stores/queueStore'
+import { useQueueStore, type ExportDraft } from '../stores/queueStore'
+import { outputFileName } from '../lib/outputName'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useFileDrop } from '../hooks/useFileDrop'
 import { useQueueSelection, type QueueSelection } from '../hooks/useQueueSelection'
@@ -14,11 +15,11 @@ import { cn } from '../lib/cn'
 import { QueueContextMenu } from './QueueContextMenu'
 
 const ROW_HEIGHT = 30
-const GRID = 'grid grid-cols-[minmax(0,1fr)_220px_110px] items-center gap-2 px-3'
+const GRID = 'file-queue-row grid grid-cols-[minmax(0,1fr)_220px_110px] items-center gap-2 px-3'
 
 /** Virtualized queue table (port of FileQueueView): selection, sort, drag-drop. */
-export function FileQueue(): React.JSX.Element {
-  const files = useQueueStore((s) => s.files)
+export function FileQueue({ draft }: { draft?: ExportDraft }): React.JSX.Element {
+  const files = useQueueStore((s) => draft?.files ?? s.files)
   const selectedIds = useQueueStore((s) => s.selectedIds)
   const activeId = useQueueStore((s) => s.activeId)
   const sortField = useSettingsStore((s) => s.settings.sortField)
@@ -52,16 +53,16 @@ export function FileQueue(): React.JSX.Element {
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="file-queue flex min-h-0 flex-1 flex-col">
       <QueueHeader sortField={sortField} sortAscending={sortAscending} onSort={toggleSort} />
 
-      <QueueContextMenu>
+      <QueueContextMenu disabled={!!draft}>
         <div
           ref={parentRef}
           tabIndex={0}
           onKeyDown={sel.handleKeyDown}
           onContextMenu={sel.handleContainerContextMenu}
-          {...dropHandlers}
+          {...(draft ? {} : dropHandlers)}
           className={cn(
             'relative min-h-0 flex-1 overflow-auto outline-none',
             '[scrollbar-gutter:stable]'
@@ -74,6 +75,7 @@ export function FileQueue(): React.JSX.Element {
                 <Row
                   key={file.id}
                   file={file}
+                  outputName={draft ? outputFileName(file, draft.settings) : undefined}
                   index={vi.index}
                   selected={selectedIds.has(file.id)}
                   active={activeId === file.id}
@@ -85,7 +87,7 @@ export function FileQueue(): React.JSX.Element {
             })}
           </div>
 
-          {isDragOver && (
+          {!draft && isDragOver && (
             <div className="pointer-events-none absolute inset-0 rounded-md ring-2 ring-inset ring-blue-500/40 bg-blue-500/5" />
           )}
         </div>
@@ -162,6 +164,7 @@ function SortableHeader({
 // isn't defeated by a fresh style object per render.
 const Row = memo(function Row({
   file,
+  outputName,
   index,
   selected,
   active,
@@ -170,6 +173,7 @@ const Row = memo(function Row({
   sel
 }: {
   file: X3FFileDTO
+  outputName?: string
   index: number
   selected: boolean
   active: boolean
@@ -197,8 +201,12 @@ const Row = memo(function Row({
         active && 'ring-1 ring-inset ring-blue-400/40'
       )}
     >
-      <span className="truncate" title={file.fileName}>
+      <span
+        className="truncate"
+        title={outputName ? `${file.fileName} → ${outputName}` : file.fileName}
+      >
         {file.fileName}
+        {outputName && <span className="ml-2 text-xs text-neutral-400">→ {outputName}</span>}
       </span>
       <span className="truncate text-neutral-400">
         {file.pending ? (

@@ -16,8 +16,13 @@ export const PREVIEW_SCHEME = 'x3f-preview'
 
 /**
  * Build a `x3f-preview://` URL for an absolute file path, usable as an
- * `<img src>` or `fetch()` target in the renderer.
+ * `<img src>` or `fetch()` target in the renderer. A queue file's stable ID
+ * keeps browser caches reusable while browsing and fresh after reimporting.
  */
-export function previewUrl(path: string, variant: PreviewVariant = 'preview'): string {
-  return `${PREVIEW_SCHEME}://img/?p=${encodeURIComponent(path)}&v=${variant}`
+export function previewUrl(
+  path: string,
+  variant: PreviewVariant = 'preview',
+  revision?: string
+): string {
+  return `${PREVIEW_SCHEME}://img/?p=${encodeURIComponent(path)}${revision ? `&r=${encodeURIComponent(revision)}` : ''}&v=${variant}`
 }

@@ -76,7 +76,7 @@ export class ConversionService implements ConversionBackend {
 
   /** Request cancellation: SIGTERM every live child, with a Windows taskkill fallback. */
   stop(): void {
-    logger.conversion('Stop conversion requested')
+    logger.conversion('Stop export requested')
     this.cancelling = true
     for (const child of this.activeChildren) {
       if (child.killed) continue
@@ -101,7 +101,7 @@ export class ConversionService implements ConversionBackend {
     // re-entry must be refused here too: two batches would share cancelling/
     // activeChildren and could write the same outputs.
     if (this.running) {
-      throw new ConversionError('conversionFailed', 'A conversion is already running')
+      throw new ConversionError('conversionFailed', 'An export is already running')
     }
     this.batchId = batchId
     this.cancelling = false
@@ -117,13 +117,13 @@ export class ConversionService implements ConversionBackend {
     }
     const groups = this.groupByOutputTarget(files, settings)
     const limit = resolveConcurrency(settings.concurrency)
-    logger.conversion(`Converting ${files.length} file(s), concurrency ${limit}`)
+    logger.conversion(`Exporting ${files.length} file(s), concurrency ${limit}`)
 
     try {
       await runWithConcurrency(groups, limit, async (group) => {
         for (const file of group) {
           if (this.cancelling) {
-            logger.conversion('Conversion cancelled by user')
+            logger.conversion('Export cancelled by user')
             return
           }
           try {
@@ -132,7 +132,7 @@ export class ConversionService implements ConversionBackend {
             result.completed += 1
           } catch (e) {
             if (isCancellation(e)) {
-              logger.conversion(`File conversion cancelled: ${basename(file.path)}`)
+              logger.conversion(`File export cancelled: ${basename(file.path)}`)
               this.setStatus(file.id, 'queued')
             } else {
               const message = e instanceof Error ? e.message : String(e)
@@ -185,7 +185,7 @@ export class ConversionService implements ConversionBackend {
     settings: BatchConversionSettings
   ): Promise<'completed' | 'warning'> {
     const name = basename(file.path)
-    logger.conversion('Starting conversion', name)
+    logger.conversion('Starting export', name)
     this.setStatus(file.id, 'processing')
 
     const outputFormat = resolveSetting(settings, file.overrides, 'outputFormat')
@@ -265,7 +265,7 @@ export class ConversionService implements ConversionBackend {
 
       this.setProgress(file.id, 1.0)
       this.setStatus(file.id, 'completed', undefined, finalOutput)
-      logger.conversion(`Conversion completed -> ${basename(finalOutput)}`, name)
+      logger.conversion(`Export completed -> ${basename(finalOutput)}`, name)
       return 'completed'
     } catch (e) {
       if (isCancellation(e) && extractRan) {
@@ -317,7 +317,7 @@ export class ConversionService implements ConversionBackend {
     }
 
     if (this.cancelling || signal === 'SIGTERM' || code === SIGTERM_EXIT_CODE) {
-      throw new ConversionError('conversionCancelled', 'Conversion was cancelled by user')
+      throw new ConversionError('conversionCancelled', 'Export was cancelled by user')
     }
     if (code !== 0) {
       const detail = stderr.trim()
@@ -370,7 +370,7 @@ export class ConversionService implements ConversionBackend {
 
   private checkCancel(): void {
     if (this.cancelling) {
-      throw new ConversionError('conversionCancelled', 'Conversion cancelled by user')
+      throw new ConversionError('conversionCancelled', 'Export cancelled by user')
     }
   }
 
