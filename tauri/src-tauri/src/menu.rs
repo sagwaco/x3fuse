@@ -59,9 +59,9 @@ pub fn install(app: &tauri::AppHandle) -> tauri::Result<()> {
         false,
         None::<&str>,
     )?;
-    let mut menu = MenuBuilder::new(app);
+    let menu = MenuBuilder::new(app);
     #[cfg(target_os = "macos")]
-    {
+    let menu = {
         let application = SubmenuBuilder::new(app, "X3Fuse")
             .item(&PredefinedMenuItem::about(app, None, None)?)
             .item(&updates)
@@ -76,8 +76,8 @@ pub fn install(app: &tauri::AppHandle) -> tauri::Result<()> {
             .separator()
             .item(&quit)
             .build()?;
-        menu = menu.item(&application);
-    }
+        menu.item(&application)
+    };
     let mut file = SubmenuBuilder::new(app, "File").item(&item(
         "addFiles",
         "menu.file.add_x3f_files",

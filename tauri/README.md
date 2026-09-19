@@ -101,8 +101,37 @@ the executable. These development artifacts need the platform webview runtime an
 on macOS/Linux, Perl. They do not need this repository or the core checkout at runtime.
 
 The dedicated workflow builds macOS arm64 and Intel, Windows x64, and Linux x64
-artifacts. It does not publish releases, sign/notarize installers, or implement updates.
+artifacts. Branch, pull-request, and manual runs upload downloadable Actions artifacts.
 The macOS deployment target remains 14.0; its Intel CI runner uses macOS 15.
+
+### Alpha releases
+
+Push a versioned Tauri alpha tag on the commit to distribute:
+
+```sh
+git tag -a tauri-v0.1.0-alpha.1 -m "X3Fuse Tauri alpha 1"
+git push origin tauri-v0.1.0-alpha.1
+```
+
+Tags matching `tauri-v*-alpha.*` run the full four-platform build and publish a
+GitHub prerelease only after every build, check, and artifact upload succeeds.
+The release does not replace the stable latest release. Rerunning the tag workflow
+updates the same release's assets; use a new alpha tag for a new commit.
+The app's internal version stays unchanged; the release tag and source commit
+identify the alpha build.
+
+Download one of these archives from the repository's **Releases** page:
+
+- `x3fuse-tauri-darwin-arm64.tar.gz`: macOS, Apple Silicon.
+- `x3fuse-tauri-darwin-x64.tar.gz`: macOS, Intel.
+- `x3fuse-tauri-win32-x64.tar.gz`: Windows, x64.
+- `x3fuse-tauri-linux-x64.tar.gz`: Linux, x64.
+
+Extract the archive and follow the launch table above or the included `README.txt`.
+Windows needs Microsoft WebView2 Runtime; Linux needs WebKitGTK 4.1, GTK 3, and
+Perl; macOS needs macOS 14 or newer and system Perl. These alpha builds are unsigned,
+are not notarized, and have no automatic updater. Record the alpha tag and OS when
+reporting results from the runtime acceptance checks below.
 
 ## Runtime acceptance
 
