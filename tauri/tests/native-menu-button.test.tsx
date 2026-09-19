@@ -72,3 +72,38 @@ it('cancels on unmount and never opens a disabled fieldset control', async () =>
   await act(async () => choose('a'))
   expect(onSelect).not.toHaveBeenCalled()
 })
+
+it('uses current callbacks and options when an open menu finishes after a rerender', async () => {
+  let choose!: (value: string) => void
+  invoke.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        choose = resolve
+      })
+  )
+  const oldSelect = vi.fn()
+  const nextSelect = vi.fn()
+  const items = [{ value: 'a', label: 'A' }]
+  const view = render(
+    <NativeMenuButton items={items} onSelect={oldSelect}>
+      Format
+    </NativeMenuButton>
+  )
+  fireEvent.click(screen.getByRole('button'))
+  view.rerender(
+    <NativeMenuButton items={items} onSelect={nextSelect}>
+      Format
+    </NativeMenuButton>
+  )
+  await act(async () => choose('a'))
+  expect(oldSelect).not.toHaveBeenCalled()
+  expect(nextSelect).toHaveBeenCalledWith('a')
+  fireEvent.click(screen.getByRole('button'))
+  view.rerender(
+    <NativeMenuButton items={[{ ...items[0], disabled: true }]} onSelect={nextSelect}>
+      Format
+    </NativeMenuButton>
+  )
+  await act(async () => choose('a'))
+  expect(nextSelect).toHaveBeenCalledOnce()
+})

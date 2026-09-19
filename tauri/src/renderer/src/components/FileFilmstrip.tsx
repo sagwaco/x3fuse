@@ -1,4 +1,6 @@
 import { memo, useEffect, useMemo, useRef } from 'react'
+import { useVirtualizer } from '@tanstack/react-virtual'
+import { useScrollToActive } from '../hooks/useScrollToActive'
 import type { X3FFileDTO } from '@shared/types'
 import { useQueueStore, type ExportDraft } from '../stores/queueStore'
 import { outputFileName } from '../lib/outputName'
@@ -29,8 +31,25 @@ export function FileFilmstrip({ draft }: { draft?: ExportDraft }): React.JSX.Ele
   const rootRef = useRef<HTMLDivElement>(null)
 
   // The large preview follows the active selection, falling back to the first file.
-  const active = sorted.find((f) => f.id === activeId) ?? sorted[0]
-
+  const activeIndex = Math.max(
+    0,
+    sorted.findIndex((f) => f.id === activeId)
+  )
+  const active = sorted[activeIndex]
+  const stripRef = useRef<HTMLDivElement>(null)
+  const virtualizer = useVirtualizer({
+    count: sorted.length,
+    horizontal: true,
+    getScrollElement: () => stripRef.current,
+    estimateSize: () => 84,
+    getItemKey: (index) => sorted[index].id,
+    paddingStart: 12,
+    paddingEnd: 4,
+    scrollPaddingStart: 12,
+    scrollPaddingEnd: 12,
+    overscan: 4
+  })
+  useScrollToActive(virtualizer, sorted, active?.id ?? null)
   // Focus the surface on mount so arrow-key navigation works without a click.
   useEffect(() => rootRef.current?.focus(), [])
 
@@ -54,18 +73,34 @@ export function FileFilmstrip({ draft }: { draft?: ExportDraft }): React.JSX.Ele
           </p>
         )}
 
-        <div className="h-[104px] shrink-0 scroll-px-3 overflow-x-auto overflow-y-hidden border-t border-white/10 bg-neutral-900/40">
-          <div className="flex h-full w-max min-w-full items-center gap-2 px-3">
-            {sorted.map((file, i) => (
-              <FilmstripCell
-                key={file.id}
-                file={file}
-                index={i}
-                selected={selectedIds.has(file.id)}
-                active={active?.id === file.id}
-                sel={sel}
-              />
-            ))}
+        <div
+          ref={stripRef}
+          data-filmstrip
+          className="h-[104px] shrink-0 scroll-px-3 overflow-x-auto overflow-y-hidden border-t border-white/10 bg-neutral-900/40"
+        >
+          <div className="relative h-full" style={{ width: virtualizer.getTotalSize() }}>
+            {virtualizer.getVirtualItems().map((item) => {
+              const file = sorted[item.index]
+              return (
+                <div
+                  key={file.id}
+                  style={{
+                    position: 'absolute',
+                    left: 0,
+                    top: 14,
+                    transform: `translateX(${item.start}px)`
+                  }}
+                >
+                  <FilmstripCell
+                    file={file}
+                    index={item.index}
+                    selected={selectedIds.has(file.id)}
+                    active={active?.id === file.id}
+                    sel={sel}
+                  />
+                </div>
+              )
+            })}
           </div>
         </div>
 
@@ -91,17 +126,8 @@ const FilmstripCell = memo(function FilmstripCell({
   active: boolean
   sel: QueueSelection
 }): React.JSX.Element {
-  const ref = useRef<HTMLDivElement>(null)
-
-  // The strip isn't virtualized, so the cell scrolls itself into view when it
-  // becomes the cursor (the virtualized views use useScrollToActive instead).
-  useEffect(() => {
-    if (active) ref.current?.scrollIntoView({ inline: 'nearest', block: 'nearest' })
-  }, [active])
-
   return (
     <div
-      ref={ref}
       onClick={(e) => sel.handleItemClick(e, file.id, index)}
       onDoubleClick={() => sel.handleItemDoubleClick(file.id)}
       onContextMenu={() => sel.handleItemContextMenu(file.id)}

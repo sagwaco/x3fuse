@@ -39,6 +39,19 @@ export function scopeDensity(
   width: number,
   height: number
 ): Float32Array[] {
+  const steps = scopeDensitySteps(image, mode, width, height)
+  let result = steps.next()
+  while (!result.done) result = steps.next()
+  return result.value
+}
+
+/** The fallback renderer can yield between small pieces of the same calculation. */
+export function* scopeDensitySteps(
+  image: ScopePixels,
+  mode: Exclude<ScopeMode, 'histogram'>,
+  width: number,
+  height: number
+): Generator<void, Float32Array[]> {
   const layers = Array.from(
     { length: mode === 'vectorscope' ? 1 : mode === 'waveform' ? 4 : 3 },
     () => new Float32Array(width * height)
@@ -46,6 +59,7 @@ export function scopeDensity(
   const bin = (value: number, size: number): number =>
     Math.max(0, Math.min(size - 1, Math.round(value * (size - 1))))
   for (let i = 0; i < image.data.length; i += 4) {
+    if (i > 0 && i % 4096 === 0) yield
     const r = image.data[i] / 255
     const g = image.data[i + 1] / 255
     const b = image.data[i + 2] / 255

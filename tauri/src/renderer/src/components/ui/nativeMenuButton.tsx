@@ -18,6 +18,8 @@ export function NativeMenuButton({
   const id = useId()
   const pending = useRef<object | null>(null)
   const [open, setOpen] = useState(false)
+  const latest = useRef({ items, onSelect })
+  latest.current = { items, onSelect }
 
   useEffect(() => {
     setOpen(false)
@@ -48,9 +50,9 @@ export function NativeMenuButton({
           if (
             button.isConnected &&
             !button.matches(':disabled') &&
-            items.some((item) => item.value === value && !item.disabled)
+            latest.current.items.some((item) => item.value === value && !item.disabled)
           )
-            onSelect(value)
+            latest.current.onSelect(value)
         }
       )
     } catch (error) {

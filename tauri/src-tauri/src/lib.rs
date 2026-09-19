@@ -139,7 +139,10 @@ pub fn run() {
                             "text/plain"
                         },
                     )
-                    .header("Cache-Control", "no-cache")
+                    .header(
+                        "Cache-Control",
+                        preview::cache_control(&request.uri().to_string(), status),
+                    )
                     .header("Access-Control-Allow-Origin", origin)
                     .body(bytes)
                     .unwrap();

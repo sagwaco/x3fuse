@@ -43,6 +43,7 @@ let previewId = 0
 beforeEach(() => {
   preview = `preview:${++previewId}`
   bitmaps = []
+  context.getImageData.mockImplementation(() => ({ ...image, data: image.data.slice() }))
   vi.stubGlobal(
     'fetch',
     vi.fn(async () => ({ ok: true, blob: async () => new Blob() }))
@@ -139,14 +140,15 @@ describe('scope preview', () => {
     expect(screen.queryByRole('status')).toBeNull()
     const canvas = (await screen.findByRole('img', { name: 'RGB Parade' })) as HTMLCanvasElement
     await waitFor(() => expect(context.fill).toHaveBeenCalled())
-    expect(context.drawImage).toHaveBeenCalledWith(bitmaps[0], 0, 80, 640, 320, 0, 0, 320, 160)
-    expect(context.setTransform).toHaveBeenCalledWith(0, 1, -1, 0, 160, 0)
+    expect(context.drawImage).toHaveBeenCalledWith(bitmaps[0], 0, 80, 640, 320, 0, 0, 640, 320)
+    expect(context.setTransform).toHaveBeenCalledWith(0, 1, -1, 0, 320, 0)
+    expect(context.drawImage).toHaveBeenCalledWith(expect.any(HTMLCanvasElement), 0, 0, 160, 320)
     expect(context.getImageData).toHaveBeenCalledWith(0, 0, 160, 320)
     expect(canvas.width).toBe(548)
     expect(canvas.height).toBe(400)
     for (const mode of ['histogram', 'waveform', 'vectorscope'] as const) {
       view.rerender(<ColorScope url={preview} orientation={6} aspectRatio={2} mode={mode} />)
-      expect(screen.getByRole('img')).toBe(canvas)
+      expect(await screen.findByRole('img')).toBe(canvas)
     }
     expect(fetch).toHaveBeenCalledTimes(1)
     expect(createImageBitmap).toHaveBeenCalledTimes(1)
@@ -201,7 +203,8 @@ describe('scope preview', () => {
     const stale = { width: 1, height: 1, close: vi.fn() }
     await act(async () => finish(stale))
     expect(stale.close).toHaveBeenCalledOnce()
-    expect(context.drawImage).toHaveBeenCalledTimes(1)
+    // A shared decode may finish into its cache, but stale pixels never reach the scope.
+    expect(context.getImageData).toHaveBeenCalledOnce()
     expect(hook.result.current).toEqual(image)
   })
 
@@ -225,7 +228,7 @@ describe('scope preview', () => {
     expect(screen.getByRole('status')).toBeTruthy()
   })
 
-  it('redraws cached pixels synchronously on revisit and remount without a new fetch or decode', async () => {
+  it('copies a completed scope synchronously on revisit and remount without recomputing it', async () => {
     context.getImageData.mockReturnValueOnce(image).mockReturnValueOnce({
       ...image,
       data: new Uint8ClampedArray([0, 0, 255, 255, 0, 0, 255, 255])
@@ -236,9 +239,11 @@ describe('scope preview', () => {
     expect(screen.queryByRole('img')).toBeNull()
     await screen.findByRole('img')
     context.fill.mockClear()
+    context.drawImage.mockClear()
     view.rerender(<ColorScope url={preview} mode="waveform" />)
     expect(screen.getByRole('img')).toBeTruthy()
-    expect(context.fill).toHaveBeenCalled()
+    expect(context.fill).not.toHaveBeenCalled()
+    expect(context.drawImage).toHaveBeenCalledWith(expect.any(HTMLCanvasElement), 0, 0)
     expect(view.container.querySelector('.rt-Skeleton')).toBeNull()
     view.unmount()
 
@@ -249,13 +254,46 @@ describe('scope preview', () => {
   })
 
   it('does not reuse pixels after a file at the same path is imported as a new queue row', async () => {
-    const hook = renderHook(({ fileId }) => useScopeImage(preview, undefined, 1, fileId), {
-      initialProps: { fileId: 'first-import' }
-    })
+    const hook = renderHook(
+      ({ fileId }) => useScopeImage(`${preview}?rev=${fileId}`, undefined, 1, fileId),
+      {
+        initialProps: { fileId: 'first-import' }
+      }
+    )
     await waitFor(() => expect(hook.result.current).toEqual(image))
     hook.rerender({ fileId: 'second-import' })
     expect(hook.result.current).toBe('loading')
     await waitFor(() => expect(hook.result.current).toEqual(image))
     expect(fetch).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not redraw for unchanged window dimensions but refreshes the backing pixel ratio', async () => {
+    vi.stubGlobal('devicePixelRatio', 1)
+    render(<ColorScope url={preview} mode="waveform" />)
+    const canvas = (await screen.findByRole('img')) as HTMLCanvasElement
+    context.fill.mockClear()
+    context.drawImage.mockClear()
+    fireEvent(window, new Event('resize'))
+    expect(context.fill).not.toHaveBeenCalled()
+    expect(context.drawImage).not.toHaveBeenCalled()
+    vi.stubGlobal('devicePixelRatio', 2)
+    fireEvent(window, new Event('resize'))
+    await waitFor(() => expect(canvas.width).toBe(548))
+    expect(canvas.height).toBe(400)
+    expect(context.fill).toHaveBeenCalled()
+  })
+
+  it('restores cached pixels when a quick revisit remounts the canvas before the next image loads', async () => {
+    const view = render(<ColorScope url={preview} mode="waveform" />)
+    const first = await screen.findByRole('img')
+    vi.mocked(fetch).mockReturnValueOnce(new Promise(() => {}))
+    view.rerender(<ColorScope url={`${preview}:pending`} mode="waveform" />)
+    expect(screen.queryByRole('img')).toBeNull()
+    context.fill.mockClear()
+    context.drawImage.mockClear()
+    view.rerender(<ColorScope url={preview} mode="waveform" />)
+    expect(screen.getByRole('img')).not.toBe(first)
+    expect(context.drawImage).toHaveBeenCalledWith(expect.any(HTMLCanvasElement), 0, 0)
+    expect(context.fill).not.toHaveBeenCalled()
   })
 })

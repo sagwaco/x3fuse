@@ -29,8 +29,12 @@ export function useQueueSelection(ordered: X3FFileDTO[], nav?: ArrowNav): QueueS
   const anchorRef = useRef<string | null>(null)
   // Set by a row's onContextMenu so the container handler can tell row vs. empty.
   const itemHandledCtx = useRef(false)
-  const orderedRef = useRef(ordered)
-  orderedRef.current = ordered
+  const order = useMemo(() => {
+    const ids = ordered.map((file) => file.id)
+    return { ids, indices: new Map(ids.map((id, index) => [id, index])) }
+  }, [ordered])
+  const orderedRef = useRef(order)
+  orderedRef.current = order
   const navRef = useRef(nav)
   navRef.current = nav
 
@@ -44,8 +48,8 @@ export function useQueueSelection(ordered: X3FFileDTO[], nav?: ArrowNav): QueueS
       store.setSelection(next, id)
       anchorRef.current = id
     } else if (e.shiftKey && anchorRef.current) {
-      const ids = orderedRef.current.map((f) => f.id)
-      const a = ids.indexOf(anchorRef.current)
+      const ids = orderedRef.current.ids
+      const a = orderedRef.current.indices.get(anchorRef.current) ?? -1
       const b = index
       const [lo, hi] = a < b ? [a, b] : [b, a]
       store.setSelection(new Set(ids.slice(lo, hi + 1)), id)
@@ -84,18 +88,18 @@ export function useQueueSelection(ordered: X3FFileDTO[], nav?: ArrowNav): QueueS
   /** Move the cursor to `target`; plain = single-select, shift = extend range. */
   const moveCursor = useCallback((target: number, extend: boolean): void => {
     const store = useQueueStore.getState()
-    const ids = orderedRef.current.map((f) => f.id)
+    const ids = orderedRef.current.ids
     const targetId = ids[target]
     if (!targetId) return
 
     if (extend) {
       // Extend the contiguous range from the fixed anchor to the new cursor.
       const anchorId =
-        anchorRef.current && ids.includes(anchorRef.current)
+        anchorRef.current && orderedRef.current.indices.has(anchorRef.current)
           ? anchorRef.current
           : (store.activeId ?? targetId)
       anchorRef.current = anchorId
-      const a = ids.indexOf(anchorId)
+      const a = orderedRef.current.indices.get(anchorId) ?? -1
       const [lo, hi] = a < target ? [a, target] : [target, a]
       store.setSelection(new Set(ids.slice(lo, hi + 1)), targetId)
     } else {
@@ -115,8 +119,8 @@ export function useQueueSelection(ordered: X3FFileDTO[], nav?: ArrowNav): QueueS
 
       const currentNav = navRef.current
       if (currentNav) {
-        const ids = orderedRef.current.map((f) => f.id)
-        const current = store.activeId ? ids.indexOf(store.activeId) : -1
+        const ids = orderedRef.current.ids
+        const current = store.activeId ? (orderedRef.current.indices.get(store.activeId) ?? -1) : -1
         const target = arrowTargetIndex(current, e.key, currentNav, ids.length)
         if (target !== null) {
           e.preventDefault()

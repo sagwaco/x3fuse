@@ -1,19 +1,52 @@
-import { useRef, useState, type PointerEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent } from 'react'
 import type { X3FFileDTO } from '@shared/types'
 import { usePreviewStore } from '../stores/previewStore'
 import { t } from '../lib/strings'
-import { OrientedImage } from './OrientedImage'
+import { FilmstripImage } from './FilmstripImage'
 
 export function PreviewMinimap({ file }: { file: X3FFileDTO }): React.JSX.Element {
   const map = usePreviewStore((state) => state.minimap)
   const drag = useRef<{ id: number; x: number; y: number } | null>(null)
   const [dragging, setDragging] = useState(false)
+  const latestMap = useRef(map)
+  latestMap.current = map
+  const pending = useRef<{ fileId: string; x: number; y: number } | null>(null)
+  const frame = useRef<number | null>(null)
+  const flushPan = useCallback((): void => {
+    if (frame.current !== null) cancelAnimationFrame(frame.current)
+    frame.current = null
+    const point = pending.current
+    pending.current = null
+    if (point && latestMap.current?.fileId === point.fileId) {
+      latestMap.current.panTo(point.x, point.y)
+    }
+  }, [])
+
+  useEffect(() => {
+    setDragging(false)
+    return () => {
+      if (frame.current !== null) cancelAnimationFrame(frame.current)
+      frame.current = null
+      pending.current = null
+      drag.current = null
+    }
+  }, [file.id, map?.fileId])
+
+  // Keep the decoded image subtree out of viewport-overlay updates.
+  const image = useMemo(
+    () => (
+      <FilmstripImage
+        file={file}
+        containerClassName="absolute inset-0"
+        className="h-full w-full object-contain"
+      />
+    ),
+    [file]
+  )
   if (!map || map.fileId !== file.id) {
     return (
-      <OrientedImage
+      <FilmstripImage
         file={file}
-        variant="preview"
-        loading="eager"
         containerClassName="h-44 w-full rounded-md border border-white/10 bg-neutral-900"
       />
     )
@@ -27,6 +60,7 @@ export function PreviewMinimap({ file }: { file: X3FFileDTO }): React.JSX.Elemen
     }
   }
   const stopDragging = (): void => {
+    flushPan()
     drag.current = null
     setDragging(false)
   }
@@ -38,13 +72,7 @@ export function PreviewMinimap({ file }: { file: X3FFileDTO }): React.JSX.Elemen
         style={{ width: `min(100%, ${11 * map.aspectRatio}rem)`, aspectRatio: map.aspectRatio }}
       >
         {/* Use the same oriented JPEG as the main image so the window aligns exactly. */}
-        <OrientedImage
-          file={file}
-          variant="full"
-          loading="eager"
-          containerClassName="absolute inset-0"
-          className="h-full w-full object-contain"
-        />
+        {image}
         <div
           role="region"
           aria-label={t('preview.minimap')}
@@ -56,6 +84,7 @@ export function PreviewMinimap({ file }: { file: X3FFileDTO }): React.JSX.Elemen
             event.preventDefault()
             event.currentTarget.focus()
             event.currentTarget.setPointerCapture(event.pointerId)
+            flushPan()
             const { x, y } = point(event)
             const inside =
               x >= map.x && x <= map.x + map.width && y >= map.y && y <= map.y + map.height
@@ -70,7 +99,8 @@ export function PreviewMinimap({ file }: { file: X3FFileDTO }): React.JSX.Elemen
           onPointerMove={(event) => {
             if (!drag.current || drag.current.id !== event.pointerId) return
             const { x, y } = point(event)
-            map.panTo(x - drag.current.x, y - drag.current.y)
+            pending.current = { fileId: file.id, x: x - drag.current.x, y: y - drag.current.y }
+            if (frame.current === null) frame.current = requestAnimationFrame(flushPan)
           }}
           onPointerUp={(event) => {
             if (event.currentTarget.hasPointerCapture(event.pointerId)) {
@@ -83,13 +113,18 @@ export function PreviewMinimap({ file }: { file: X3FFileDTO }): React.JSX.Elemen
           onKeyDown={(event) => {
             if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return
             event.preventDefault()
+            const centerX = Math.max(
+              map.width / 2,
+              Math.min(1 - map.width / 2, pending.current?.x ?? map.x + map.width / 2)
+            )
+            const centerY = Math.max(
+              map.height / 2,
+              Math.min(1 - map.height / 2, pending.current?.y ?? map.y + map.height / 2)
+            )
+            flushPan()
             map.panTo(
-              map.x +
-                map.width / 2 +
-                (event.key === 'ArrowLeft' ? -0.05 : event.key === 'ArrowRight' ? 0.05 : 0),
-              map.y +
-                map.height / 2 +
-                (event.key === 'ArrowUp' ? -0.05 : event.key === 'ArrowDown' ? 0.05 : 0)
+              centerX + (event.key === 'ArrowLeft' ? -0.05 : event.key === 'ArrowRight' ? 0.05 : 0),
+              centerY + (event.key === 'ArrowUp' ? -0.05 : event.key === 'ArrowDown' ? 0.05 : 0)
             )
           }}
         >

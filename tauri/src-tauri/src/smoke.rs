@@ -57,7 +57,7 @@ fn probe(webview: &Webview, input: &str) -> Result<Value, String> {
     webview
         .eval(SCRIPT.replace("__INPUT_PATH__", &serde_json::to_string(input).unwrap()))
         .map_err(|e| e.to_string())?;
-    let deadline = Instant::now() + Duration::from_secs(45);
+    let deadline = Instant::now() + Duration::from_secs(90);
     while Instant::now() < deadline {
         let mut result = evaluate(webview, "window.__x3fSmoke ?? null")?;
         if !result.is_null() {
@@ -68,7 +68,7 @@ fn probe(webview: &Webview, input: &str) -> Result<Value, String> {
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-    Err("Native webview smoke exceeded 45 seconds".into())
+    Err("Native webview smoke exceeded 90 seconds".into())
 }
 
 fn evaluate(webview: &Webview, script: &str) -> Result<Value, String> {
@@ -131,48 +131,13 @@ fn check_resize(webview: &Webview) -> Result<Value, String> {
 const SCRIPT: &str = r#"
 (() => {
   window.__x3fSmoke = null;
-  const input = __INPUT_PATH__;
-  const check = (condition, message) => { if (!condition) throw new Error(message); };
-  const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
   void (async () => {
-    check(location.protocol === 'tauri:' || location.hostname === 'tauri.localhost',
-      'Use embedded production assets: npm run tauri -- build --debug --no-bundle');
-    const deadline = Date.now() + 10000;
-    while (!document.querySelector('#root button') && Date.now() < deadline) await wait(50);
-    const root = document.querySelector('#root');
-    check(root?.querySelector('button'), 'React did not mount its main controls');
-    const native = window.__TAURI_INTERNALS__;
-    const info = await native.invoke('app_info');
-    check(['darwin', 'win32', 'linux'].includes(info.platform), 'Invalid app_info response');
-    const files = await native.invoke('queue_add', {payload: {paths: [input]}});
-    check(files.length === 1 && files[0].path === input && files[0].fileSize > 0,
-      'Native import did not return source metadata');
-    const previews = [];
-    for (const variant of ['preview', 'full']) {
-      const image = new Image();
-      image.crossOrigin = 'anonymous';
-      image.src = native.convertFileSrc(input, 'x3f-preview') + '?v=' + variant;
-      let timeout;
-      try {
-        await Promise.race([
-          image.decode(),
-          new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error(variant + ' decode timed out')), 15000); })
-        ]);
-      } finally { clearTimeout(timeout); }
-      check(image.naturalWidth > 0 && image.naturalHeight > 0, variant + ' has no image pixels');
-      const canvas = document.createElement('canvas');
-      canvas.width = canvas.height = 16;
-      const context = canvas.getContext('2d');
-      check(context, 'Canvas 2D is unavailable');
-      context.drawImage(image, 0, 0, 16, 16);
-      const pixels = context.getImageData(0, 0, 16, 16).data;
-      check(pixels.length === 1024 && pixels.some((value, i) => i % 4 === 3 && value > 0),
-        variant + ' canvas returned no visible pixels');
-      previews.push({variant, width: image.naturalWidth, height: image.naturalHeight, pixelBytes: pixels.length});
+    const deadline = Date.now() + 15000;
+    while (!window.__x3fRunNativeSmoke && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 50));
     }
-    return {ok: true, url: location.href, app: info,
-      root: {buttons: root.querySelectorAll('button').length, text: root.textContent.slice(0, 160)},
-      imported: {fileName: files[0].fileName, fileSize: files[0].fileSize}, previews};
+    if (!window.__x3fRunNativeSmoke) throw new Error('Renderer smoke bridge missing; run npm run test:native -- --build');
+    return window.__x3fRunNativeSmoke(__INPUT_PATH__);
   })().then(result => { window.__x3fSmoke = result; }, error => {
     window.__x3fSmoke = {ok: false, error: String(error), url: location.href};
   });

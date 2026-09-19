@@ -26,6 +26,14 @@ beforeEach(() => {
       disconnect() {}
     }
   )
+  vi.stubGlobal(
+    'IntersectionObserver',
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+  )
   vi.stubGlobal('PointerEvent', MouseEvent)
   const files = ['a', 'b', 'excluded'].map((id) => ({
     id,

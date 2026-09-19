@@ -194,17 +194,24 @@ export const useQueueStore = create<QueueState>((set, get) => {
           : {})
       }))
 
-      // Hydrate the active preview and visible sort order without waiting for
-      // metadata from the entire import before any thumbnail can load.
-      const { sortField, sortAscending } = useSettingsStore.getState().settings
-      const ordered = sortFiles(placeholders, sortField, sortAscending)
-      const activeIndex = ordered.findIndex((file) => file.id === get().activeId)
-      if (activeIndex > 0) ordered.unshift(...ordered.splice(activeIndex, 1))
-
-      for (let offset = 0; offset < ordered.length; offset += 8) {
-        const survivingIds = new Set(get().files.map((file) => file.id))
-        const chunk = ordered.slice(offset, offset + 8).filter((file) => survivingIds.has(file.id))
-        if (!chunk.length) continue
+      // Re-evaluate priorities between batches: rapid browsing can move far ahead of import.
+      const remaining = new Set(placeholders.map((file) => file.id))
+      while (remaining.size) {
+        const current = get()
+        const { sortField, sortAscending } = useSettingsStore.getState().settings
+        const ordered = sortFiles(current.files, sortField, sortAscending)
+        const active = ordered.findIndex((file) => file.id === current.activeId)
+        const nearby = active < 0 ? [] : [ordered[active], ordered[active + 1], ordered[active - 1]]
+        const priority = new Set(nearby.filter(Boolean).map((file) => file.id))
+        const chunk = [
+          ...ordered.filter((file) => priority.has(file.id) && remaining.has(file.id)),
+          ...ordered.filter((file) => !priority.has(file.id) && remaining.has(file.id))
+        ].slice(0, 8)
+        // Keep the active item first even when sorting places its neighbor before it.
+        const index = chunk.findIndex((file) => file.id === current.activeId)
+        if (index > 0) chunk.unshift(...chunk.splice(index, 1))
+        if (!chunk.length) break
+        for (const file of chunk) remaining.delete(file.id)
         let added: X3FFileDTO[] = []
         try {
           added = await ipc.invoke('queue:add', { paths: chunk.map((file) => file.path) })
@@ -236,6 +243,7 @@ export const useQueueStore = create<QueueState>((set, get) => {
                 capturedDate: dto.capturedDate,
                 orientation: dto.orientation,
                 aspectRatio: dto.aspectRatio,
+                exif: dto.exif,
                 pending: false
               }
             ]
@@ -348,9 +356,7 @@ export const useQueueStore = create<QueueState>((set, get) => {
 
     onBatchStarted({ batchId, settings }) {
       if (get().batch?.id !== batchId) return
-      useSettingsStore.setState((s) => ({
-        settings: { ...s.settings, ...settings, hasPreviousConversion: true }
-      }))
+      useSettingsStore.getState().accept({ ...settings, hasPreviousConversion: true })
       set({ draft: null, isPreparing: false })
       useNavStore.getState().goToQueue()
     },

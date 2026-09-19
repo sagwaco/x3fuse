@@ -38,6 +38,10 @@ the repository's opcode data into `src-tauri/resources/`. Windows includes ExifT
 complete standalone runtime; macOS and Linux use its Perl script and bundled modules.
 The app does not ship or launch `x3f_extract`.
 
+Development builds optimize the core crates and TIFF compression library so
+full-strength denoising remains usable while the desktop backend keeps its
+normal debug build settings.
+
 ## Checks and builds
 
 ```sh
@@ -64,6 +68,10 @@ X3FUSE_TEST_MERRILL=/absolute/path/merrill.X3F \
 X3FUSE_TEST_QUATTRO=/absolute/path/quattro.X3F \
 cargo test --manifest-path src-tauri/Cargo.toml --locked --test conversion_acceptance -- --ignored
 ```
+
+This also checks full-strength denoising with compressed DNG/TIFF and DNG highlight
+recovery, with a 60-second limit per conversion. Run it in the default test profile as shown
+to exercise the development-build settings; `--release` alone would miss regressions there.
 
 To update the core dependency, change its version in `src-tauri/Cargo.toml`, run
 `cargo update --manifest-path src-tauri/Cargo.toml -p x3f-core`, and review the updated
@@ -102,16 +110,21 @@ An opt-in smoke check runs inside the real native webview with bundled assets an
 the production CSP, without screen-capture permission:
 
 ```sh
-npm run sync:resources
-npm run tauri -- build --debug --no-bundle
-X3FUSE_SMOKE_FILE=/absolute/path/sample.X3F npm run test:native
+X3FUSE_SMOKE_FILE=/absolute/path/sample.X3F npm run test:native -- --build
 ```
 
-It checks React startup, native app information/import metadata, both preview sizes,
-canvas pixel access used by scopes, and layout/background consistency at three native
-window sizes (with resize timing). Its JSON report is written to
+It imports through the renderer, checks both preview sizes and the packaged workers
+under the production CSP, and verifies a generated 4K image's 2K preview stays visible
+during deliberately delayed full-resolution decoding. It then measures navigation and scope-setting
+actions in a 1,000-row synthetic filmstrip. The rows reuse the supplied source: this
+checks UI scaling, not cold extraction from 1,000 distinct photos. The report includes
+input-to-paint estimates, frame gaps, mounted cell counts, and three native resize
+checks. Native popup selection and real-photo conversion remain manual checks.
+
+The `--build` option enables the opt-in renderer probe in a Debug executable; omit it
+to rerun that executable. Normal builds omit the probe. Its JSON report is written to
 `artifacts/native-smoke-<platform>.json`; set `X3FUSE_SMOKE_REPORT` to choose another
-path. It requires a desktop session and exits within 55 seconds. The native probe is
+path. It requires a desktop session and exits within 100 seconds after building. The native probe is
 compiled out of release builds. Repeat with Merrill and Quattro samples.
 
 Run the extracted artifact outside the repository on each supported OS. Verify native
@@ -123,6 +136,15 @@ parallel batches, and intact pre-existing outputs after failure.
 
 Automated frontend tests do not exercise WKWebView, WebView2, or WebKitGTK. A passing
 build or unit suite does not claim that these desktop acceptance checks have passed.
+
+The filmstrip virtualizes thumbnails and uses decoded 2K previews at Fit. A worker
+prepares nearby images first, then the remaining queue; background preparation pauses
+during conversion. Full-resolution images appear only above Fit, after decoding, with
+the medium preview kept underneath. A small thumbnail covers a cold cache miss.
+In-memory preview caches are bounded; obsolete queued requests are replaced during
+rapid navigation. Import supplies inspector EXIF rows in the same
+metadata pass. Scopes render in a worker, with cooperative fallback on older webviews;
+preference persistence runs off the native event thread.
 
 Native popup controls retain OS menus. When a control disappears or becomes disabled,
 queued actions are ignored; an already-visible popup can remain until normal OS

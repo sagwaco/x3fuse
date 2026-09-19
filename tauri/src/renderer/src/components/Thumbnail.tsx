@@ -1,5 +1,4 @@
 import type { X3FFileDTO } from '@shared/types'
-import type { PreviewVariant } from '@shared/preview'
 import { OrientedImage } from './OrientedImage'
 
 /**
@@ -9,12 +8,10 @@ import { OrientedImage } from './OrientedImage'
  */
 export function Thumbnail({
   file,
-  variant = 'preview',
   className
 }: {
   file: X3FFileDTO
-  variant?: PreviewVariant
   className?: string
 }): React.JSX.Element {
-  return <OrientedImage file={file} variant={variant} containerClassName={className} />
+  return <OrientedImage file={file} containerClassName={className} />
 }

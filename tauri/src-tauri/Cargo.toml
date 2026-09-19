@@ -29,6 +29,16 @@ tempfile = "3"
 sys-locale = "0.3"
 x3f-core = "0.1.5"
 
+# RAW processing needs optimization even when the desktop app is being debugged.
+[profile.dev.package.x3f-core]
+opt-level = 3
+
+[profile.dev.package.x3f-sys]
+opt-level = 3
+
+[profile.dev.package.miniz_oxide]
+opt-level = 3
+
 [profile.release]
 lto = "thin"
 codegen-units = 1

@@ -16,7 +16,8 @@ function metadata(paths: string[]): X3FFileDTO[] {
     fileName: path.split('/').at(-1)!,
     fileSize: 1234,
     orientation: 6,
-    aspectRatio: 1.5
+    aspectRatio: 1.5,
+    exif: [{ label: 'Camera', value: 'Sigma' }]
   }))
 }
 
@@ -59,27 +60,32 @@ describe('progressive file import', () => {
     expect(placeholders.every((file) => file.pending)).toBe(true)
     expect(store.getState().selectedIds).toEqual(new Set([activeId]))
     expect(invoke).toHaveBeenCalledTimes(1)
-    const firstPaths = [paths[16], ...paths.slice(0, 7)]
+    const firstPaths = [paths[16], paths[15], ...paths.slice(0, 6)]
     expect(invoke).toHaveBeenLastCalledWith('queue:add', { paths: firstPaths })
 
     first.resolve(metadata(firstPaths))
     await vi.waitFor(() => expect(invoke).toHaveBeenCalledTimes(2))
-    expect(invoke).toHaveBeenLastCalledWith('queue:add', { paths: paths.slice(7, 15) })
+    expect(invoke).toHaveBeenLastCalledWith('queue:add', { paths: paths.slice(6, 14) })
     expect(store.getState().files.filter((file) => !file.pending)).toHaveLength(8)
     expect(store.getState().files.filter((file) => file.pending)).toHaveLength(9)
     expect(store.getState().activeId).toBe(activeId)
     for (const file of store.getState().files.filter((file) => !file.pending)) {
-      expect(file).toMatchObject({ fileSize: 1234, orientation: 6, aspectRatio: 1.5 })
+      expect(file).toMatchObject({
+        fileSize: 1234,
+        orientation: 6,
+        aspectRatio: 1.5,
+        exif: [{ label: 'Camera', value: 'Sigma' }]
+      })
       expect(firstPaths).toContain(file.path)
     }
 
     // Selection changes made during an import must survive every later response.
-    const selected = placeholders.find((file) => file.path === paths[15])!.id
+    const selected = placeholders.find((file) => file.path === paths[14])!.id
     store.getState().setSelection(new Set([selected]), selected)
-    second.resolve(metadata(paths.slice(7, 15)))
+    second.resolve(metadata(paths.slice(6, 14)))
     await importing
     expect(invoke).toHaveBeenCalledTimes(3)
-    expect(invoke).toHaveBeenLastCalledWith('queue:add', { paths: [paths[15]] })
+    expect(invoke).toHaveBeenLastCalledWith('queue:add', { paths: [paths[14]] })
     expect(store.getState().files.map((file) => file.id)).toEqual(
       placeholders.map((file) => file.id)
     )
@@ -121,7 +127,7 @@ describe('progressive file import', () => {
     expect(store.getState().activeId).toBeNull()
     expect(store.getState().selectedIds.size).toBe(0)
     const secondPaths = invoke.mock.calls[1][1].paths
-    expect(secondPaths).toEqual(paths.slice(8, 16).filter((path) => path !== paths[9]))
+    expect(secondPaths).toEqual(paths.slice(8, 17).filter((path) => path !== paths[9]))
 
     store.getState().clearQueue()
     second.resolve(metadata(secondPaths))
@@ -145,7 +151,7 @@ describe('progressive file import', () => {
     first.resolve(metadata(paths.slice(0, 8)))
     await importing
     expect(invoke.mock.calls[1][1].paths).toEqual(
-      paths.slice(8, 16).filter((path) => path !== paths[9])
+      paths.slice(8, 17).filter((path) => path !== paths[9])
     )
     expect(store.getState().files).toHaveLength(16)
     expect(store.getState().files.every((file) => file.pending === false)).toBe(true)
@@ -190,4 +196,19 @@ describe('progressive file import', () => {
     ])
     expect(store.getState().files.every((file) => file.pending === false)).toBe(true)
   })
+})
+
+it('reprioritizes a newly selected pending file before the next import batch', async () => {
+  const first = deferred()
+  invoke.mockReturnValueOnce(first.promise)
+  const importing = store.getState().addFiles(paths)
+  const selected = store.getState().files[16].id
+  store.getState().setSelection(new Set([selected]), selected)
+  first.resolve(metadata(paths.slice(0, 8)))
+  await importing
+  expect(invoke.mock.calls[1][1].paths[0]).toBe(paths[16])
+  expect(store.getState().activeId).toBe(selected)
+  expect(store.getState().files.find((file) => file.id === selected)?.exif).toEqual([
+    { label: 'Camera', value: 'Sigma' }
+  ])
 })

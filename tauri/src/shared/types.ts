@@ -104,7 +104,8 @@ export interface X3FFileDTO {
   capturedDate?: string
   /** Source file size in bytes. */
   fileSize?: number
-  exif?: Record<string, unknown>
+  /** Curated inspector rows extracted alongside import metadata. */
+  exif?: ExifPair[]
   /**
    * EXIF Orientation (1–8). The Foveon sensor is landscape-native. The small
    * PreviewImage (used for thumbnails) carries no orientation of its own, so the

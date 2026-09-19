@@ -33,6 +33,80 @@ afterEach(() => {
 })
 
 describe('inspector metadata loading', () => {
+  it('uses imported EXIF immediately and does not start extraction while import hydration is pending', () => {
+    const pairs = [{ label: 'Camera', value: 'Imported camera' }]
+    useQueueStore.setState({ files: [{ ...files[0], pending: true }, files[1]] })
+    const view = render(<Inspector />)
+    expect(view.container.querySelector('[aria-busy="true"]')).not.toBeNull()
+    expect(invoke).not.toHaveBeenCalled()
+
+    act(() =>
+      useQueueStore.setState({ files: [{ ...files[0], pending: true, exif: pairs }, files[1]] })
+    )
+    expect(screen.getByText('Imported camera')).toBeTruthy()
+    expect(view.container.querySelector('[aria-busy="true"]')).toBeNull()
+    expect(invoke).not.toHaveBeenCalled()
+
+    act(() => useQueueStore.setState({ files: [{ ...files[0], exif: pairs }, files[1]] }))
+    expect(screen.getByText('Imported camera')).toBeTruthy()
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
+  it('keeps only one running extraction and the latest of 20 rapid selections', async () => {
+    const selections = Array.from({ length: 20 }, (_, index) => ({
+      ...files[0],
+      id: `${files[0].id}-${index}`,
+      path: `${files[0].path}-${index}`
+    }))
+    const finish = new Map<string, (pairs: ExifPair[]) => void>()
+    invoke.mockImplementation(
+      (_channel, { path }) => new Promise((resolve) => finish.set(path, resolve))
+    )
+    const hook = renderHook(({ path, id }) => useExif(path, id), { initialProps: selections[0] })
+    for (const file of selections.slice(1)) {
+      hook.rerender(file)
+      expect(hook.result.current).toBe('loading')
+    }
+    expect(invoke).toHaveBeenCalledTimes(1)
+    const stale = [{ label: 'Camera', value: 'First camera' }]
+    await act(async () => finish.get(selections[0].path)!(stale))
+    expect(hook.result.current).toBe('loading')
+    expect(invoke).toHaveBeenCalledTimes(2)
+    expect(invoke).toHaveBeenLastCalledWith('exif:full', { path: selections[19].path })
+    const latest = [{ label: 'Camera', value: 'Last camera' }]
+    await act(async () => finish.get(selections[19].path)!(latest))
+    expect(hook.result.current).toBe(latest)
+    hook.rerender(selections[0])
+    expect(hook.result.current).toBe(stale)
+    expect(invoke).toHaveBeenCalledTimes(2)
+  })
+
+  it('shares pending and running extraction among subscribers without cancelling the remaining listener', async () => {
+    const finish = new Map<string, (pairs: ExifPair[]) => void>()
+    invoke.mockImplementation(
+      (_channel, { path }) => new Promise((resolve) => finish.set(path, resolve))
+    )
+    const blocker = renderHook(() => useExif(files[0].path, files[0].id))
+    const first = renderHook(() => useExif(files[1].path, files[1].id))
+    const second = renderHook(() => useExif(files[1].path, files[1].id))
+    expect(invoke).toHaveBeenCalledTimes(1)
+    first.unmount()
+    await act(async () =>
+      finish.get(files[0].path)!([{ label: 'Camera', value: 'Blocking camera' }])
+    )
+    expect(invoke).toHaveBeenCalledTimes(2)
+    const third = renderHook(() => useExif(files[1].path, files[1].id))
+    expect(invoke).toHaveBeenCalledTimes(2)
+    expect(second.result.current).toBe('loading')
+    expect(third.result.current).toBe('loading')
+    const pairs = [{ label: 'Camera', value: 'Shared camera' }]
+    await act(async () => finish.get(files[1].path)!(pairs))
+    expect(second.result.current).toBe(pairs)
+    expect(third.result.current).toBe(pairs)
+    expect(blocker.result.current).toEqual([{ label: 'Camera', value: 'Blocking camera' }])
+    expect(invoke).toHaveBeenCalledTimes(2)
+  })
+
   it('delays Skeletons for one second, resets the delay on selection, and never shows stale metadata', async () => {
     vi.useFakeTimers()
     const finish = new Map<string, (pairs: ExifPair[]) => void>()

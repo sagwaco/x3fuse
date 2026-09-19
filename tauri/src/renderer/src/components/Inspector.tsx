@@ -1,4 +1,5 @@
 import { previewUrl } from '@shared/preview'
+import type { X3FFileDTO } from '@shared/types'
 import { useQueueStore } from '../stores/queueStore'
 import { useExif } from '../hooks/useExif'
 import { useDelayedLoading } from '../hooks/useDelayedLoading'
@@ -58,7 +59,7 @@ export function Inspector(): React.JSX.Element {
           </Section>
 
           <Section title={t('inspector.metadata')}>
-            <ExifTable path={active.path} fileId={active.id} />
+            <ExifTable file={active} />
           </Section>
         </div>
       )}
@@ -66,9 +67,9 @@ export function Inspector(): React.JSX.Element {
   )
 }
 
-function ExifTable({ path, fileId }: { path: string; fileId: string }): React.JSX.Element {
-  const data = useExif(path, fileId)
-  const showLoading = useDelayedLoading(data === 'loading', fileId)
+function ExifTable({ file }: { file: X3FFileDTO }): React.JSX.Element {
+  const data = useExif(file.path, file.id, file.exif, file.pending)
+  const showLoading = useDelayedLoading(data === 'loading', file.id)
 
   if (data === 'loading') {
     return (

@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { X3FFileDTO } from '@shared/types'
 import { t } from '../lib/strings'
-import { OrientedImage } from './OrientedImage'
+import { FilmstripImage } from './FilmstripImage'
 import { usePreviewStore } from '../stores/previewStore'
 
 type View = { zoom: number | null; x: number; y: number }
@@ -20,6 +20,8 @@ export function ZoomablePreview({ file }: { file: X3FFileDTO }): React.JSX.Eleme
   const [size, setSize] = useState({ width: 0, height: 0 })
   const [image, setImage] = useState({ width: 0, height: 0 })
   const [view, setView] = useState<View>(FIT)
+  const latestView = useRef<View>(FIT)
+  const frame = useRef<number | null>(null)
   const ready = image.width > 0 && image.height > 0 && size.width > 0 && size.height > 0
   const fit = ready ? Math.min(1, size.width / image.width, size.height / image.height) : 1
   const minZoom = Math.min(0.1, fit)
@@ -28,7 +30,10 @@ export function ZoomablePreview({ file }: { file: X3FFileDTO }): React.JSX.Eleme
     const viewport = viewportRef.current!
     const observer = new ResizeObserver(([entry]) => {
       animateZoom.current = false
-      setSize({ width: entry.contentRect.width, height: entry.contentRect.height })
+      const { width, height } = entry.contentRect
+      setSize((previous) =>
+        previous.width === width && previous.height === height ? previous : { width, height }
+      )
     })
     observer.observe(viewport)
     return () => observer.disconnect()
@@ -39,21 +44,38 @@ export function ZoomablePreview({ file }: { file: X3FFileDTO }): React.JSX.Eleme
       const scale = next.zoom ?? fit
       const maxX = Math.max(0, (image.width * scale - size.width) / 2)
       const maxY = Math.max(0, (image.height * scale - size.height) / 2)
-      return {
-        ...next,
-        x: Math.max(-maxX, Math.min(maxX, next.x)),
-        y: Math.max(-maxY, Math.min(maxY, next.y))
-      }
+      const x = Math.max(-maxX, Math.min(maxX, next.x))
+      const y = Math.max(-maxY, Math.min(maxY, next.y))
+      return x === next.x && y === next.y ? next : { ...next, x, y }
     },
     [fit, image, size]
   )
 
+  const flushView = useCallback((): void => {
+    if (frame.current !== null) cancelAnimationFrame(frame.current)
+    frame.current = null
+    setView(latestView.current)
+  }, [])
+
+  // Accumulate every gesture delta, but publish at most once per display frame.
+  const updateView = useCallback(
+    (next: View, deferred = false): void => {
+      const previous = latestView.current
+      const changed = previous.zoom !== next.zoom || previous.x !== next.x || previous.y !== next.y
+      if (changed) latestView.current = next
+      if (!deferred) flushView()
+      else if (changed && frame.current === null) frame.current = requestAnimationFrame(flushView)
+    },
+    [flushView]
+  )
+
   // Clamp stored offsets too, so resizing away an edge cannot resurrect an old pan.
-  useEffect(() => setView(constrain), [constrain])
+  useEffect(() => updateView(constrain(latestView.current)), [constrain, updateView])
 
   // Read the presentation once when a gesture interrupts an eased zoom. All
   // animation frames stay in the compositor, without React/store updates.
   const interruptZoom = useCallback((): View | null => {
+    if (!animateZoom.current) return null
     animateZoom.current = false
     const media = mediaRef.current
     if (!media || media.getAnimations().length === 0) return null
@@ -69,32 +91,34 @@ export function ZoomablePreview({ file }: { file: X3FFileDTO }): React.JSX.Eleme
       if (!ready) return
       const presented = animate ? null : interruptZoom()
       animateZoom.current = animate
-      setView((previous) => {
-        const current = constrain(presented ?? previous)
-        const oldScale = current.zoom ?? fit
-        const requested = typeof target === 'function' ? target(oldScale) : target
-        if (requested === null) return FIT
-        const zoom = Math.max(minZoom, Math.min(MAX_ZOOM, requested))
-        const ratio = zoom / oldScale
-        return constrain({
+      const current = constrain(presented ?? latestView.current)
+      const oldScale = current.zoom ?? fit
+      const requested = typeof target === 'function' ? target(oldScale) : target
+      if (requested === null) {
+        updateView(FIT)
+        return
+      }
+      const zoom = Math.max(minZoom, Math.min(MAX_ZOOM, requested))
+      const ratio = zoom / oldScale
+      updateView(
+        constrain({
           zoom,
           x: (center ? 0 : x) - (x - current.x) * ratio,
           y: (center ? 0 : y) - (y - current.y) * ratio
-        })
-      })
+        }),
+        !animate
+      )
     },
-    [ready, constrain, fit, minZoom, interruptZoom]
+    [ready, constrain, fit, minZoom, interruptZoom, updateView]
   )
 
   const pan = useCallback(
     (x: number, y: number): void => {
       const presented = interruptZoom()
-      setView((previous) => {
-        const current = constrain(presented ?? previous)
-        return constrain({ ...current, x: current.x + x, y: current.y + y })
-      })
+      const current = constrain(presented ?? latestView.current)
+      updateView(constrain({ ...current, x: current.x + x, y: current.y + y }), true)
     },
-    [constrain, interruptZoom]
+    [constrain, interruptZoom, updateView]
   )
 
   useEffect(() => {
@@ -125,17 +149,17 @@ export function ZoomablePreview({ file }: { file: X3FFileDTO }): React.JSX.Eleme
   const panTo = useCallback(
     (centerX: number, centerY: number): void => {
       const presented = interruptZoom()
-      setView((previous) => {
-        const current = constrain(presented ?? previous)
-        const scale = current.zoom ?? fit
-        return constrain({
+      const current = constrain(presented ?? latestView.current)
+      const scale = current.zoom ?? fit
+      updateView(
+        constrain({
           ...current,
           x: (0.5 - centerX) * image.width * scale,
           y: (0.5 - centerY) * image.height * scale
         })
-      })
+      )
     },
-    [constrain, image, fit, interruptZoom]
+    [constrain, image, fit, interruptZoom, updateView]
   )
 
   useEffect(() => {
@@ -173,6 +197,8 @@ export function ZoomablePreview({ file }: { file: X3FFileDTO }): React.JSX.Eleme
 
   useEffect(
     () => () => {
+      if (frame.current !== null) cancelAnimationFrame(frame.current)
+      frame.current = null
       const { minimap, controls } = usePreviewStore.getState()
       if (minimap?.fileId === file.id || controls?.fileId === file.id) {
         usePreviewStore.setState({ minimap: null, controls: null })
@@ -182,9 +208,29 @@ export function ZoomablePreview({ file }: { file: X3FFileDTO }): React.JSX.Eleme
   )
 
   const stopDragging = (): void => {
+    flushView()
     drag.current = null
     setDragging(false)
   }
+
+  const onDimensions = useCallback(({ width, height }: { width: number; height: number }): void => {
+    setImage((previous) =>
+      previous.width === width && previous.height === height ? previous : { width, height }
+    )
+  }, [])
+  const fullResolution = ready && scale > fit
+  const content = useMemo(
+    () => (
+      <FilmstripImage
+        file={file}
+        fullResolution={fullResolution}
+        containerClassName="h-full w-full"
+        className="h-full w-full object-contain"
+        onDimensions={onDimensions}
+      />
+    ),
+    [file, fullResolution, onDimensions]
+  )
 
   return (
     <div className="relative h-full w-full min-h-0 min-w-0">
@@ -201,7 +247,7 @@ export function ZoomablePreview({ file }: { file: X3FFileDTO }): React.JSX.Eleme
         onClick={(event) => {
           if (!moved.current) {
             const rect = event.currentTarget.getBoundingClientRect()
-            zoomTo(scale === fit && fit < 1 ? 1 : null, {
+            zoomTo((latestView.current.zoom ?? fit) === fit && fit < 1 ? 1 : null, {
               x: event.detail ? event.clientX - rect.left - rect.width / 2 : 0,
               y: event.detail ? event.clientY - rect.top - rect.height / 2 : 0,
               center: true
@@ -222,8 +268,8 @@ export function ZoomablePreview({ file }: { file: X3FFileDTO }): React.JSX.Eleme
           moved.current = false
           event.currentTarget.focus()
           const presented = interruptZoom()
-          if (presented) setView(constrain(presented))
-          if (!(presented ? (presented.zoom ?? fit) > fit : canPan)) return
+          if (presented) updateView(constrain(presented))
+          if (!ready || ((presented ?? latestView.current).zoom ?? fit) <= fit) return
           event.preventDefault()
           event.currentTarget.setPointerCapture(event.pointerId)
           drag.current = { id: event.pointerId, x: event.clientX, y: event.clientY }
@@ -264,19 +310,7 @@ export function ZoomablePreview({ file }: { file: X3FFileDTO }): React.JSX.Eleme
             transform: `translate(${current.x}px, ${current.y}px) scale(${scale})`
           }}
         >
-          <OrientedImage
-            file={file}
-            variant="full"
-            loading="eager"
-            containerClassName="h-full w-full"
-            className="h-full w-full object-contain"
-            onLoad={(image) =>
-              setImage({
-                width: image.naturalWidth,
-                height: image.naturalHeight
-              })
-            }
-          />
+          {content}
         </div>
       </div>
     </div>

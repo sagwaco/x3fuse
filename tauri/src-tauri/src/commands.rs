@@ -18,18 +18,32 @@ fn main_window(window: &WebviewWindow) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn settings_get(state: State<'_, Arc<AppState>>) -> Settings {
-    state.preferences.get()
+pub async fn settings_get(state: State<'_, Arc<AppState>>) -> Result<Settings, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.preferences.get())
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn settings_set(state: State<'_, Arc<AppState>>, payload: Value) -> Result<Settings, String> {
-    let next = state.preferences.set(payload)?;
-    state
-        .logs
-        .debug
-        .store(next.debug_logging_enabled, Ordering::Relaxed);
-    Ok(next)
+pub async fn settings_set(
+    state: State<'_, Arc<AppState>>,
+    payload: Value,
+) -> Result<Settings, String> {
+    write_settings(state.inner().clone(), payload).await
+}
+
+async fn write_settings(state: Arc<AppState>, payload: Value) -> Result<Settings, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let next = state.preferences.set(payload)?;
+        state
+            .logs
+            .debug
+            .store(next.debug_logging_enabled, Ordering::Relaxed);
+        Ok(next)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[derive(Deserialize)]
@@ -71,6 +85,7 @@ pub async fn queue_add(
         if let Some(meta) = meta.remove(&dto.path) {
             dto.orientation = meta.orientation;
             dto.aspect_ratio = meta.aspect_ratio;
+            dto.exif = Some(meta.exif);
             if let Some(bytes) = meta.preview {
                 state.previews.prime(&dto.path, bytes);
             }
@@ -128,7 +143,7 @@ pub async fn convert_start(
         }
         let mut settings = serde_json::to_value(&payload.settings).map_err(|e| e.to_string())?;
         settings["hasPreviousConversion"] = true.into();
-        state.preferences.set(settings)?;
+        write_settings(state.clone(), settings).await?;
         app.emit_to(
             "main",
             "batch:started",
@@ -147,7 +162,8 @@ pub async fn convert_start(
 pub fn convert_stop(window: WebviewWindow, state: State<'_, Arc<AppState>>) -> Result<(), String> {
     main_window(&window)?;
     state.cancel.store(true, Ordering::SeqCst);
-    state.logs.write("conversion", "Stop export requested");
+    let logs = state.logs.clone();
+    tauri::async_runtime::spawn_blocking(move || logs.write("conversion", "Stop export requested"));
     Ok(())
 }
 
@@ -180,9 +196,10 @@ pub async fn dialog_pick_files(
     state: State<'_, Arc<AppState>>,
 ) -> Result<Vec<PathBuf>, String> {
     main_window(&window)?;
-    let last = state.preferences.get().last_import_directory;
+    let state = state.inner().clone();
     let title = crate::menu::translate("dialog.select_x3f_files.title");
-    let paths = tauri::async_runtime::spawn_blocking(move || {
+    tauri::async_runtime::spawn_blocking(move || {
+        let last = state.preferences.get().last_import_directory;
         let mut dialog = app
             .dialog()
             .file()
@@ -192,21 +209,21 @@ pub async fn dialog_pick_files(
         if let Some(last) = last {
             dialog = dialog.set_directory(last);
         }
-        dialog
+        let paths = dialog
             .blocking_pick_files()
             .unwrap_or_default()
             .into_iter()
             .map(|p| p.into_path().map_err(|e| e.to_string()))
-            .collect::<Result<Vec<_>, _>>()
+            .collect::<Result<Vec<_>, _>>()?;
+        if let Some(parent) = paths.first().and_then(|p| p.parent()) {
+            state
+                .preferences
+                .set(json!({"lastImportDirectory":parent}))?;
+        }
+        Ok(paths)
     })
     .await
-    .map_err(|e| e.to_string())??;
-    if let Some(parent) = paths.first().and_then(|p| p.parent()) {
-        state
-            .preferences
-            .set(json!({"lastImportDirectory":parent}))?;
-    }
-    Ok(paths)
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -231,13 +248,17 @@ pub async fn dialog_pick_output_dir(
 }
 
 #[tauri::command]
-pub fn shell_reveal(app: AppHandle, payload: PathRequest) -> Result<(), String> {
-    if !payload.path.is_absolute() || !payload.path.exists() {
-        return Err("Path does not exist".into());
-    }
-    app.opener()
-        .reveal_item_in_dir(payload.path)
-        .map_err(|e| e.to_string())
+pub async fn shell_reveal(app: AppHandle, payload: PathRequest) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if !payload.path.is_absolute() || !payload.path.exists() {
+            return Err("Path does not exist".into());
+        }
+        app.opener()
+            .reveal_item_in_dir(payload.path)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -272,19 +293,32 @@ pub fn open_settings(app: &AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn logs_open(app: AppHandle, state: State<'_, Arc<AppState>>) -> Result<(), String> {
+pub async fn logs_open(app: AppHandle, state: State<'_, Arc<AppState>>) -> Result<(), String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || open_logs(&app, &state))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+pub fn open_logs(app: &AppHandle, state: &AppState) -> Result<(), String> {
     std::fs::create_dir_all(&state.logs.dir).map_err(|e| e.to_string())?;
     app.opener()
         .open_path(state.logs.dir.to_string_lossy(), None::<&str>)
         .map_err(|e| e.to_string())
 }
 #[tauri::command]
-pub fn logs_clear(state: State<'_, Arc<AppState>>) -> Result<(), String> {
-    state.logs.clear()
+pub async fn logs_clear(state: State<'_, Arc<AppState>>) -> Result<(), String> {
+    let logs = state.logs.clone();
+    tauri::async_runtime::spawn_blocking(move || logs.clear())
+        .await
+        .map_err(|e| e.to_string())?
 }
 #[tauri::command]
-pub fn logs_sizes(state: State<'_, Arc<AppState>>) -> Value {
-    state.logs.sizes()
+pub async fn logs_sizes(state: State<'_, Arc<AppState>>) -> Result<Value, String> {
+    let logs = state.logs.clone();
+    tauri::async_runtime::spawn_blocking(move || logs.sizes())
+        .await
+        .map_err(|e| e.to_string())
 }
 #[tauri::command]
 pub fn app_info(app: AppHandle) -> Value {

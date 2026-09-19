@@ -9,6 +9,45 @@ import { usePreviewStore } from '../src/renderer/src/stores/previewStore'
 
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }))
 vi.mock('../src/renderer/src/lib/ipc', () => ({ ipc: { invoke } }))
+vi.mock('../src/renderer/src/components/FilmstripImage', async () => {
+  const { useState } = await import('react')
+  return {
+    FilmstripImage: function MockFilmstripImage({
+      file,
+      fullResolution = false,
+      onDimensions,
+      containerClassName,
+      className
+    }: {
+      file: X3FFileDTO
+      fullResolution?: boolean
+      onDimensions?: (dimensions: { width: number; height: number }) => void
+      containerClassName?: string
+      className?: string
+    }) {
+      const [ready, setReady] = useState(false)
+      return (
+        <div className={containerClassName}>
+          <img
+            src={`${file.path}?v=fit`}
+            alt={file.fileName}
+            aria-hidden={!ready}
+            className={className}
+            data-full-resolution={fullResolution}
+            onLoad={(event) => {
+              setReady(true)
+              onDimensions?.({
+                width: event.currentTarget.naturalWidth,
+                height: event.currentTarget.naturalHeight
+              })
+            }}
+            onError={() => setReady(false)}
+          />
+        </div>
+      )
+    }
+  }
+})
 
 const file: X3FFileDTO = {
   id: 'a',
@@ -16,9 +55,36 @@ const file: X3FFileDTO = {
   fileName: 'a.X3F'
 }
 let resize: (width: number, height: number) => void
+const frames = new Map<number, FrameRequestCallback>()
+let nextFrame = 0
+
+function flushFrames(): void {
+  act(() => {
+    const callbacks = [...frames.values()]
+    frames.clear()
+    callbacks.forEach((callback) => callback(performance.now()))
+  })
+}
+
+function wheel(target: Element, options: WheelEventInit): void {
+  fireEvent.wheel(target, options)
+  flushFrames()
+}
+
+function pointerMove(target: Element, options: PointerEventInit): void {
+  fireEvent.pointerMove(target, options)
+  flushFrames()
+}
 
 beforeEach(() => {
   invoke.mockReset().mockResolvedValue(null)
+  frames.clear()
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+    const id = ++nextFrame
+    frames.set(id, callback)
+    return id
+  })
+  vi.stubGlobal('cancelAnimationFrame', (id: number) => frames.delete(id))
   Object.defineProperty(Element.prototype, 'getAnimations', {
     configurable: true,
     value: vi.fn(() => [])
@@ -61,7 +127,7 @@ afterEach(() => {
 })
 
 function loadImage(width = 1600, height = 1200): HTMLImageElement {
-  const image = document.querySelector('img[src$="v=full"]') as HTMLImageElement
+  const image = document.querySelector('.preview-image img') as HTMLImageElement
   Object.defineProperties(image, {
     naturalWidth: { value: width, configurable: true },
     naturalHeight: { value: height, configurable: true }
@@ -105,6 +171,82 @@ async function chooseZoom(value: string): Promise<void> {
 }
 
 describe('filmstrip zoom preview', () => {
+  it('uses medium at Fit and requests full only beyond Fit without changing image geometry', () => {
+    const { surface, media, image } = setup(6000, 4000)
+    const fitTransform = media.style.transform
+    expect(image.dataset.fullResolution).toBe('false')
+    expect(media.style.width).toBe('6000px')
+    expect(media.style.height).toBe('4000px')
+    expect(usePreviewStore.getState().controls?.scale).toBeCloseTo(800 / 6000)
+    render(<PreviewMinimap file={file} />)
+
+    fireEvent.keyDown(surface, { key: '1' })
+    expect(image.dataset.fullResolution).toBe('true')
+    expect(document.querySelector('.preview-image img')).toBe(image)
+    const zoomTransform = media.style.transform
+    // A completed quality upgrade does not alter the original coordinate system.
+    fireEvent.load(image)
+    expect(media.style.transform).toBe(zoomTransform)
+    expect(media.style.width).toBe('6000px')
+    const minimapImage = document
+      .querySelector('[aria-label="Preview minimap"]')
+      ?.previousElementSibling?.querySelector('img')
+    expect(minimapImage?.getAttribute('data-full-resolution')).toBe('false')
+
+    fireEvent.keyDown(surface, { key: '0' })
+    expect(image.dataset.fullResolution).toBe('false')
+    expect(document.querySelector('.preview-image img')).toBe(image)
+    expect(media.style.transform).toBe(fitTransform)
+    fireEvent.keyDown(surface, { key: '-' })
+    expect(image.dataset.fullResolution).toBe('false')
+  })
+
+  it('coalesces gesture bursts, flushes the last drag on release, and cancels stale frames', () => {
+    const { surface, media, image, unmount } = setup()
+    fireEvent.click(surface)
+    const published = vi.fn()
+    const unsubscribe = usePreviewStore.subscribe(published)
+    vi.mocked(media.getAnimations).mockClear()
+    for (let i = 0; i < 40; i++) fireEvent.wheel(surface, { deltaX: 2, deltaY: 1 })
+    expect(frames.size).toBe(1)
+    expect(media.style.transform).toBe('translate(0px, 0px) scale(1)')
+    expect(published).not.toHaveBeenCalled()
+    expect(media.getAnimations).toHaveBeenCalledOnce()
+    flushFrames()
+    expect(media.style.transform).toBe('translate(-80px, -40px) scale(1)')
+    expect(published).toHaveBeenCalledOnce()
+    expect(document.querySelector('.preview-image img')).toBe(image)
+
+    fireEvent.pointerDown(surface, { button: 0, clientX: 200, clientY: 200 })
+    fireEvent.pointerMove(surface, { clientX: 220, clientY: 210 })
+    fireEvent.pointerMove(surface, { clientX: 240, clientY: 230 })
+    expect(frames.size).toBe(1)
+    fireEvent.pointerUp(surface)
+    expect(frames.size).toBe(0)
+    expect(media.style.transform).toBe('translate(-40px, -10px) scale(1)')
+
+    wheel(surface, { deltaX: 10000, deltaY: 10000 })
+    published.mockClear()
+    fireEvent.wheel(surface, { deltaX: 10000, deltaY: 10000 })
+    expect(frames.size).toBe(0)
+    expect(published).not.toHaveBeenCalled()
+    fireEvent.wheel(surface, { deltaX: -20, deltaY: -20 })
+    expect(frames.size).toBe(1)
+    unmount()
+    expect(frames.size).toBe(0)
+    expect(usePreviewStore.getState().controls).toBeNull()
+    unsubscribe()
+  })
+
+  it('applies a discrete zoom to the newest gesture state before the next frame', () => {
+    const { surface, media } = setup()
+    fireEvent.wheel(surface, { ctrlKey: true, deltaY: -Math.log(2) / 0.01 })
+    expect(frames.size).toBe(1)
+    fireEvent.click(surface)
+    expect(frames.size).toBe(0)
+    expect(media.style.transform).toBe('translate(0px, 0px) scale(0.5)')
+  })
+
   it('centers the clicked image point and updates the minimap, then returns to Fit', () => {
     const { surface, media } = setup()
     surface.getBoundingClientRect = () =>
@@ -138,11 +280,11 @@ describe('filmstrip zoom preview', () => {
     expect(media.dataset.zoomAnimated).toBe('true')
     expect(media.style.width).toBe('1600px')
     expect(media.style.height).toBe('1200px')
-    fireEvent.wheel(surface, { deltaX: 20, deltaY: 10 })
+    wheel(surface, { deltaX: 20, deltaY: 10 })
     expect(media.dataset.zoomAnimated).toBe('false')
     fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }))
     expect(media.dataset.zoomAnimated).toBe('true')
-    fireEvent.wheel(surface, { ctrlKey: true, deltaY: 10 })
+    wheel(surface, { ctrlKey: true, deltaY: 10 })
     expect(media.dataset.zoomAnimated).toBe('false')
     fireEvent.keyDown(surface, { key: '0' })
     expect(media.dataset.zoomAnimated).toBe('true')
@@ -160,7 +302,7 @@ describe('filmstrip zoom preview', () => {
     } as CSSStyleDeclaration)
     const matrix = vi.fn(() => ({ a: 0.75, e: 40, f: 20 }))
     vi.stubGlobal('DOMMatrixReadOnly', matrix)
-    fireEvent.wheel(surface, { deltaX: 10, deltaY: 5 })
+    wheel(surface, { deltaX: 10, deltaY: 5 })
     expect(matrix).toHaveBeenCalledWith('matrix(0.75, 0, 0, 0.75, 40, 20)')
     expect(media.style.transform).toBe('translate(30px, 15px) scale(0.75)')
     expect(media.dataset.zoomAnimated).toBe('false')
@@ -242,18 +384,19 @@ describe('filmstrip zoom preview', () => {
       cancelable: true
     })
     fireEvent(surface, pinch)
+    flushFrames()
     expect(pinch.defaultPrevented).toBe(true)
     expect(media.style.transform).toContain('scale(1)')
     expect(media.style.transform).toContain('translate(-200px, -100px)')
-    fireEvent.wheel(surface, { deltaX: 50, deltaY: 80 })
+    wheel(surface, { deltaX: 50, deltaY: 80 })
     expect(media.style.transform).toContain('translate(-250px, -180px)')
-    fireEvent.wheel(surface, { deltaX: 10000, deltaY: 10000 })
+    wheel(surface, { deltaX: 10000, deltaY: 10000 })
     expect(media.style.transform).toContain('translate(-400px, -300px)')
-    fireEvent.wheel(surface, { deltaX: -10000, deltaY: -10000 })
+    wheel(surface, { deltaX: -10000, deltaY: -10000 })
     expect(media.style.transform).toContain('translate(400px, 300px)')
     fireEvent.click(surface)
     expect(media.style.transform).toContain('translate(0px, 0px)')
-    fireEvent.wheel(surface, { deltaX: 50, deltaY: 50 })
+    wheel(surface, { deltaX: 50, deltaY: 50 })
     expect(media.style.transform).toContain('translate(0px, 0px)')
   })
 
@@ -262,20 +405,20 @@ describe('filmstrip zoom preview', () => {
     fireEvent.click(surface)
     fireEvent.pointerDown(surface, { button: 0, clientX: 200, clientY: 200 })
     expect(surface.setPointerCapture).toHaveBeenCalledWith(1)
-    fireEvent.pointerMove(surface, { clientX: 300, clientY: 250 })
+    pointerMove(surface, { clientX: 300, clientY: 250 })
     expect(media.style.transform).toContain('translate(100px, 50px)')
     fireEvent.pointerUp(surface)
     expect(surface.releasePointerCapture).toHaveBeenCalledWith(1)
     fireEvent.click(surface)
     expect(media.style.transform).toContain('scale(1)')
-    fireEvent.pointerMove(surface, { clientX: 500, clientY: 500 })
+    pointerMove(surface, { clientX: 500, clientY: 500 })
     expect(media.style.transform).toContain('translate(100px, 50px)')
     fireEvent.pointerDown(surface, { button: 0 })
     fireEvent.pointerCancel(surface)
-    fireEvent.pointerMove(surface, { clientX: 500, clientY: 500 })
+    pointerMove(surface, { clientX: 500, clientY: 500 })
     expect(media.style.transform).toContain('translate(100px, 50px)')
     fireEvent.pointerDown(surface, { button: 2 })
-    fireEvent.pointerMove(surface, { clientX: 500, clientY: 500 })
+    pointerMove(surface, { clientX: 500, clientY: 500 })
     expect(media.style.transform).toContain('translate(100px, 50px)')
   })
 
@@ -286,7 +429,7 @@ describe('filmstrip zoom preview', () => {
     expect(media.style.transform).toContain('scale(0.1875)')
     fireEvent.click(surface)
     expect(media.style.transform).toContain('scale(1)')
-    fireEvent.wheel(surface, { deltaX: 500, deltaY: 500 })
+    wheel(surface, { deltaX: 500, deltaY: 500 })
     act(() => resize(2000, 2000))
     expect(media.style.transform).toContain('translate(0px, 0px)')
     act(() => resize(400, 300))
@@ -304,12 +447,12 @@ describe('filmstrip zoom preview', () => {
     expect(media.style.transform).toContain('scale(1.25)')
     fireEvent.keyDown(surface, { key: '-' })
     expect(media.style.transform).toContain('scale(1)')
-    fireEvent.wheel(surface, { ctrlKey: true, deltaY: -100000 })
+    wheel(surface, { ctrlKey: true, deltaY: -100000 })
     expect((screen.getByRole('button', { name: 'Zoom in' }) as HTMLButtonElement).disabled).toBe(
       true
     )
     expect(media.style.transform).toContain('scale(8)')
-    fireEvent.wheel(surface, { ctrlKey: true, deltaY: 100000 })
+    wheel(surface, { ctrlKey: true, deltaY: 100000 })
     expect((screen.getByRole('button', { name: 'Zoom out' }) as HTMLButtonElement).disabled).toBe(
       true
     )
@@ -321,21 +464,21 @@ describe('filmstrip zoom preview', () => {
   it('disables controls until a preview loads, including pending and failed previews', () => {
     const result = render(<PreviewWithControls key="pending" file={{ ...file, pending: true }} />)
     expect(screen.queryByRole('img')).toBeNull()
-    expect(document.querySelector('img[src$="v=full"]')?.getAttribute('loading')).toBe('eager')
+    expect(document.querySelector('.preview-image img')?.getAttribute('data-full-resolution')).toBe(
+      'false'
+    )
     expect(
       screen.getAllByRole('button').every((button) => (button as HTMLButtonElement).disabled)
     ).toBe(true)
     result.rerender(<PreviewWithControls key="failed" file={file} />)
-    // A usable small image never enables full-resolution zoom controls.
-    fireEvent.error(document.querySelector('img[src$="v=full"]')!)
-    fireEvent.load(screen.getByRole('img'))
-    expect(screen.getByRole('img').getAttribute('src')).toContain('v=preview')
+    // Zoom geometry is unavailable until the medium preview reports native dimensions.
+    fireEvent.error(document.querySelector('.preview-image img')!)
     expect(
       screen.getAllByRole('button').every((button) => (button as HTMLButtonElement).disabled)
     ).toBe(true)
   })
 
-  it('enables full-image zoom before metadata arrives and keeps it ready afterward', () => {
+  it('enables zoom from medium dimensions before metadata arrives and keeps it ready afterward', () => {
     const result = render(<PreviewWithControls file={{ ...file, pending: true }} />)
     loadImage()
     expect(usePreviewStore.getState().controls?.fileId).toBe(file.id)
@@ -344,7 +487,8 @@ describe('filmstrip zoom preview', () => {
     )
     expect(usePreviewStore.getState().controls?.fileId).toBe(file.id)
     expect(document.querySelector('.rt-Skeleton')).toBeNull()
-    expect(screen.getByRole('img').getAttribute('src')).toContain('v=full')
+    expect(screen.getByRole('img').getAttribute('src')).toContain('v=fit')
+    expect(screen.getByRole('img').getAttribute('data-full-resolution')).toBe('false')
   })
 
   it('offers native zoom presets and preserves a custom percentage after gesture zoom', async () => {
@@ -431,12 +575,16 @@ describe('filmstrip zoom preview', () => {
     // Grab off-center inside the rectangle: pointer-down must not recenter it.
     fireEvent.pointerDown(minimap, { button: 0, clientX: 70, clientY: 60 })
     expect(media.style.transform).toContain('translate(0px, 0px)')
+    fireEvent.pointerMove(minimap, { clientX: 80, clientY: 65 })
     fireEvent.pointerMove(minimap, { clientX: 90, clientY: 75 })
+    expect(frames.size).toBe(1)
+    expect(rectangle.style.left).toBe('25%')
+    fireEvent.pointerUp(minimap)
+    expect(frames.size).toBe(0)
     expect(parseFloat(rectangle.style.left)).toBeCloseTo(35)
     expect(parseFloat(rectangle.style.top)).toBeCloseTo(35)
     expect(usePreviewStore.getState().minimap!.x).toBeCloseTo(0.35)
-    fireEvent.pointerUp(minimap)
-    fireEvent.pointerMove(minimap, { clientX: 200, clientY: 150 })
+    pointerMove(minimap, { clientX: 200, clientY: 150 })
     expect(parseFloat(rectangle.style.left)).toBeCloseTo(35)
     expect(media.style.transform).toContain('scale(1)')
 
@@ -446,7 +594,7 @@ describe('filmstrip zoom preview', () => {
     expect(rectangle.style.top).toBe('50%')
     expect(media.style.transform).toContain('translate(-400px, -300px)')
     fireEvent.pointerCancel(minimap)
-    fireEvent.pointerMove(minimap, { clientX: 0, clientY: 0 })
+    pointerMove(minimap, { clientX: 0, clientY: 0 })
     expect(rectangle.style.left).toBe('50%')
     fireEvent.keyDown(minimap, { key: 'ArrowLeft' })
     expect(parseFloat(rectangle.style.left)).toBeCloseTo(45)

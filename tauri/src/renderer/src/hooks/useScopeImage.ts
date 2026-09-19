@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { drawImageWithOrientation } from '../lib/orientation'
+import { loadSmallPreview } from '../lib/previewImages'
 
 type ScopeImage = ImageData | 'loading' | null
 const cache = new Map<string, ImageData>()
@@ -31,22 +31,20 @@ export function useScopeImage(
     save('loading')
     void (async () => {
       try {
-        const res = await fetch(url, { signal: controller.signal })
-        if (!res.ok) throw new Error(`preview ${res.status}`)
-        const bitmap = await createImageBitmap(await res.blob(), { imageOrientation: 'none' })
-        try {
-          if (controller.signal.aborted) return
-          const canvas = document.createElement('canvas')
-          if (!canvas.getContext('2d')) throw new Error('no 2d context')
-          // ponytail: preview samples cap at 320px; use larger samples if fine detail matters.
-          drawImageWithOrientation(canvas, bitmap, orientation, { maxEdge: 320, aspectRatio })
-          const image = canvas.getContext('2d')!.getImageData(0, 0, canvas.width, canvas.height)
-          cache.set(key, image)
-          if (cache.size > 16) cache.delete(cache.keys().next().value!)
-          save(image)
-        } finally {
-          bitmap.close()
-        }
+        const source = await loadSmallPreview(url, orientation, aspectRatio, controller.signal)
+        if (controller.signal.aborted) return
+        const canvas = document.createElement('canvas')
+        const context = canvas.getContext('2d')
+        if (!context) throw new Error('no 2d context')
+        // ponytail: preview samples cap at 320px; increase only if fine detail matters.
+        const scale = Math.min(1, 320 / Math.max(source.width, source.height))
+        canvas.width = Math.max(1, Math.round(source.width * scale))
+        canvas.height = Math.max(1, Math.round(source.height * scale))
+        context.drawImage(source, 0, 0, canvas.width, canvas.height)
+        const image = context.getImageData(0, 0, canvas.width, canvas.height)
+        cache.set(key, image)
+        if (cache.size > 16) cache.delete(cache.keys().next().value!)
+        save(image)
       } catch {
         save(null)
       }

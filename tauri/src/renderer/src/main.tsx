@@ -15,6 +15,10 @@ async function start(): Promise<void> {
       <App />
     </React.StrictMode>
   )
+  if (import.meta.env.VITE_NATIVE_SMOKE === '1') {
+    const { installNativeSmoke } = await import('./lib/nativeSmoke')
+    installNativeSmoke()
+  }
 }
 
 void start().catch((error: unknown) => {

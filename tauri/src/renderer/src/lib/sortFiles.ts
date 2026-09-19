@@ -5,11 +5,7 @@ import type { SortField, X3FFileDTO } from '@shared/types'
  * case-insensitive locale compare; Date/Size compare the nullable fields with
  * distant-past / 0 fallbacks (sortableCapturedDate / sortableFileSize).
  */
-export function sortFiles(
-  files: X3FFileDTO[],
-  field: SortField,
-  ascending: boolean
-): X3FFileDTO[] {
+export function sortFiles(files: X3FFileDTO[], field: SortField, ascending: boolean): X3FFileDTO[] {
   const sorted = [...files].sort((a, b) => compare(a, b, field))
   return ascending ? sorted : sorted.reverse()
 }
@@ -26,8 +22,9 @@ function compare(a: X3FFileDTO, b: X3FFileDTO, field: SortField): number {
   }
 }
 
+const collator = new Intl.Collator(undefined, { sensitivity: 'accent' })
 function ci(a: string, b: string): number {
-  return a.localeCompare(b, undefined, { sensitivity: 'accent' })
+  return collator.compare(a, b)
 }
 
 function capturedMs(f: X3FFileDTO): number {

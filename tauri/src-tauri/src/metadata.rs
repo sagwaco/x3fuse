@@ -174,24 +174,29 @@ impl ExifTool {
         let mut args: Vec<OsString> = [
             "-charset",
             "filename=UTF8",
-            "-Orientation",
-            "-ImageWidth",
-            "-ImageHeight",
+            "-Orientation#",
+            "-ImageWidth#",
+            "-ImageHeight#",
             "-PreviewImage",
             "-ThumbnailImage",
             "-b",
-            "-n",
+            "-d",
+            "%Y-%m-%d %H:%M:%S",
             "-json",
         ]
         .into_iter()
         .map(Into::into)
         .collect();
+        args.extend(INSPECTOR.iter().map(|(tag, _)| format!("-{tag}").into()));
         args.extend(paths.iter().map(|p| p.as_os_str().to_owned()));
         let result = async {
             let bytes = self.run(args, None).await?;
             let objects: Vec<Value> = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
             let mut result = HashMap::new();
             for object in objects {
+                if object.get("Error").is_some() {
+                    continue;
+                }
                 let Some(path) = object["SourceFile"].as_str() else {
                     continue;
                 };
@@ -215,6 +220,7 @@ impl ExifTool {
                         orientation,
                         aspect_ratio,
                         preview,
+                        exif: inspector_pairs(&object),
                     },
                 );
             }
@@ -250,29 +256,33 @@ impl ExifTool {
         let Some(meta) = objects.first() else {
             return Ok(vec![]);
         };
-        Ok(INSPECTOR
-            .iter()
-            .filter_map(|(tag, label)| {
-                let v = &meta[tag];
-                if v.is_null() || v.as_str() == Some("") {
-                    return None;
-                }
-                let value = v
-                    .as_str()
-                    .map(str::to_string)
-                    .unwrap_or_else(|| v.to_string());
-                let value = match *tag {
-                    "FNumber" => format!("f/{value}"),
-                    "ImageSize" => value.replace('x', " × "),
-                    _ => value,
-                };
-                Some(ExifPair {
-                    label: (*label).into(),
-                    value,
-                })
-            })
-            .collect())
+        Ok(inspector_pairs(meta))
     }
+}
+
+fn inspector_pairs(meta: &Value) -> Vec<ExifPair> {
+    INSPECTOR
+        .iter()
+        .filter_map(|(tag, label)| {
+            let v = &meta[tag];
+            if v.is_null() || v.as_str() == Some("") {
+                return None;
+            }
+            let value = v
+                .as_str()
+                .map(str::to_string)
+                .unwrap_or_else(|| v.to_string());
+            let value = match *tag {
+                "FNumber" => format!("f/{value}"),
+                "ImageSize" => value.replace('x', " × "),
+                _ => value,
+            };
+            Some(ExifPair {
+                label: (*label).into(),
+                value,
+            })
+        })
+        .collect()
 }
 
 const INSPECTOR: &[(&str, &str)] = &[
@@ -296,6 +306,7 @@ pub struct DisplayMeta {
     pub orientation: Option<u8>,
     pub aspect_ratio: Option<f64>,
     pub preview: Option<Vec<u8>>,
+    pub exif: Vec<ExifPair>,
 }
 pub fn is_jpeg(bytes: &[u8]) -> bool {
     bytes.len() > 2 && bytes.starts_with(&[0xff, 0xd8])
@@ -318,6 +329,7 @@ pub fn basic_metadata(path: PathBuf) -> Result<FileDto, String> {
         captured_date,
         orientation: None,
         aspect_ratio: None,
+        exif: None,
     })
 }
 
@@ -349,6 +361,35 @@ fn capture_date(path: &Path) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn import_and_inspector_share_display_formatting() {
+        let pairs = inspector_pairs(&serde_json::json!({
+            "Model": "SIGMA dp2 Quattro",
+            "LensID": "",
+            "FNumber": 2.8,
+            "ExposureTime": "1/125",
+            "ISO": 100,
+            "ExposureProgram": "Aperture-priority AE",
+            "ImageSize": "5424x3616",
+            "SerialNumber": null
+        }));
+        let rows: Vec<_> = pairs
+            .iter()
+            .map(|pair| (pair.label.as_str(), pair.value.as_str()))
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                ("Camera", "SIGMA dp2 Quattro"),
+                ("Aperture", "f/2.8"),
+                ("Shutter", "1/125"),
+                ("ISO", "100"),
+                ("Program", "Aperture-priority AE"),
+                ("Dimensions", "5424 × 3616")
+            ]
+        );
+    }
+
     #[test]
     fn import_preserves_header_dates_and_rejects_non_x3f_paths() {
         let dir = tempfile::tempdir().unwrap();

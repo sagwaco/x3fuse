@@ -1,4 +1,7 @@
-import { useEffect } from 'react'
+import { useEffect, useMemo } from 'react'
+import { previewUrl } from '@shared/preview'
+import { prefetchFitPreviews } from '../lib/fitPreviews'
+import { sortFiles } from '../lib/sortFiles'
 import { useQueueStore } from '../stores/queueStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useNavStore } from '../stores/navStore'
@@ -52,7 +55,54 @@ export function MainWindow(): React.JSX.Element {
           </div>
         </>
       )}
+      <PreviewPreparation />
       <ReconversionDialog />
     </div>
   )
+}
+
+/** Prepare Fit images while browsing any view; keep background work out of exports. */
+function PreviewPreparation(): null {
+  const files = useQueueStore((state) => state.files)
+  const activeId = useQueueStore((state) => state.activeId)
+  const isProcessing = useQueueStore((state) => state.isProcessing)
+  const sortField = useSettingsStore((state) => state.settings.sortField)
+  const sortAscending = useSettingsStore((state) => state.settings.sortAscending)
+  const sorted = useMemo(
+    () => sortFiles(files, sortField, sortAscending),
+    [files, sortField, sortAscending]
+  )
+  // Warm nearby images first, then the remaining queue, one background job at a time.
+  const previewSources = useMemo(
+    () =>
+      sorted
+        .filter((file) => !file.pending)
+        .map((file) => ({ id: file.id, source: previewUrl(file.path, 'full', file.id) })),
+    [sorted]
+  )
+  useEffect(() => {
+    if (isProcessing) return
+    let cancel: (() => void) | undefined
+    const timer = setTimeout(() => {
+      const index = previewSources.findIndex((file) => file.id === activeId)
+      const nearby =
+        index < 0
+          ? []
+          : [
+              previewSources[index],
+              previewSources[index + 1],
+              previewSources[index - 1],
+              previewSources[index + 2]
+            ]
+      const sources = new Set(nearby.filter(Boolean).map((file) => file.source))
+      for (const file of previewSources) sources.add(file.source)
+      cancel = prefetchFitPreviews([...sources])
+    }, 150)
+    return () => {
+      clearTimeout(timer)
+      cancel?.()
+    }
+  }, [activeId, previewSources, isProcessing])
+
+  return null
 }

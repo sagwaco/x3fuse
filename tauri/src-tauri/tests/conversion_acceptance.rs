@@ -138,3 +138,75 @@ fn real_conversion_metadata_previews_and_cancelled_publication() {
         assert!(!target.exists());
     }
 }
+
+#[test]
+#[ignore = "Requires explicitly supplied Merrill and Quattro corpus files"]
+fn full_denoise_conversion_finishes_within_deadline() {
+    use std::{
+        sync::mpsc,
+        time::{Duration, Instant},
+    };
+
+    let deadline = Duration::from_secs(60);
+    let resources = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources");
+    for key in ["X3FUSE_TEST_MERRILL", "X3FUSE_TEST_QUATTRO"] {
+        let input = fixture(key);
+        for (format, core_format) in [
+            (OutputFormat::Dng, x3f_core::OutputFormat::Dng),
+            (OutputFormat::Tiff, x3f_core::OutputFormat::Tiff),
+        ] {
+            let settings = BatchSettings {
+                output_format: format,
+                compress: true,
+                denoise_intensity: 10,
+                dng_highlight_recovery: true,
+                ..Default::default()
+            };
+            let options = process_options(&settings, resources.join("opcodes"));
+            let temporary = tempfile::tempdir().unwrap();
+            let output = temporary
+                .path()
+                .join(format!("full-denoise.{}", format.extension()));
+            let cancel = AtomicBool::new(false);
+            let mut reached_write = false;
+            let started = Instant::now();
+            let result = std::thread::scope(|scope| {
+                let (done, completion) = mpsc::channel::<()>();
+                let cancel = &cancel;
+                scope.spawn(move || {
+                    if matches!(
+                        completion.recv_timeout(deadline),
+                        Err(mpsc::RecvTimeoutError::Timeout)
+                    ) {
+                        cancel.store(true, Ordering::Relaxed);
+                    }
+                });
+                let result = x3f_core::convert_file(
+                    &input,
+                    &output,
+                    core_format,
+                    &options,
+                    cancel,
+                    |stage| reached_write |= stage == x3f_core::ConversionStage::Write,
+                );
+                let _ = done.send(());
+                result
+            });
+            let elapsed = started.elapsed();
+            eprintln!(
+                "Full-denoise {format:?} conversion of {}: {elapsed:?}",
+                input.display()
+            );
+            if result.is_err() {
+                assert!(!output.exists(), "Failed conversion left a partial output");
+            }
+            assert!(
+                result.is_ok(),
+                "{key} {format:?} failed after {elapsed:?}: {result:?}"
+            );
+            assert!(elapsed < deadline && !cancel.load(Ordering::Relaxed));
+            assert!(reached_write);
+            assert!(std::fs::metadata(&output).unwrap().len() > 100);
+        }
+    }
+}

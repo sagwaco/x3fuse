@@ -1,56 +1,33 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { ImageOff } from 'lucide-react'
 import { Skeleton } from '@radix-ui/themes/components/skeleton'
 import '@radix-ui/themes/src/components/skeleton.css'
 import type { X3FFileDTO } from '@shared/types'
-import { previewUrl, type PreviewVariant } from '@shared/preview'
-import { drawImageWithOrientation, shouldUseCanvas } from '../lib/orientation'
+import { previewUrl } from '@shared/preview'
+import { cachedSmallPreview, loadSmallPreview } from '../lib/previewImages'
 import { cn } from '../lib/cn'
 import { t } from '../lib/strings'
 import { useDelayedLoading } from '../hooks/useDelayedLoading'
 
 type Status = 'loading' | 'ok' | 'error'
-
-// Retain only small, already-oriented canvases; full JPEGs use the webview's cache.
-const canvasCache = new Map<string, HTMLCanvasElement>()
-const CANVAS_BUDGET = 16 * 1024 * 1024
-let cachedCanvasBytes = 0
-
-function cacheCanvas(key: string, canvas: HTMLCanvasElement): void {
-  const previous = canvasCache.get(key)
-  if (previous) cachedCanvasBytes -= previous.width * previous.height * 4
-  canvasCache.delete(key)
-  canvasCache.set(key, canvas)
-  cachedCanvasBytes += canvas.width * canvas.height * 4
-  while (cachedCanvasBytes > CANVAS_BUDGET) {
-    const oldest = canvasCache.keys().next().value!
-    const evicted = canvasCache.get(oldest)!
-    cachedCanvasBytes -= evicted.width * evicted.height * 4
-    canvasCache.delete(oldest)
-  }
-}
-
 interface ImageProps {
   file: X3FFileDTO
-  variant?: PreviewVariant
   containerClassName?: string
   className?: string
   maxEdge?: number
   loading?: 'lazy' | 'eager'
-  onLoad?: (image: HTMLImageElement) => void
 }
 
-/** Reset image state when its source changes, without resetting a full JPEG
- * when import metadata arrives: that JPEG carries its own orientation/crop. */
+/** Shared, correctly oriented small preview for thumbnails and cold-load fallback. */
 export function OrientedImage(props: ImageProps): React.JSX.Element {
-  const { file, variant = 'preview', maxEdge } = props
+  const { file, maxEdge } = props
   const key = JSON.stringify([
     file.id,
     file.path,
-    variant,
-    ...(variant === 'preview'
-      ? [file.pending ?? false, file.orientation ?? 1, file.aspectRatio, maxEdge]
-      : [])
+    file.pending ?? false,
+    file.orientation ?? 1,
+    file.aspectRatio,
+    maxEdge
   ])
   return <ImageContent key={key} cacheKey={key} {...props} />
 }
@@ -58,67 +35,38 @@ export function OrientedImage(props: ImageProps): React.JSX.Element {
 function ImageContent({
   cacheKey,
   file,
-  variant = 'preview',
   containerClassName,
   className,
   maxEdge,
-  loading = 'lazy',
-  onLoad
+  loading = 'lazy'
 }: ImageProps & { cacheKey: string }): React.JSX.Element {
-  const orientation = variant === 'preview' ? (file.orientation ?? 1) : 1
-  const aspectRatio = variant === 'preview' ? file.aspectRatio : undefined
-  const url = previewUrl(file.path, variant, file.id)
-  // Small previews need metadata before they can be oriented and cropped.
-  const pending = variant === 'preview' && !!file.pending
-  const useCanvas = shouldUseCanvas(variant, orientation, aspectRatio)
+  const orientation = file.orientation ?? 1
+  const aspectRatio = file.aspectRatio
+  const url = previewUrl(file.path, 'preview', file.id)
+  const pending = !!file.pending
   const [status, setStatus] = useState<Status>('loading')
   const [visible, setVisible] = useState(loading === 'eager')
   const showSkeleton = useDelayedLoading(pending || status === 'loading', cacheKey)
   const containerRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const imageRef = useRef<HTMLImageElement>(null)
   const mediaReady = useRef(false)
 
-  const reportLoad = useCallback(
-    (image: HTMLImageElement) => {
-      if (mediaReady.current) return
-      mediaReady.current = true
-      setStatus('ok')
-      onLoad?.(image)
-    },
-    [onLoad]
-  )
-
-  // Cached media must be ready before paint, including the parent's zoom sizing.
   useLayoutEffect(() => {
-    if (pending || status !== 'loading') return
-    if (!useCanvas) {
-      const image = imageRef.current
-      if (image?.complete && image.naturalWidth > 0) reportLoad(image)
-      return
-    }
-    const cached = canvasCache.get(cacheKey)
+    if (pending || mediaReady.current) return
+    const cached = cachedSmallPreview(url, orientation, aspectRatio)
     const canvas = canvasRef.current
     if (!cached || !canvas) return
     try {
-      // StrictMode replays this effect; resizing the cached canvas itself clears it.
-      if (cached !== canvas) {
-        const context = canvas.getContext('2d')
-        if (!context) throw new Error('no 2d context')
-        canvas.width = cached.width
-        canvas.height = cached.height
-        context.drawImage(cached, 0, 0)
-        cacheCanvas(cacheKey, canvas)
-      }
+      copyPreview(canvas, cached, maxEdge)
       mediaReady.current = true
       setStatus('ok')
     } catch {
       setStatus('error')
     }
-  }, [pending, status, useCanvas, cacheKey, reportLoad])
+  }, [pending, url, orientation, aspectRatio, maxEdge])
 
   useEffect(() => {
-    if (!useCanvas || visible || loading === 'eager' || pending || mediaReady.current) return
+    if (visible || loading === 'eager' || pending || mediaReady.current) return
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries.some((entry) => entry.isIntersecting)) {
@@ -130,33 +78,23 @@ function ImageContent({
     )
     observer.observe(containerRef.current!)
     return () => observer.disconnect()
-  }, [useCanvas, visible, loading, pending])
+  }, [visible, loading, pending])
 
   useEffect(() => {
-    if (pending || !useCanvas || mediaReady.current || (!visible && loading !== 'eager')) return
+    if (pending || mediaReady.current || (!visible && loading !== 'eager')) return
     const controller = new AbortController()
-    void (async () => {
-      try {
-        const res = await fetch(url, { signal: controller.signal })
-        if (!res.ok) throw new Error(`preview ${res.status}`)
-        const bitmap = await createImageBitmap(await res.blob())
-        try {
-          if (controller.signal.aborted) return
-          const canvas = canvasRef.current
-          if (!canvas?.getContext('2d')) throw new Error('no 2d context')
-          drawImageWithOrientation(canvas, bitmap, orientation, { maxEdge, aspectRatio })
-          cacheCanvas(cacheKey, canvas)
-          mediaReady.current = true
-          setStatus('ok')
-        } finally {
-          bitmap.close()
-        }
-      } catch {
+    void loadSmallPreview(url, orientation, aspectRatio, controller.signal)
+      .then((cached) => {
+        if (controller.signal.aborted || !canvasRef.current) return
+        copyPreview(canvasRef.current, cached, maxEdge)
+        mediaReady.current = true
+        setStatus('ok')
+      })
+      .catch(() => {
         if (!controller.signal.aborted) setStatus('error')
-      }
-    })()
+      })
     return () => controller.abort()
-  }, [url, useCanvas, orientation, aspectRatio, maxEdge, pending, visible, loading, cacheKey])
+  }, [url, orientation, aspectRatio, maxEdge, pending, visible, loading])
 
   return (
     <div
@@ -167,7 +105,7 @@ function ImageContent({
         containerClassName
       )}
     >
-      {pending || status === 'error' ? null : useCanvas ? (
+      {!pending && status !== 'error' && (
         <canvas
           ref={canvasRef}
           role="img"
@@ -178,35 +116,8 @@ function ImageContent({
             className
           )}
         />
-      ) : (
-        <img
-          ref={imageRef}
-          src={url}
-          alt={file.fileName}
-          aria-hidden={variant === 'full' && status !== 'ok' ? true : undefined}
-          loading={loading}
-          decoding={variant === 'full' ? 'sync' : 'async'}
-          draggable={false}
-          onLoad={(event) => reportLoad(event.currentTarget)}
-          onError={() => setStatus('error')}
-          className={cn(
-            'max-h-full max-w-full',
-            status === 'ok' ? 'opacity-100' : 'opacity-0',
-            className
-          )}
-        />
       )}
-      {/* Avoid a brief low-res flash when the full JPEG loads within a second. */}
-      {variant === 'full' && (showSkeleton || status === 'error') ? (
-        <OrientedImage
-          file={file}
-          variant="preview"
-          loading={loading}
-          containerClassName="absolute inset-0"
-          className={className}
-          maxEdge={maxEdge}
-        />
-      ) : showSkeleton ? (
+      {showSkeleton ? (
         <Skeleton className="preview-skeleton absolute inset-0 h-full w-full" />
       ) : status === 'error' ? (
         <div
@@ -219,4 +130,13 @@ function ImageContent({
       ) : null}
     </div>
   )
+}
+
+function copyPreview(canvas: HTMLCanvasElement, source: HTMLCanvasElement, maxEdge = 1800): void {
+  const context = canvas.getContext('2d')
+  if (!context) throw new Error('No preview canvas')
+  const scale = Math.min(1, maxEdge / Math.max(source.width, source.height))
+  canvas.width = Math.max(1, Math.round(source.width * scale))
+  canvas.height = Math.max(1, Math.round(source.height * scale))
+  context.drawImage(source, 0, 0, canvas.width, canvas.height)
 }

@@ -3,6 +3,14 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 import { render, renderHook, screen, cleanup, fireEvent, act } from '@testing-library/react'
 import { DEFAULT_SETTINGS, type X3FFileDTO } from '@shared/types'
 
+// This suite verifies renderer wiring; media decoding has its own integration tests.
+vi.mock('../src/renderer/src/lib/previewImages', () => ({
+  cachedSmallPreview: () => undefined,
+  loadSmallPreview: () => new Promise(() => {}),
+  subscribeFullPreview: () => () => {},
+  subscribeFullPreviewBlob: () => () => {}
+}))
+
 /**
  * Renderer smoke test: mounts the real component tree (stores + IPC hook + Radix)
  * against a mocked `window.x3f` bridge to catch render-time throws that the dev
@@ -80,7 +88,8 @@ describe('renderer smoke', () => {
       id: 'from-main',
       path: '/photos/first.X3F',
       fileName: 'first.X3F',
-      fileSize: 1000
+      fileSize: 1000,
+      exif: [{ label: 'Camera', value: 'Sigma DP2 Merrill' }]
     }
     let finishImport!: (files: X3FFileDTO[]) => void
     invoke.mockReturnValueOnce(
@@ -88,7 +97,6 @@ describe('renderer smoke', () => {
         finishImport = resolve
       })
     )
-    invoke.mockResolvedValueOnce([{ label: 'Camera', value: 'Sigma DP2 Merrill' }])
     let importing!: Promise<void>
     await act(async () => {
       importing = useQueueStore.getState().addFiles([file.path])
@@ -98,7 +106,7 @@ describe('renderer smoke', () => {
     expect(useQueueStore.getState().selectedIds).toEqual(new Set([activeId]))
     expect(screen.getByText('first.X3F')).toBeTruthy()
     expect(screen.getByRole('heading', { name: 'Scopes' })).toBeTruthy()
-    expect(screen.getByText('Sigma DP2 Merrill')).toBeTruthy()
+    expect(screen.queryByText('Sigma DP2 Merrill')).toBeNull()
 
     await act(async () => {
       finishImport([file])
@@ -106,6 +114,7 @@ describe('renderer smoke', () => {
     })
     expect(useQueueStore.getState().activeId).toBe(activeId)
     expect(useQueueStore.getState().files[0].pending).toBe(false)
+    expect(screen.getByText('Sigma DP2 Merrill')).toBeTruthy()
     expect(screen.getByRole('img', { name: 'first.X3F' })).toBeTruthy()
     invoke.mockResolvedValueOnce([{ ...file, path: '/photos/second.X3F' }])
     await act(async () => useQueueStore.getState().addFiles(['/photos/second.X3F']))

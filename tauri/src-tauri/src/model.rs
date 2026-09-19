@@ -201,6 +201,8 @@ pub struct FileDto {
     pub orientation: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub aspect_ratio: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exif: Option<Vec<ExifPair>>,
 }
 
 #[derive(Clone, Debug, Serialize)]

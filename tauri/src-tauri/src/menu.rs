@@ -5,7 +5,6 @@ use tauri::{
     menu::{MenuBuilder, MenuItem, PredefinedMenuItem, SubmenuBuilder},
     Emitter, Manager,
 };
-use tauri_plugin_opener::OpenerExt;
 
 pub fn translate(key: &str) -> String {
     static STRINGS: OnceLock<(Value, Value)> = OnceLock::new();
@@ -162,23 +161,22 @@ pub fn install(app: &tauri::AppHandle) -> tauri::Result<()> {
                 app.exit(0);
                 Ok(())
             }
-            "settings" => {
+            name @ ("settings" | "showLogs" | "clearLogs") => {
                 let app = app.clone();
+                let name = name.to_string();
                 tauri::async_runtime::spawn_blocking(move || {
-                    if let Err(error) = commands::open_settings(&app) {
-                        app.state::<Arc<AppState>>().logs.write("error", error);
+                    let state = app.state::<Arc<AppState>>();
+                    let result = match name.as_str() {
+                        "settings" => commands::open_settings(&app),
+                        "showLogs" => commands::open_logs(&app, &state),
+                        _ => state.logs.clear(),
+                    };
+                    if let Err(error) = result {
+                        state.logs.write("error", error);
                     }
                 });
                 Ok(())
             }
-            "showLogs" => std::fs::create_dir_all(&state.logs.dir)
-                .map_err(|e| e.to_string())
-                .and_then(|_| {
-                    app.opener()
-                        .open_path(state.logs.dir.to_string_lossy(), None::<&str>)
-                        .map_err(|e| e.to_string())
-                }),
-            "clearLogs" => state.logs.clear(),
             name @ ("addFiles" | "selectAll" | "deselectAll" | "removeSelected" | "convertAll"
             | "stop" | "clearQueue") => app
                 .emit_to("main", "menu:command", json!({"name":name}))
@@ -186,7 +184,8 @@ pub fn install(app: &tauri::AppHandle) -> tauri::Result<()> {
             _ => Ok(()),
         };
         if let Err(e) = result {
-            state.logs.write("error", e);
+            let logs = state.logs.clone();
+            tauri::async_runtime::spawn_blocking(move || logs.write("error", e));
         }
     });
     Ok(())
