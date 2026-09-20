@@ -1,3 +1,9 @@
+# 0.1.7 - Beta 1.1.7
+
+- Fix the primary Convert button processing only one file after adding multiple files; it now converts the entire queue.
+- Fix reconversion confirmation skipping requested files that do not already have output.
+- Reject truncated or corrupt X3F files before conversion so they cannot stall the queue, and continue processing the remaining files.
+
 # 0.1.6 - Beta 1.1.6
 
 - Update the core converter to x3fuse-core 0.1.4.
