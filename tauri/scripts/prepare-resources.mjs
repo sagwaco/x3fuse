@@ -66,6 +66,8 @@ if (await readFile(join(destination, '.version'), 'utf8').catch(() => '') !== ma
     await rm(temporary, { recursive: true, force: true })
   }
 }
+// ExifTool's test fixtures include unsigned Mach-O files that prevent notarization.
+await rm(join(destination, 't'), { recursive: true, force: true })
 const executable = windows ? join(destination, 'exiftool.exe') : 'perl'
 const args = windows ? ['-ver'] : [join(destination, 'exiftool'), '-ver']
 const actual = execFileSync(executable, args, { encoding: 'utf8' }).trim()

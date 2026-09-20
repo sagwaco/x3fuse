@@ -36,8 +36,8 @@ export function useScopeImage(
         const canvas = document.createElement('canvas')
         const context = canvas.getContext('2d')
         if (!context) throw new Error('no 2d context')
-        // ponytail: preview samples cap at 320px; increase only if fine detail matters.
-        const scale = Math.min(1, 320 / Math.max(source.width, source.height))
+        // ponytail: cap at the usual embedded preview size; use full JPEGs if more detail is needed.
+        const scale = Math.min(1, 640 / Math.max(source.width, source.height))
         canvas.width = Math.max(1, Math.round(source.width * scale))
         canvas.height = Math.max(1, Math.round(source.height * scale))
         context.drawImage(source, 0, 0, canvas.width, canvas.height)

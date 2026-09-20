@@ -21,6 +21,7 @@ interface PreviewControls {
 }
 
 export const usePreviewStore = create<{
+  activeFileId: string | null
   minimap: PreviewMap | null
   controls: PreviewControls | null
-}>(() => ({ minimap: null, controls: null }))
+}>(() => ({ activeFileId: null, minimap: null, controls: null }))

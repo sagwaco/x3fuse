@@ -27,13 +27,14 @@ export function* drawScope(
   ctx.lineWidth = 0.5
   if (mode === 'vectorscope') {
     const size = Math.max(1, Math.floor(Math.min(width - 24, 176)))
+    const densitySize = Math.max(1, Math.round(size * pixelRatio))
     const x = (width - size) / 2
     const y = (200 - size) / 2
-    const radius = (size - 1) / 2
-    const cx = x + radius
-    const cy = y + radius
-    const layers = yield* scopeDensitySteps(image, mode, size, size)
-    yield* drawDensity(ctx, layers[0], size, size, x, y, '#d4e5dc')
+    const radius = (densitySize - 1) / (2 * pixelRatio)
+    const cx = x + densitySize / (2 * pixelRatio)
+    const cy = y + densitySize / (2 * pixelRatio)
+    const layers = yield* scopeDensitySteps(image, mode, densitySize, densitySize)
+    yield* drawDensity(ctx, layers[0], densitySize, densitySize, x, y, pixelRatio, '#d4e5dc')
     ctx.strokeStyle = '#737373'
     for (const fraction of [0.5, 1]) {
       ctx.beginPath()
@@ -115,16 +116,19 @@ export function* drawScope(
   const gap = 5
   const channelWidth =
     mode === 'rgbParade' ? Math.max(1, Math.floor((plotWidth - gap * 2) / 3)) : plotWidth
-  const layers = yield* scopeDensitySteps(image, mode, channelWidth, plotHeight)
+  const densityWidth = Math.max(1, Math.round(channelWidth * pixelRatio))
+  const densityHeight = Math.max(1, Math.round(plotHeight * pixelRatio))
+  const layers = yield* scopeDensitySteps(image, mode, densityWidth, densityHeight)
   for (const [c, layer] of layers.entries()) {
     const x = left + (mode === 'rgbParade' ? c * (channelWidth + gap) : 0)
     yield* drawDensity(
       ctx,
       layer,
-      channelWidth,
-      plotHeight,
+      densityWidth,
+      densityHeight,
       x,
       top,
+      pixelRatio,
       SCOPE_COLORS[c],
       c === 3 ? 0.55 : 1
     )
@@ -145,6 +149,7 @@ function* drawDensity(
   height: number,
   x: number,
   y: number,
+  pixelRatio: number,
   color: string,
   opacity = 1
 ): Generator<void> {
@@ -157,10 +162,16 @@ function* drawDensity(
   for (let i = 0; i < width * height; i++) {
     if (i > 0 && i % 256 === 0) yield
     if (!counts[i]) continue
-    // Preserve native antialiasing and fractional density at the display scale.
+    // Density bins and point radius stay in physical pixels on high-DPI displays.
     ctx.globalAlpha = (0.6 * opacity * Math.log1p(counts[i])) / scale
     ctx.beginPath()
-    ctx.arc(x + (i % width) + 0.5, y + Math.floor(i / width) + 0.5, 0.75, 0, Math.PI * 2)
+    ctx.arc(
+      x + ((i % width) + 0.5) / pixelRatio,
+      y + (Math.floor(i / width) + 0.5) / pixelRatio,
+      0.75 / pixelRatio,
+      0,
+      Math.PI * 2
+    )
     ctx.fill()
   }
   ctx.globalAlpha = 1

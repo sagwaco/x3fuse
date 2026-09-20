@@ -5,7 +5,7 @@ import {
   createScopeRenderer,
   scopeRenderKey
 } from '../src/renderer/src/lib/scopeRender'
-import type { ScopeRenderRequest } from '../src/renderer/src/lib/scopeRenderer'
+import { drawScope, type ScopeRenderRequest } from '../src/renderer/src/lib/scopeRenderer'
 
 const workers: FakeWorker[] = []
 class FakeWorker {
@@ -170,10 +170,60 @@ describe('scope rendering scheduler', () => {
     expect(context.arc).toHaveBeenCalledWith(
       expect.any(Number),
       expect.any(Number),
-      0.75,
+      0.75 / request().pixelRatio,
       0,
       Math.PI * 2
     )
     renderer.dispose()
+  })
+})
+
+describe('scope trace resolution', () => {
+  it.each([1, 1.5, 2])('draws density bins and points at %sx device resolution', (pixelRatio) => {
+    for (const mode of ['waveform', 'rgbParade', 'vectorscope'] as const) {
+      const context = {
+        scale: vi.fn(),
+        beginPath: vi.fn(),
+        arc: vi.fn(),
+        stroke: vi.fn(),
+        moveTo: vi.fn(),
+        lineTo: vi.fn(),
+        fillText: vi.fn(),
+        fill: vi.fn(),
+        setLineDash: vi.fn(),
+        strokeRect: vi.fn()
+      }
+      const image = {
+        width: 1,
+        height: 1,
+        data: new Uint8ClampedArray([255, 255, 255, 255])
+      } as ImageData
+      const steps = drawScope(context as unknown as CanvasRenderingContext2D, {
+        ...request(),
+        image,
+        mode,
+        pixelRatio
+      })
+      while (!steps.next().done) {
+        /* Drain the shared worker/fallback renderer. */
+      }
+      const points = context.arc.mock.calls.filter(([, , radius]) => radius === 0.75 / pixelRatio)
+      expect(points.length).toBeGreaterThan(0)
+      if (mode === 'vectorscope') {
+        expect(points).toHaveLength(1)
+        // A neutral trace aligns with the center of the graticule to half a device pixel.
+        const circle = context.arc.mock.calls.at(-1)!
+        expect(Math.abs(points[0][0] - circle[0])).toBeLessThanOrEqual(0.5 / pixelRatio + 1e-8)
+        expect(Math.abs(points[0][1] - circle[1])).toBeLessThanOrEqual(0.5 / pixelRatio + 1e-8)
+      } else {
+        const columns = [...new Set(points.map(([x]) => x))].sort((a, b) => a - b)
+        expect(columns).toHaveLength(
+          mode === 'waveform' ? Math.round(230 * pixelRatio) : 3 * Math.round(73 * pixelRatio)
+        )
+        expect(columns[0]).toBeCloseTo(36 + 0.5 / pixelRatio)
+        expect(columns[1] - columns[0]).toBeCloseTo(1 / pixelRatio)
+        expect(Math.min(...points.map(([, y]) => y))).toBeCloseTo(15 + 0.5 / pixelRatio)
+      }
+    }
   })
 })

@@ -439,6 +439,56 @@ describe('filmstrip zoom preview', () => {
     expect(screen.getByRole('button', { name: 'Zoom level' }).textContent).toBe('Fit')
   })
 
+  it('keeps the toolbar undimmed but disabled while navigating to a loading preview', () => {
+    const preview = (active: X3FFileDTO | null) => (
+      <>
+        <ZoomControls />
+        {active && <ZoomablePreview key={active.id} file={active} />}
+      </>
+    )
+    const { rerender } = render(preview(file))
+    loadImage()
+    const toolbar = screen.getByRole('group', { name: 'Zoom controls' })
+    fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }))
+    expect(screen.getByRole('button', { name: 'Zoom level' }).textContent).not.toBe('Fit')
+
+    rerender(preview({ ...file, id: 'b', path: '/photos/b.X3F' }))
+    expect(screen.getByRole('group', { name: 'Zoom controls' })).toBe(toolbar)
+    expect(usePreviewStore.getState().activeFileId).toBe('b')
+    expect(usePreviewStore.getState().controls).toBeNull()
+    expect(screen.getByRole('button', { name: 'Zoom level' }).textContent).toBe('Fit')
+    for (const button of screen.getAllByRole('button') as HTMLButtonElement[]) {
+      expect(button.disabled).toBe(true)
+      expect(button.classList.contains('disabled:opacity-100')).toBe(true)
+      expect(button.classList.contains('disabled:opacity-50')).toBe(false)
+      fireEvent.click(button)
+      fireEvent.keyDown(button, { key: 'Enter' })
+    }
+    expect(invoke).not.toHaveBeenCalled()
+    expect(usePreviewStore.getState().controls).toBeNull()
+
+    loadImage(1200, 1600)
+    expect(usePreviewStore.getState().controls).toMatchObject({ fileId: 'b', zoom: null })
+    expect(screen.getByRole('button', { name: 'Zoom level' }).textContent).toBe('Fit')
+    for (const button of screen.getAllByRole('button') as HTMLButtonElement[]) {
+      expect(button.disabled).toBe(false)
+      expect(button.classList.contains('disabled:opacity-100')).toBe(false)
+    }
+    fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }))
+    expect(usePreviewStore.getState().controls!.zoom).toBeGreaterThan(0)
+
+    // Leaving while another preview is still loading must also clear its identity.
+    rerender(preview({ ...file, id: 'c', path: '/photos/c.X3F' }))
+    rerender(preview(null))
+    expect(usePreviewStore.getState().activeFileId).toBeNull()
+    expect(usePreviewStore.getState().controls).toBeNull()
+    for (const button of screen.getAllByRole('button') as HTMLButtonElement[]) {
+      expect(button.disabled).toBe(true)
+      expect(button.classList.contains('disabled:opacity-50')).toBe(true)
+      expect(button.classList.contains('disabled:opacity-100')).toBe(false)
+    }
+  })
+
   it('supports keyboard zoom and bounds extreme gestures', () => {
     const { surface, media } = setup()
     fireEvent.keyDown(surface, { key: '1' })

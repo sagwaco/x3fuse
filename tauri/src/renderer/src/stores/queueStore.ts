@@ -1,8 +1,10 @@
 import { create } from 'zustand'
 import {
   batchSettings,
+  DEFAULT_SETTINGS,
   type BatchConversionSettings,
   type ConversionStatus,
+  type OutputFormat,
   type X3FFileDTO
 } from '@shared/types'
 import type { BatchSummary, IpcEventMap, OutputConflict } from '@shared/ipc'
@@ -58,6 +60,7 @@ interface QueueState {
   cancelExport: () => void
   commitExport: () => Promise<void>
   convertPrevious: () => Promise<void>
+  exportPreset: (format: OutputFormat) => Promise<void>
   convertAllMenu: () => void
   applyStatus: (p: IpcEventMap['file:status']) => void
   applyProgress: (p: IpcEventMap['file:progress']) => void
@@ -293,6 +296,33 @@ export const useQueueStore = create<QueueState>((set, get) => {
 
     commitExport: checkAndStart,
 
+    async exportPreset(format) {
+      if (get().isProcessing || get().isPreparing || get().draft) return
+      const draft = capture(get().selectedIds)
+      if (!draft) return
+      draft.settings = {
+        ...batchSettings(DEFAULT_SETTINGS),
+        outputFormat: format,
+        compress: format === 'dng',
+        dngHighlightRecovery: format === 'dng',
+        concurrency: draft.settings.concurrency
+      }
+      set({ isPreparing: true })
+      try {
+        const directory = await ipc.invoke('dialog:pickOutputDir')
+        if (!directory) {
+          set({ isPreparing: false })
+          return
+        }
+        draft.settings.outputDirectory = directory
+        set({ draft, isPreparing: false, error: null })
+        await checkAndStart()
+      } catch (error) {
+        set({ draft, isPreparing: false, error: String(error) })
+      }
+      if (get().error) useNavStore.getState().goToExport()
+    },
+
     async convertPrevious() {
       if (
         get().isProcessing ||
@@ -362,28 +392,40 @@ export const useQueueStore = create<QueueState>((set, get) => {
     },
 
     onBatchComplete(summary) {
-      set((s) =>
-        s.batch?.id !== summary.batchId
-          ? s
-          : {
-              isProcessing: false,
-              isCancelling: false,
-              isPreparing: false,
-              batch: {
-                ...s.batch,
-                summary,
-                results: s.batch.results.map((r) => ({
-                  ...r,
-                  status:
-                    r.status === 'queued'
-                      ? 'unstarted'
-                      : r.status === 'processing' && summary.cancelled
-                        ? 'cancelled'
-                        : r.status
-                }))
-              }
-            }
-      )
+      const batch = get().batch
+      if (!batch || batch.id !== summary.batchId || batch.summary) return
+      set({
+        isProcessing: false,
+        isCancelling: false,
+        isPreparing: false,
+        batch: {
+          ...batch,
+          summary,
+          results: batch.results.map((r) => ({
+            ...r,
+            status:
+              r.status === 'queued'
+                ? 'unstarted'
+                : r.status === 'processing' && summary.cancelled
+                  ? 'cancelled'
+                  : r.status
+          }))
+        }
+      })
+      if (summary.cancelled) return
+      const revealed = new Set<string>()
+      for (const { status, outputPath } of batch.results) {
+        if (!outputPath || (status !== 'completed' && status !== 'warning')) continue
+        const directory = outputPath.slice(
+          0,
+          Math.max(outputPath.lastIndexOf('/'), outputPath.lastIndexOf('\\'))
+        )
+        if (revealed.has(directory)) continue
+        revealed.add(directory)
+        void ipc.invoke('shell:reveal', { path: outputPath }).catch((error: unknown) => {
+          console.error('Could not reveal exported files', error)
+        })
+      }
     },
 
     dismissBatch() {

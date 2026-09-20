@@ -19,6 +19,7 @@ export function Toolbar(): React.JSX.Element {
   const isPreparing = useQueueStore((s) => s.isPreparing)
   const hasDraft = useQueueStore((s) => s.draft !== null)
   const convertPrevious = useQueueStore((s) => s.convertPrevious)
+  const exportPreset = useQueueStore((s) => s.exportPreset)
   const loaded = useSettingsStore((s) => s.loaded)
   const hasPrevious = useSettingsStore((s) => s.settings.hasPreviousConversion)
   const inspectorOpen = useSettingsStore((s) => s.settings.inspectorOpen)
@@ -70,9 +71,16 @@ export function Toolbar(): React.JSX.Element {
             disabled={!canConvert}
             aria-label={t('batch.convert_options')}
             items={[
+              { value: 'embeddedJpg', label: t('batch.export_jpeg') },
+              { value: 'dng', label: t('batch.export_dng') },
+              { value: 'tiff', label: t('batch.export_tiff') },
               { value: 'previous', label: t('batch.convert_previous'), disabled: !hasPrevious }
             ]}
-            onSelect={() => void convertPrevious()}
+            onSelect={(value) => {
+              if (value === 'previous') void convertPrevious()
+              else if (value === 'embeddedJpg' || value === 'dng' || value === 'tiff')
+                void exportPreset(value)
+            }}
           >
             <ChevronDown className="h-4 w-4" aria-hidden="true" />
           </NativeMenuButton>

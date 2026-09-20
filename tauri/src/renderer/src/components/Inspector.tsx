@@ -1,7 +1,8 @@
 import { previewUrl } from '@shared/preview'
+import { useShallow } from 'zustand/react/shallow'
 import type { X3FFileDTO } from '@shared/types'
 import { useQueueStore } from '../stores/queueStore'
-import { useExif } from '../hooks/useExif'
+import { useSelectionExif } from '../hooks/useExif'
 import { useDelayedLoading } from '../hooks/useDelayedLoading'
 import { Skeleton } from '@radix-ui/themes/components/skeleton'
 import '@radix-ui/themes/src/components/skeleton.css'
@@ -10,25 +11,27 @@ import { ColorScope } from './ColorScope'
 import { ScopeMenu } from './ScopeMenu'
 import { useSettingsStore } from '../stores/settingsStore'
 import { PreviewMinimap } from './PreviewMinimap'
+import { OrientedImage } from './OrientedImage'
 import { PanelSection as Section } from './ui/panelSection'
 
-/**
- * Collapsible right sidebar showing the active file's color scope and EXIF
- * metadata. The "active" file is the primary selection (queueStore.activeId);
- * with nothing selected it shows an empty state.
- */
+/** Selection previews, scopes for a single image, and shared EXIF metadata. */
 export function Inspector(): React.JSX.Element {
   const scopeMode = useSettingsStore((s) => s.settings.inspectorScopeMode)
-  // Select just the active file: its reference only changes when that file's
-  // row changes, so other files' progress ticks don't re-render the inspector.
-  const active = useQueueStore((s) =>
-    s.activeId ? s.files.find((f) => f.id === s.activeId) : undefined
+  const selected = useQueueStore(
+    useShallow((s) => s.files.filter((file) => s.selectedIds.has(file.id)))
   )
+  const activeId = useQueueStore((s) => s.activeId)
+  const active = selected.find((file) => file.id === activeId) ?? selected[0]
+  const multiple = selected.length > 1
+  const title = multiple ? t('batch.image_count', { count: selected.length }) : active?.fileName
 
   return (
     <aside className="flex w-[300px] shrink-0 flex-col border-l border-white/10 bg-neutral-900/30">
       <div className="flex h-8 shrink-0 items-center border-b border-white/10 px-3 text-xs font-medium text-neutral-400">
-        {t('inspector.title')}
+        <span className="truncate" title={title}>
+          {t('inspector.title')}
+          {title ? ` - ${title}` : ''}
+        </span>
       </div>
 
       {!active ? (
@@ -37,29 +40,33 @@ export function Inspector(): React.JSX.Element {
         </div>
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto">
-          <div className="border-b border-white/10 px-3 py-2">
-            <p className="truncate text-sm text-neutral-200" title={active.fileName}>
-              {active.fileName}
-            </p>
-          </div>
-
           <div className="border-b border-white/10 p-3">
-            <PreviewMinimap key={active.id} file={active} />
+            {multiple ? (
+              <PreviewStack files={selected} active={active} />
+            ) : (
+              <PreviewMinimap key={active.id} file={active} />
+            )}
           </div>
 
-          <Section title={t('inspector.scopes')} action={<ScopeMenu />}>
-            <ColorScope
-              url={active.pending ? undefined : previewUrl(active.path, 'preview', active.id)}
-              fileId={active.id}
-              pending={active.pending}
-              aspectRatio={active.aspectRatio}
-              orientation={active.orientation}
-              mode={scopeMode}
-            />
+          <Section title={t('inspector.scopes')} action={!multiple && <ScopeMenu />}>
+            {multiple ? (
+              <p className="py-6 text-center text-xs text-neutral-500">
+                {t('inspector.scopes_multiple')}
+              </p>
+            ) : (
+              <ColorScope
+                url={active.pending ? undefined : previewUrl(active.path, 'preview', active.id)}
+                fileId={active.id}
+                pending={active.pending}
+                aspectRatio={active.aspectRatio}
+                orientation={active.orientation}
+                mode={scopeMode}
+              />
+            )}
           </Section>
 
           <Section title={t('inspector.metadata')}>
-            <ExifTable file={active} />
+            <ExifTable files={selected} />
           </Section>
         </div>
       )}
@@ -67,9 +74,48 @@ export function Inspector(): React.JSX.Element {
   )
 }
 
-function ExifTable({ file }: { file: X3FFileDTO }): React.JSX.Element {
-  const data = useExif(file.path, file.id, file.exif, file.pending)
-  const showLoading = useDelayedLoading(data === 'loading', file.id)
+function PreviewStack({
+  files,
+  active
+}: {
+  files: X3FFileDTO[]
+  active: X3FFileDTO
+}): React.JSX.Element {
+  const previews = [active, ...files.filter((file) => file.id !== active.id)].slice(0, 3)
+  return (
+    <div
+      className="isolate grid h-48 place-items-center"
+      role="group"
+      aria-label={t('batch.image_count', { count: files.length })}
+    >
+      {previews.map((file, index) => (
+        <div
+          key={file.id}
+          title={file.fileName}
+          className="[grid-area:1/1]"
+          style={{
+            transform: `rotate(${[0, -8, 6][index]}deg)`,
+            zIndex: previews.length - index
+          }}
+        >
+          <OrientedImage
+            file={file}
+            loading="eager"
+            containerClassName="overflow-visible"
+            className="h-auto w-auto max-h-40 max-w-[220px] rounded-sm shadow-[0_8px_16px_-4px_rgba(0,0,0,0.65)]"
+          />
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function ExifTable({ files }: { files: X3FFileDTO[] }): React.JSX.Element {
+  const data = useSelectionExif(files)
+  const showLoading = useDelayedLoading(
+    data === 'loading',
+    JSON.stringify(files.map((file) => [file.id, file.path]))
+  )
 
   if (data === 'loading') {
     return (
@@ -82,16 +128,30 @@ function ExifTable({ file }: { file: X3FFileDTO }): React.JSX.Element {
     )
   }
 
-  if (!data || data.length === 0) {
+  const values = data.map((rows) => new Map(rows.map(({ label, value }) => [label, value])))
+  const labels = [...new Set(data.flatMap((rows) => rows.map((row) => row.label)))]
+  const rows = labels.map((label) => {
+    const value = values[0].get(label)
+    const common = value !== undefined && values.every((entry) => entry.get(label) === value)
+    return {
+      label,
+      value: common ? value : t('inspector.multiple_values'),
+      common
+    }
+  })
+  if (rows.length === 0) {
     return <p className="text-xs text-neutral-600">{t('inspector.no_metadata')}</p>
   }
 
   return (
     <dl className="space-y-1.5">
-      {data.map((row) => (
+      {rows.map((row) => (
         <div key={row.label} className="flex items-baseline justify-between gap-3 text-xs">
           <dt className="shrink-0 text-neutral-500">{row.label}</dt>
-          <dd className="truncate text-right text-neutral-200" title={row.value}>
+          <dd
+            className={`truncate text-right ${row.common ? 'text-neutral-200' : 'text-neutral-500'}`}
+            title={row.value}
+          >
             {row.value}
           </dd>
         </div>

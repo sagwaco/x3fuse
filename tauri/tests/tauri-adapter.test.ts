@@ -110,12 +110,13 @@ it('uses native menu actions once, including callbacks queued after popup comple
     y: 64,
     items: [
       { value: 'a', label: 'A', checked: true },
-      { value: 'b', label: 'B', disabled: true }
+      { value: 'b', label: 'B', disabled: true, separatorBefore: true }
     ]
   }
   const first = showNativeMenu(request, onSelect)
   await Promise.resolve()
-  menus[0].items[1].action()
+  expect(menus[0].items[1]).toEqual({ item: 'Separator' })
+  menus[0].items[2].action()
   expect(onSelect).not.toHaveBeenCalled()
   menus[0].dismiss()
   await first

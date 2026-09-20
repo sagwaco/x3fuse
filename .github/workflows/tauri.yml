@@ -5,7 +5,7 @@ on:
     paths: ["tauri/**", "X3Fuse/opcodes/**", ".github/workflows/tauri.yml"]
   push:
     branches: ["**"]
-    tags: ["tauri-v*-alpha.*"]
+    tags: ["x3fuse-alpha-*"]
     paths: ["tauri/**", "X3Fuse/opcodes/**", ".github/workflows/tauri.yml"]
   workflow_dispatch:
 
@@ -56,7 +56,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential clang libclang-dev libwebkit2gtk-4.1-dev libgtk-3-dev libxdo-dev libssl-dev librsvg2-dev libayatana-appindicator3-dev perl
+          sudo apt-get install -y build-essential clang libclang-dev libwebkit2gtk-4.1-dev libgtk-3-dev libxdo-dev libssl-dev librsvg2-dev libayatana-appindicator3-dev perl zip unzip
       - name: Locate Windows libclang
         if: runner.os == 'Windows'
         run: printf '%s\n' 'LIBCLANG_PATH=C:\Program Files\LLVM\bin' >> "$GITHUB_ENV"
@@ -70,52 +70,93 @@ jobs:
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml --locked --all-targets -- -D warnings
       - run: cargo test --manifest-path src-tauri/Cargo.toml --locked
       - name: Build macOS application bundle
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && !(github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'x3fuse-alpha-'))
         run: npm run tauri -- build --bundles app
+      - name: Build, sign, and notarize macOS alpha
+        if: runner.os == 'macOS' && github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'x3fuse-alpha-')
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: Developer ID Application
+          APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: |
+          : "${APPLE_CERTIFICATE:?Missing BUILD_CERTIFICATE_BASE64}"
+          : "${APPLE_CERTIFICATE_PASSWORD:?Missing P12_PASSWORD}"
+          : "${APPLE_API_KEY_BASE64:?Missing APPLE_API_KEY_BASE64}"
+          : "${APPLE_API_KEY:?Missing APPLE_API_KEY_ID}"
+          : "${APPLE_API_ISSUER:?Missing APPLE_API_ISSUER_ID}"
+          export APPLE_API_KEY_PATH="$RUNNER_TEMP/x3fuse-notary.p8"
+          trap 'rm -f "$APPLE_API_KEY_PATH"' EXIT
+          (umask 077; printf '%s' "$APPLE_API_KEY_BASE64" | base64 --decode > "$APPLE_API_KEY_PATH")
+          npm run tauri -- build --bundles app
       - name: Build Windows or Linux native executable
         if: runner.os != 'macOS'
         run: npm run tauri -- build --no-bundle
       - name: Package executable and complete resources
         run: node scripts/package-artifact.mjs
+      - name: Verify signed macOS release archive
+        if: runner.os == 'macOS' && github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'x3fuse-alpha-')
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          verification=$(mktemp -d "$RUNNER_TEMP/x3fuse-verify.XXXXXX")
+          trap 'rm -rf "$verification"' EXIT
+          ditto -xk "artifacts/x3fuse-alpha-macos-$ARCH.zip" "$verification"
+          product_name=$(node -p "require('./src-tauri/tauri.conf.json').productName")
+          app="$verification/x3fuse-alpha-macos-$ARCH/$product_name.app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          xcrun stapler validate "$app"
+          spctl --assess --type execute --verbose=4 "$app"
       - uses: actions/upload-artifact@v4
         with:
-          name: x3fuse-tauri-${{ matrix.platform }}-${{ matrix.arch }}
-          path: tauri/artifacts/*.tar.gz
+          name: x3fuse-alpha-${{ matrix.platform }}-${{ matrix.arch }}
+          path: tauri/artifacts/*.zip
           if-no-files-found: error
           compression-level: 0
 
   publish-alpha:
     needs: native
-    if: github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'tauri-v') && contains(github.ref_name, '-alpha.')
+    if: github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'x3fuse-alpha-')
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: x3fuse-tauri-*
+          pattern: x3fuse-alpha-*
           path: artifacts
           merge-multiple: true
       - name: Publish alpha archives
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name }}
-          name: X3Fuse Tauri ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
           draft: false
           prerelease: true
           make_latest: "false"
           fail_on_unmatched_files: true
           files: |
-            artifacts/x3fuse-tauri-darwin-arm64.tar.gz
-            artifacts/x3fuse-tauri-darwin-x64.tar.gz
-            artifacts/x3fuse-tauri-win32-x64.tar.gz
-            artifacts/x3fuse-tauri-linux-x64.tar.gz
+            artifacts/x3fuse-alpha-macos-arm64.zip
+            artifacts/x3fuse-alpha-macos-x64.zip
+            artifacts/x3fuse-alpha-windows-x64.zip
+            artifacts/x3fuse-alpha-linux-x64.zip
           body: |
             Multiplatform alpha for user testing, built from commit `${{ github.sha }}`.
 
-            Download the archive for your OS and architecture and keep the complete extracted directory together.
+            Download the ZIP for your computer:
+
+            - Apple Silicon Mac (M1 or newer): `x3fuse-alpha-macos-arm64.zip`
+            - Intel Mac: `x3fuse-alpha-macos-x64.zip`
+            - Windows (64-bit Intel/AMD): `x3fuse-alpha-windows-x64.zip`
+            - Linux (64-bit Intel/AMD): `x3fuse-alpha-linux-x64.zip`
+
+            On a Mac, open Apple menu > About This Mac. A **Chip** entry identifies Apple Silicon; an Intel **Processor** entry identifies an Intel Mac.
+            Extract the ZIP and keep the complete extracted directory together.
             macOS archives contain an app bundle; Windows and Linux archives contain a portable executable and resources.
-            These builds are unsigned, are not notarized, and do not support automatic updates.
+            macOS release apps are signed with a Developer ID certificate and notarized by Apple. Windows and Linux builds are unsigned.
+            These alpha builds do not support automatic updates.
 
             macOS requires macOS 14 or newer and system Perl. Windows requires Microsoft WebView2 Runtime.
             Linux requires WebKitGTK 4.1, GTK 3, and Perl.

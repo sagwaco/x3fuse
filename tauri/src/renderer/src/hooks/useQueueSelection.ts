@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, type KeyboardEvent, type MouseEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, type KeyboardEvent, type MouseEvent } from 'react'
 import type { X3FFileDTO } from '@shared/types'
 import { useQueueStore } from '../stores/queueStore'
 import { useSettingsStore } from '../stores/settingsStore'
@@ -109,7 +109,7 @@ export function useQueueSelection(ordered: X3FFileDTO[], nav?: ArrowNav): QueueS
   }, [])
 
   const handleKeyDown = useCallback(
-    (e: KeyboardEvent): void => {
+    (e: KeyboardEvent | globalThis.KeyboardEvent): void => {
       const store = useQueueStore.getState()
       if ((e.key === 'Backspace' || e.key === 'Delete') && store.selectedIds.size > 0) {
         e.preventDefault()
@@ -130,6 +130,27 @@ export function useQueueSelection(ordered: X3FFileDTO[], nav?: ArrowNav): QueueS
     },
     [moveCursor]
   )
+
+  // Titlebar/background clicks can leave focus on the document instead of the queue.
+  useEffect(() => {
+    const isBackground = (target: EventTarget | null): boolean =>
+      target === document || target === document.body || target === document.documentElement
+    const handleBackgroundKeyDown = (event: globalThis.KeyboardEvent): void => {
+      if (
+        event.defaultPrevented ||
+        !['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key) ||
+        !isBackground(event.target) ||
+        (document.activeElement !== null && !isBackground(document.activeElement)) ||
+        document.querySelector(
+          '[role="dialog"][data-state="open"], [role="menu"][data-state="open"], [aria-haspopup="menu"][aria-expanded="true"]'
+        )
+      )
+        return
+      handleKeyDown(event)
+    }
+    document.addEventListener('keydown', handleBackgroundKeyDown)
+    return () => document.removeEventListener('keydown', handleBackgroundKeyDown)
+  }, [handleKeyDown])
 
   return useMemo(
     () => ({

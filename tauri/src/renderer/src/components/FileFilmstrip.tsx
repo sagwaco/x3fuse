@@ -63,7 +63,10 @@ export function FileFilmstrip({ draft }: { draft?: ExportDraft }): React.JSX.Ele
         {...(draft ? {} : dropHandlers)}
         className="relative flex min-h-0 min-w-0 flex-1 flex-col outline-none"
       >
-        <div className="flex min-h-0 min-w-0 flex-1 items-center justify-center bg-neutral-950">
+        <div
+          className="flex min-h-0 min-w-0 flex-1 items-center justify-center bg-neutral-950"
+          onContextMenu={() => active && sel.handleItemContextMenu(active.id)}
+        >
           {active ? <ZoomablePreview key={active.id} file={active} /> : null}
         </div>
 

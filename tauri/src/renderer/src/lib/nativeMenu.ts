@@ -18,17 +18,20 @@ export async function showNativeMenu(
   active = token
   let selected = false
   const menu = await Menu.new({
-    items: request.items.map((item) => ({
-      text: item.label,
-      enabled: !item.disabled,
-      ...(item.checked === undefined ? {} : { checked: item.checked }),
-      action: () => {
-        if (token.valid && !selected && !item.disabled) {
-          selected = true
-          onSelect(item.value)
+    items: request.items.flatMap((item) => [
+      ...(item.separatorBefore ? [{ item: 'Separator' as const }] : []),
+      {
+        text: item.label,
+        enabled: !item.disabled,
+        ...(item.checked === undefined ? {} : { checked: item.checked }),
+        action: () => {
+          if (token.valid && !selected && !item.disabled) {
+            selected = true
+            onSelect(item.value)
+          }
         }
       }
-    }))
+    ])
   })
   try {
     if (token.valid) await menu.popup(new LogicalPosition(request.x, request.y))

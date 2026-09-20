@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { X3FFileDTO } from '@shared/types'
 import { t } from '../lib/strings'
 import { FilmstripImage } from './FilmstripImage'
@@ -195,17 +195,16 @@ export function ZoomablePreview({ file }: { file: X3FFileDTO }): React.JSX.Eleme
     })
   }, [ready, file.id, current.zoom, scale, minZoom, zoomTo])
 
-  useEffect(
-    () => () => {
+  useLayoutEffect(() => {
+    usePreviewStore.setState({ activeFileId: file.id })
+    return () => {
       if (frame.current !== null) cancelAnimationFrame(frame.current)
       frame.current = null
-      const { minimap, controls } = usePreviewStore.getState()
-      if (minimap?.fileId === file.id || controls?.fileId === file.id) {
-        usePreviewStore.setState({ minimap: null, controls: null })
+      if (usePreviewStore.getState().activeFileId === file.id) {
+        usePreviewStore.setState({ activeFileId: null, minimap: null, controls: null })
       }
-    },
-    [file.id]
-  )
+    }
+  }, [file.id])
 
   const stopDragging = (): void => {
     flushView()
@@ -239,7 +238,7 @@ export function ZoomablePreview({ file }: { file: X3FFileDTO }): React.JSX.Eleme
         role="region"
         aria-label={t('preview.image')}
         tabIndex={0}
-        className="absolute inset-0 overflow-hidden overscroll-none outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500/60"
+        className="absolute inset-0 overflow-hidden overscroll-none outline-none"
         style={{
           cursor: dragging ? 'grabbing' : canPan ? 'grab' : ready ? 'zoom-in' : 'default',
           touchAction: 'none'

@@ -142,8 +142,8 @@ describe('scope preview', () => {
     await waitFor(() => expect(context.fill).toHaveBeenCalled())
     expect(context.drawImage).toHaveBeenCalledWith(bitmaps[0], 0, 80, 640, 320, 0, 0, 640, 320)
     expect(context.setTransform).toHaveBeenCalledWith(0, 1, -1, 0, 320, 0)
-    expect(context.drawImage).toHaveBeenCalledWith(expect.any(HTMLCanvasElement), 0, 0, 160, 320)
-    expect(context.getImageData).toHaveBeenCalledWith(0, 0, 160, 320)
+    expect(context.drawImage).toHaveBeenCalledWith(expect.any(HTMLCanvasElement), 0, 0, 320, 640)
+    expect(context.getImageData).toHaveBeenCalledWith(0, 0, 320, 640)
     expect(canvas.width).toBe(548)
     expect(canvas.height).toBe(400)
     for (const mode of ['histogram', 'waveform', 'vectorscope'] as const) {
@@ -177,6 +177,20 @@ describe('scope preview', () => {
       }
     }
   )
+
+  it.each([
+    [160, 120, 160, 120],
+    [1280, 960, 640, 480]
+  ])('samples a %i×%i preview at %i×%i without upscaling', async (width, height, w, h) => {
+    vi.mocked(createImageBitmap).mockResolvedValueOnce({
+      width,
+      height,
+      close: vi.fn()
+    } as unknown as ImageBitmap)
+    const hook = renderHook(() => useScopeImage(preview))
+    await waitFor(() => expect(hook.result.current).toEqual(image))
+    expect(context.getImageData).toHaveBeenCalledWith(0, 0, w, h)
+  })
 
   it('shows no preview on failure and closes a decoded bitmap if reading pixels fails', async () => {
     context.getImageData.mockImplementationOnce(() => {

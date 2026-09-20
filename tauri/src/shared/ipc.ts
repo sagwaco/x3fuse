@@ -52,6 +52,7 @@ export interface NativeMenuItem {
   label: string
   disabled?: boolean
   checked?: boolean
+  separatorBefore?: boolean
 }
 
 export interface NativeMenuRequest {

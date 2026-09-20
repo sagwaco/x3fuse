@@ -92,7 +92,12 @@ describe('batch workflow', () => {
     expect(invoke).toHaveBeenCalledWith(
       'menu:popup',
       expect.objectContaining({
-        items: [{ value: 'previous', label: 'Export with Previous Settings', disabled: true }]
+        items: [
+          { value: 'embeddedJpg', label: 'Export JPEG' },
+          { value: 'dng', label: 'Export DNG' },
+          { value: 'tiff', label: 'Export TIFF' },
+          { value: 'previous', label: 'Export with Previous Settings', disabled: true }
+        ]
       })
     )
     const request = invoke.mock.calls[0][1] as { id: string }
@@ -127,6 +132,144 @@ describe('batch workflow', () => {
     expect(invoke).toHaveBeenCalledTimes(3)
     expect(invoke).toHaveBeenLastCalledWith('convert:start', expect.any(Object))
   })
+
+  it.each(['embeddedJpg', 'dng', 'tiff'] as const)(
+    'exports %s from the menu with fixed settings after picking a folder',
+    async (format) => {
+      const saved = {
+        ...DEFAULT_SETTINGS,
+        compress: true,
+        dngHighlightRecovery: false,
+        denoiseIntensity: 0,
+        colorProfile: 'proPhotoRGB' as const,
+        cineon: true,
+        outputDirectory: '/saved',
+        concurrency: 2
+      }
+      useSettingsStore.setState({ settings: saved })
+      invoke.mockResolvedValueOnce(format).mockResolvedValueOnce('/chosen')
+      render(<Toolbar />)
+      fireEvent.click(screen.getByRole('button', { name: 'Export options' }))
+      await waitFor(() => expect(store.getState().isProcessing).toBe(true))
+      const preset = {
+        ...settings,
+        outputFormat: format,
+        compress: format === 'dng',
+        dngHighlightRecovery: format === 'dng',
+        outputDirectory: '/chosen',
+        concurrency: 2
+      }
+      expect(invoke.mock.calls.map(([channel]) => channel)).toEqual([
+        'menu:popup',
+        'dialog:pickOutputDir',
+        'queue:existingOutputs',
+        'convert:start'
+      ])
+      expect(invoke).toHaveBeenLastCalledWith(
+        'convert:start',
+        expect.objectContaining({
+          files: [
+            { id: 'a', path: '/photos/a.X3F' },
+            { id: 'b', path: '/photos/b.X3F' }
+          ],
+          settings: preset,
+          replaceExisting: false,
+          approvedOutputs: []
+        })
+      )
+      expect(useNavStore.getState().screen).toBe('queue')
+      expect(useSettingsStore.getState().settings).toEqual(saved)
+      act(() =>
+        store.getState().onBatchStarted({ batchId: store.getState().batch!.id, settings: preset })
+      )
+      expect(useSettingsStore.getState().settings).toMatchObject({
+        ...preset,
+        hasPreviousConversion: true
+      })
+      expect(store.getState().draft).toBeNull()
+    }
+  )
+
+  it('freezes preset targets and blocks repeat exports while the folder picker is open', async () => {
+    let choose!: (directory: string) => void
+    invoke.mockReturnValueOnce(
+      new Promise((resolve) => {
+        choose = resolve
+      })
+    )
+    const pending = store.getState().exportPreset('dng')
+    expect(store.getState().isPreparing).toBe(true)
+    store.getState().setSelection(new Set(['c']))
+    store.getState().removeSelected()
+    await store.getState().exportPreset('tiff')
+    store.getState().openExport()
+    expect(invoke).toHaveBeenCalledTimes(1)
+    choose('/chosen')
+    await pending
+    expect(store.getState().draft?.files.map((file) => file.id)).toEqual(['a', 'b'])
+    expect(store.getState().files).toBe(files)
+  })
+
+  it('leaves settings and export state unchanged when the folder picker is cancelled', async () => {
+    store.setState({ error: 'Existing error' })
+    const before = store.getState()
+    invoke.mockResolvedValueOnce(null)
+    await store.getState().exportPreset('dng')
+    expect(store.getState()).toEqual(before)
+    expect(useSettingsStore.getState().settings).toEqual(DEFAULT_SETTINGS)
+    expect(useNavStore.getState().screen).toBe('queue')
+    expect(invoke).toHaveBeenCalledTimes(1)
+    expect(invoke).toHaveBeenCalledWith('dialog:pickOutputDir')
+  })
+
+  it.each(['picker', 'validation', 'start'])(
+    'shows preset %s failures in the existing export screen and releases busy state',
+    async (stage) => {
+      if (stage !== 'picker') invoke.mockResolvedValueOnce('/chosen')
+      if (stage === 'start') invoke.mockResolvedValueOnce([])
+      invoke.mockRejectedValueOnce(new Error('Destination unavailable'))
+      await store.getState().exportPreset('dng')
+      await waitFor(() => expect(store.getState().error).toContain('Destination unavailable'))
+      expect(store.getState().isPreparing).toBe(false)
+      expect(store.getState().isProcessing).toBe(false)
+      expect(store.getState().draft?.settings).toMatchObject({
+        outputFormat: 'dng',
+        compress: true,
+        dngHighlightRecovery: true,
+        denoiseIntensity: 10
+      })
+      expect(useNavStore.getState().screen).toBe('export')
+      expect(useSettingsStore.getState().settings).toEqual(DEFAULT_SETTINGS)
+    }
+  )
+
+  it.each([false, true])(
+    'requires overwrite approval for a preset (approve: %s)',
+    async (approve) => {
+      const conflicts = [{ id: 'a', outputPath: '/chosen/a.dng' }]
+      invoke.mockResolvedValueOnce('/chosen').mockResolvedValueOnce(conflicts)
+      await store.getState().exportPreset('dng')
+      expect(store.getState().pendingReconversion).toEqual(conflicts)
+      expect(invoke).toHaveBeenCalledTimes(2)
+      expect(useNavStore.getState().screen).toBe('queue')
+      if (approve) {
+        store.getState().confirmReconversion()
+        expect(invoke).toHaveBeenLastCalledWith(
+          'convert:start',
+          expect.objectContaining({
+            replaceExisting: true,
+            approvedOutputs: conflicts
+          })
+        )
+      } else {
+        store.getState().cancelReconversion()
+        expect(store.getState().draft).toBeNull()
+        expect(store.getState().isPreparing).toBe(false)
+        expect(invoke).toHaveBeenCalledTimes(2)
+      }
+      expect(useSettingsStore.getState().settings).toEqual(DEFAULT_SETTINGS)
+    }
+  )
 
   it('shows radial progress and a short counter, with Stop only inside the modal', async () => {
     await start()
@@ -388,6 +531,132 @@ describe('batch workflow', () => {
     })
     expect(store.getState().batch).toBe(results)
     expect(store.getState().files).toBe(files)
+  })
+
+  it.each(['embeddedJpg', 'dng', 'tiff', 'review', 'previous', 'all'] as const)(
+    'reveals the destination once after the %s export finishes',
+    async (option) => {
+      if (option === 'review') {
+        store.getState().openExport()
+        await store.getState().commitExport()
+      } else if (option === 'all') {
+        store.getState().convertAllMenu()
+        await store.getState().commitExport()
+      } else if (option === 'previous') {
+        useSettingsStore.setState({
+          settings: { ...DEFAULT_SETTINGS, hasPreviousConversion: true }
+        })
+        await store.getState().convertPrevious()
+      } else {
+        invoke.mockResolvedValueOnce('/chosen')
+        await store.getState().exportPreset(option)
+      }
+      const batch = store.getState().batch!
+      store
+        .getState()
+        .onBatchStarted({ batchId: batch.id, settings: store.getState().draft!.settings })
+      for (const result of batch.results) {
+        store.getState().applyStatus({
+          batchId: batch.id,
+          id: result.file.id,
+          status: 'completed',
+          outputPath: `/chosen/${result.outputFileName}`
+        })
+      }
+      invoke.mockClear()
+      const summary = {
+        batchId: batch.id,
+        completed: batch.results.length,
+        failed: 0,
+        warnings: 0,
+        total: batch.results.length,
+        cancelled: false
+      }
+      store.getState().onBatchComplete({ ...summary, batchId: 'stale' })
+      expect(invoke).not.toHaveBeenCalled()
+      store.getState().onBatchComplete(summary)
+      store.getState().onBatchComplete(summary)
+      expect(invoke).toHaveBeenCalledTimes(1)
+      expect(invoke).toHaveBeenCalledWith('shell:reveal', {
+        path: `/chosen/${batch.results[0].outputFileName}`
+      })
+      expect(store.getState().isProcessing).toBe(false)
+    }
+  )
+
+  it.each([
+    ['/photos/a.dng', '/other/b.dng'],
+    ['C:\\photos\\a.dng', 'D:\\photos\\b.dng']
+  ])('reveals each destination, including exports with warnings (%s)', async (first, second) => {
+    const batchId = await start()
+    store.getState().applyStatus({ batchId, id: 'a', status: 'completed', outputPath: first })
+    store.getState().applyStatus({ batchId, id: 'b', status: 'warning', outputPath: second })
+    invoke.mockClear()
+    store
+      .getState()
+      .onBatchComplete({
+        batchId,
+        completed: 2,
+        failed: 0,
+        warnings: 1,
+        total: 2,
+        cancelled: false
+      })
+    expect(invoke.mock.calls).toEqual([
+      ['shell:reveal', { path: first }],
+      ['shell:reveal', { path: second }]
+    ])
+  })
+
+  it.each([false, true])(
+    'does not reveal failed or cancelled batches (cancelled: %s)',
+    async (cancelled) => {
+      const batchId = await start()
+      store
+        .getState()
+        .applyStatus({
+          batchId,
+          id: 'a',
+          status: cancelled ? 'completed' : 'failed',
+          outputPath: '/photos/a.dng'
+        })
+      invoke.mockClear()
+      store
+        .getState()
+        .onBatchComplete({
+          batchId,
+          completed: cancelled ? 1 : 0,
+          failed: cancelled ? 0 : 2,
+          warnings: 0,
+          total: 2,
+          cancelled
+        })
+      expect(invoke).not.toHaveBeenCalled()
+    }
+  )
+
+  it('keeps the export successful if the file browser cannot open', async () => {
+    const batchId = await start()
+    store
+      .getState()
+      .applyStatus({ batchId, id: 'a', status: 'completed', outputPath: '/photos/a.dng' })
+    const error = new Error('File browser unavailable')
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    invoke.mockRejectedValueOnce(error)
+    store
+      .getState()
+      .onBatchComplete({
+        batchId,
+        completed: 1,
+        failed: 1,
+        warnings: 0,
+        total: 2,
+        cancelled: false
+      })
+    await waitFor(() => expect(log).toHaveBeenCalledWith('Could not reveal exported files', error))
+    expect(store.getState().error).toBeNull()
+    expect(store.getState().isProcessing).toBe(false)
+    expect(store.getState().batch?.summary?.completed).toBe(1)
   })
 
   it('routes Export All through the export screen', () => {

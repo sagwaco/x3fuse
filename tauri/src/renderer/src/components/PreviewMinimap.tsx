@@ -77,7 +77,7 @@ export function PreviewMinimap({ file }: { file: X3FFileDTO }): React.JSX.Elemen
           role="region"
           aria-label={t('preview.minimap')}
           tabIndex={0}
-          className="absolute inset-0 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500"
+          className="absolute inset-0 outline-none"
           style={{ cursor: dragging ? 'grabbing' : 'grab', touchAction: 'none' }}
           onPointerDown={(event) => {
             if (event.button !== 0 || !event.isPrimary) return

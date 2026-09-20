@@ -3,15 +3,24 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, render, renderHook, screen, waitFor } from '@testing-library/react'
 import { DEFAULT_SETTINGS, type ExifPair, type X3FFileDTO } from '@shared/types'
 import { Inspector } from '../src/renderer/src/components/Inspector'
-import { useExif } from '../src/renderer/src/hooks/useExif'
+import { useExif, useSelectionExif } from '../src/renderer/src/hooks/useExif'
 import { useQueueStore } from '../src/renderer/src/stores/queueStore'
 import { useSettingsStore } from '../src/renderer/src/stores/settingsStore'
 
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }))
 vi.mock('../src/renderer/src/lib/ipc', () => ({ ipc: { invoke } }))
-vi.mock('../src/renderer/src/components/PreviewMinimap', () => ({ PreviewMinimap: () => null }))
-vi.mock('../src/renderer/src/components/ColorScope', () => ({ ColorScope: () => null }))
-vi.mock('../src/renderer/src/components/ScopeMenu', () => ({ ScopeMenu: () => null }))
+vi.mock('../src/renderer/src/components/PreviewMinimap', () => ({
+  PreviewMinimap: ({ file }: { file: X3FFileDTO }) => <img alt={file.fileName} />
+}))
+vi.mock('../src/renderer/src/components/OrientedImage', () => ({
+  OrientedImage: ({ file }: { file: X3FFileDTO }) => <img alt={file.fileName} />
+}))
+vi.mock('../src/renderer/src/components/ColorScope', () => ({
+  ColorScope: () => <div data-testid="scope" />
+}))
+vi.mock('../src/renderer/src/components/ScopeMenu', () => ({
+  ScopeMenu: () => <button>Scope view</button>
+}))
 
 let files: X3FFileDTO[]
 let importId = 0
@@ -33,6 +42,139 @@ afterEach(() => {
 })
 
 describe('inspector metadata loading', () => {
+  it('shows selected preview cards, common metadata, and mixed or missing values, then restores single-image mode', () => {
+    const camera = { label: 'Camera', value: 'SIGMA' }
+    files = [
+      {
+        ...files[0],
+        exif: [camera, { label: 'ISO', value: '100' }, { label: 'Lens', value: '50mm' }]
+      },
+      {
+        ...files[1],
+        exif: [{ label: 'ISO', value: '200' }, camera, { label: 'Copyright', value: 'Owner' }]
+      },
+      { id: 'excluded', path: '/excluded.X3F', fileName: 'excluded.X3F', exif: [] }
+    ]
+    useQueueStore.setState({
+      files,
+      selectedIds: new Set([files[0].id, files[1].id]),
+      activeId: files[1].id
+    })
+    render(<Inspector />)
+    expect(screen.getByText('Info - 2 images')).toBeTruthy()
+    const stack = screen.getByRole('group', { name: '2 images' })
+    expect(stack.querySelectorAll('img')).toHaveLength(2)
+    expect(stack.firstElementChild?.getAttribute('title')).toBe('b.X3F')
+    expect(screen.queryByAltText('excluded.X3F')).toBeNull()
+    expect(screen.getByText('Scopes not available for multiple images')).toBeTruthy()
+    expect(screen.queryByTestId('scope')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Scope view' })).toBeNull()
+    expect(screen.getByText('Camera').nextElementSibling?.textContent).toBe('SIGMA')
+    expect(
+      screen.getByText('Camera').nextElementSibling?.classList.contains('text-neutral-200')
+    ).toBe(true)
+    for (const label of ['ISO', 'Lens', 'Copyright']) {
+      expect(screen.getByText(label).nextElementSibling?.textContent).toBe('Multiple values')
+      expect(
+        screen.getByText(label).nextElementSibling?.classList.contains('text-neutral-500')
+      ).toBe(true)
+    }
+    expect(invoke).not.toHaveBeenCalled()
+
+    act(() => useQueueStore.getState().setSelection(new Set([files[0].id]), files[0].id))
+    expect(screen.getByText('Info - a.X3F')).toBeTruthy()
+    expect(screen.queryByRole('group')).toBeNull()
+    expect(screen.getByAltText('a.X3F')).toBeTruthy()
+    expect(screen.getByTestId('scope')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Scope view' })).toBeTruthy()
+    expect(screen.getByText('ISO').nextElementSibling?.textContent).toBe('100')
+    act(() => useQueueStore.getState().deselectAll())
+    expect(screen.getByText('Info')).toBeTruthy()
+    expect(screen.getByText('Select a file to see its details')).toBeTruthy()
+  })
+
+  it('bounds the preview stack while retaining the full selection count and active image', () => {
+    files = Array.from({ length: 1000 }, (_, i) => ({
+      id: `stack-${i}`,
+      path: `/stack-${i}.X3F`,
+      fileName: `stack-${i}.X3F`,
+      exif: []
+    }))
+    useQueueStore.setState({
+      files,
+      selectedIds: new Set(files.map((file) => file.id)),
+      activeId: files[999].id
+    })
+    render(<Inspector />)
+    expect(screen.getByText('Info - 1000 images')).toBeTruthy()
+    expect(screen.getAllByRole('img')).toHaveLength(3)
+    expect(screen.getByRole('group').firstElementChild?.getAttribute('title')).toBe('stack-999.X3F')
+    expect(screen.getByText('No metadata available')).toBeTruthy()
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
+  it('waits for every selected image to finish import before claiming a common value', () => {
+    const exif = [{ label: 'Camera', value: 'SIGMA' }]
+    files = [
+      { ...files[0], exif },
+      { ...files[1], pending: true }
+    ]
+    useQueueStore.setState({ files, selectedIds: new Set(files.map((file) => file.id)) })
+    const view = render(<Inspector />)
+    expect(view.container.querySelector('[aria-busy="true"]')).toBeTruthy()
+    expect(screen.queryByText('SIGMA')).toBeNull()
+    expect(invoke).not.toHaveBeenCalled()
+    act(() => useQueueStore.setState({ files: [files[0], { ...files[1], pending: false, exif }] }))
+    expect(screen.getByText('SIGMA')).toBeTruthy()
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
+  it('loads all selected fallbacks serially, handles failures, and drops stale queued selections', async () => {
+    const selections = Array.from({ length: 4 }, (_, i) => ({
+      ...files[0],
+      id: `${files[0].id}-${i}`,
+      path: `${files[0].path}-${i}`
+    }))
+    const finish = new Map<string, (pairs: ExifPair[]) => void>()
+    invoke.mockImplementation(
+      (_channel, { path }) =>
+        new Promise((resolve, reject) => {
+          if (path === selections[3].path) reject(new Error('unreadable'))
+          else finish.set(path, resolve)
+        })
+    )
+    const hook = renderHook(({ selected }) => useSelectionExif(selected), {
+      initialProps: { selected: selections.slice(0, 3) }
+    })
+    expect(invoke).toHaveBeenCalledTimes(1)
+    const pairs = [{ label: 'Camera', value: 'SIGMA' }]
+    await act(async () => finish.get(selections[0].path)!(pairs))
+    expect(invoke).toHaveBeenLastCalledWith('exif:full', { path: selections[1].path })
+    expect(hook.result.current).toBe('loading')
+    hook.rerender({ selected: [selections[0], selections[3]] })
+    await act(async () => finish.get(selections[1].path)!(pairs))
+    expect(invoke).toHaveBeenCalledTimes(3)
+    expect(invoke).toHaveBeenLastCalledWith('exif:full', { path: selections[3].path })
+    expect(hook.result.current).toEqual([pairs, []])
+  })
+
+  it('retains metadata for selections larger than the cache, including initial cache hits', async () => {
+    const selections = Array.from({ length: 70 }, (_, i) => ({
+      ...files[0],
+      id: `${files[0].id}-large-${i}`,
+      path: `${files[0].path}-large-${i}`
+    }))
+    const pairs = [{ label: 'Camera', value: 'SIGMA' }]
+    invoke.mockResolvedValue(pairs)
+    const hook = renderHook(({ selected }) => useSelectionExif(selected), {
+      initialProps: { selected: selections.slice(0, 1) }
+    })
+    await waitFor(() => expect(hook.result.current).toEqual([pairs]))
+    hook.rerender({ selected: selections })
+    await waitFor(() => expect(hook.result.current).toEqual(selections.map(() => pairs)))
+    expect(invoke).toHaveBeenCalledTimes(70)
+  })
+
   it('uses imported EXIF immediately and does not start extraction while import hydration is pending', () => {
     const pairs = [{ label: 'Camera', value: 'Imported camera' }]
     useQueueStore.setState({ files: [{ ...files[0], pending: true }, files[1]] })

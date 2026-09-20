@@ -18,7 +18,7 @@ Install Node.js 22 LTS, the stable Rust toolchain, and the
 - Windows x64: Visual Studio C++ build tools, LLVM/libclang, and Microsoft WebView2
   Runtime. Set `LIBCLANG_PATH` to LLVM's `bin` directory when it is not discoverable.
 - Linux x64: GTK 3, WebKitGTK 4.1 development packages, build tools, Clang/libclang,
-  and Perl.
+  Perl, and `zip`/`unzip` for packaging and archive tests.
 
 Cargo resolves `x3f-core` 0.1.5 from crates.io, including the parsing hardening,
 cooperative cancellation, and conversion reports used by the desktop backend.
@@ -87,7 +87,7 @@ are added. Then run:
 node scripts/package-artifact.mjs
 ```
 
-The archive in `artifacts/` contains the complete native application and resources:
+The ZIP archive in `artifacts/` contains the complete native application and resources:
 
 | Platform | Extracted layout                                     | Launch                   |
 | -------- | ---------------------------------------------------- | ------------------------ |
@@ -102,36 +102,46 @@ on macOS/Linux, Perl. They do not need this repository or the core checkout at r
 
 The dedicated workflow builds macOS arm64 and Intel, Windows x64, and Linux x64
 artifacts. Branch, pull-request, and manual runs upload downloadable Actions artifacts.
+These runs do not use Apple signing credentials; their macOS artifacts are not
+Developer ID signed or notarized.
 The macOS deployment target remains 14.0; its Intel CI runner uses macOS 15.
 
 ### Alpha releases
 
-Push a versioned Tauri alpha tag on the commit to distribute:
+Push a versioned alpha tag on the commit to distribute, using
+`x3fuse-alpha-<version>-<sequence>`:
 
 ```sh
-git tag -a tauri-v0.1.0-alpha.1 -m "X3Fuse Tauri alpha 1"
-git push origin tauri-v0.1.0-alpha.1
+git tag -a x3fuse-alpha-0.1.0-2 -m "x3fuse-alpha-0.1.0-2"
+git push origin x3fuse-alpha-0.1.0-2
 ```
 
-Tags matching `tauri-v*-alpha.*` run the full four-platform build and publish a
+Tags matching `x3fuse-alpha-*` run the full four-platform build and publish a
 GitHub prerelease only after every build, check, and artifact upload succeeds.
-The release does not replace the stable latest release. Rerunning the tag workflow
-updates the same release's assets; use a new alpha tag for a new commit.
-The app's internal version stays unchanged; the release tag and source commit
-identify the alpha build.
+The release title matches the tag and does not replace the stable latest release.
+Rerunning the tag workflow updates the same release's assets; use a new alpha tag
+for a new commit.
+Existing releases and internal app/binary names remain unchanged. The app's
+internal version stays unchanged; the release tag and source commit identify the
+alpha build.
 
-Download one of these archives from the repository's **Releases** page:
+Download one of these ZIP files from the repository's **Releases** page:
 
-- `x3fuse-tauri-darwin-arm64.tar.gz`: macOS, Apple Silicon.
-- `x3fuse-tauri-darwin-x64.tar.gz`: macOS, Intel.
-- `x3fuse-tauri-win32-x64.tar.gz`: Windows, x64.
-- `x3fuse-tauri-linux-x64.tar.gz`: Linux, x64.
+- `x3fuse-alpha-macos-arm64.zip`: macOS, **Apple Silicon (M-series)**.
+- `x3fuse-alpha-macos-x64.zip`: macOS, **Intel**.
+- `x3fuse-alpha-windows-x64.zip`: Windows, x64.
+- `x3fuse-alpha-linux-x64.zip`: Linux, x64.
 
-Extract the archive and follow the launch table above or the included `README.txt`.
+On a Mac, open **Apple menu → About This Mac**: an Apple M-series chip means
+Apple Silicon; an Intel processor means Intel.
+
+Extract the ZIP and follow the launch table above or the included `README.txt`.
 Windows needs Microsoft WebView2 Runtime; Linux needs WebKitGTK 4.1, GTK 3, and
-Perl; macOS needs macOS 14 or newer and system Perl. These alpha builds are unsigned,
-are not notarized, and have no automatic updater. Record the alpha tag and OS when
-reporting results from the runtime acceptance checks below.
+Perl; macOS needs macOS 14 or newer and system Perl. macOS alpha releases are
+Developer ID signed and notarized using the same Apple credentials as stable
+releases. Windows and Linux builds are unsigned. No alpha build has an automatic
+updater. Record the alpha tag and OS when reporting results from the runtime
+acceptance checks below.
 
 ## Runtime acceptance
 

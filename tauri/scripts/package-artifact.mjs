@@ -9,7 +9,7 @@ const tar = process.platform === 'win32'
   ? join(process.env.SystemRoot || process.env.WINDIR || 'C:\\Windows', 'System32', 'tar.exe')
   : 'tar'
 
-/** Stage the native executable and all bundled data, then preserve modes in tar. */
+/** Stage the complete native application, then ZIP it with the host's archive tool. */
 export async function packageArtifact(
   root = appRoot,
   platform = process.platform,
@@ -31,10 +31,11 @@ export async function packageArtifact(
   if (!opcodes.some((entry) => entry.isFile() && entry.name.includes('_FF_DNG_Opcodelist3_')))
     throw new Error('Opcode data is missing')
 
-  const name = `x3fuse-tauri-${platform}-${arch}`
+  const os = { darwin: 'macos', win32: 'windows', linux: 'linux' }[platform]
+  const name = `x3fuse-alpha-${os}-${arch}`
   const temporary = await mkdtemp(join(tmpdir(), 'x3fuse-package-'))
   const stage = join(temporary, name)
-  const output = join(root, 'artifacts', `${name}.tar.gz`)
+  const output = join(root, 'artifacts', `${name}.zip`)
   try {
     await mkdir(stage)
     if (platform === 'darwin') {
@@ -45,28 +46,40 @@ export async function packageArtifact(
       await stat(join(source, 'Contents/Resources/resources/exiftool', launcher))
       await stat(join(source, 'Contents/Resources/resources/exiftool/lib'))
       await stat(join(source, 'Contents/Resources/resources/opcodes'))
-      await cp(source, join(stage, bundle), { recursive: true, verbatimSymlinks: true })
+      if (process.platform === 'darwin') {
+        // Preserve the stapled ticket, extended attributes, and bundle symlinks.
+        execFileSync('ditto', [source, join(stage, bundle)], { stdio: 'inherit' })
+      } else {
+        await cp(source, join(stage, bundle), { recursive: true, verbatimSymlinks: true })
+      }
     } else {
       const executable = `x3fuse-tauri${windows ? '.exe' : ''}`
       const binaryDir = windows ? stage : join(stage, 'bin')
       const resourceDir = windows ? stage : join(stage, 'lib/x3fuse-tauri')
       await mkdir(binaryDir, { recursive: true })
       await cp(join(release, executable), join(binaryDir, executable))
-      await cp(resources, join(resourceDir, 'resources'), { recursive: true })
+      await cp(resources, join(resourceDir, 'resources'), { recursive: true, verbatimSymlinks: true })
     }
     await cp(join(root, '../LICENSE'), join(stage, 'LICENSE'))
     const launch =
       platform === 'darwin'
-        ? `Open ${config.productName}.app.`
+        ? `Open ${config.productName}.app. macOS 14 or newer and system Perl are required.\nApple Silicon (M-series): x3fuse-alpha-macos-arm64.zip\nIntel Mac: x3fuse-alpha-macos-x64.zip\nCheck Apple menu > About This Mac: Chip identifies Apple Silicon; Processor identifies Intel.`
         : windows
           ? 'Run x3fuse-tauri.exe. Microsoft WebView2 Runtime must be installed.'
           : 'Run ./bin/x3fuse-tauri. WebKitGTK 4.1, GTK 3, and Perl must be installed.'
     await writeFile(
       join(stage, 'README.txt'),
-      `X3Fuse Tauri ${config.version}\n${launch}\nKeep the complete extracted directory together.\nDevelopment build: no signing, notarization, or auto-updater.\nSource and build instructions: https://github.com/sagwaco/x3fuse/tree/main/tauri\n`
+      `X3Fuse alpha ${config.version}\n${launch}\nKeep the complete extracted directory together.\nPublished macOS alpha releases are signed and notarized; development builds are not notarized. Windows and Linux builds are unsigned.\nNo automatic updates.\nSource and build instructions: https://github.com/sagwaco/x3fuse/tree/main/tauri\n`
     )
     await mkdir(dirname(output), { recursive: true })
-    execFileSync(tar, ['-czf', output, '-C', temporary, name], { stdio: 'inherit' })
+    await rm(output, { force: true })
+    if (process.platform === 'darwin') {
+      execFileSync('ditto', ['-c', '-k', '--sequesterRsrc', '--keepParent', stage, output], { stdio: 'inherit' })
+    } else if (process.platform === 'win32') {
+      execFileSync(tar, ['-a', '-cf', output, '-C', temporary, name], { stdio: 'inherit' })
+    } else {
+      execFileSync('zip', ['-q', '-r', '-y', output, name], { cwd: temporary, stdio: 'inherit' })
+    }
     return output
   } finally {
     await rm(temporary, { recursive: true, force: true })
