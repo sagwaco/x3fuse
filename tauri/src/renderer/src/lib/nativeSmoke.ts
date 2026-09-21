@@ -4,22 +4,42 @@ import { useQueueStore } from '../stores/queueStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { usePreviewStore } from '../stores/previewStore'
 import { ipc } from './ipc'
+import { useEditorStore } from '../stores/editorStore'
+import { useNavStore } from '../stores/navStore'
 import { t } from './strings'
 
 declare global {
   interface Window {
-    __x3fRunNativeSmoke?: (input: string) => Promise<Record<string, unknown>>
+    __x3fRunNativeSmoke?: (input: string, editor?: boolean) => Promise<Record<string, unknown>>
+    __x3fSmokeProgress?: string
   }
 }
 
 const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 const painted = (): Promise<void> =>
-  new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+  new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () =>
+        reject(
+          new Error(
+            `Webview did not paint: ${document.visibilityState}, focused=${document.hasFocus()}`
+          )
+        ),
+      5000
+    )
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        clearTimeout(timer)
+        resolve()
+      })
+    )
+  })
 function check(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message)
 }
-async function until(predicate: () => boolean, message: string): Promise<void> {
-  const deadline = performance.now() + 15000
+async function until(predicate: () => boolean, message: string, timeout = 15000): Promise<void> {
+  window.__x3fSmokeProgress = message
+  const deadline = performance.now() + timeout
   while (!predicate()) {
     check(performance.now() < deadline, message)
     await wait(20)
@@ -597,5 +617,318 @@ async function run(input: string): Promise<Record<string, unknown>> {
 
 /** Included only by an explicit VITE_NATIVE_SMOKE=1 build; Rust invokes it only in Debug. */
 export function installNativeSmoke(): void {
-  window.__x3fRunNativeSmoke = run
+  window.__x3fRunNativeSmoke = (input, editor = false) => (editor ? runEditor(input) : run(input))
+}
+
+/** The launcher copies the RAW to a temporary folder before enabling this test. */
+async function runEditor(input: string): Promise<Record<string, unknown>> {
+  window.__x3fSmokeProgress = 'Loading editor settings'
+  await useSettingsStore.getState().load()
+  const original = { ...useSettingsStore.getState().settings }
+  const e = useEditorStore.getState
+  const q = useQueueStore.getState
+  const previewReady = (): boolean => !!e().preview && !e().rendering && !e().loading
+  const previewPainted = (): boolean => {
+    const canvas = document.querySelector<HTMLCanvasElement>('canvas[data-rendered-preview]')
+    return !!canvas?.width && canvas.dataset.previewUrl === e().preview?.url
+  }
+  const tilePainted = (): boolean => {
+    const canvas = document.querySelector<HTMLCanvasElement>('canvas[data-editor-tile]')
+    return !!canvas?.width && canvas.dataset.previewUrl === e().tile?.url
+  }
+  const monochromePixels = (): string => {
+    const source = document.querySelector<HTMLCanvasElement>('canvas[data-rendered-preview]')!
+    const canvas = document.createElement('canvas')
+    canvas.width = canvas.height = 16
+    const context = canvas.getContext('2d')!
+    context.drawImage(source, 0, 0, 16, 16)
+    const pixels = context.getImageData(0, 0, 16, 16).data
+    for (let i = 0; i < pixels.length; i += 4)
+      check(
+        Math.abs(pixels[i] - pixels[i + 1]) <= 2 && Math.abs(pixels[i] - pixels[i + 2]) <= 2,
+        'Monochrome preview contains colored pixels'
+      )
+    check(
+      pixels.some((v, i) => i % 4 === 0 && v > 20 && v < 235),
+      'Monochrome preview lost all midtones'
+    )
+    return pixels.join(',')
+  }
+  const button = (label: string): HTMLButtonElement => {
+    const element = [...document.querySelectorAll<HTMLButtonElement>('button')].find(
+      (node) => node.textContent?.trim() === label || node.getAttribute('aria-label') === label
+    )
+    check(element, `Missing editor button: ${label}`)
+    return element
+  }
+  try {
+    await useSettingsStore.getState().update({ queueViewMode: 'filmstrip', inspectorOpen: false })
+    await q().addFiles([input])
+    const file = q().files[0]
+    check(file && !file.pending, 'Editor import did not complete')
+    q().setSelection(new Set([file.id]), file.id)
+    await painted()
+    const opened = performance.now()
+    button(t('editor.edit')).click()
+    await until(previewReady, 'Initial RAW preview did not complete', 60000)
+    check(useNavStore.getState().screen === 'editor', 'Edit did not open in the main window')
+    check(!e().error, e().error ?? 'Editor failed')
+    const firstPreviewMs = performance.now() - opened
+    const initial = e().preview!
+    check(e().session!.recipe.film !== null, 'Film rendering is not enabled by default')
+    check(
+      JSON.stringify(e().session!.recipe.crop) === JSON.stringify(e().session!.asShotCrop),
+      'Initial crop does not use camera framing'
+    )
+    await until(previewPainted, 'Initial GPU frame did not paint', 15000)
+    const image = new Image()
+    image.crossOrigin = 'anonymous'
+    image.src = initial.url
+    window.__x3fSmokeProgress = 'Decoding initial editor image'
+    await image.decode()
+    check(
+      image.naturalWidth > 0 && image.naturalHeight > 0,
+      'Edited custom-protocol PNG did not decode under CSP'
+    )
+    check(initial.fullWidth && initial.fullHeight, 'Native RAW dimensions were not returned')
+    const exposure = document.querySelector<HTMLInputElement>(
+      `input[aria-label="${CSS.escape(t('editor.evFilm'))}"]`
+    )
+    check(exposure, 'Accessible exposure control is missing')
+    const changed = performance.now()
+    e().change({ film: { ...e().documents[e().session!.path].recipe.film!, evFilm: 1 } }, false)
+    e().commit()
+    check(await e().flush(), 'Autosave failed')
+    await until(
+      () => previewReady() && e().preview!.url !== initial.url && previewPainted(),
+      'Exposure did not update the RAW preview',
+      60000
+    )
+    const adjustmentMs = performance.now() - changed
+    const path = e().session!.path
+    check(e().documents[path].past.length === 1, 'One gesture produced more than one undo step')
+    button(t('editor.undo')).click()
+    check(e().documents[path].recipe.film?.evFilm === 0, 'Undo did not restore exposure')
+    await painted()
+    button(t('editor.redo')).click()
+    check(e().documents[path].recipe.film?.evFilm === 1, 'Redo did not restore the adjustment')
+    check(await e().flush(), 'History autosave failed')
+    const loaded = await ipc.invoke('editor:load', { paths: [input] })
+    check(loaded[0]?.recipe?.film?.evFilm === 1, 'Saved sidecar did not reload')
+    await until(previewReady, 'History render did not complete', 60000)
+    const inputToPaint: number[] = []
+    for (let index = 0; index < 12; index++) {
+      window.__x3fSmokeProgress = `Painting slider input ${index}`
+      await painted()
+      const previous = e().preview!.url
+      const value = e().documents[path].recipe.film!.evFilm
+      const knob = document.querySelector<HTMLElement>(
+        `[role="slider"][aria-label="${CSS.escape(t('editor.evFilm'))}"]`
+      )
+      check(knob, 'Film exposure slider knob is missing')
+      const began = performance.now()
+      knob.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
+      check(e().documents[path].recipe.film!.evFilm > value, 'Film slider did not change exposure')
+      await until(
+        () => e().preview?.url !== previous && previewPainted(),
+        'Interactive film frame did not paint',
+        15000
+      )
+      await painted()
+      inputToPaint.push(performance.now() - began)
+    }
+    const knob = document.querySelector<HTMLElement>(
+      `[role="slider"][aria-label="${CSS.escape(t('editor.evFilm'))}"]`
+    )!
+    knob.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+    check(e().documents[path].recipe.film!.evFilm === 0, 'Double-click did not reset film exposure')
+    e().change({ film: { ...e().documents[path].recipe.film!, evFilm: 1 } })
+    check(await e().flush(), 'Benchmark adjustment autosave failed')
+    await until(() => previewReady() && previewPainted(), 'Latest adjustment did not paint', 15000)
+    await until(
+      () => (e().preview?.width ?? 0) > 512 && previewPainted(),
+      'Idle preview did not refine',
+      15000
+    )
+    const monochrome = document.querySelector<HTMLButtonElement>(
+      `[role="switch"][aria-label="${CSS.escape(t('editor.monochrome'))}"]`
+    )
+    check(monochrome, 'Monochrome switch is missing')
+    monochrome.click()
+    check(e().documents[path].recipe.monochrome?.filter === 'neutral', 'Monochrome did not enable')
+    let previous = e().preview!.url
+    e().change({ monochrome: { filter: 'red' } })
+    await until(
+      () => e().preview?.url !== previous && previewPainted(),
+      'Red monochrome filter did not paint'
+    )
+    const redPixels = monochromePixels()
+    previous = e().preview!.url
+    e().change({ monochrome: { filter: 'blue' } })
+    await until(
+      () => e().preview?.url !== previous && previewPainted(),
+      'Blue monochrome filter did not paint'
+    )
+    check(monochromePixels() !== redPixels, 'Red and blue sensor filters produced the same image')
+    previous = e().preview!.url
+    e().change({ monochrome: { filter: 'red' } })
+    check(await e().flush(), 'Monochrome did not save')
+    const monochromeSaved = await ipc.invoke('editor:load', { paths: [input] })
+    check(
+      monochromeSaved[0]?.recipe?.monochrome?.filter === 'red',
+      'Monochrome sidecar did not reload'
+    )
+    await until(
+      () => e().preview?.url !== previous && previewPainted(),
+      'Restored monochrome filter did not paint'
+    )
+
+    usePreviewStore.getState().controls!.zoomTo(1)
+    await until(
+      () => {
+        const tile = e().tile
+        return (
+          !!tile &&
+          !e().rendering &&
+          tilePainted() &&
+          Math.abs(tile.width - (tile.fullWidth ?? 0) * tile.region.width) < 1 &&
+          Math.abs(tile.height - (tile.fullHeight ?? 0) * tile.region.height) < 1
+        )
+      },
+      'Native-resolution region did not render',
+      60000
+    )
+    check(
+      e().tile!.width > 0 && e().tile!.fullWidth === initial.fullWidth,
+      'Region render lost native dimensions'
+    )
+    await until(
+      () => !document.querySelector('.preview-image')?.getAnimations().length,
+      'Zoom animation did not settle'
+    )
+    const panCanvas = document.querySelector<HTMLCanvasElement>('canvas[data-editor-tile]')!
+    const panSurface = document.querySelector<HTMLElement>(
+      `[role="region"][aria-label="${CSS.escape(t('preview.image'))}"]`
+    )!
+    const panStart = e().viewport!.x
+    for (let index = 0; index < 8; index++) {
+      panSurface.dispatchEvent(
+        new WheelEvent('wheel', { deltaX: 12, bubbles: true, cancelable: true })
+      )
+      await painted()
+      check(
+        document.querySelector('canvas[data-editor-tile]') === panCanvas,
+        'Panning removed the decoded detail tile'
+      )
+      check(
+        Math.abs(panCanvas.width - (initial.fullWidth! * parseFloat(panCanvas.style.width)) / 100) <
+          1 &&
+          Math.abs(
+            panCanvas.height - (initial.fullHeight! * parseFloat(panCanvas.style.height)) / 100
+          ) < 1,
+        'Panning downgraded the tile resolution'
+      )
+    }
+    check(e().viewport!.x > panStart, 'Native pan gesture did not move the viewport')
+    await until(
+      () =>
+        tilePainted() &&
+        !e().rendering &&
+        JSON.stringify(e().tile?.viewport) === JSON.stringify(e().viewport),
+      'Panned detail did not catch up with the viewport'
+    )
+    const basePreview = e().preview!.url
+    const viewportInputToPaint: number[] = []
+    for (let index = 0; index < 6; index++) {
+      const previousTile = e().tile!.url
+      const began = performance.now()
+      knob.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
+      await until(
+        () => e().tile?.url !== previousTile && tilePainted(),
+        'Zoomed adjustment did not paint'
+      )
+      await painted()
+      viewportInputToPaint.push(performance.now() - began)
+      check(e().preview!.url === basePreview, 'Zoomed adjustment rerendered the full image')
+    }
+    check(await e().flush(), 'Zoomed adjustment did not save')
+    usePreviewStore.getState().controls!.zoomTo(null)
+    await until(
+      () => !e().viewport && e().preview?.url !== basePreview && previewReady() && previewPainted(),
+      'Fit preview did not refresh after zoomed edits'
+    )
+    previous = e().preview!.url
+    e().change({ film: { ...e().documents[path].recipe.film!, evFilm: 1 } })
+    check(await e().flush(), 'Export adjustment did not save')
+    await until(
+      () => e().preview?.url !== previous && previewPainted(),
+      'Export adjustment did not paint'
+    )
+    q().openExport(new Set([file.id]), 'editor')
+    await until(
+      () => useNavStore.getState().screen === 'export' && !q().isPreparing,
+      'Editor export review did not open',
+      60000
+    )
+    check(q().draft?.returnScreen === 'editor', 'Export review lost its editor return route')
+    check(q().draft?.files[0].edit?.recipe.film?.evFilm === 1, 'Export recipe was not captured')
+    check(
+      q().draft?.files[0].edit?.recipe.monochrome?.filter === 'red',
+      'Monochrome export recipe was not captured'
+    )
+    // The launcher copied the RAW to a disposable directory. Keep exports there
+    // regardless of the user's remembered destination or existing output files.
+    q().updateDraft({ outputFormat: 'jpeg', rendering: 'rendered', outputDirectory: null })
+    const beganExport = performance.now()
+    await q().commitExport()
+    await until(() => !!q().batch?.summary, 'Edited JPEG export did not finish', 60000)
+    check(q().batch!.summary!.completed === 1, `Edited export failed: ${JSON.stringify(q().batch)}`)
+    const jpegExportMs = performance.now() - beganExport
+    check(useNavStore.getState().screen === 'editor', 'Export did not return to the editor')
+    check(await e().close(), 'Back to Main failed to save the editor')
+    check(useNavStore.getState().screen === 'queue', 'Back to Main did not restore browsing')
+    check(q().files[0].edit?.recipe.film?.evFilm === 1, 'Main view lost saved edits')
+    q().openExport(new Set([file.id]))
+    await until(
+      () => useNavStore.getState().screen === 'export' && !q().isPreparing,
+      'Main export review failed',
+      60000
+    )
+    check(
+      q().draft?.files[0].edit?.recipe.film?.evFilm === 1,
+      'Main export did not use the saved edit'
+    )
+    q().cancelExport()
+    return {
+      ok: true,
+      editor: {
+        firstPreviewMs,
+        adjustmentMs,
+        inputToPaint: timings(inputToPaint),
+        viewportInputToPaint: timings(viewportInputToPaint),
+        viewportOnlyAdjustments: true,
+        panningKeepsDetail: true,
+        monochromeFilters: true,
+        interactiveMaxEdge: 512,
+        idleRefinement: true,
+        sliderReset: true,
+        filmDefault: true,
+        asShotCrop: true,
+        jpegExportMs,
+        width: initial.fullWidth,
+        height: initial.fullHeight,
+        storage: loaded[0].storage,
+        nativeRegion: true,
+        undoRedo: true,
+        sidecarReload: true,
+        bothExportEntryPoints: true
+      },
+      app: await ipc.invoke('app:info')
+    }
+  } finally {
+    window.__x3fSmokeProgress = 'Closing editor and restoring smoke settings'
+    await e().close()
+    q().clearQueue()
+    await useSettingsStore.getState().update(original)
+  }
 }

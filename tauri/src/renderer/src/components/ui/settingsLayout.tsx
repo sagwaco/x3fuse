@@ -51,18 +51,20 @@ export function ToggleRow({
   label,
   checked,
   onChange,
+  disabled,
   labelClassName,
   help
 }: {
   label: string
   checked: boolean
   onChange: (checked: boolean) => void
+  disabled?: boolean
   labelClassName?: string
   help?: string
 }): React.JSX.Element {
   return (
     <Row label={label} labelClassName={labelClassName} help={help}>
-      <Switch aria-label={label} checked={checked} onCheckedChange={onChange} />
+      <Switch aria-label={label} checked={checked} onCheckedChange={onChange} disabled={disabled} />
     </Row>
   )
 }

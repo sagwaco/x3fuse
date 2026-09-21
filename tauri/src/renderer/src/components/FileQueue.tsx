@@ -15,6 +15,7 @@ import { t } from '../lib/strings'
 import { cn } from '../lib/cn'
 import { QueueContextMenu } from './QueueContextMenu'
 import { Thumbnail } from './Thumbnail'
+import { EditedBadge } from './EditedBadge'
 import { ResizeHandle } from './ui/resizeHandle'
 
 const ROW_HEIGHT = 30
@@ -90,6 +91,7 @@ export function FileQueue({ draft }: { draft?: ExportDraft }): React.JSX.Element
       let content: number
       if (column.key === 'name') {
         content = 36 + measure(file.fileName)
+        if (file.edit && file.edit.revision > 0) content += 20
         if (draft) content += 8 + measure(`→ ${outputFileName(file, draft.settings)}`, 12)
       } else if (column.key === 'date') {
         content = measure(
@@ -244,6 +246,7 @@ const Row = memo(function Row({
           {file.fileName}
           {outputName && <span className="ml-2 text-xs text-neutral-400">→ {outputName}</span>}
         </span>
+        <EditedBadge edit={file.edit} />
       </div>
       <span className="truncate pl-2 text-neutral-400">
         {file.pending ? (

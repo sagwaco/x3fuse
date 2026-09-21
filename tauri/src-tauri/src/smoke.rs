@@ -54,12 +54,38 @@ pub fn on_page_load(webview: &Webview, event: PageLoadEvent) {
 }
 
 fn probe(webview: &Webview, input: &str) -> Result<Value, String> {
+    // WKWebView suspends animation frames when occluded. Keep this disposable
+    // test window visible so input-to-paint measurements observe real frames.
+    webview
+        .window()
+        .set_always_on_top(true)
+        .map_err(|e| e.to_string())?;
     webview.window().set_focus().map_err(|e| e.to_string())?;
     webview
-        .eval(SCRIPT.replace("__INPUT_PATH__", &serde_json::to_string(input).unwrap()))
+        .eval(
+            SCRIPT
+                .replace("__INPUT_PATH__", &serde_json::to_string(input).unwrap())
+                .replace(
+                    "__EDITOR_SMOKE__",
+                    if std::env::var("X3FUSE_EDITOR_SMOKE").as_deref() == Ok("1") {
+                        "true"
+                    } else {
+                        "false"
+                    },
+                ),
+        )
         .map_err(|e| e.to_string())?;
     let deadline = Instant::now() + Duration::from_secs(90);
+    let mut previous_progress = Value::Null;
     while Instant::now() < deadline {
+        let progress = evaluate(
+            webview,
+            "({stage: window.__x3fSmokeProgress ?? null, visibility: document.visibilityState})",
+        )?;
+        if progress != previous_progress {
+            eprintln!("Native smoke progress: {progress}");
+            previous_progress = progress;
+        }
         let mut result = evaluate(webview, "window.__x3fSmoke ?? null")?;
         if !result.is_null() {
             // Geometry checks are independent of the renderer's performance budget.
@@ -72,7 +98,9 @@ fn probe(webview: &Webview, input: &str) -> Result<Value, String> {
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-    Err("Native webview smoke exceeded 90 seconds".into())
+    Err(format!(
+        "Native webview smoke exceeded 90 seconds: {previous_progress}"
+    ))
 }
 
 fn evaluate(webview: &Webview, script: &str) -> Result<Value, String> {
@@ -299,7 +327,7 @@ const SCRIPT: &str = r#"
       await new Promise(resolve => setTimeout(resolve, 50));
     }
     if (!window.__x3fRunNativeSmoke) throw new Error('Renderer smoke bridge missing; run npm run test:native -- --build');
-    return window.__x3fRunNativeSmoke(__INPUT_PATH__);
+    return window.__x3fRunNativeSmoke(__INPUT_PATH__, __EDITOR_SMOKE__);
   })().then(result => { window.__x3fSmoke = result; }, error => {
     window.__x3fSmoke = {ok: false, error: String(error), url: location.href};
   });

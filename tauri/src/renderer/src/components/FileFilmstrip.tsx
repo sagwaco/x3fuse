@@ -1,8 +1,9 @@
-import { memo, useEffect, useMemo, useRef } from 'react'
+import { memo, useEffect, useMemo, useRef, type ReactNode } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useScrollToActive } from '../hooks/useScrollToActive'
 import type { X3FFileDTO } from '@shared/types'
 import { useQueueStore, type ExportDraft } from '../stores/queueStore'
+import { useEditorStore } from '../stores/editorStore'
 import { outputFileName } from '../lib/outputName'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useFileDrop } from '../hooks/useFileDrop'
@@ -10,11 +11,18 @@ import { useQueueSelection, type QueueSelection } from '../hooks/useQueueSelecti
 import { sortFiles } from '../lib/sortFiles'
 import { cn } from '../lib/cn'
 import { Thumbnail } from './Thumbnail'
+import { EditedBadge } from './EditedBadge'
 import { ZoomablePreview } from './ZoomablePreview'
 import { QueueContextMenu } from './QueueContextMenu'
 
 /** Filmstrip view: a large preview of the active file above a scrollable strip. */
-export function FileFilmstrip({ draft }: { draft?: ExportDraft }): React.JSX.Element {
+export function FileFilmstrip({
+  draft,
+  preview
+}: {
+  draft?: ExportDraft
+  preview?: ReactNode
+}): React.JSX.Element {
   const files = useQueueStore((s) => draft?.files ?? s.files)
   const selectedIds = useQueueStore((s) => s.selectedIds)
   const activeId = useQueueStore((s) => s.activeId)
@@ -36,6 +44,15 @@ export function FileFilmstrip({ draft }: { draft?: ExportDraft }): React.JSX.Ele
     sorted.findIndex((f) => f.id === activeId)
   )
   const active = sorted[activeIndex]
+  const editorPreviewUrl = useEditorStore((state) =>
+    preview !== undefined && state.session?.path === active?.path ? state.preview?.url : undefined
+  )
+  // Reuse completed editor pixels; autosaves must not start a separate 2K render.
+  const activeThumbnail = useMemo(
+    () =>
+      active && editorPreviewUrl ? { ...active, displayPreviewUrl: editorPreviewUrl } : active,
+    [active, editorPreviewUrl]
+  )
   const stripRef = useRef<HTMLDivElement>(null)
   const virtualizer = useVirtualizer({
     count: sorted.length,
@@ -54,20 +71,20 @@ export function FileFilmstrip({ draft }: { draft?: ExportDraft }): React.JSX.Ele
   useEffect(() => rootRef.current?.focus(), [])
 
   return (
-    <QueueContextMenu disabled={!!draft}>
+    <QueueContextMenu disabled={!!draft || preview !== undefined}>
       <div
         ref={rootRef}
         tabIndex={0}
         onKeyDown={sel.handleKeyDown}
         onContextMenu={sel.handleContainerContextMenu}
-        {...(draft ? {} : dropHandlers)}
+        {...(draft || preview !== undefined ? {} : dropHandlers)}
         className="relative flex min-h-0 min-w-0 flex-1 flex-col outline-none"
       >
         <div
           className="flex min-h-0 min-w-0 flex-1 items-center justify-center bg-neutral-950"
           onContextMenu={() => active && sel.handleItemContextMenu(active.id)}
         >
-          {active ? <ZoomablePreview key={active.id} file={active} /> : null}
+          {preview ?? (active ? <ZoomablePreview key={active.id} file={active} /> : null)}
         </div>
 
         {draft && active && (
@@ -95,7 +112,7 @@ export function FileFilmstrip({ draft }: { draft?: ExportDraft }): React.JSX.Ele
                   }}
                 >
                   <FilmstripCell
-                    file={file}
+                    file={file === active ? activeThumbnail : file}
                     index={item.index}
                     selected={selectedIds.has(file.id)}
                     active={active?.id === file.id}
@@ -145,6 +162,7 @@ const FilmstripCell = memo(function FilmstripCell({
       )}
     >
       <Thumbnail file={file} className="h-full w-full" />
+      <EditedBadge edit={file.edit} overlay />
     </div>
   )
 })

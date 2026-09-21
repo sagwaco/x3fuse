@@ -1,10 +1,11 @@
 import { spawn } from 'node:child_process'
-import { access, mkdir, readFile, rm } from 'node:fs/promises'
-import { dirname, isAbsolute, join, resolve } from 'node:path'
+import { access, mkdir, readFile, rm, mkdtemp, copyFile } from 'node:fs/promises'
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { tmpdir } from 'node:os'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const input = process.env.X3FUSE_SMOKE_FILE
+let input = process.env.X3FUSE_SMOKE_FILE
 if (!input || !isAbsolute(input)) throw new Error('Set X3FUSE_SMOKE_FILE to an absolute X3F path')
 await access(input)
 if (process.argv.includes('--build')) {
@@ -45,6 +46,15 @@ await access(executable).catch(() => {
 })
 await mkdir(dirname(report), { recursive: true })
 await rm(report, { force: true })
+const editorTemporary =
+  process.env.X3FUSE_EDITOR_SMOKE === '1'
+    ? await mkdtemp(join(tmpdir(), 'x3fuse-editor-smoke-'))
+    : null
+if (editorTemporary) {
+  const copied = join(editorTemporary, basename(input))
+  await copyFile(input, copied)
+  input = copied
+}
 const child = spawn(executable, [], {
   cwd: root,
   stdio: 'inherit',
@@ -64,4 +74,5 @@ try {
   if (code !== 0 || !result.ok) throw new Error(result.error || `Native smoke exited ${code}`)
 } finally {
   clearTimeout(timeout)
+  if (editorTemporary) await rm(editorTemporary, { recursive: true, force: true })
 }

@@ -7,12 +7,16 @@ import type {
   BatchConversionSettings,
   X3FFileDTO
 } from './types'
+import type { EditRecipe, EditRecord, EditorSession, RenderedPreview } from './editor'
 
 /** A file the renderer asks main to act on (convert / existing-output check). */
 export interface ConvertFile {
   id: string
   /** Absolute path to the source .X3F file. */
   path: string
+  recipe?: EditRecipe
+  sourceRevision?: string
+  revision?: number
 }
 
 export interface BatchSummary {
@@ -37,6 +41,10 @@ export interface LogSizes {
 
 /** Commands fired by the native application menu. */
 export type MenuCommand =
+  | 'undoEdit'
+  | 'redoEdit'
+  | 'copyEdits'
+  | 'pasteEdits'
   | 'addFiles'
   | 'selectAll'
   | 'deselectAll'
@@ -65,6 +73,47 @@ export interface NativeMenuRequest {
 
 /** Request/response channels: channel -> { payload, result }. */
 export interface IpcRequestMap {
+  'editor:finishClose': { payload: { quit: boolean }; result: void }
+  'editor:preview': {
+    payload: { path: string; recipe: EditRecipe; revision: number; sourceRevision?: string }
+    result: { url: string; sourceRevision: string }
+  }
+  'editor:cancelRender': { payload: { sessionId: string; revision: number }; result: void }
+  'editor:beginImageRequest': { payload: void; result: { requestId: string } }
+  'editor:endImageRequest': { payload: { requestId: string }; result: void }
+  'editor:open': { payload: { path: string }; result: EditorSession }
+  'editor:render': {
+    payload: {
+      sessionId: string
+      recipe: EditRecipe
+      revision: number
+      maxEdge: number
+      interactive?: boolean
+      region?: { x: number; y: number; width: number; height: number }
+    }
+    result: RenderedPreview
+  }
+  'editor:save': {
+    payload: { path: string; recipe: EditRecipe; revision: number; sourceRevision?: string }
+    result: EditRecord
+  }
+  'editor:load': {
+    payload: { paths: string[] }
+    result: Array<{
+      path: string
+      recipe?: EditRecipe
+      revision: number
+      sourceRevision?: string
+      storage?: EditRecord['storage']
+      previewUrl?: string
+      error?: string
+    }>
+  }
+  'editor:close': { payload: { sessionId: string }; result: void }
+  'editor:pickWhiteBalance': {
+    payload: { sessionId: string; x: number; y: number; recipe?: EditRecipe }
+    result: { temperature: number; tint: number }
+  }
   'settings:get': { payload: void; result: ConversionSettings }
   'settings:set': { payload: Partial<ConversionSettings>; result: ConversionSettings }
 
@@ -115,6 +164,7 @@ export type IpcResult<C extends IpcRequestChannel> = IpcRequestMap[C]['result']
 
 /** Main -> renderer event channels: channel -> payload. */
 export interface IpcEventMap {
+  'editor:closing': { quit: boolean }
   /** `outputPath` is set on the terminal `completed` status (used for reveal). */
   'batch:started': { batchId: string; settings: BatchConversionSettings }
   'file:status': {
@@ -136,6 +186,17 @@ export type IpcEventChannel = keyof IpcEventMap
 export type IpcEventPayload<C extends IpcEventChannel> = IpcEventMap[C]
 
 export const IPC_REQUEST_CHANNELS: IpcRequestChannel[] = [
+  'editor:finishClose',
+  'editor:preview',
+  'editor:open',
+  'editor:render',
+  'editor:cancelRender',
+  'editor:beginImageRequest',
+  'editor:endImageRequest',
+  'editor:save',
+  'editor:load',
+  'editor:close',
+  'editor:pickWhiteBalance',
   'settings:get',
   'settings:set',
   'queue:add',
@@ -155,6 +216,7 @@ export const IPC_REQUEST_CHANNELS: IpcRequestChannel[] = [
 ]
 
 export const IPC_EVENT_CHANNELS: IpcEventChannel[] = [
+  'editor:closing',
   'batch:started',
   'file:status',
   'file:progress',

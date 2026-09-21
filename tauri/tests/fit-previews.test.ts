@@ -65,6 +65,73 @@ afterEach(() => {
 })
 
 describe('fit previews', () => {
+  it('greedily warms edited PNGs and hands decoded pixels directly to the viewer', async () => {
+    const sources = ['x3f-edit://localhost/edited-a', 'http://x3f-edit.localhost/edited-b']
+    const stop = service.prefetchFitPreviews(sources)
+    await settle()
+    for (const source of sources) {
+      expect(transport.mock.calls.at(-1)![0]).toBe(source)
+      expect(workers[0].postMessage.mock.calls.at(-1)![0].preserveSource).toBe(true)
+      workers[0].reply(output())
+      await settle()
+    }
+    const ready = vi.fn()
+    const release = service.subscribeFitPreview(sources[0], ready, vi.fn())
+    expect(ready).toHaveBeenCalledWith(service.cachedFitPreview(sources[0]))
+    expect(transport).toHaveBeenCalledTimes(2)
+    release()
+    stop()
+  })
+
+  it('preserves native PNG bytes in the worker without a second JPEG encode', async () => {
+    const bitmap = { width: 2048, height: 1365, close: vi.fn() }
+    vi.stubGlobal(
+      'createImageBitmap',
+      vi.fn(async () => bitmap)
+    )
+    const canvas = vi.fn()
+    vi.stubGlobal('OffscreenCanvas', canvas)
+    const post = vi.spyOn(self, 'postMessage').mockImplementation(() => {})
+    const previous = self.onmessage
+    try {
+      await import('../src/renderer/src/lib/fitPreview.worker')
+      const blob = new Blob(['native png'], { type: 'image/png' })
+      await self.onmessage!({ data: { id: 5, blob, preserveSource: true } } as MessageEvent)
+      expect(canvas).not.toHaveBeenCalled()
+      expect(post.mock.calls[0][0]).toEqual({
+        id: 5,
+        blob,
+        image: bitmap,
+        width: 2048,
+        height: 1365
+      })
+      expect(bitmap.close).not.toHaveBeenCalled()
+    } finally {
+      self.onmessage = previous
+    }
+  })
+
+  it('preserves native PNG bytes when browser support requires the canvas fallback', async () => {
+    const bitmap = { width: 2048, height: 1365, close: vi.fn() }
+    vi.stubGlobal(
+      'createImageBitmap',
+      vi.fn(async () => bitmap)
+    )
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+      drawImage: vi.fn()
+    } as unknown as CanvasRenderingContext2D)
+    const encode = vi.spyOn(HTMLCanvasElement.prototype, 'toBlob')
+    const ready = vi.fn()
+    const release = service.subscribeFitPreview('x3f-edit://localhost/fallback', ready, vi.fn())
+    await settle()
+    workers[0].reply({ failed: true })
+    await settle()
+    expect(ready).toHaveBeenCalledOnce()
+    expect(encode).not.toHaveBeenCalled()
+    expect(bitmap.close).toHaveBeenCalledOnce()
+    release()
+  })
+
   it('deduplicates pending preparation, preserves original dimensions, and provides synchronous decoded hits', async () => {
     const first = vi.fn(),
       second = vi.fn(),

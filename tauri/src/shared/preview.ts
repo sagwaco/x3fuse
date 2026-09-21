@@ -1,4 +1,24 @@
 import { convertFileSrc } from '@tauri-apps/api/core'
+import type { X3FFileDTO } from './types'
+
+export function displayPreviewUrl(file: X3FFileDTO, variant: PreviewVariant = 'preview'): string {
+  const url =
+    file.displayPreviewUrl ??
+    (file.edit ? (file.edit.previewUrl ?? '') : previewUrl(file.path, variant, file.id))
+  // Explicit editor frames already exist; reuse them instead of requesting another render.
+  if (
+    !file.displayPreviewUrl &&
+    variant === 'preview' &&
+    /^(x3f-edit:\/\/localhost|http:\/\/x3f-edit\.localhost)\//.test(url)
+  ) {
+    const thumbnail = new URL(url)
+    thumbnail.searchParams.set('v', 'thumbnail')
+    return thumbnail.toString()
+  }
+  return url
+}
+export const isRenderedPreview = (file: X3FFileDTO): boolean =>
+  !!file.edit || !!file.displayPreviewUrl
 
 /**
  * Which embedded JPEG to pull out of an X3F file:

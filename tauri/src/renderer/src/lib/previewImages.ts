@@ -1,10 +1,12 @@
 import { drawImageWithOrientation } from './orientation'
+import { ipc } from './ipc'
 
 const SMALL_BUDGET = 16 * 1024 * 1024
 const FULL_BUDGET = 64 * 1024 * 1024
 const small = new Map<string, HTMLCanvasElement>()
 let smallBytes = 0
-type SmallJob = {
+type ImageRequest = { controller: AbortController; end?: () => Promise<void>; cancelled?: boolean }
+type SmallJob = ImageRequest & {
   key: string
   url: string
   orientation: number
@@ -18,6 +20,34 @@ type SmallJob = {
 const smallJobs = new Map<string, SmallJob>()
 const smallQueue: SmallJob[] = []
 let smallRunning = 0
+
+async function fetchPreview(source: string, request: ImageRequest): Promise<Response> {
+  let url = source
+  if (/^(x3f-edit:\/\/|https?:\/\/x3f-edit\.localhost([/:]|$))/i.test(url)) {
+    const { requestId } = await ipc.invoke('editor:beginImageRequest')
+    let ending: Promise<void> | undefined
+    request.end = () => (ending ??= ipc.invoke('editor:endImageRequest', { requestId }))
+    const uri = new URL(url)
+    uri.searchParams.set('requestId', requestId)
+    url = uri.toString()
+  }
+  if (request.cancelled || request.controller.signal.aborted)
+    throw new DOMException('Cancelled', 'AbortError')
+  return fetch(url, { signal: request.controller.signal })
+}
+
+function cancelPreview(source: string, request: ImageRequest): void {
+  // Embedded JPEG extraction cannot be cancelled; keep its native concurrency bounded.
+  if (/^(x3f-preview:\/\/|https?:\/\/x3f-preview\.localhost([/:]|$))/i.test(source)) return
+  request.cancelled = true
+  if (request.end) {
+    // Wait for native cancellation acknowledgement before freeing a transport slot.
+    void request.end().then(
+      () => request.controller.abort(),
+      () => {}
+    )
+  } else request.controller.abort()
+}
 
 export const smallPreviewKey = (url: string, orientation = 1, aspectRatio?: number): string =>
   JSON.stringify([url, orientation, aspectRatio])
@@ -46,13 +76,18 @@ function pumpSmall(): void {
     smallRunning++
     void (async () => {
       try {
-        const response = await fetch(job.url)
+        const response = await fetchPreview(job.url, job)
+        if (!job.consumers.size) return
         if (!response.ok) throw new Error(`preview ${response.status}`)
-        const bitmap = await createImageBitmap(await response.blob(), { imageOrientation: 'none' })
+        const blob = await response.blob()
+        if (!job.consumers.size) return
+        const bitmap = await createImageBitmap(blob, { imageOrientation: 'none' })
         const canvas = document.createElement('canvas')
         try {
+          if (!job.consumers.size) return
           if (!canvas.getContext('2d')) throw new Error('No preview canvas')
           drawImageWithOrientation(canvas, bitmap, job.orientation, {
+            maxEdge: 640,
             aspectRatio: job.aspectRatio
           })
         } finally {
@@ -69,7 +104,8 @@ function pumpSmall(): void {
       } catch (error) {
         for (const consumer of job.consumers) consumer.reject(error)
       } finally {
-        smallJobs.delete(job.key)
+        if (smallJobs.get(job.key) === job) smallJobs.delete(job.key)
+        await job.end?.().catch(() => {})
         smallRunning--
         pumpSmall()
       }
@@ -77,7 +113,7 @@ function pumpSmall(): void {
   }
 }
 
-/** Consumers cancel independently; a running native extraction retains its slot until completion. */
+/** New visible requests take priority; shared consumers cancel independently. */
 export function loadSmallPreview(
   url: string,
   orientation: number,
@@ -90,7 +126,14 @@ export function loadSmallPreview(
   const key = smallPreviewKey(url, orientation, aspectRatio)
   let job = smallJobs.get(key)
   if (!job) {
-    job = { key, url, orientation, aspectRatio, consumers: new Set() }
+    job = {
+      key,
+      url,
+      orientation,
+      aspectRatio,
+      controller: new AbortController(),
+      consumers: new Set()
+    }
     smallJobs.set(key, job)
     smallQueue.push(job)
   }
@@ -103,6 +146,15 @@ export function loadSmallPreview(
         if (queued >= 0) {
           smallQueue.splice(queued, 1)
           smallJobs.delete(current.key)
+        } else {
+          // StrictMode/view handoffs can reacquire this fetch before the microtask.
+          queueMicrotask(() => {
+            if (current.consumers.size) return
+            if (/^(x3f-preview:\/\/|https?:\/\/x3f-preview\.localhost([/:]|$))/i.test(current.url))
+              return
+            if (smallJobs.get(current.key) === current) smallJobs.delete(current.key)
+            cancelPreview(current.url, current)
+          })
         }
       }
       reject(new DOMException('Cancelled', 'AbortError'))
@@ -120,6 +172,11 @@ export function loadSmallPreview(
     }
     current.consumers.add(consumer)
     signal.addEventListener('abort', abort, { once: true })
+    const queued = smallQueue.indexOf(current)
+    if (queued >= 0) {
+      smallQueue.splice(queued, 1)
+      smallQueue.unshift(current)
+    }
     // StrictMode may release/reacquire a consumer before this microtask runs.
     queueMicrotask(pumpSmall)
   })
@@ -127,7 +184,11 @@ export function loadSmallPreview(
 
 type FullEntry = { url: string; blob: Blob; bytes: number; users: number }
 type FullConsumer = { ready: (entry: FullEntry) => void; error: () => void }
-type FullJob = { source: string; consumers: Set<FullConsumer> }
+type FullJob = ImageRequest & {
+  source: string
+  consumers: Set<FullConsumer>
+  priority: 'foreground' | 'background'
+}
 const full = new Map<string, FullEntry>()
 let fullBytes = 0
 let running: FullJob | undefined
@@ -163,17 +224,22 @@ function pumpFull(): void {
   running = current
   void (async () => {
     try {
-      const response = await fetch(current.source)
+      const response = await fetchPreview(current.source, current)
+      if (current.cancelled) throw new DOMException('Cancelled', 'AbortError')
       if (!response.ok) throw new Error(`preview ${response.status}`)
       const blob = await response.blob()
+      if (current.cancelled) throw new DOMException('Cancelled', 'AbortError')
       const entry = { url: URL.createObjectURL(blob), blob, bytes: blob.size, users: 0 }
       full.set(current.source, entry)
       fullBytes += entry.bytes
       for (const consumer of current.consumers) consumer.ready(entry)
       trimFull()
     } catch {
+      current.cancelled = true
       for (const consumer of current.consumers) consumer.error()
     } finally {
+      current.cancelled = true
+      await current.end?.().catch(() => {})
       running = undefined
       pumpFull()
     }
@@ -205,7 +271,7 @@ export function subscribeFullPreview(
     consumer.ready(cached)
   } else {
     job =
-      running?.source === source
+      running?.source === source && !running.cancelled
         ? running
         : pending?.source === source
           ? pending
@@ -213,7 +279,7 @@ export function subscribeFullPreview(
             ? background
             : undefined
     if (!job) {
-      job = { source, consumers: new Set() }
+      job = { source, consumers: new Set(), controller: new AbortController(), priority }
       if (priority === 'foreground') {
         if (pending) for (const old of pending.consumers) old.error()
         pending = job
@@ -226,6 +292,11 @@ export function subscribeFullPreview(
       if (pending) for (const old of pending.consumers) old.error()
       pending = job
     }
+    if (priority === 'foreground') {
+      job.priority = 'foreground'
+      if (running && running !== job && running.priority === 'background')
+        cancelPreview(running.source, running)
+    }
     job.consumers.add(consumer)
     queueMicrotask(pumpFull)
   }
@@ -235,6 +306,12 @@ export function subscribeFullPreview(
     job?.consumers.delete(consumer)
     if (pending === job && !job?.consumers.size) pending = undefined
     if (background === job && !job?.consumers.size) background = undefined
+    if (job && job === running && !job.consumers.size) {
+      const current = job
+      queueMicrotask(() => {
+        if (!current.consumers.size) cancelPreview(current.source, current)
+      })
+    }
     if (held) held.users--
     // Let a remounted viewer acquire the same URL before evicting an unpinned entry.
     queueMicrotask(trimFull)

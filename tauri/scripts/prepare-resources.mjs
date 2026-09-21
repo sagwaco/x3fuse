@@ -27,6 +27,9 @@ for (const name of ['LICENSE', 'NOTICE']) {
   await cp(join(root, 'licenses/x3fuse-core', name), join(coreNotices, name))
 }
 await cp(join(root, '../LICENSE'), join(resources, 'licenses/X3Fuse-LICENSE'))
+const renderer = resolve(root, '../../x3fuse-core/crates/x3f-render')
+await cp(join(renderer, 'licenses'), join(resources, 'licenses/x3f-render'), { recursive: true })
+await cp(join(renderer, 'NOTICE'), join(resources, 'licenses/x3f-render/NOTICE'))
 
 if (await readFile(join(destination, '.version'), 'utf8').catch(() => '') !== marker) {
   const cache = join(root, '.cache')

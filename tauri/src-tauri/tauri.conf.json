@@ -24,7 +24,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: x3f-preview: http://x3f-preview.localhost; connect-src 'self' ipc: http://ipc.localhost x3f-preview: http://x3f-preview.localhost; worker-src 'self' blob:; object-src 'none'; base-uri 'self'"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: x3f-preview: http://x3f-preview.localhost x3f-edit: http://x3f-edit.localhost; connect-src 'self' ipc: http://ipc.localhost x3f-preview: http://x3f-preview.localhost x3f-edit: http://x3f-edit.localhost; worker-src 'self' blob:; object-src 'none'; base-uri 'self'"
     }
   },
   "bundle": {

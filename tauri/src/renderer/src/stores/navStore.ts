@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 
 /** Which top-level screen the main window is showing. */
-export type Screen = 'queue' | 'export'
+export type Screen = 'queue' | 'export' | 'editor'
 
 /**
  * Main-window screen routing. The Settings window is a separate BrowserWindow
@@ -14,10 +14,12 @@ interface NavState {
   screen: Screen
   goToExport: () => void
   goToQueue: () => void
+  goToEditor: () => void
 }
 
 export const useNavStore = create<NavState>((set) => ({
   screen: 'queue',
   goToExport: () => set({ screen: 'export' }),
-  goToQueue: () => set({ screen: 'queue' })
+  goToQueue: () => set({ screen: 'queue' }),
+  goToEditor: () => set({ screen: 'editor' })
 }))

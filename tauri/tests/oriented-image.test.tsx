@@ -60,7 +60,9 @@ it('keeps pending metadata unloaded and starts small decoding only when visible'
   )
   const canvas = screen.getByRole('img') as HTMLCanvasElement
   expect([canvas.width, canvas.height]).toEqual([160, 320])
-  expect(fetch).toHaveBeenCalledWith(previewUrl(file.path, 'preview', file.id))
+  expect(fetch).toHaveBeenCalledWith(previewUrl(file.path, 'preview', file.id), {
+    signal: expect.any(AbortSignal)
+  })
   expect(context.setTransform).toHaveBeenCalledWith(0, 1, -1, 0, 320, 0)
 })
 
@@ -100,4 +102,27 @@ it('reports unavailable previews without leaking a failed bitmap', async () => {
     expect(screen.getByRole('img', { name: 'No preview available' })).toBeTruthy()
   )
   expect(close).toHaveBeenCalledTimes(1)
+})
+
+it('uses the filmstrip delay only until the fallback pixels are ready', async () => {
+  vi.useFakeTimers()
+  let finish!: (response: Response) => void
+  vi.mocked(fetch).mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve
+      })
+  )
+  const view = render(<OrientedImage file={file} loading="eager" loadingDelay={500} />)
+  await act(() => vi.advanceTimersByTimeAsync(499))
+  expect(view.container.querySelector('.rt-Skeleton')).toBeNull()
+  await act(() => vi.advanceTimersByTimeAsync(1))
+  expect(view.container.querySelector('.rt-Skeleton')).not.toBeNull()
+  await act(async () => finish({ ok: true, blob: async () => new Blob(['jpeg']) } as Response))
+  expect(view.container.querySelector('.rt-Skeleton')).toBeNull()
+  expect((screen.getByRole('img') as HTMLCanvasElement).classList.contains('opacity-100')).toBe(
+    true
+  )
+  await act(() => vi.advanceTimersByTimeAsync(1000))
+  expect(view.container.querySelector('.rt-Skeleton')).toBeNull()
 })

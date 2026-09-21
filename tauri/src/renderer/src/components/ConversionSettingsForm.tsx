@@ -49,9 +49,11 @@ function concurrencyOptions(): { value: string; label: string }[] {
  */
 export function ConversionSettingsForm({
   settings,
-  update
+  update,
+  renderedOnly = false
 }: {
   settings: BatchConversionSettings
+  renderedOnly?: boolean
   update: (patch: Partial<BatchConversionSettings>) => void
 }): React.JSX.Element {
   // Remember the last non-zero denoise intensity so toggling Off→On restores it.
@@ -62,6 +64,7 @@ export function ConversionSettingsForm({
   }, [settings.denoiseIntensity])
 
   const format = settings.outputFormat
+  const rendered = settings.rendering === 'rendered'
   const saveAlongside = settings.outputDirectory === null
 
   async function pickOutputDir(): Promise<void> {
@@ -119,12 +122,45 @@ export function ConversionSettingsForm({
       {/* Conversion */}
       <Section title={t('settings.section.conversion')}>
         <div className="flex flex-col gap-3">
+          {!renderedOnly && (
+            <Row labelClassName="text-xs text-neutral-300" label={t('editor.exportRendering')}>
+              <Select
+                aria-label={t('editor.exportRendering')}
+                value={settings.rendering ?? 'original'}
+                options={[
+                  { value: 'original', label: t('editor.originalExport') },
+                  { value: 'rendered', label: t('editor.renderedExport') }
+                ]}
+                onValueChange={(rendering) =>
+                  update(
+                    rendering === 'rendered'
+                      ? {
+                          rendering,
+                          outputFormat: format === 'tiff' ? 'tiff' : 'jpeg',
+                          cineon: false,
+                          colorProfile:
+                            settings.colorProfile === 'none' ? 'sRGB' : settings.colorProfile
+                        }
+                      : { rendering, outputFormat: format === 'jpeg' ? 'dng' : format }
+                  )
+                }
+              />
+            </Row>
+          )}
+          {rendered && <p className="text-xs text-neutral-500">{t('editor.renderedExportHint')}</p>}
           <Row labelClassName="text-xs text-neutral-300" label={t('settings.conversion_format')}>
             <Select
               className="text-xs text-neutral-200"
               aria-label={t('settings.conversion_format')}
               value={format}
-              options={FORMAT_OPTIONS}
+              options={
+                rendered
+                  ? [
+                      { value: 'jpeg', label: 'JPEG' },
+                      { value: 'tiff', label: 'TIFF (16-bit)' }
+                    ]
+                  : FORMAT_OPTIONS
+              }
               onValueChange={(v) => update({ outputFormat: v })}
             />
           </Row>
@@ -139,7 +175,7 @@ export function ConversionSettingsForm({
             />
           )}
 
-          {shouldShowDngHighlightRecoveryOption(format) && (
+          {!rendered && shouldShowDngHighlightRecoveryOption(format) && (
             <ToggleRow
               labelClassName="text-xs text-neutral-300"
               label={t('settings.dng_highlight_recovery')}
@@ -149,7 +185,7 @@ export function ConversionSettingsForm({
             />
           )}
 
-          {shouldShowCineonOption(format) && (
+          {!rendered && shouldShowCineonOption(format) && (
             <ToggleRow
               labelClassName="text-xs text-neutral-300"
               label={t('settings.cineon')}
@@ -159,58 +195,85 @@ export function ConversionSettingsForm({
             />
           )}
 
-          {shouldShowColorProfileOption(format) && (
+          {(rendered || shouldShowColorProfileOption(format)) && (
             <Row labelClassName="text-xs text-neutral-300" label={t('settings.color_profile')}>
               <Select
                 className="text-xs text-neutral-200"
                 aria-label={t('settings.color_profile')}
                 value={settings.colorProfile}
-                options={COLOR_OPTIONS}
+                options={
+                  rendered
+                    ? COLOR_OPTIONS.filter((option) => option.value !== 'none')
+                    : COLOR_OPTIONS
+                }
                 onValueChange={(v) => update({ colorProfile: v })}
               />
             </Row>
           )}
 
-          <Divider />
-
-          <ToggleRow
-            labelClassName="text-xs text-neutral-300"
-            label={t('settings.denoise')}
-            help={t('settings.denoise.help')}
-            checked={settings.denoiseIntensity > 0}
-            onChange={setDenoiseEnabled}
-          />
-          {settings.denoiseIntensity > 0 && (
-            <div className="flex flex-col gap-1.5">
-              <span className="text-xs text-neutral-300">{t('settings.denoise.intensity')}</span>
+          {rendered && format === 'jpeg' && (
+            <div className="space-y-2">
+              <span className="text-xs text-neutral-300">
+                {t('editor.jpegQuality')} ({settings.jpegQuality})
+              </span>
               <Slider
-                value={settings.denoiseIntensity}
+                aria-label={t('editor.jpegQuality')}
+                value={settings.jpegQuality}
                 min={1}
-                max={10}
-                onValueChange={(v) => update({ denoiseIntensity: v })}
+                max={100}
+                onValueChange={(jpegQuality) => update({ jpegQuality })}
               />
-              <div className="flex justify-between text-xs font-semibold text-neutral-500">
-                <span>{t('settings.denoise.intensity.less')}</span>
-                <span>{t('settings.denoise.intensity.more')}</span>
-              </div>
             </div>
           )}
+          {!rendered && (
+            <>
+              <Divider />
 
-          <Divider />
+              <ToggleRow
+                labelClassName="text-xs text-neutral-300"
+                label={t('settings.denoise')}
+                help={t('settings.denoise.help')}
+                checked={settings.denoiseIntensity > 0}
+                onChange={setDenoiseEnabled}
+              />
+              {settings.denoiseIntensity > 0 && (
+                <div className="flex flex-col gap-1.5">
+                  <span className="text-xs text-neutral-300">
+                    {t('settings.denoise.intensity')}
+                  </span>
+                  <Slider
+                    value={settings.denoiseIntensity}
+                    min={1}
+                    max={10}
+                    onValueChange={(v) => update({ denoiseIntensity: v })}
+                  />
+                  <div className="flex justify-between text-xs font-semibold text-neutral-500">
+                    <span>{t('settings.denoise.intensity.less')}</span>
+                    <span>{t('settings.denoise.intensity.more')}</span>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+          {!rendered && (
+            <>
+              <Divider />
 
-          <Row
-            labelClassName="text-xs text-neutral-300"
-            label={t('settings.concurrency')}
-            help={t('settings.concurrency.help')}
-          >
-            <Select
-              className="text-xs text-neutral-200"
-              aria-label={t('settings.concurrency')}
-              value={String(settings.concurrency)}
-              options={concurrencyOptions()}
-              onValueChange={(v) => update({ concurrency: Number(v) })}
-            />
-          </Row>
+              <Row
+                labelClassName="text-xs text-neutral-300"
+                label={t('settings.concurrency')}
+                help={t('settings.concurrency.help')}
+              >
+                <Select
+                  className="text-xs text-neutral-200"
+                  aria-label={t('settings.concurrency')}
+                  value={String(settings.concurrency)}
+                  options={concurrencyOptions()}
+                  onValueChange={(v) => update({ concurrency: Number(v) })}
+                />
+              </Row>
+            </>
+          )}
         </div>
       </Section>
     </>

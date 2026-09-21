@@ -10,6 +10,20 @@ use std::{
     },
 };
 
+/// Publish a complete JSON document on the destination filesystem.
+pub fn write_json_atomic(
+    path: &std::path::Path,
+    value: &impl serde::Serialize,
+) -> Result<(), String> {
+    let parent = path.parent().ok_or("Missing storage directory")?;
+    fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    let mut temp = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
+    serde_json::to_writer_pretty(&mut temp, value).map_err(|e| e.to_string())?;
+    temp.as_file().sync_all().map_err(|e| e.to_string())?;
+    temp.persist(path).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 pub struct Preferences {
     path: PathBuf,
     value: Mutex<Settings>,
@@ -57,12 +71,7 @@ impl Preferences {
         }
         let next: Settings = serde_json::from_value(value).map_err(|e| e.to_string())?;
         next.validate()?;
-        let parent = self.path.parent().ok_or("Missing settings directory")?;
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-        let mut temp = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
-        serde_json::to_writer_pretty(&mut temp, &next).map_err(|e| e.to_string())?;
-        temp.as_file().sync_all().map_err(|e| e.to_string())?;
-        temp.persist(&self.path).map_err(|e| e.to_string())?;
+        write_json_atomic(&self.path, &next)?;
         *current = next.clone();
         Ok(next)
     }

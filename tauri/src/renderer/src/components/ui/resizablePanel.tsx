@@ -9,10 +9,15 @@ export function ResizablePanel({
   kind,
   children
 }: {
-  kind: 'inspector' | 'export'
+  kind: 'inspector' | 'export' | 'editor'
   children: ReactNode
 }): React.JSX.Element {
-  const key = kind === 'inspector' ? 'inspectorWidth' : 'exportPanelWidth'
+  const key =
+    kind === 'inspector'
+      ? 'inspectorWidth'
+      : kind === 'editor'
+        ? 'editorPanelWidth'
+        : 'exportPanelWidth'
   const saved = useSettingsStore((state) => state.settings[key])
   const update = useSettingsStore((state) => state.update)
   const [draft, setDraft] = useState<number>()
@@ -35,7 +40,13 @@ export function ResizablePanel({
     >
       <ResizeHandle
         label={t('layout.resize_panel', {
-          name: t(kind === 'inspector' ? 'inspector.title' : 'export.settings_heading')
+          name: t(
+            kind === 'inspector'
+              ? 'inspector.title'
+              : kind === 'editor'
+                ? 'editor.adjustments'
+                : 'export.settings_heading'
+          )
         })}
         hint={t('layout.reset_panel')}
         value={width}

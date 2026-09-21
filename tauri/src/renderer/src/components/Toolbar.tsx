@@ -1,4 +1,4 @@
-import { ChevronDown, PanelRight } from 'lucide-react'
+import { ChevronDown, PanelRight, SlidersHorizontal } from 'lucide-react'
 import { useQueueStore } from '../stores/queueStore'
 import { t } from '../lib/strings'
 import { BatchProgress } from './BatchProgress'
@@ -7,6 +7,7 @@ import { ViewControls } from './ViewControls'
 import { ZoomControls } from './ZoomControls'
 import { useSettingsStore } from '../stores/settingsStore'
 import { NativeMenuButton } from './ui/nativeMenuButton'
+import { useEditorStore } from '../stores/editorStore'
 
 /** Browsing controls, export status, and the split Export button. */
 export function Toolbar(): React.JSX.Element {
@@ -51,6 +52,19 @@ export function Toolbar(): React.JSX.Element {
 
       <div className="flex min-w-0 items-center gap-2">
         <BatchProgress />
+        <Button
+          variant="ghost"
+          size="md"
+          disabled={!canConvert}
+          onClick={() => {
+            const file =
+              selected.find((file) => file.id === useQueueStore.getState().activeId) ?? selected[0]
+            if (file) void useEditorStore.getState().open(file)
+          }}
+        >
+          <SlidersHorizontal className="h-4 w-4" aria-hidden="true" />
+          {t('editor.edit')}
+        </Button>
         <div
           role="group"
           aria-label={t('batch.convert_options')}
@@ -73,14 +87,20 @@ export function Toolbar(): React.JSX.Element {
             disabled={!canConvert}
             aria-label={t('batch.convert_options')}
             items={[
-              { value: 'embeddedJpg', label: t('batch.export_jpeg') },
+              { value: 'jpeg', label: t('batch.export_jpeg') },
+              { value: 'embeddedJpg', label: t('editor.exportEmbeddedJpeg') },
               { value: 'dng', label: t('batch.export_dng') },
               { value: 'tiff', label: t('batch.export_tiff') },
               { value: 'previous', label: t('batch.convert_previous'), disabled: !hasPrevious }
             ]}
             onSelect={(value) => {
               if (value === 'previous') void convertPrevious()
-              else if (value === 'embeddedJpg' || value === 'dng' || value === 'tiff')
+              else if (
+                value === 'jpeg' ||
+                value === 'embeddedJpg' ||
+                value === 'dng' ||
+                value === 'tiff'
+              )
                 void exportPreset(value)
             }}
           >

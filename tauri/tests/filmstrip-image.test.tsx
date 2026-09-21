@@ -11,7 +11,9 @@ const { fitSubscribe, fullSubscribe } = vi.hoisted(() => ({
 vi.mock('../src/renderer/src/lib/fitPreviews', () => ({ subscribeFitPreview: fitSubscribe }))
 vi.mock('../src/renderer/src/lib/previewImages', () => ({ subscribeFullPreview: fullSubscribe }))
 vi.mock('../src/renderer/src/components/OrientedImage', () => ({
-  OrientedImage: () => <div data-small-preview />
+  OrientedImage: ({ loadingDelay }: { loadingDelay?: number }) => (
+    <div data-small-preview data-loading-delay={loadingDelay} />
+  )
 }))
 
 const file: X3FFileDTO = { id: 'fit-a', path: '/a.X3F', fileName: 'a.X3F' }
@@ -40,6 +42,106 @@ afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
   vi.clearAllMocks()
+  vi.useRealTimers()
+})
+
+it('paints prefetched edited pixels immediately and keeps the original render URL', () => {
+  const url = 'x3f-edit://localhost/edited-a'
+  const dimensions = vi.fn()
+  const view = render(
+    <FilmstripImage file={{ ...file, displayPreviewUrl: url }} onDimensions={dimensions} />
+  )
+  const canvas = view.container.querySelector('canvas')!
+  expect(canvas.dataset.previewUrl).toBe(url)
+  expect(canvas.classList.contains('opacity-100')).toBe(true)
+  expect(fitSubscribe).toHaveBeenCalledWith(url, expect.any(Function), expect.any(Function))
+  expect(drawImage).toHaveBeenCalledWith(fit.image, 0, 0)
+  expect(dimensions).toHaveBeenCalledWith({ width: 6000, height: 4000 })
+  expect(fullSubscribe).not.toHaveBeenCalled()
+  expect(view.container.querySelector('.rt-Skeleton')).toBeNull()
+})
+
+it('shows an edited skeleton only after 500ms and keeps visible pixels throughout slower upgrades', async () => {
+  vi.useFakeTimers()
+  const pending: Array<(preview: typeof fit) => void> = []
+  const releases: Array<ReturnType<typeof vi.fn>> = []
+  fitSubscribe.mockImplementation((_url, ready) => {
+    pending.push(ready)
+    const release = vi.fn()
+    releases.push(release)
+    return release
+  })
+  const original = { ...file, displayPreviewUrl: 'x3f-edit://localhost/edited-a' }
+  const view = render(<FilmstripImage file={original} />)
+  await act(() => vi.advanceTimersByTimeAsync(499))
+  expect(view.container.querySelector('.rt-Skeleton')).toBeNull()
+  await act(() => vi.advanceTimersByTimeAsync(1))
+  expect(view.container.querySelector('.rt-Skeleton')).not.toBeNull()
+  act(() => pending[0](fit))
+  const canvas = view.container.querySelector('canvas')!
+  expect(view.container.querySelector('.rt-Skeleton')).toBeNull()
+  view.rerender(
+    <FilmstripImage file={{ ...original, displayPreviewUrl: 'x3f-edit://localhost/edited-b' }} />
+  )
+  expect(releases[0]).toHaveBeenCalledOnce()
+  await act(() => vi.advanceTimersByTimeAsync(1000))
+  expect(view.container.querySelector('.rt-Skeleton')).toBeNull()
+  expect(view.container.querySelector('canvas')).toBe(canvas)
+  expect(canvas.dataset.previewUrl).toBe(original.displayPreviewUrl)
+  act(() => pending[1](fit))
+  expect(canvas.dataset.previewUrl).toBe('x3f-edit://localhost/edited-b')
+  view.unmount()
+  expect(releases[1]).toHaveBeenCalledOnce()
+})
+
+it('resets the edited loading delay on URL/photo changes and ends it on errors', async () => {
+  vi.useFakeTimers()
+  const failures: Array<() => void> = []
+  fitSubscribe.mockImplementation((_url, _ready, error) => {
+    failures.push(error)
+    return () => {}
+  })
+  const original = { ...file, displayPreviewUrl: 'x3f-edit://localhost/cold-a' }
+  const view = render(<FilmstripImage file={original} />)
+  await act(() => vi.advanceTimersByTimeAsync(400))
+  view.rerender(
+    <FilmstripImage file={{ ...original, displayPreviewUrl: 'x3f-edit://localhost/cold-b' }} />
+  )
+  await act(() => vi.advanceTimersByTimeAsync(499))
+  expect(view.container.querySelector('.rt-Skeleton')).toBeNull()
+  await act(() => vi.advanceTimersByTimeAsync(1))
+  expect(view.container.querySelector('.rt-Skeleton')).not.toBeNull()
+  act(() => failures[1]())
+  expect(view.container.querySelector('.rt-Skeleton')).toBeNull()
+  expect(view.container.querySelector('[role="alert"]')).not.toBeNull()
+  view.rerender(
+    <FilmstripImage file={{ ...original, displayPreviewUrl: 'x3f-edit://localhost/cold-c' }} />
+  )
+  expect(view.container.querySelector('[role="alert"]')).toBeNull()
+  await act(() => vi.advanceTimersByTimeAsync(500))
+  expect(view.container.querySelector('.rt-Skeleton')).not.toBeNull()
+  view.rerender(
+    <FilmstripImage file={{ ...original, displayPreviewUrl: 'x3f-edit://localhost/cold-b' }} />
+  )
+  expect(view.container.querySelector('[role="alert"]')).toBeNull()
+  await act(() => vi.advanceTimersByTimeAsync(499))
+  expect(view.container.querySelector('.rt-Skeleton')).toBeNull()
+  await act(() => vi.advanceTimersByTimeAsync(1))
+  expect(view.container.querySelector('.rt-Skeleton')).not.toBeNull()
+  view.rerender(<FilmstripImage file={{ ...original, id: 'other', path: '/other.X3F' }} />)
+  await act(() => vi.advanceTimersByTimeAsync(499))
+  expect(view.container.querySelector('.rt-Skeleton')).toBeNull()
+  await act(() => vi.advanceTimersByTimeAsync(1))
+  expect(view.container.querySelector('.rt-Skeleton')).not.toBeNull()
+})
+
+it('uses the 500ms loading delay on the unedited fallback without covering it during Fit preparation', () => {
+  fitSubscribe.mockImplementation(() => () => {})
+  const view = render(<FilmstripImage file={file} />)
+  expect(
+    view.container.querySelector('[data-small-preview]')?.getAttribute('data-loading-delay')
+  ).toBe('500')
+  expect(view.container.querySelector('.rt-Skeleton')).toBeNull()
 })
 
 it('paints a decoded 2K Fit cache hit before paint, using original geometry without mounting the full JPEG', () => {

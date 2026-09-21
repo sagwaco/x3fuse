@@ -1,8 +1,9 @@
 /** Data models serialized by the Rust backend and used by the renderer. */
+import type { EditRecord } from './editor'
 
 export type ConversionStatus = 'queued' | 'processing' | 'completed' | 'failed' | 'warning'
 
-export type OutputFormat = 'dng' | 'embeddedJpg' | 'tiff'
+export type OutputFormat = 'dng' | 'embeddedJpg' | 'tiff' | 'jpeg'
 
 export type ColorProfile = 'sRGB' | 'adobeRGB' | 'proPhotoRGB' | 'none'
 
@@ -31,11 +32,15 @@ export interface ExifPair {
 export const OUTPUT_EXTENSION: Record<OutputFormat, string> = {
   dng: '.dng',
   embeddedJpg: '.jpg',
+  jpeg: '.jpg',
   tiff: '.tif'
 }
 
 /** Application preferences persisted and validated by the Rust backend. */
 export interface ConversionSettings {
+  rendering: 'original' | 'rendered'
+  jpegQuality: number
+  editorPanelWidth: number
   outputFormat: OutputFormat
   compress: boolean
   /** NLM denoise intensity, 0 = off ... 10 = full strength. */
@@ -70,6 +75,9 @@ export interface ConversionSettings {
 }
 
 export const DEFAULT_SETTINGS: ConversionSettings = {
+  rendering: 'original',
+  jpegQuality: 92,
+  editorPanelWidth: 320,
   outputFormat: 'dng',
   compress: false,
   denoiseIntensity: 10,
@@ -98,6 +106,11 @@ export const DEFAULT_SETTINGS: ConversionSettings = {
  * Conversion results belong to a batch, not to these browsing records.
  */
 export interface X3FFileDTO {
+  sourceRevision?: string
+  edit?: EditRecord
+  editError?: string
+  /** Immutable render override for editor and export-review snapshots. */
+  displayPreviewUrl?: string
   id: string
   /** Absolute path to the source .X3F file. */
   path: string
@@ -151,6 +164,8 @@ export const shouldShowCineonOption = (f: OutputFormat): boolean => f === 'tiff'
 export type BatchConversionSettings = Pick<
   ConversionSettings,
   | 'outputFormat'
+  | 'rendering'
+  | 'jpegQuality'
   | 'compress'
   | 'denoiseIntensity'
   | 'colorProfile'
@@ -162,6 +177,8 @@ export type BatchConversionSettings = Pick<
 
 export function batchSettings(settings: BatchConversionSettings): BatchConversionSettings {
   const {
+    rendering,
+    jpegQuality,
     outputFormat,
     compress,
     denoiseIntensity,
@@ -172,6 +189,8 @@ export function batchSettings(settings: BatchConversionSettings): BatchConversio
     concurrency
   } = settings
   return {
+    rendering: rendering ?? 'original',
+    jpegQuality: jpegQuality ?? 92,
     outputFormat,
     compress,
     denoiseIntensity,

@@ -95,6 +95,19 @@ pub fn install(app: &tauri::AppHandle) -> tauri::Result<()> {
         .item(&PredefinedMenuItem::undo(app, None)?)
         .item(&PredefinedMenuItem::redo(app, None)?)
         .separator()
+        .item(&item("undoEdit", "editor.undo", None)?)
+        .item(&item("redoEdit", "editor.redo", None)?)
+        .item(&item(
+            "copyEdits",
+            "editor.copy",
+            Some("CmdOrCtrl+Shift+C"),
+        )?)
+        .item(&item(
+            "pasteEdits",
+            "editor.paste",
+            Some("CmdOrCtrl+Shift+V"),
+        )?)
+        .separator()
         .item(&PredefinedMenuItem::cut(app, None)?)
         .item(&PredefinedMenuItem::copy(app, None)?)
         .item(&PredefinedMenuItem::paste(app, None)?)
@@ -178,7 +191,8 @@ pub fn install(app: &tauri::AppHandle) -> tauri::Result<()> {
                 Ok(())
             }
             name @ ("addFiles" | "selectAll" | "deselectAll" | "removeSelected" | "convertAll"
-            | "stop" | "clearQueue") => app
+            | "stop" | "clearQueue" | "undoEdit" | "redoEdit" | "copyEdits"
+            | "pasteEdits") => app
                 .emit_to("main", "menu:command", json!({"name":name}))
                 .map_err(|e| e.to_string()),
             _ => Ok(()),

@@ -10,6 +10,7 @@ import { useVirtualGrid } from '../hooks/useVirtualGrid'
 import { sortFiles } from '../lib/sortFiles'
 import { cn } from '../lib/cn'
 import { Thumbnail } from './Thumbnail'
+import { EditedBadge } from './EditedBadge'
 import { QueueContextMenu } from './QueueContextMenu'
 
 const PADDING = 12
@@ -136,6 +137,7 @@ const GridCell = memo(function GridCell({
         style={{ height: THUMB_H }}
       >
         <Thumbnail file={file} className="h-full w-full rounded-md" />
+        <EditedBadge edit={file.edit} overlay />
       </div>
       <span
         className={cn(

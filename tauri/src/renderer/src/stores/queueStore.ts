@@ -14,12 +14,15 @@ import { outputFileName } from '../lib/outputName'
 import { sortFiles } from '../lib/sortFiles'
 import { useSettingsStore } from './settingsStore'
 import { useNavStore } from './navStore'
+import { useEditorStore } from './editorStore'
+import { defaultRecipe } from '@shared/editor'
 
 const newPlaceholderId = (): string => crypto.randomUUID()
 
 export interface ExportDraft {
   files: X3FFileDTO[]
   settings: BatchConversionSettings
+  returnScreen?: 'queue' | 'editor'
 }
 
 export interface BatchFileResult {
@@ -55,7 +58,7 @@ interface QueueState {
   removeFiles: (ids: Set<string>) => void
   removeSelected: () => void
   clearQueue: () => void
-  openExport: (ids?: Set<string>) => void
+  openExport: (ids?: Set<string>, returnScreen?: 'queue' | 'editor') => void
   updateDraft: (patch: Partial<BatchConversionSettings>) => void
   cancelExport: () => void
   commitExport: () => Promise<void>
@@ -83,21 +86,74 @@ function pickActive(
 }
 
 export const useQueueStore = create<QueueState>((set, get) => {
-  function capture(ids: Set<string>): ExportDraft | null {
+  function capture(
+    ids: Set<string>,
+    returnScreen: 'queue' | 'editor' = 'queue'
+  ): ExportDraft | null {
     const settings = useSettingsStore.getState()
     if (!settings.loaded) return null
     const files = sortFiles(
-      get().files.filter((f) => ids.has(f.id)),
+      get()
+        .files.filter((f) => ids.has(f.id))
+        .map((file) => {
+          const editor = useEditorStore.getState()
+          const doc = editor.session?.path === file.path ? editor.documents[file.path] : undefined
+          // An untouched editor session still has camera framing and a per-photo
+          // film seed; the export snapshot must match the preview before autosave.
+          return doc
+            ? {
+                ...file,
+                edit: {
+                  recipe: doc.recipe,
+                  revision: doc.revision,
+                  sourceRevision: doc.sourceRevision
+                },
+                sourceRevision: doc.sourceRevision,
+                displayPreviewUrl: undefined
+              }
+            : file
+        }),
       settings.settings.sortField,
       settings.settings.sortAscending
     )
     if (!files.length || files.some((f) => f.pending)) return null
-    return { files, settings: batchSettings(settings.settings) }
+    const snapshot = batchSettings(settings.settings)
+    if (returnScreen === 'editor' || files.some((file) => file.edit)) {
+      snapshot.rendering = 'rendered'
+      if (snapshot.outputFormat !== 'tiff' && snapshot.outputFormat !== 'jpeg')
+        snapshot.outputFormat = 'jpeg'
+      if (snapshot.colorProfile === 'none') snapshot.colorProfile = 'sRGB'
+      snapshot.cineon = false
+    }
+    return { files: structuredClone(files), settings: snapshot, returnScreen }
+  }
+
+  async function prepareRendered(draft: ExportDraft): Promise<ExportDraft> {
+    if (draft.settings.rendering !== 'rendered') return draft
+    const files = await Promise.all(
+      draft.files.map(async (file) => {
+        if (file.sourceRevision && file.displayPreviewUrl) return file
+        const edit = file.edit ?? { recipe: defaultRecipe(), revision: 0 }
+        const preview = await ipc.invoke('editor:preview', {
+          path: file.path,
+          recipe: edit.recipe,
+          revision: edit.revision,
+          sourceRevision: file.sourceRevision ?? edit.sourceRevision
+        })
+        return {
+          ...file,
+          edit,
+          displayPreviewUrl: preview.url,
+          sourceRevision: preview.sourceRevision
+        }
+      })
+    )
+    return { ...draft, files }
   }
 
   function beginConversion(approvedOutputs: OutputConflict[]): void {
     const draft = get().draft
-    if (!draft || get().isProcessing) return
+    if (!draft || get().isProcessing || useEditorStore.getState().closing) return
     const previousBatch = get().batch
     const batch: ConversionBatch = {
       id: crypto.randomUUID(),
@@ -120,7 +176,17 @@ export const useQueueStore = create<QueueState>((set, get) => {
     void ipc
       .invoke('convert:start', {
         batchId: batch.id,
-        files: draft.files.map(({ id, path }) => ({ id, path })),
+        files: draft.files.map(({ id, path, edit, sourceRevision }) => ({
+          id,
+          path,
+          ...(draft!.settings.rendering === 'rendered'
+            ? {
+                recipe: edit?.recipe ?? defaultRecipe(),
+                revision: edit?.revision ?? 0,
+                sourceRevision: sourceRevision ?? edit?.sourceRevision
+              }
+            : {})
+        })),
         settings: draft.settings,
         replaceExisting: approvedOutputs.length > 0,
         approvedOutputs
@@ -139,12 +205,25 @@ export const useQueueStore = create<QueueState>((set, get) => {
   }
 
   async function checkAndStart(): Promise<void> {
-    const draft = get().draft
-    if (!draft || get().isProcessing || get().isPreparing) return
+    let draft = get().draft
+    if (!draft || get().isProcessing || get().isPreparing || useEditorStore.getState().closing)
+      return
     set({ isPreparing: true, error: null })
     try {
+      draft = await prepareRendered(draft)
+      set({ draft })
       const conflicts = await ipc.invoke('queue:existingOutputs', {
-        files: draft.files.map(({ id, path }) => ({ id, path })),
+        files: draft.files.map(({ id, path, edit, sourceRevision }) => ({
+          id,
+          path,
+          ...(draft!.settings.rendering === 'rendered'
+            ? {
+                recipe: edit?.recipe ?? defaultRecipe(),
+                revision: edit?.revision ?? 0,
+                sourceRevision: sourceRevision ?? edit?.sourceRevision
+              }
+            : {})
+        })),
         settings: draft.settings
       })
       if (conflicts.length) set({ pendingReconversion: conflicts })
@@ -166,16 +245,23 @@ export const useQueueStore = create<QueueState>((set, get) => {
     batch: null,
     error: null,
 
-    setSelection: (ids, active) =>
-      set((s) => ({ selectedIds: ids, activeId: pickActive(ids, active, s.activeId) })),
-    selectAll: () =>
+    setSelection: (ids, active) => {
+      if (useEditorStore.getState().closing) return
+      set((s) => ({ selectedIds: ids, activeId: pickActive(ids, active, s.activeId) }))
+    },
+    selectAll: () => {
+      if (useEditorStore.getState().closing) return
       set((s) => {
         const ids = new Set(s.files.map((f) => f.id))
         return { selectedIds: ids, activeId: pickActive(ids, undefined, s.activeId) }
-      }),
-    deselectAll: () => set({ selectedIds: new Set(), activeId: null }),
+      })
+    },
+    deselectAll: () => {
+      if (!useEditorStore.getState().closing) set({ selectedIds: new Set(), activeId: null })
+    },
 
     async addFiles(paths) {
+      if (useEditorStore.getState().closing) return
       // Match main's filter so placeholders line up positionally with the DTOs
       // it returns (it builds them from the same .x3f subset, in the same order).
       const x3f = paths.filter((p) => p.toLowerCase().endsWith('.x3f'))
@@ -243,10 +329,13 @@ export const useQueueStore = create<QueueState>((set, get) => {
               {
                 ...f,
                 fileSize: dto.fileSize,
+                sourceRevision: dto.sourceRevision,
                 capturedDate: dto.capturedDate,
                 orientation: dto.orientation,
                 aspectRatio: dto.aspectRatio,
                 exif: dto.exif,
+                edit: dto.edit,
+                editError: dto.editError,
                 pending: false
               }
             ]
@@ -256,7 +345,22 @@ export const useQueueStore = create<QueueState>((set, get) => {
     },
 
     removeFiles(ids) {
-      if (get().isProcessing || get().isPreparing || get().draft) return
+      if (
+        get().isProcessing ||
+        get().isPreparing ||
+        get().draft ||
+        useEditorStore.getState().closing
+      )
+        return
+      if (useEditorStore.getState().session) {
+        void useEditorStore
+          .getState()
+          .close()
+          .then((closed) => {
+            if (closed) get().removeFiles(ids)
+          })
+        return
+      }
       set((s) => ({
         files: s.files.filter((f) => !ids.has(f.id)),
         selectedIds: new Set([...s.selectedIds].filter((id) => !ids.has(id))),
@@ -269,40 +373,117 @@ export const useQueueStore = create<QueueState>((set, get) => {
     },
 
     clearQueue() {
-      if (get().isProcessing || get().isPreparing || get().draft) return
+      if (
+        get().isProcessing ||
+        get().isPreparing ||
+        get().draft ||
+        useEditorStore.getState().closing
+      )
+        return
+      if (useEditorStore.getState().session) {
+        void useEditorStore
+          .getState()
+          .close()
+          .then((closed) => {
+            if (closed) get().clearQueue()
+          })
+        return
+      }
       set({ files: [], selectedIds: new Set(), activeId: null })
     },
 
-    openExport(ids = get().selectedIds) {
-      if (get().isProcessing || get().isPreparing || get().draft) return
-      const draft = capture(ids)
-      if (!draft) return
-      set({ draft, error: null })
-      useNavStore.getState().goToExport()
+    openExport(ids = get().selectedIds, returnScreen = 'queue') {
+      if (
+        get().isProcessing ||
+        get().isPreparing ||
+        get().draft ||
+        useEditorStore.getState().closing
+      )
+        return
+      const proceed = (): void => {
+        if (useEditorStore.getState().closing) return
+        const draft = capture(ids, returnScreen)
+        if (!draft) return
+        set({ draft, error: null })
+        useNavStore.getState().goToExport()
+        if (draft.settings.rendering === 'rendered') {
+          set({ isPreparing: true })
+          void prepareRendered(draft)
+            .then((prepared) => {
+              if (get().draft === draft) set({ draft: prepared, isPreparing: false })
+            })
+            .catch((error: unknown) => set({ isPreparing: false, error: String(error) }))
+        }
+      }
+      if (useEditorStore.getState().session) {
+        void useEditorStore
+          .getState()
+          .flush()
+          .then((saved) => {
+            if (saved) proceed()
+          })
+      } else proceed()
     },
 
     updateDraft(patch) {
-      if (get().isPreparing || get().isProcessing) return
+      if (get().isPreparing || get().isProcessing || useEditorStore.getState().closing) return
+      if (patch.rendering === 'rendered' || patch.outputFormat === 'jpeg') {
+        const format = patch.outputFormat ?? get().draft?.settings.outputFormat
+        const profile = patch.colorProfile ?? get().draft?.settings.colorProfile ?? 'sRGB'
+        patch = {
+          ...patch,
+          rendering: 'rendered',
+          cineon: false,
+          colorProfile: profile === 'none' ? 'sRGB' : profile,
+          outputFormat: format === 'tiff' ? 'tiff' : 'jpeg'
+        }
+      } else if (patch.rendering === 'original' && get().draft?.settings.outputFormat === 'jpeg') {
+        patch = { ...patch, outputFormat: 'dng' }
+      }
       set((s) => ({
         draft: s.draft ? { ...s.draft, settings: { ...s.draft.settings, ...patch } } : null
       }))
+      const draft = get().draft
+      if (
+        draft?.settings.rendering === 'rendered' &&
+        draft.files.some((file) => !file.sourceRevision || !file.displayPreviewUrl)
+      ) {
+        set({ isPreparing: true })
+        void prepareRendered(draft)
+          .then((prepared) => {
+            if (get().draft === draft) set({ draft: prepared, isPreparing: false })
+          })
+          .catch((error: unknown) => set({ isPreparing: false, error: String(error) }))
+      }
     },
 
     cancelExport() {
-      if (get().isPreparing || get().isProcessing) return
+      if (get().isPreparing || get().isProcessing || useEditorStore.getState().closing) return
+      const returnScreen = get().draft?.returnScreen
       set({ draft: null, error: null })
-      useNavStore.getState().goToQueue()
+      if (returnScreen === 'editor') useNavStore.getState().goToEditor()
+      else useNavStore.getState().goToQueue()
     },
 
     commitExport: checkAndStart,
 
     async exportPreset(format) {
-      if (get().isProcessing || get().isPreparing || get().draft) return
+      if (
+        get().isProcessing ||
+        get().isPreparing ||
+        get().draft ||
+        useEditorStore.getState().closing
+      )
+        return
       const draft = capture(get().selectedIds)
       if (!draft) return
       draft.settings = {
         ...batchSettings(DEFAULT_SETTINGS),
         outputFormat: format,
+        rendering:
+          format === 'jpeg' || (format === 'tiff' && draft.settings.rendering === 'rendered')
+            ? 'rendered'
+            : 'original',
         compress: format === 'dng',
         dngHighlightRecovery: format === 'dng',
         concurrency: draft.settings.concurrency
@@ -328,6 +509,7 @@ export const useQueueStore = create<QueueState>((set, get) => {
         get().isProcessing ||
         get().isPreparing ||
         get().draft ||
+        useEditorStore.getState().closing ||
         !useSettingsStore.getState().settings.hasPreviousConversion
       )
         return
@@ -340,7 +522,13 @@ export const useQueueStore = create<QueueState>((set, get) => {
     },
 
     convertAllMenu() {
-      if (get().isProcessing || get().isPreparing || get().draft) return
+      if (
+        get().isProcessing ||
+        get().isPreparing ||
+        get().draft ||
+        useEditorStore.getState().closing
+      )
+        return
       get().selectAll()
       get().openExport()
     },
@@ -387,8 +575,10 @@ export const useQueueStore = create<QueueState>((set, get) => {
     onBatchStarted({ batchId, settings }) {
       if (get().batch?.id !== batchId) return
       useSettingsStore.getState().accept({ ...settings, hasPreviousConversion: true })
+      const returnScreen = get().draft?.returnScreen
       set({ draft: null, isPreparing: false })
-      useNavStore.getState().goToQueue()
+      if (returnScreen === 'editor') useNavStore.getState().goToEditor()
+      else useNavStore.getState().goToQueue()
     },
 
     onBatchComplete(summary) {
@@ -412,6 +602,7 @@ export const useQueueStore = create<QueueState>((set, get) => {
           }))
         }
       })
+      if (useEditorStore.getState().session) useEditorStore.getState().render()
       if (summary.cancelled) return
       const revealed = new Set<string>()
       for (const { status, outputPath } of batch.results) {

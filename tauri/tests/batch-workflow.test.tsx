@@ -93,7 +93,8 @@ describe('batch workflow', () => {
       'menu:popup',
       expect.objectContaining({
         items: [
-          { value: 'embeddedJpg', label: 'Export JPEG' },
+          { value: 'jpeg', label: 'Export JPEG' },
+          { value: 'embeddedJpg', label: 'Export embedded JPEG' },
           { value: 'dng', label: 'Export DNG' },
           { value: 'tiff', label: 'Export TIFF' },
           { value: 'previous', label: 'Export with Previous Settings', disabled: true }
@@ -592,16 +593,14 @@ describe('batch workflow', () => {
     store.getState().applyStatus({ batchId, id: 'a', status: 'completed', outputPath: first })
     store.getState().applyStatus({ batchId, id: 'b', status: 'warning', outputPath: second })
     invoke.mockClear()
-    store
-      .getState()
-      .onBatchComplete({
-        batchId,
-        completed: 2,
-        failed: 0,
-        warnings: 1,
-        total: 2,
-        cancelled: false
-      })
+    store.getState().onBatchComplete({
+      batchId,
+      completed: 2,
+      failed: 0,
+      warnings: 1,
+      total: 2,
+      cancelled: false
+    })
     expect(invoke.mock.calls).toEqual([
       ['shell:reveal', { path: first }],
       ['shell:reveal', { path: second }]
@@ -612,25 +611,21 @@ describe('batch workflow', () => {
     'does not reveal failed or cancelled batches (cancelled: %s)',
     async (cancelled) => {
       const batchId = await start()
-      store
-        .getState()
-        .applyStatus({
-          batchId,
-          id: 'a',
-          status: cancelled ? 'completed' : 'failed',
-          outputPath: '/photos/a.dng'
-        })
+      store.getState().applyStatus({
+        batchId,
+        id: 'a',
+        status: cancelled ? 'completed' : 'failed',
+        outputPath: '/photos/a.dng'
+      })
       invoke.mockClear()
-      store
-        .getState()
-        .onBatchComplete({
-          batchId,
-          completed: cancelled ? 1 : 0,
-          failed: cancelled ? 0 : 2,
-          warnings: 0,
-          total: 2,
-          cancelled
-        })
+      store.getState().onBatchComplete({
+        batchId,
+        completed: cancelled ? 1 : 0,
+        failed: cancelled ? 0 : 2,
+        warnings: 0,
+        total: 2,
+        cancelled
+      })
       expect(invoke).not.toHaveBeenCalled()
     }
   )
@@ -643,16 +638,14 @@ describe('batch workflow', () => {
     const error = new Error('File browser unavailable')
     const log = vi.spyOn(console, 'error').mockImplementation(() => {})
     invoke.mockRejectedValueOnce(error)
-    store
-      .getState()
-      .onBatchComplete({
-        batchId,
-        completed: 1,
-        failed: 1,
-        warnings: 0,
-        total: 2,
-        cancelled: false
-      })
+    store.getState().onBatchComplete({
+      batchId,
+      completed: 1,
+      failed: 1,
+      warnings: 0,
+      total: 2,
+      cancelled: false
+    })
     await waitFor(() => expect(log).toHaveBeenCalledWith('Could not reveal exported files', error))
     expect(store.getState().error).toBeNull()
     expect(store.getState().isProcessing).toBe(false)

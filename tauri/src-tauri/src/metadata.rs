@@ -170,6 +170,46 @@ impl ExifTool {
         Ok(None)
     }
 
+    pub async fn copy_rendered_tags(
+        &self,
+        input: &Path,
+        output: &Path,
+        cancel: &AtomicBool,
+    ) -> Result<(), String> {
+        let mut args: Vec<OsString> = vec![
+            "-charset".into(),
+            "filename=UTF8".into(),
+            "-overwrite_original".into(),
+            "-tagsFromFile".into(),
+            input.into(),
+        ];
+        // Copy capture/author metadata only. The encoder owns geometry, ICC and previews.
+        args.extend(
+            [
+                "-EXIF:Make",
+                "-EXIF:Model",
+                "-EXIF:DateTimeOriginal",
+                "-EXIF:CreateDate",
+                "-EXIF:ExposureTime",
+                "-EXIF:FNumber",
+                "-EXIF:ISO",
+                "-EXIF:FocalLength",
+                "-EXIF:LensModel",
+                "-EXIF:LensInfo",
+                "-EXIF:Artist",
+                "-EXIF:Copyright",
+                "-GPS:all",
+                "-XMP-dc:Creator",
+                "-XMP-dc:Rights",
+                "-Orientation#=1",
+            ]
+            .into_iter()
+            .map(Into::into),
+        );
+        args.push(output.into());
+        self.run(args, Some(cancel)).await.map(|_| ())
+    }
+
     pub async fn display(&self, paths: &[PathBuf]) -> HashMap<PathBuf, DisplayMeta> {
         let mut args: Vec<OsString> = [
             "-charset",
@@ -330,6 +370,8 @@ pub fn basic_metadata(path: PathBuf) -> Result<FileDto, String> {
         orientation: None,
         aspect_ratio: None,
         exif: None,
+        edit: None,
+        edit_error: None,
     })
 }
 

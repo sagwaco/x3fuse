@@ -3,7 +3,7 @@ import { ImageOff } from 'lucide-react'
 import { Skeleton } from '@radix-ui/themes/components/skeleton'
 import '@radix-ui/themes/src/components/skeleton.css'
 import type { X3FFileDTO } from '@shared/types'
-import { previewUrl } from '@shared/preview'
+import { displayPreviewUrl, isRenderedPreview } from '@shared/preview'
 import { cachedSmallPreview, loadSmallPreview } from '../lib/previewImages'
 import { cn } from '../lib/cn'
 import { t } from '../lib/strings'
@@ -16,6 +16,7 @@ interface ImageProps {
   className?: string
   maxEdge?: number
   loading?: 'lazy' | 'eager'
+  loadingDelay?: number
 }
 
 /** Shared, correctly oriented small preview for thumbnails and cold-load fallback. */
@@ -27,6 +28,9 @@ export function OrientedImage(props: ImageProps): React.JSX.Element {
     file.pending ?? false,
     file.orientation ?? 1,
     file.aspectRatio,
+    file.displayPreviewUrl,
+    file.edit?.revision,
+    file.edit?.previewUrl,
     maxEdge
   ])
   return <ImageContent key={key} cacheKey={key} {...props} />
@@ -38,15 +42,16 @@ function ImageContent({
   containerClassName,
   className,
   maxEdge,
-  loading = 'lazy'
+  loading = 'lazy',
+  loadingDelay
 }: ImageProps & { cacheKey: string }): React.JSX.Element {
-  const orientation = file.orientation ?? 1
-  const aspectRatio = file.aspectRatio
-  const url = previewUrl(file.path, 'preview', file.id)
+  const orientation = isRenderedPreview(file) ? 1 : (file.orientation ?? 1)
+  const aspectRatio = isRenderedPreview(file) ? undefined : file.aspectRatio
+  const url = displayPreviewUrl(file)
   const pending = !!file.pending
   const [status, setStatus] = useState<Status>('loading')
   const [visible, setVisible] = useState(loading === 'eager')
-  const showSkeleton = useDelayedLoading(pending || status === 'loading', cacheKey)
+  const showSkeleton = useDelayedLoading(pending || status === 'loading', cacheKey, loadingDelay)
   const containerRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const mediaReady = useRef(false)

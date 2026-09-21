@@ -1,5 +1,5 @@
 import { ResizablePanel } from './ui/resizablePanel'
-import { previewUrl } from '@shared/preview'
+import { displayPreviewUrl, isRenderedPreview } from '@shared/preview'
 import { useShallow } from 'zustand/react/shallow'
 import type { X3FFileDTO } from '@shared/types'
 import { useQueueStore } from '../stores/queueStore'
@@ -56,11 +56,11 @@ export function Inspector(): React.JSX.Element {
               </p>
             ) : (
               <ColorScope
-                url={active.pending ? undefined : previewUrl(active.path, 'preview', active.id)}
+                url={active.pending ? undefined : displayPreviewUrl(active)}
                 fileId={active.id}
                 pending={active.pending}
-                aspectRatio={active.aspectRatio}
-                orientation={active.orientation}
+                aspectRatio={isRenderedPreview(active) ? undefined : active.aspectRatio}
+                orientation={isRenderedPreview(active) ? 1 : active.orientation}
                 mode={scopeMode}
               />
             )}

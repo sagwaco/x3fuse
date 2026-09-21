@@ -7,6 +7,8 @@ pub enum OutputFormat {
     Dng,
     #[serde(rename = "embeddedJpg")]
     Jpeg,
+    #[serde(rename = "jpeg")]
+    RenderedJpeg,
     #[serde(rename = "tiff")]
     Tiff,
 }
@@ -15,10 +17,25 @@ impl OutputFormat {
     pub fn extension(self) -> &'static str {
         match self {
             Self::Dng => "dng",
-            Self::Jpeg => "jpg",
+            Self::Jpeg | Self::RenderedJpeg => "jpg",
             Self::Tiff => "tif",
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum Rendering {
+    #[default]
+    Original,
+    Rendered,
+}
+
+fn default_jpeg_quality() -> u8 {
+    92
+}
+fn default_editor_width() -> u16 {
+    320
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -37,6 +54,10 @@ pub enum ColorProfile {
 #[serde(rename_all = "camelCase")]
 pub struct BatchSettings {
     pub output_format: OutputFormat,
+    #[serde(default)]
+    pub rendering: Rendering,
+    #[serde(default = "default_jpeg_quality")]
+    pub jpeg_quality: u8,
     pub compress: bool,
     pub denoise_intensity: u8,
     pub color_profile: ColorProfile,
@@ -50,6 +71,8 @@ impl Default for BatchSettings {
     fn default() -> Self {
         Self {
             output_format: OutputFormat::Dng,
+            rendering: Rendering::Original,
+            jpeg_quality: default_jpeg_quality(),
             compress: false,
             denoise_intensity: 10,
             color_profile: ColorProfile::Srgb,
@@ -62,9 +85,28 @@ impl Default for BatchSettings {
 }
 
 impl BatchSettings {
+    pub fn is_rendered(&self) -> bool {
+        self.output_format == OutputFormat::RenderedJpeg || self.rendering == Rendering::Rendered
+    }
+
     pub fn validate(&self) -> Result<(), String> {
-        if self.denoise_intensity > 10 || self.concurrency > 8 {
+        if self.denoise_intensity > 10
+            || self.concurrency > 8
+            || !(1..=100).contains(&self.jpeg_quality)
+        {
             return Err("Invalid export setting".into());
+        }
+        if self.is_rendered()
+            && (!matches!(
+                self.output_format,
+                OutputFormat::RenderedJpeg | OutputFormat::Tiff
+            ) || self.color_profile == ColorProfile::None
+                || self.cineon)
+        {
+            return Err(
+                "Edited export requires JPEG or TIFF with a color profile and without Cineon"
+                    .into(),
+            );
         }
         if self
             .output_directory
@@ -109,6 +151,8 @@ pub struct Settings {
     pub inspector_open: bool,
     pub inspector_width: u16,
     pub export_panel_width: u16,
+    #[serde(default = "default_editor_width")]
+    pub editor_panel_width: u16,
     pub list_column_widths: ListColumnWidths,
     pub inspector_scope_mode: String,
     pub last_import_directory: Option<PathBuf>,
@@ -128,6 +172,7 @@ impl Default for Settings {
             inspector_open: false,
             inspector_width: 300,
             export_panel_width: 380,
+            editor_panel_width: default_editor_width(),
             list_column_widths: ListColumnWidths {
                 name: 0,
                 date: 220,
@@ -145,6 +190,7 @@ impl Settings {
         let widths = &self.list_column_widths;
         if !(220..=800).contains(&self.inspector_width)
             || !(300..=800).contains(&self.export_panel_width)
+            || !(280..=800).contains(&self.editor_panel_width)
             || (widths.name != 0 && !(180..=2000).contains(&widths.name))
             || !(80..=1000).contains(&widths.date)
             || !(64..=400).contains(&widths.size)
@@ -173,10 +219,17 @@ pub struct ListColumnWidths {
     pub size: u16,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ConvertFile {
     pub id: String,
     pub path: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recipe: Option<x3f_render::EditRecipe>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revision: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_revision: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -229,6 +282,10 @@ pub struct FileDto {
     pub aspect_ratio: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exif: Option<Vec<ExifPair>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edit: Option<crate::editor::EditRecord>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edit_error: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]

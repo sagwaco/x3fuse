@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent } 
 import type { X3FFileDTO } from '@shared/types'
 import { usePreviewStore } from '../stores/previewStore'
 import { t } from '../lib/strings'
-import { FilmstripImage } from './FilmstripImage'
+import { OrientedImage } from './OrientedImage'
 
 export function PreviewMinimap({ file }: { file: X3FFileDTO }): React.JSX.Element {
   const map = usePreviewStore((state) => state.minimap)
@@ -35,8 +35,9 @@ export function PreviewMinimap({ file }: { file: X3FFileDTO }): React.JSX.Elemen
   // Keep the decoded image subtree out of viewport-overlay updates.
   const image = useMemo(
     () => (
-      <FilmstripImage
+      <OrientedImage
         file={file}
+        loading="eager"
         containerClassName="absolute inset-0"
         className="h-full w-full object-contain"
       />
@@ -45,8 +46,9 @@ export function PreviewMinimap({ file }: { file: X3FFileDTO }): React.JSX.Elemen
   )
   if (!map || map.fileId !== file.id) {
     return (
-      <FilmstripImage
+      <OrientedImage
         file={file}
+        loading="eager"
         containerClassName="h-44 w-full rounded-md border border-white/10 bg-neutral-900"
       />
     )
@@ -71,7 +73,7 @@ export function PreviewMinimap({ file }: { file: X3FFileDTO }): React.JSX.Elemen
         className="relative overflow-hidden"
         style={{ width: `min(100%, ${11 * map.aspectRatio}rem)`, aspectRatio: map.aspectRatio }}
       >
-        {/* Use the same oriented JPEG as the main image so the window aligns exactly. */}
+        {/* The thumbnail has the same oriented framing as the main image. */}
         {image}
         <div
           role="region"

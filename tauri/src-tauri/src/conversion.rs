@@ -60,8 +60,18 @@ pub fn validate_batch(
         if file.id.is_empty() || file.id.len() > 128 || !ids.insert(&file.id) {
             return Err("Invalid or duplicate file ID".into());
         }
+        if settings.is_rendered()
+            && !file.source_revision.as_ref().is_some_and(|value| {
+                value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+            })
+        {
+            return Err("Review the source before edited export".into());
+        }
         // A source removed after import is a per-file conversion error, not a batch rejection.
         validate_source_path(&file.path)?;
+        if let Some(recipe) = &file.recipe {
+            recipe.validate()?;
+        }
         let output_path = canonical_output(file, settings)?;
         let parent = output_path.parent().ok_or("Missing output directory")?;
         if directories.insert(parent.to_owned()) {
@@ -200,16 +210,34 @@ async fn process_file(
     let core_path = temp_path.clone();
     let input = file.path.clone();
     let options = process_options(settings, state.resources.join("opcodes"));
-    let format = match settings.output_format {
-        OutputFormat::Dng => x3f_core::OutputFormat::Dng,
-        OutputFormat::Tiff => x3f_core::OutputFormat::Tiff,
-        OutputFormat::Jpeg => x3f_core::OutputFormat::Jpeg,
-    };
     let cancel = state.cancel.clone();
     let handle = app.clone();
     let batch_id = batch.to_string();
     let source = file.clone();
-    let report = tauri::async_runtime::spawn_blocking(move || {
+    let export_state = state.clone();
+    let export_settings = settings.clone();
+    let warnings = tauri::async_runtime::spawn_blocking(move || {
+        if export_settings.is_rendered() {
+            let recipe = source.recipe.clone().unwrap_or_default();
+            progress(&handle, &batch_id, &source, 0.25);
+            export_state.editor.export(
+                &input,
+                source.source_revision.as_deref(),
+                &recipe,
+                &export_settings,
+                &core_path,
+                &cancel,
+            )?;
+            return Ok(Vec::new());
+        }
+        let format = match export_settings.output_format {
+            OutputFormat::Dng => x3f_core::OutputFormat::Dng,
+            OutputFormat::Tiff => x3f_core::OutputFormat::Tiff,
+            OutputFormat::Jpeg => x3f_core::OutputFormat::Jpeg,
+            OutputFormat::RenderedJpeg => {
+                return Err("Rendered JPEG requires the editor pipeline".into())
+            }
+        };
         x3f_core::convert_file(&input, &core_path, format, &options, &cancel, |stage| {
             let value = match stage {
                 x3f_core::ConversionStage::Read => 0.2,
@@ -219,6 +247,7 @@ async fn process_file(
             };
             progress(&handle, &batch_id, &source, value);
         })
+        .map(|report| report.warnings)
         .map_err(|e| e.to_string())
     })
     .await
@@ -230,6 +259,22 @@ async fn process_file(
             .exif
             .copy_tags(&file.path, &temp_path, &state.cancel)
             .await?;
+    } else if settings.is_rendered() {
+        state
+            .exif
+            .copy_rendered_tags(&file.path, &temp_path, &state.cancel)
+            .await?;
+        let input = file.path.clone();
+        let expected = file.source_revision.clone();
+        let editor_state = state.clone();
+        let actual = tauri::async_runtime::spawn_blocking(move || {
+            editor_state.editor.edits.source_revision(&input)
+        })
+        .await
+        .map_err(|e| e.to_string())??;
+        if expected.as_deref() != Some(actual.as_str()) {
+            return Err("Source changed during export; review the photo again".into());
+        }
     }
     check()?;
     progress(app, batch, file, 0.9);
@@ -250,9 +295,9 @@ async fn process_file(
     check()?;
     publish_approved(&temp_path, &target, &file.id, approved)?;
     // After publication the validated file is complete, even if Stop arrives concurrently.
-    let warning = !report.warnings.is_empty();
-    let message = report.warnings.join("\n");
-    for warning in report.warnings {
+    let warning = !warnings.is_empty();
+    let message = warnings.join("\n");
+    for warning in warnings {
         state.logs.write("conversion", warning);
     }
     progress(app, batch, file, 1.0);
@@ -320,7 +365,11 @@ pub async fn run_batch(
         }
     };
     let groups = Arc::new(Mutex::new(groups));
-    let lanes = concurrency(request.settings.concurrency).min(groups.lock().unwrap().len());
+    let lanes = if request.settings.is_rendered() {
+        1
+    } else {
+        concurrency(request.settings.concurrency).min(groups.lock().unwrap().len())
+    };
     let summary = Arc::new(Mutex::new(BatchSummary {
         batch_id: request.batch_id.clone(),
         total: request.files.len(),
@@ -400,6 +449,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn rendered_export_requires_a_reviewed_source_snapshot() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut file = ConvertFile {
+            id: "photo".into(),
+            path: directory.path().join("photo.X3F"),
+            ..Default::default()
+        };
+        let settings = BatchSettings {
+            output_format: OutputFormat::RenderedJpeg,
+            rendering: Rendering::Rendered,
+            ..Default::default()
+        };
+        assert!(validate_batch(&[file.clone()], &settings).is_err());
+        file.source_revision = Some("a".repeat(64));
+        assert!(validate_batch(&[file], &settings).is_ok());
+    }
+
+    #[test]
     fn replacement_approval_does_not_extend_to_new_conflicts() {
         let dir = tempfile::tempdir().unwrap();
         let files: Vec<_> = ["one", "two"]
@@ -407,6 +474,7 @@ mod tests {
             .map(|name| ConvertFile {
                 id: name.into(),
                 path: dir.path().join(format!("{name}.X3F")),
+                ..Default::default()
             })
             .collect();
         let settings = BatchSettings {
@@ -463,6 +531,7 @@ mod tests {
         let files = vec![ConvertFile {
             id: "photo".into(),
             path: dir.path().join("photo.X3F"),
+            ..Default::default()
         }];
         let settings = BatchSettings {
             output_directory: Some(link.clone()),
@@ -506,6 +575,7 @@ mod tests {
                 ConvertFile {
                     id: i.to_string(),
                     path,
+                    ..Default::default()
                 }
             })
             .collect();

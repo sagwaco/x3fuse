@@ -192,7 +192,9 @@ describe('renderer smoke', () => {
     const controls = Array.from(container.querySelectorAll('button, [role="separator"]'))
     const order = controls.map(
       (element) =>
-        (element.getAttribute('aria-label') ?? element.getAttribute('role') ?? element.textContent) ||
+        (element.getAttribute('aria-label') ??
+          element.getAttribute('role') ??
+          element.textContent) ||
         element.getAttribute('title')
     )
     expect(order).toEqual([
@@ -203,6 +205,7 @@ describe('renderer smoke', () => {
       'Zoom out',
       'Zoom in',
       'Zoom level',
+      'Edit',
       'Export',
       'Export options',
       'Toggle info panel'

@@ -3,14 +3,28 @@ import type { X3FFileDTO } from '@shared/types'
 import { t } from '../lib/strings'
 import { FilmstripImage } from './FilmstripImage'
 import { usePreviewStore } from '../stores/previewStore'
+import type { PreviewRegion } from '@shared/editor'
 
 type View = { zoom: number | null; x: number; y: number }
 type ZoomOptions = { x?: number; y?: number; animate?: boolean; center?: boolean }
 const FIT: View = { zoom: null, x: 0, y: 0 }
 const MAX_ZOOM = 8
+type Tile = { url: string; region: PreviewRegion; viewport: PreviewRegion }
 
 /** Zoom is relative to the oriented JPEG's natural dimensions; null follows Fit. */
-export function ZoomablePreview({ file }: { file: X3FFileDTO }): React.JSX.Element {
+export function ZoomablePreview({
+  file,
+  onImagePoint,
+  naturalSize,
+  tile,
+  onViewportChange
+}: {
+  file: X3FFileDTO
+  onImagePoint?: (x: number, y: number) => void
+  naturalSize?: { width: number; height: number }
+  tile?: Tile | null
+  onViewportChange?: (region: PreviewRegion | null) => void
+}): React.JSX.Element {
   const viewportRef = useRef<HTMLDivElement>(null)
   const mediaRef = useRef<HTMLDivElement>(null)
   const animateZoom = useRef(false)
@@ -162,23 +176,35 @@ export function ZoomablePreview({ file }: { file: X3FFileDTO }): React.JSX.Eleme
     [constrain, image, fit, interruptZoom, updateView]
   )
 
-  useEffect(() => {
+  const visibleRegion = useMemo(() => {
+    if (!canPan) return null
     const width = Math.min(1, size.width / (image.width * scale))
     const height = Math.min(1, size.height / (image.height * scale))
+    return {
+      x: Math.max(0, Math.min(1 - width, 0.5 - current.x / (image.width * scale) - width / 2)),
+      y: Math.max(0, Math.min(1 - height, 0.5 - current.y / (image.height * scale) - height / 2)),
+      width,
+      height
+    }
+  }, [canPan, image, size, scale, current.x, current.y])
+
+  // Publish the actual viewport before paint, including after a geometry refresh.
+  useLayoutEffect(() => {
+    onViewportChange?.(visibleRegion)
+  }, [onViewportChange, visibleRegion, file.displayPreviewUrl])
+
+  useEffect(() => {
     usePreviewStore.setState({
-      minimap: canPan
+      minimap: visibleRegion
         ? {
             fileId: file.id,
             aspectRatio: image.width / image.height,
-            x: 0.5 - current.x / (image.width * scale) - width / 2,
-            y: 0.5 - current.y / (image.height * scale) - height / 2,
-            width,
-            height,
+            ...visibleRegion,
             panTo
           }
         : null
     })
-  }, [canPan, file.id, image, size, scale, current.x, current.y, panTo])
+  }, [visibleRegion, file.id, image, panTo])
 
   useEffect(() => {
     usePreviewStore.setState({
@@ -212,11 +238,18 @@ export function ZoomablePreview({ file }: { file: X3FFileDTO }): React.JSX.Eleme
     setDragging(false)
   }
 
-  const onDimensions = useCallback(({ width, height }: { width: number; height: number }): void => {
-    setImage((previous) =>
-      previous.width === width && previous.height === height ? previous : { width, height }
-    )
-  }, [])
+  const onDimensions = useCallback(
+    (size: { width: number; height: number }): void => {
+      const { width, height } = naturalSize ?? size
+      setImage((previous) =>
+        previous.width === width && previous.height === height ? previous : { width, height }
+      )
+    },
+    [naturalSize]
+  )
+  useEffect(() => {
+    if (naturalSize) onDimensions(naturalSize)
+  }, [naturalSize, onDimensions])
   const fullResolution = ready && scale > fit
   const content = useMemo(
     () => (
@@ -240,10 +273,27 @@ export function ZoomablePreview({ file }: { file: X3FFileDTO }): React.JSX.Eleme
         tabIndex={0}
         className="absolute inset-0 overflow-hidden overscroll-none outline-none"
         style={{
-          cursor: dragging ? 'grabbing' : canPan ? 'grab' : ready ? 'zoom-in' : 'default',
+          cursor: onImagePoint
+            ? 'crosshair'
+            : dragging
+              ? 'grabbing'
+              : canPan
+                ? 'grab'
+                : ready
+                  ? 'zoom-in'
+                  : 'default',
           touchAction: 'none'
         }}
         onClick={(event) => {
+          if (onImagePoint && !moved.current) {
+            const rect = mediaRef.current?.getBoundingClientRect()
+            if (rect && rect.width > 0 && rect.height > 0) {
+              const x = (event.clientX - rect.left) / rect.width
+              const y = (event.clientY - rect.top) / rect.height
+              if (x >= 0 && x <= 1 && y >= 0 && y <= 1) onImagePoint(x, y)
+            }
+            return
+          }
           if (!moved.current) {
             const rect = event.currentTarget.getBoundingClientRect()
             zoomTo((latestView.current.zoom ?? fit) === fit && fit < 1 ? 1 : null, {
@@ -310,8 +360,46 @@ export function ZoomablePreview({ file }: { file: X3FFileDTO }): React.JSX.Eleme
           }}
         >
           {content}
+          {tile && visibleRegion && <PreviewTile tile={tile} />}
         </div>
       </div>
     </div>
   )
+}
+
+/** Keep the last decoded tile on screen until its replacement is ready. */
+function PreviewTile({ tile }: { tile: Tile }): React.JSX.Element {
+  const canvas = useRef<HTMLCanvasElement>(null)
+  useLayoutEffect(() => {
+    let cancelled = false
+    const image = new Image()
+    image.crossOrigin = 'anonymous'
+    image.decoding = 'async'
+    image.src = tile.url
+    void image
+      .decode()
+      .then(() => {
+        const element = canvas.current
+        const context = element?.getContext('2d')
+        if (cancelled || !element || !context) return
+        element.width = image.naturalWidth
+        element.height = image.naturalHeight
+        context.drawImage(image, 0, 0)
+        Object.assign(element.style, {
+          left: `${tile.region.x * 100}%`,
+          top: `${tile.region.y * 100}%`,
+          width: `${tile.region.width * 100}%`,
+          height: `${tile.region.height * 100}%`
+        })
+        element.dataset.previewUrl = tile.url
+      })
+      .catch(() => {
+        // Retain previously decoded pixels if a replacement was cancelled.
+      })
+    return () => {
+      cancelled = true
+      image.src = ''
+    }
+  }, [tile])
+  return <canvas ref={canvas} data-editor-tile aria-hidden="true" className="absolute" />
 }

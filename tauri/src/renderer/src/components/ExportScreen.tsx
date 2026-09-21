@@ -73,7 +73,17 @@ export function ExportScreen(): React.JSX.Element {
             {t('export.images_heading')}
           </div>
           {count > 0 ? (
-            <QueueView mode={viewMode} draft={draft} />
+            <QueueView
+              mode={viewMode}
+              draft={{
+                ...draft,
+                files: draft.files.map((file) =>
+                  draft.settings.rendering === 'original'
+                    ? { ...file, edit: undefined, displayPreviewUrl: undefined }
+                    : file
+                )
+              }}
+            />
           ) : (
             <div className="flex flex-1 items-center justify-center px-6 text-center text-sm text-neutral-600">
               {t('export.empty')}
@@ -87,7 +97,11 @@ export function ExportScreen(): React.JSX.Element {
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto">
             <fieldset disabled={busy} className="contents">
-              <ConversionSettingsForm settings={draft.settings} update={updateDraft} />
+              <ConversionSettingsForm
+                settings={draft.settings}
+                update={updateDraft}
+                renderedOnly={draft.returnScreen === 'editor'}
+              />
             </fieldset>
           </div>
         </ResizablePanel>

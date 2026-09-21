@@ -71,7 +71,7 @@ function disableWorker(): void {
   waiting = undefined
 }
 
-function renderWorker(blob: Blob, original?: Encoded): Promise<Result> {
+function renderWorker(blob: Blob, original?: Encoded, preserveSource = false): Promise<Result> {
   return new Promise((resolve, reject) => {
     try {
       if (!worker) {
@@ -104,6 +104,7 @@ function renderWorker(blob: Blob, original?: Encoded): Promise<Result> {
       worker.postMessage({
         id,
         blob,
+        preserveSource,
         original: original && { width: original.width, height: original.height }
       })
     } catch {
@@ -116,7 +117,8 @@ function renderWorker(blob: Blob, original?: Encoded): Promise<Result> {
 async function renderFallback(
   blob: Blob,
   original: Encoded | undefined,
-  job: Job
+  job: Job,
+  preserveSource: boolean
 ): Promise<Result> {
   let image: ImageBitmap | HTMLImageElement
   let url: string | undefined
@@ -148,14 +150,16 @@ async function renderFallback(
     context.drawImage(image, 0, 0, canvas.width, canvas.height)
     const medium =
       original?.blob ??
-      (await new Promise<Blob>((resolve, reject) => {
-        canvas.toBlob(
-          (result) =>
-            result ? resolve(result) : reject(new Error('Could not encode fit preview')),
-          'image/jpeg',
-          0.9
-        )
-      }))
+      (preserveSource
+        ? blob
+        : await new Promise<Blob>((resolve, reject) => {
+            canvas.toBlob(
+              (result) =>
+                result ? resolve(result) : reject(new Error('Could not encode fit preview')),
+              'image/jpeg',
+              0.9
+            )
+          }))
     return { image: canvas, blob: medium, width, height }
   } finally {
     if ('close' in image) image.close()
@@ -228,15 +232,17 @@ function pump(): void {
       }
       const blob = saved?.blob ?? (await sourceBlob(current))
       if (!blob || current.cancelled) throw new Error('Cancelled or unavailable')
+      // Native editor frames are already sized and color-managed; preserve lossless pixels.
+      const preserveSource = /^(x3f-edit:\/\/|http:\/\/x3f-edit\.localhost\/)/.test(current.source)
       let result: Result
       if (!workerDisabled && typeof Worker !== 'undefined') {
         try {
-          result = await renderWorker(blob, saved)
+          result = await renderWorker(blob, saved, preserveSource)
         } catch {
           if (current.cancelled) throw new Error('Cancelled')
-          result = await renderFallback(blob, saved, current)
+          result = await renderFallback(blob, saved, current, preserveSource)
         }
-      } else result = await renderFallback(blob, saved, current)
+      } else result = await renderFallback(blob, saved, current, preserveSource)
       if (current.cancelled) {
         releaseImage(result.image)
         return

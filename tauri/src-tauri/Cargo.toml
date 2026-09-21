@@ -28,7 +28,9 @@ percent-encoding = "2"
 url = "2"
 tempfile = "3"
 sys-locale = "0.3"
-x3f-core = "0.1.5"
+x3f-core = { version = "0.1.5", path = "../../../x3fuse-core/crates/x3f-core" }
+x3f-render = { path = "../../../x3fuse-core/crates/x3f-render" }
+sha2 = "0.10"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
@@ -41,6 +43,20 @@ opt-level = 3
 opt-level = 3
 
 [profile.dev.package.miniz_oxide]
+opt-level = 3
+
+[profile.dev.package.x3f-render]
+opt-level = 3
+
+[profile.dev.package.image]
+opt-level = 3
+
+# Preview PNG filtering must stay optimized in desktop debug builds.
+[profile.dev.package.png]
+opt-level = 3
+
+# Importing saved edits fingerprints the entire RAW, including on external drives.
+[profile.dev.package.sha2]
 opt-level = 3
 
 [profile.release]

@@ -2,6 +2,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { X3FFileDTO } from '@shared/types'
+import { defaultRecipe } from '@shared/editor'
+import { displayPreviewUrl } from '@shared/preview'
 import { ZoomablePreview } from '../src/renderer/src/components/ZoomablePreview'
 import { ZoomControls } from '../src/renderer/src/components/ZoomControls'
 import { PreviewMinimap } from '../src/renderer/src/components/PreviewMinimap'
@@ -9,6 +11,19 @@ import { usePreviewStore } from '../src/renderer/src/stores/previewStore'
 
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }))
 vi.mock('../src/renderer/src/lib/ipc', () => ({ ipc: { invoke } }))
+vi.mock('../src/renderer/src/components/OrientedImage', () => ({
+  OrientedImage: ({
+    file,
+    containerClassName
+  }: {
+    file: X3FFileDTO
+    containerClassName?: string
+  }) => (
+    <div className={containerClassName}>
+      <img data-small-preview src={displayPreviewUrl(file)} alt={file.fileName} />
+    </div>
+  )
+}))
 vi.mock('../src/renderer/src/components/FilmstripImage', async () => {
   const { useState } = await import('react')
   return {
@@ -171,6 +186,36 @@ async function chooseZoom(value: string): Promise<void> {
 }
 
 describe('filmstrip zoom preview', () => {
+  it('uses the saved edited thumbnail for the Info navigator before and during zoom', () => {
+    const edited = {
+      ...file,
+      edit: { recipe: defaultRecipe(), revision: 1, previewUrl: 'x3f-edit://localhost/saved-a' }
+    }
+    usePreviewStore.setState({ minimap: null })
+    render(<PreviewMinimap file={edited} />)
+    expect(screen.getByRole('img').getAttribute('src')).toBe(
+      'x3f-edit://localhost/saved-a?v=thumbnail'
+    )
+    act(() =>
+      usePreviewStore.setState({
+        minimap: {
+          fileId: file.id,
+          aspectRatio: 1.5,
+          x: 0.25,
+          y: 0.25,
+          width: 0.5,
+          height: 0.5,
+          panTo: vi.fn()
+        }
+      })
+    )
+    expect(screen.getByRole('region', { name: 'Preview minimap' })).toBeTruthy()
+    expect(screen.getByRole('img').getAttribute('src')).toBe(
+      'x3f-edit://localhost/saved-a?v=thumbnail'
+    )
+    act(() => usePreviewStore.setState({ minimap: null }))
+  })
+
   it('uses medium at Fit and requests full only beyond Fit without changing image geometry', () => {
     const { surface, media, image } = setup(6000, 4000)
     const fitTransform = media.style.transform
@@ -191,7 +236,7 @@ describe('filmstrip zoom preview', () => {
     const minimapImage = document
       .querySelector('[aria-label="Preview minimap"]')
       ?.previousElementSibling?.querySelector('img')
-    expect(minimapImage?.getAttribute('data-full-resolution')).toBe('false')
+    expect(minimapImage?.hasAttribute('data-small-preview')).toBe(true)
 
     fireEvent.keyDown(surface, { key: '0' })
     expect(image.dataset.fullResolution).toBe('false')
@@ -676,5 +721,109 @@ describe('filmstrip zoom preview', () => {
     rerender(<PreviewWithControls key="b" file={{ ...file, id: 'b' }} />)
     expect(usePreviewStore.getState().minimap).toBeNull()
     expect(usePreviewStore.getState().controls).toBeNull()
+  })
+})
+
+describe('editor viewport tiles', () => {
+  it('publishes zoom and pan regions immediately, preserves native geometry, and restores Fit', () => {
+    const onViewportChange = vi.fn()
+    const result = render(
+      <ZoomablePreview
+        file={file}
+        naturalSize={{ width: 6000, height: 4000 }}
+        onViewportChange={onViewportChange}
+      />
+    )
+    loadImage(512, 341)
+    const media = document.querySelector<HTMLElement>('.preview-image')!
+    expect(media.style.width).toBe('6000px')
+    expect(onViewportChange).toHaveBeenLastCalledWith(null)
+    act(() => usePreviewStore.getState().controls!.zoomTo(1))
+    let area = onViewportChange.mock.lastCall![0]
+    expect(area.width).toBeCloseTo(800 / 6000)
+    expect(area.height).toBeCloseTo(600 / 4000)
+    const surface = screen.getByRole('region', { name: 'Image preview' })
+    wheel(surface, { deltaX: 100, deltaY: 0 })
+    const moved = onViewportChange.mock.lastCall![0]
+    expect(moved.x).toBeGreaterThan(area.x)
+    expect(moved.width).toBe(area.width)
+    onViewportChange.mockClear()
+    result.rerender(
+      <ZoomablePreview
+        file={{ ...file, displayPreviewUrl: 'new-geometry-base' }}
+        naturalSize={{ width: 6000, height: 4000 }}
+        onViewportChange={onViewportChange}
+      />
+    )
+    expect(onViewportChange).toHaveBeenCalledWith(moved)
+    act(() => usePreviewStore.getState().controls!.zoomTo(null))
+    expect(onViewportChange).toHaveBeenLastCalledWith(null)
+    area = usePreviewStore.getState().minimap
+    expect(area).toBeNull()
+  })
+
+  it('retains decoded native pixels at their image coordinates through pans and replacement decoding', async () => {
+    const pending: Array<{ image: HTMLImageElement; finish: () => void }> = []
+    Object.defineProperty(HTMLImageElement.prototype, 'decode', {
+      configurable: true,
+      value: vi.fn(function (this: HTMLImageElement) {
+        Object.defineProperties(this, {
+          naturalWidth: { value: 800 },
+          naturalHeight: { value: 600 }
+        })
+        return new Promise<void>((finish) => pending.push({ image: this, finish }))
+      })
+    })
+    const draw = vi.fn()
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+      drawImage: draw
+    } as unknown as CanvasRenderingContext2D)
+    const result = render(<ZoomablePreview file={file} />)
+    loadImage()
+    act(() => usePreviewStore.getState().controls!.zoomTo(1))
+    const { x, y, width, height } = usePreviewStore.getState().minimap!
+    const viewport = { x, y, width, height }
+    const first = { url: 'tile-1', region: { ...viewport, x: x + 0.0001 }, viewport }
+    result.rerender(<ZoomablePreview file={file} tile={first} />)
+    const canvas = result.container.querySelector<HTMLCanvasElement>('[data-editor-tile]')!
+    expect(canvas.dataset.previewUrl).toBeUndefined()
+    await act(async () => pending[0].finish())
+    expect(canvas.dataset.previewUrl).toBe('tile-1')
+    expect(canvas.style.left).toBe(`${first.region.x * 100}%`)
+    expect(draw).toHaveBeenCalledWith(pending[0].image, 0, 0)
+    result.rerender(<ZoomablePreview file={file} tile={{ ...first, url: 'tile-2' }} />)
+    expect(result.container.querySelector('[data-editor-tile]')).toBe(canvas)
+    expect(canvas.dataset.previewUrl).toBe('tile-1')
+    result.rerender(<ZoomablePreview file={file} tile={{ ...first, url: 'tile-3' }} />)
+    await act(async () => pending[1].finish())
+    expect(canvas.dataset.previewUrl).toBe('tile-1')
+    await act(async () => pending[2].finish())
+    expect(canvas.dataset.previewUrl).toBe('tile-3')
+    const previousPlacement = canvas.style.cssText
+    const previousDrawCount = draw.mock.calls.length
+    wheel(screen.getByRole('region', { name: 'Image preview' }), { deltaX: 100 })
+    expect(result.container.querySelector('[data-editor-tile]')).toBe(canvas)
+    expect(canvas.dataset.previewUrl).toBe('tile-3')
+    expect(canvas.style.cssText).toBe(previousPlacement)
+    expect(canvas.width).toBe(800)
+    expect(canvas.height).toBe(600)
+    expect(draw).toHaveBeenCalledTimes(previousDrawCount)
+    const moved = usePreviewStore.getState().minimap!
+    const nextViewport = { x: moved.x, y: moved.y, width: moved.width, height: moved.height }
+    const next = {
+      url: 'tile-4',
+      region: { ...nextViewport, x: nextViewport.x + 0.0001 },
+      viewport: nextViewport
+    }
+    result.rerender(<ZoomablePreview file={file} tile={next} />)
+    expect(result.container.querySelector('[data-editor-tile]')).toBe(canvas)
+    expect(canvas.dataset.previewUrl).toBe('tile-3')
+    expect(canvas.style.cssText).toBe(previousPlacement)
+    await act(async () => pending[3].finish())
+    expect(canvas.dataset.previewUrl).toBe('tile-4')
+    expect(canvas.style.left).toBe(`${next.region.x * 100}%`)
+    expect(canvas.style.cssText).not.toBe(previousPlacement)
+    act(() => usePreviewStore.getState().controls!.zoomTo(null))
+    expect(result.container.querySelector('[data-editor-tile]')).toBeNull()
   })
 })

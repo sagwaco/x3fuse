@@ -1,9 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { Skeleton } from '@radix-ui/themes/components/skeleton'
+import '@radix-ui/themes/src/components/skeleton.css'
 import type { X3FFileDTO } from '@shared/types'
-import { previewUrl } from '@shared/preview'
+import { displayPreviewUrl, isRenderedPreview } from '@shared/preview'
+import { t } from '../lib/strings'
 import { subscribeFitPreview } from '../lib/fitPreviews'
 import { subscribeFullPreview } from '../lib/previewImages'
 import { cn } from '../lib/cn'
+import { useDelayedLoading } from '../hooks/useDelayedLoading'
 import { OrientedImage } from './OrientedImage'
 
 interface Props {
@@ -16,7 +20,70 @@ interface Props {
 
 /** Keep the decoded Fit canvas in place throughout every full-resolution upgrade. */
 export function FilmstripImage(props: Props): React.JSX.Element {
-  return <ImageContent key={JSON.stringify([props.file.id, props.file.path])} {...props} />
+  const Content = isRenderedPreview(props.file) ? RenderedContent : ImageContent
+  return <Content key={JSON.stringify([props.file.id, props.file.path])} {...props} />
+}
+
+/** Editor frames share the decoded Fit cache and keep their previous pixels during upgrades. */
+function RenderedContent({
+  file,
+  onDimensions,
+  containerClassName,
+  className
+}: Props): React.JSX.Element {
+  const url = displayPreviewUrl(file, 'full')
+  const canvas = useRef<HTMLCanvasElement>(null)
+  const dimensions = useRef(onDimensions)
+  dimensions.current = onDimensions
+  const [ready, setReady] = useState(false)
+  const [failedUrl, setFailedUrl] = useState<string>()
+  const failed = failedUrl === url
+  const showSkeleton = useDelayedLoading(!ready && !failed, url, 500)
+  useLayoutEffect(() => {
+    setFailedUrl(undefined)
+    return subscribeFitPreview(
+      url,
+      (preview) => {
+        const element = canvas.current
+        const context = element?.getContext('2d')
+        if (!element || !context) return
+        element.width = preview.image.width
+        element.height = preview.image.height
+        context.drawImage(preview.image, 0, 0)
+        element.dataset.previewUrl = url
+        dimensions.current?.({ width: preview.width, height: preview.height })
+        setReady(true)
+        setFailedUrl(undefined)
+      },
+      () => setFailedUrl(url)
+    )
+  }, [url])
+  return (
+    <div
+      className={cn(
+        'relative flex items-center justify-center overflow-hidden',
+        containerClassName
+      )}
+      aria-busy={!ready && !failed}
+    >
+      <canvas
+        ref={canvas}
+        data-fit-preview
+        data-rendered-preview
+        role="img"
+        aria-label={file.fileName}
+        aria-hidden={!ready || undefined}
+        className={cn('max-h-full max-w-full', ready ? 'opacity-100' : 'opacity-0', className)}
+      />
+      {showSkeleton ? (
+        <Skeleton className="preview-skeleton absolute inset-0 h-full w-full" />
+      ) : failed && !ready ? (
+        <span role="alert" className="absolute text-xs text-neutral-500">
+          {t('inspector.no_preview')}
+        </span>
+      ) : null}
+    </div>
+  )
 }
 
 function ImageContent({
@@ -26,7 +93,7 @@ function ImageContent({
   containerClassName,
   className
 }: Props): React.JSX.Element {
-  const url = previewUrl(file.path, 'full', file.id)
+  const url = displayPreviewUrl(file, 'full')
   const canvas = useRef<HTMLCanvasElement>(null)
   const image = useRef<HTMLImageElement>(null)
   const dimensions = useRef(onDimensions)
@@ -101,6 +168,7 @@ function ImageContent({
         <OrientedImage
           file={file}
           loading="eager"
+          loadingDelay={500}
           containerClassName="absolute inset-0"
           className={className}
         />

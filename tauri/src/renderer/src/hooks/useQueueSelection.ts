@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, type KeyboardEvent, type Mouse
 import type { X3FFileDTO } from '@shared/types'
 import { useQueueStore } from '../stores/queueStore'
 import { useSettingsStore } from '../stores/settingsStore'
+import { useNavStore } from '../stores/navStore'
 import { arrowTargetIndex, type ArrowNav } from '../lib/queueNavigation'
 
 export interface QueueSelection {
@@ -67,7 +68,7 @@ export function useQueueSelection(ordered: X3FFileDTO[], nav?: ArrowNav): QueueS
       void useSettingsStore.getState().update({ queueViewMode: 'filmstrip' })
       return
     }
-    store.openExport(target)
+    store.openExport(target, useNavStore.getState().screen === 'editor' ? 'editor' : 'queue')
   }, [])
 
   const handleItemContextMenu = useCallback((id: string): void => {

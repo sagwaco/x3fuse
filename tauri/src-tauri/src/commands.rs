@@ -91,7 +91,18 @@ pub async fn queue_add(
             }
         }
     }
-    Ok(dtos)
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        for dto in &mut dtos {
+            match state.editor.load(&dto.path) {
+                Ok(edit) => dto.edit = edit,
+                Err(error) => dto.edit_error = Some(error),
+            }
+        }
+        dtos
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -129,6 +140,8 @@ pub async fn convert_start(
         return Err("An export is already running".into());
     }
     state.cancel.store(false, Ordering::SeqCst);
+    state.editor.paused.store(true, Ordering::SeqCst);
+    state.editor.cancel_preview();
     let state = state.inner().clone();
     let result = async {
         let validation = payload.clone();
@@ -154,6 +167,7 @@ pub async fn convert_start(
     }
     .await;
     state.running.store(false, Ordering::SeqCst);
+    state.editor.resume_previews();
     crate::finish_shutdown(&app, &state);
     result
 }
@@ -333,4 +347,258 @@ pub fn app_info(app: AppHandle) -> Value {
 }
 #[tauri::command]
 pub fn update_check() { /* Release/update work remains out of scope, as in Electron. */
+}
+
+#[tauri::command]
+pub async fn editor_open(
+    window: WebviewWindow,
+    state: State<'_, Arc<AppState>>,
+    payload: PathRequest,
+) -> Result<crate::editor::EditorSession, String> {
+    main_window(&window)?;
+    if state.running.load(Ordering::SeqCst) {
+        return Err("Wait for conversion to finish before editing".into());
+    }
+    let state = state.inner().clone();
+    state.editor.begin_open()?;
+    tauri::async_runtime::spawn_blocking(move || state.editor.open(payload.path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn editor_render(
+    window: WebviewWindow,
+    state: State<'_, Arc<AppState>>,
+    payload: crate::editor::RenderRequest,
+) -> Result<crate::editor::RenderedPreview, String> {
+    main_window(&window)?;
+    let state = state.inner().clone();
+    let job = state.editor.begin_render(payload)?;
+    tauri::async_runtime::spawn_blocking(move || state.editor.render_job(job))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveEditRequest {
+    path: PathBuf,
+    recipe: x3f_render::EditRecipe,
+    revision: u64,
+    source_revision: Option<String>,
+}
+
+#[tauri::command]
+pub async fn editor_save(
+    window: WebviewWindow,
+    state: State<'_, Arc<AppState>>,
+    payload: SaveEditRequest,
+) -> Result<crate::editor::EditRecord, String> {
+    main_window(&window)?;
+    state.editor.begin_save()?;
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        struct Saving(Arc<AppState>);
+        impl Drop for Saving {
+            fn drop(&mut self) {
+                self.0.editor.saving.fetch_sub(1, Ordering::SeqCst);
+            }
+        }
+        let _saving = Saving(state.clone());
+        state.editor.save(
+            &payload.path,
+            payload.recipe,
+            payload.revision,
+            payload.source_revision.as_deref(),
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn editor_load(
+    window: WebviewWindow,
+    state: State<'_, Arc<AppState>>,
+    payload: Paths,
+) -> Result<Vec<Value>, String> {
+    main_window(&window)?;
+    if payload.paths.len() > 1024 {
+        return Err("Load edits in smaller batches".into());
+    }
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        payload
+            .paths
+            .into_iter()
+            .map(|path| match state.editor.load(&path) {
+                Ok(Some(record)) => {
+                    let mut value = serde_json::to_value(record).unwrap();
+                    value["path"] = json!(path);
+                    value
+                }
+                Ok(None) => match state.editor.edits.source_revision(&path) {
+                    Ok(source_revision) => {
+                        json!({"path":path,"revision":0,"sourceRevision":source_revision})
+                    }
+                    Err(error) => json!({"path":path,"revision":0,"error":error}),
+                },
+                Err(error) => json!({"path":path,"revision":0,"error":error}),
+            })
+            .collect()
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionRequest {
+    session_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CancelRenderRequest {
+    session_id: String,
+    revision: u64,
+}
+
+#[tauri::command]
+pub fn editor_cancel_render(
+    window: WebviewWindow,
+    state: State<'_, Arc<AppState>>,
+    payload: CancelRenderRequest,
+) -> Result<(), String> {
+    main_window(&window)?;
+    state
+        .editor
+        .cancel_render(&payload.session_id, payload.revision)
+}
+
+#[tauri::command]
+pub fn editor_begin_image_request(
+    window: WebviewWindow,
+    state: State<'_, Arc<AppState>>,
+) -> Result<Value, String> {
+    main_window(&window)?;
+    Ok(json!({ "requestId": state.editor.begin_image_request()? }))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageRequest {
+    request_id: String,
+}
+
+#[tauri::command]
+pub fn editor_end_image_request(
+    window: WebviewWindow,
+    state: State<'_, Arc<AppState>>,
+    payload: ImageRequest,
+) -> Result<(), String> {
+    main_window(&window)?;
+    state.editor.end_image_request(&payload.request_id)
+}
+
+#[tauri::command]
+pub async fn editor_close(
+    window: WebviewWindow,
+    state: State<'_, Arc<AppState>>,
+    payload: SessionRequest,
+) -> Result<(), String> {
+    main_window(&window)?;
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.editor.close(&payload.session_id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewEditRequest {
+    path: PathBuf,
+    recipe: x3f_render::EditRecipe,
+    #[serde(default)]
+    source_revision: Option<String>,
+}
+
+#[tauri::command]
+pub async fn editor_preview(
+    window: WebviewWindow,
+    state: State<'_, Arc<AppState>>,
+    payload: PreviewEditRequest,
+) -> Result<Value, String> {
+    main_window(&window)?;
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let source_revision = state.editor.edits.source_revision(&payload.path)?;
+        let url = state.editor.preview(
+            &payload.path,
+            &payload.recipe,
+            Some(
+                payload
+                    .source_revision
+                    .as_deref()
+                    .unwrap_or(&source_revision),
+            ),
+        )?;
+        Ok(json!({"url":url,"sourceRevision":source_revision}))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PickWhiteBalanceRequest {
+    session_id: String,
+    x: f32,
+    y: f32,
+    #[serde(default)]
+    recipe: x3f_render::EditRecipe,
+}
+
+#[tauri::command]
+pub async fn editor_pick_white_balance(
+    window: WebviewWindow,
+    state: State<'_, Arc<AppState>>,
+    payload: PickWhiteBalanceRequest,
+) -> Result<Value, String> {
+    main_window(&window)?;
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        state
+            .editor
+            .pick_white_balance(&payload.session_id, payload.recipe, payload.x, payload.y)
+            .map(|(temperature, tint)| json!({"temperature":temperature,"tint":tint}))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[derive(Deserialize)]
+pub struct FinishCloseRequest {
+    quit: bool,
+}
+
+#[tauri::command]
+pub async fn editor_finish_close(
+    app: AppHandle,
+    window: WebviewWindow,
+    state: State<'_, Arc<AppState>>,
+    payload: FinishCloseRequest,
+) -> Result<(), String> {
+    main_window(&window)?;
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.editor.finish_close())
+        .await
+        .map_err(|e| e.to_string())??;
+    if payload.quit {
+        app.exit(0);
+    } else {
+        window.close().map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }

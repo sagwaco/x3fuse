@@ -1,5 +1,7 @@
 mod commands;
 pub mod conversion;
+pub mod editor;
+mod edits;
 mod menu;
 pub mod metadata;
 pub mod model;
@@ -15,13 +17,14 @@ use std::{
         Arc, OnceLock,
     },
 };
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 pub struct AppState {
     pub preferences: storage::Preferences,
     pub logs: Arc<storage::Logs>,
     pub exif: Arc<metadata::ExifTool>,
     pub previews: preview::Previews,
+    pub editor: editor::Editor,
     pub resources: PathBuf,
     pub running: AtomicBool,
     pub cancel: Arc<AtomicBool>,
@@ -117,6 +120,7 @@ pub fn run() {
                 preferences,
                 logs,
                 previews: preview::Previews::new(exif.clone()),
+                editor: editor::Editor::new(app.path().app_data_dir()?.join("edits")),
                 exif,
                 resources,
                 running: AtomicBool::new(false),
@@ -176,7 +180,70 @@ pub fn run() {
                 responder.respond(response);
             });
         })
+        .register_asynchronous_uri_scheme_protocol("x3f-edit", |context, request, responder| {
+            let app = context.app_handle().clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                let state = app.state::<Arc<AppState>>();
+                let result = state.editor.image_uri(&request.uri().to_string());
+                let (status, bytes) = match result {
+                    Ok(bytes) => (200, bytes.as_ref().clone()),
+                    Err(error) => {
+                        state
+                            .logs
+                            .write("debug", format!("Edited preview: {error}"));
+                        (400, error.into_bytes())
+                    }
+                };
+                let origin = request
+                    .headers()
+                    .get("origin")
+                    .and_then(|v| v.to_str().ok())
+                    .filter(|v| {
+                        matches!(
+                            *v,
+                            "tauri://localhost"
+                                | "http://tauri.localhost"
+                                | "https://tauri.localhost"
+                                | "http://localhost:1420"
+                        )
+                    })
+                    .unwrap_or("tauri://localhost");
+                let response = tauri::http::Response::builder()
+                    .status(status)
+                    .header(
+                        "Content-Type",
+                        if status == 200 {
+                            "image/png"
+                        } else {
+                            "text/plain"
+                        },
+                    )
+                    .header(
+                        "Cache-Control",
+                        if status == 200 {
+                            "private, max-age=86400, immutable"
+                        } else {
+                            "no-store"
+                        },
+                    )
+                    .header("Access-Control-Allow-Origin", origin)
+                    .body(bytes)
+                    .unwrap();
+                responder.respond(response);
+            });
+        })
         .invoke_handler(tauri::generate_handler![
+            commands::editor_open,
+            commands::editor_render,
+            commands::editor_save,
+            commands::editor_load,
+            commands::editor_close,
+            commands::editor_cancel_render,
+            commands::editor_begin_image_request,
+            commands::editor_end_image_request,
+            commands::editor_preview,
+            commands::editor_pick_white_balance,
+            commands::editor_finish_close,
             commands::settings_get,
             commands::settings_set,
             commands::queue_add,
@@ -198,6 +265,12 @@ pub fn run() {
             if window.label() == "main" {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     let state = window.state::<Arc<AppState>>();
+                    if state.editor.needs_close_flush() {
+                        api.prevent_close();
+                        let _ = window.emit("editor:closing", serde_json::json!({"quit":false}));
+                        return;
+                    }
+                    state.editor.cancel_preview();
                     if state.running.load(Ordering::SeqCst) {
                         api.prevent_close();
                         state.shutdown.fetch_max(1, Ordering::SeqCst);
@@ -215,6 +288,13 @@ pub fn run() {
     app.run(|app, event| match event {
         tauri::RunEvent::ExitRequested { api, code, .. } => {
             let state = app.state::<Arc<AppState>>();
+            // Closing the last macOS window is not an application Quit.
+            if state.editor.needs_close_flush() && (code.is_some() || !cfg!(target_os = "macos")) {
+                api.prevent_exit();
+                let _ = app.emit_to("main", "editor:closing", serde_json::json!({"quit":true}));
+                return;
+            }
+            state.editor.cancel_preview();
             if state.running.load(Ordering::SeqCst) {
                 api.prevent_exit();
                 state.shutdown.store(2, Ordering::SeqCst);
@@ -228,6 +308,7 @@ pub fn run() {
         }
         #[cfg(target_os = "macos")]
         tauri::RunEvent::Reopen { .. } if app.get_webview_window("main").is_none() => {
+            app.state::<Arc<AppState>>().editor.reopen();
             if let Some(config) = app.config().app.windows.iter().find(|w| w.label == "main") {
                 let _ = tauri::WebviewWindowBuilder::from_config(app, config)
                     .and_then(|builder| builder.build());
