@@ -31,6 +31,12 @@ body {
   overflow: hidden;
 }
 
+/* Pointer capture keeps drag events, but the cursor still follows hit-tested elements. */
+html.resizing-columns,
+html.resizing-columns * {
+  cursor: col-resize !important;
+}
+
 .preview-image {
   transition: none;
 }
@@ -66,18 +72,24 @@ html[data-platform='darwin'] .window-toolbar {
   padding-left: 88px;
 }
 
-/* Keep filenames readable when a sidebar narrows the list pane. */
-.file-queue {
-  container: file-queue / inline-size;
+.app-tooltip {
+  background-color: #262626;
 }
 
-@container file-queue (max-width: 560px) {
-  .file-queue-row {
-    grid-template-columns: minmax(0, 1fr) min(25%, 110px);
+@supports (-apple-visual-effect: -apple-system-glass-material) {
+  html[data-platform='darwin'] .export-help-tooltip {
+    background-color: transparent;
+    -apple-visual-effect: -apple-system-glass-material;
+    border-color: transparent;
+    box-shadow: none;
   }
+}
 
-  .file-queue-row > :nth-child(2) {
-    display: none;
+@media (prefers-reduced-transparency: reduce) {
+  html[data-platform='darwin'] .export-help-tooltip {
+    -apple-visual-effect: none;
+    background-color: #262626;
+    border-color: rgb(255 255 255 / 0.15);
   }
 }
 

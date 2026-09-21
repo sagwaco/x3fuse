@@ -158,7 +158,24 @@ during deliberately delayed full-resolution decoding. It then measures navigatio
 actions in a 1,000-row synthetic filmstrip. The rows reuse the supplied source: this
 checks UI scaling, not cold extraction from 1,000 distinct photos. The report includes
 input-to-paint estimates, frame gaps, mounted cell counts, and three native resize
-checks. Native popup selection and real-photo conversion remain manual checks.
+checks. On macOS it also measures intermediate viewport sizes during native zoom
+and restore, checking that the web content follows the animation and the original
+window bounds are restored. Reduce Motion skips the intermediate-frame requirement.
+Native popup selection and real-photo conversion remain manual checks.
+
+The macOS zoom controller also has a standalone regression check (no X3F input needed):
+
+```sh
+xcrun clang -fobjc-arc -mmacosx-version-min=14.0 -framework AppKit -framework WebKit \
+  -framework QuartzCore tests/native-zoom.m -o /tmp/x3fuse-native-zoom
+/tmp/x3fuse-native-zoom
+```
+
+The controller uses a window-associated display link to let WebKit update between
+resize frames. It preserves AppKit's zoom targets and the existing titlebar, handles
+interruption and window cleanup, and respects Reduce Motion. Check actual painting
+visually by double-clicking the titlebar in populated list, grid, filmstrip, and
+export views; DOM geometry checks alone do not establish smooth painting.
 
 The `--build` option enables the opt-in renderer probe in a Debug executable; omit it
 to rerun that executable. Normal builds omit the probe. Its JSON report is written to

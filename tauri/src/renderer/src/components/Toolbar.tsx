@@ -39,9 +39,11 @@ export function Toolbar(): React.JSX.Element {
       className="window-toolbar flex h-12 shrink-0 items-center justify-between border-b border-white/10 px-3"
     >
       <div className="flex items-center gap-2">
-        <span className="text-xs tabular-nums text-neutral-500">
-          {fileCount > 0 ? `${fileCount} ${fileCount === 1 ? 'file' : 'files'}` : ''}
-        </span>
+        {fileCount > 0 && (
+          <span className="text-xs tabular-nums text-neutral-500">
+            {`${fileCount} ${fileCount === 1 ? 'file' : 'files'}`}
+          </span>
+        )}
         <ViewControls disabled={fileCount === 0} />
         <div role="separator" aria-orientation="vertical" className="h-5 w-px bg-white/15" />
         <ZoomControls />
@@ -88,7 +90,6 @@ export function Toolbar(): React.JSX.Element {
         <Button
           variant="ghost"
           size="icon"
-          disabled={fileCount === 0}
           title={t('inspector.toggle')}
           aria-label={t('inspector.toggle')}
           aria-pressed={inspectorOpen}

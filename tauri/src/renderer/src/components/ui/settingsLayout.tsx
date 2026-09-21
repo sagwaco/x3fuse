@@ -1,4 +1,4 @@
-import * as Tooltip from '@radix-ui/react-tooltip'
+import { Tooltip } from './tooltip'
 import { Info } from 'lucide-react'
 import { cn } from '../../lib/cn'
 import { Switch } from './switch'
@@ -73,29 +73,18 @@ export function Divider(): React.JSX.Element {
 
 function HelpTooltip({ label, text }: { label: string; text: string }): React.JSX.Element {
   return (
-    <Tooltip.Provider delayDuration={200}>
-      <Tooltip.Root>
-        <Tooltip.Trigger asChild>
-          <button
-            type="button"
-            aria-label={label}
-            className="rounded text-neutral-400 hover:text-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60"
-          >
-            <Info className="h-3.5 w-3.5" aria-hidden="true" />
-          </button>
-        </Tooltip.Trigger>
-        <Tooltip.Portal>
-          <Tooltip.Content
-            side="left"
-            sideOffset={8}
-            collisionPadding={12}
-            className="z-50 max-w-72 rounded-md border border-white/15 bg-neutral-800 px-3 py-2 text-xs leading-relaxed text-neutral-200 shadow-xl"
-          >
-            {text}
-            <Tooltip.Arrow className="fill-neutral-800" />
-          </Tooltip.Content>
-        </Tooltip.Portal>
-      </Tooltip.Root>
-    </Tooltip.Provider>
+    <Tooltip
+      text={text}
+      side="left"
+      className="export-help-tooltip max-w-[min(18rem,var(--radix-tooltip-content-available-width))]"
+    >
+      <button
+        type="button"
+        aria-label={label}
+        className="rounded text-neutral-400 hover:text-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60"
+      >
+        <Info className="h-3.5 w-3.5" aria-hidden="true" />
+      </button>
+    </Tooltip>
   )
 }

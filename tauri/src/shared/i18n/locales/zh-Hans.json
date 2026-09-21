@@ -43,7 +43,7 @@
   "settings.denoise.intensity.more": "强",
   "settings.concurrency": "同时导出数量",
   "settings.concurrency.auto": "自动",
-  "settings.concurrency.help": "同时导出的照片数量。“自动”会根据本机处理器选择合适的值（约为核心数的一半，最多 4）。数值越大，批量导出完成得越快，但会占用更多 CPU 和内存；如果导出时设备变慢或发热，请选择较小的值。选择 1 则逐张导出。",
+  "settings.concurrency.help": "“自动”根据处理器选择合适的值。数值越大，CPU 和内存占用越高。",
   "settings.dng_highlight_recovery": "高光恢复（Merrill 世代）",
   "settings.dng_highlight_recovery.help": "恢复 Merrill 世代 DNG 中过曝的高光",
   "settings.dng_highlight_recovery.warning": "高光恢复可能导致 DNG 在某些应用中无法正确显示。如果遇到问题，请禁用恢复。",
@@ -172,5 +172,9 @@
   "batch.status.cancelled": "已取消",
   "batch.status.unstarted": "未开始",
   "button.close": "关闭",
-  "batch.image_count": "{{count}} 张图像"
+  "batch.image_count": "{{count}} 张图像",
+  "layout.resize_column": "调整{{name}}列宽",
+  "layout.fit_column": "拖动以调整宽度。双击或按 Enter 键以适应内容。",
+  "layout.resize_panel": "调整{{name}}面板宽度",
+  "layout.reset_panel": "拖动以调整宽度。双击或按 Enter 键以恢复默认宽度。"
 }

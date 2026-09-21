@@ -148,4 +148,34 @@ mod tests {
         assert_eq!(store.get().queue_view_mode, "grid");
         assert!(!store.get().has_previous_conversion);
     }
+
+    #[test]
+    fn layout_widths_round_trip_and_old_preferences_keep_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        fs::write(&path, r#"{"sortAscending":false}"#).unwrap();
+        let store = Preferences::load(path.clone());
+        assert_eq!(store.get().inspector_width, 300);
+        assert_eq!(store.get().export_panel_width, 380);
+        assert_eq!(store.get().list_column_widths.name, 0);
+        store
+            .set(serde_json::json!({
+                "inspectorWidth":420, "exportPanelWidth":460,
+                "listColumnWidths":{"name":500,"date":250,"size":90}
+            }))
+            .unwrap();
+        let loaded = Preferences::load(path.clone()).get();
+        assert_eq!(loaded.inspector_width, 420);
+        assert_eq!(loaded.export_panel_width, 460);
+        assert_eq!(loaded.list_column_widths.name, 500);
+        assert!(!loaded.sort_ascending);
+        for patch in [
+            serde_json::json!({"inspectorWidth":1}),
+            serde_json::json!({"exportPanelWidth":9999}),
+            serde_json::json!({"listColumnWidths":{"name":-1,"date":220,"size":110}}),
+        ] {
+            assert!(store.set(patch).is_err());
+        }
+        assert_eq!(Preferences::load(path).get().inspector_width, 420);
+    }
 }

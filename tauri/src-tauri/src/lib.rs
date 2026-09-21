@@ -45,6 +45,33 @@ pub fn finish_shutdown(app: &tauri::AppHandle, state: &AppState) {
 
 pub fn run() {
     let builder = tauri::Builder::default();
+    #[cfg(target_os = "macos")]
+    let builder = builder.plugin(
+        tauri::plugin::Builder::<tauri::Wry>::new("system-appearance")
+            .on_webview_ready(|webview| {
+                if let Err(error) = webview.with_webview(|platform| unsafe {
+                    use objc2::{msg_send, runtime::AnyObject, sel};
+                    unsafe extern "C" {
+                        fn x3fuse_install_smooth_zoom(window: *mut std::ffi::c_void) -> bool;
+                    }
+                    // The native installer borrows this window on the main thread.
+                    if !x3fuse_install_smooth_zoom(platform.ns_window()) {
+                        eprintln!("Could not enable smooth macOS window zoom");
+                    }
+                    // WebKit gates -apple-visual-effect behind this private preference.
+                    // with_webview runs on the main thread; the pointer is borrowed here only.
+                    let view = &*platform.inner().cast::<AnyObject>();
+                    let supported: bool =
+                        msg_send![view, respondsToSelector: sel!(_setUseSystemAppearance:)];
+                    if supported {
+                        let _: () = msg_send![view, _setUseSystemAppearance: true];
+                    }
+                }) {
+                    eprintln!("Could not configure macOS webview: {error}");
+                }
+            })
+            .build(),
+    );
     #[cfg(debug_assertions)]
     let builder = builder.on_page_load(|webview, payload| {
         smoke::on_page_load(webview, payload.event());

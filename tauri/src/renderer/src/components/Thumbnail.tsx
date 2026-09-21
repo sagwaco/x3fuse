@@ -8,10 +8,12 @@ import { OrientedImage } from './OrientedImage'
  */
 export function Thumbnail({
   file,
-  className
+  className,
+  maxEdge
 }: {
   file: X3FFileDTO
   className?: string
+  maxEdge?: number
 }): React.JSX.Element {
-  return <OrientedImage file={file} containerClassName={className} />
+  return <OrientedImage file={file} containerClassName={className} maxEdge={maxEdge} />
 }

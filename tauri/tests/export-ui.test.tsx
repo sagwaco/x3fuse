@@ -79,16 +79,20 @@ it('switches between the shared views while keeping the export targets fixed', a
   expect(cancel.querySelector('svg')).toBeNull()
   expect(exportButton.querySelector('.lucide-upload')).toBeTruthy()
 
-  fireEvent.click(screen.getByTitle(t('view.grid')))
+  fireEvent.click(screen.getByRole('button', { name: t('view.grid') }))
   await waitFor(() =>
-    expect(screen.getByTitle(t('view.grid')).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByRole('button', { name: t('view.grid') }).getAttribute('aria-pressed')).toBe(
+      'true'
+    )
   )
   expect(screen.queryByRole('button', { name: 'Name' })).toBeNull()
   expect(screen.getByText('→ b.dng')).toBeTruthy()
   expect(screen.queryByText('excluded.X3F')).toBeNull()
   fireEvent.doubleClick(screen.getByText('b.X3F'))
   await waitFor(() =>
-    expect(screen.getByTitle(t('view.filmstrip')).getAttribute('aria-pressed')).toBe('true')
+    expect(
+      screen.getByRole('button', { name: t('view.filmstrip') }).getAttribute('aria-pressed')
+    ).toBe('true')
   )
   expect(screen.getByText('b.X3F → b.dng')).toBeTruthy()
   const surface = document.activeElement as HTMLElement
@@ -130,6 +134,7 @@ it('shows inline help on keyboard focus and hover, without changing the setting'
   expect((await screen.findByRole('tooltip')).textContent).toContain(
     t('settings.raw_compression.warning')
   )
+  expect(document.querySelector('.export-help-tooltip')).toBeTruthy()
   fireEvent.keyDown(help, { key: 'Escape' })
   await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull())
   act(() => help.blur())

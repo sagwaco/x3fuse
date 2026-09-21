@@ -1,3 +1,4 @@
+import { ResizablePanel } from './ui/resizablePanel'
 import { previewUrl } from '@shared/preview'
 import { useShallow } from 'zustand/react/shallow'
 import type { X3FFileDTO } from '@shared/types'
@@ -26,7 +27,7 @@ export function Inspector(): React.JSX.Element {
   const title = multiple ? t('batch.image_count', { count: selected.length }) : active?.fileName
 
   return (
-    <aside className="flex w-[300px] shrink-0 flex-col border-l border-white/10 bg-neutral-900/30">
+    <ResizablePanel kind="inspector">
       <div className="flex h-8 shrink-0 items-center border-b border-white/10 px-3 text-xs font-medium text-neutral-400">
         <span className="truncate" title={title}>
           {t('inspector.title')}
@@ -70,7 +71,7 @@ export function Inspector(): React.JSX.Element {
           </Section>
         </div>
       )}
-    </aside>
+    </ResizablePanel>
   )
 }
 

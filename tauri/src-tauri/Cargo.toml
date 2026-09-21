@@ -11,6 +11,7 @@ crate-type = ["lib", "cdylib", "staticlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+cc = "1"
 
 [dependencies]
 # Apply backgroundColor to WKWebView's backing surface during live resizing.
@@ -28,6 +29,9 @@ url = "2"
 tempfile = "3"
 sys-locale = "0.3"
 x3f-core = "0.1.5"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
 
 # RAW processing needs optimization even when the desktop app is being debugged.
 [profile.dev.package.x3f-core]

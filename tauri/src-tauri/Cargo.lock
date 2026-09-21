@@ -5193,7 +5193,9 @@ name = "x3fuse-tauri"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "cc",
  "chrono",
+ "objc2",
  "percent-encoding",
  "serde",
  "serde_json",

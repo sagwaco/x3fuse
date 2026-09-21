@@ -1,3 +1,4 @@
+import { ResizablePanel } from './ui/resizablePanel'
 import { Loader2, Upload } from 'lucide-react'
 import { useQueueStore } from '../stores/queueStore'
 import { t } from '../lib/strings'
@@ -80,7 +81,7 @@ export function ExportScreen(): React.JSX.Element {
           )}
         </div>
 
-        <aside className="flex w-[380px] shrink-0 flex-col border-l border-white/10 bg-neutral-900/30">
+        <ResizablePanel kind="export">
           <div className="flex h-8 shrink-0 items-center border-b border-white/10 px-3 text-xs font-medium text-neutral-400">
             {t('export.settings_heading')}
           </div>
@@ -89,7 +90,7 @@ export function ExportScreen(): React.JSX.Element {
               <ConversionSettingsForm settings={draft.settings} update={updateDraft} />
             </fieldset>
           </div>
-        </aside>
+        </ResizablePanel>
       </div>
     </div>
   )

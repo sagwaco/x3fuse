@@ -304,7 +304,8 @@ async function stressFilmstrip(files: X3FFileDTO[], direction: 'forward' | 'revi
         'Rapid navigation lost the latest selection'
       )
       check(
-        document.querySelector('aside p[title]')?.textContent === expected.fileName,
+        document.querySelector('aside span[title]')?.textContent ===
+          `${t('inspector.title')} - ${expected.fileName}`,
         'Inspector painted stale file data'
       )
       const control = document.querySelector(
@@ -376,6 +377,111 @@ function watchPreviewRequests() {
   }
 }
 
+async function checkLayout() {
+  const edge = (name: string): HTMLElement => {
+    const element = document.querySelector<HTMLElement>(
+      `[role="separator"][aria-label="${CSS.escape(name)}"]`
+    )
+    check(element, `Missing resize control: ${name}`)
+    return element
+  }
+  const reset = (element: HTMLElement): void => {
+    element.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+  }
+  const resize = async (element: HTMLElement): Promise<void> => {
+    const before = Number(element.getAttribute('aria-valuenow'))
+    const key = before >= Number(element.getAttribute('aria-valuemax')) ? 'Home' : 'End'
+    element.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }))
+    await painted()
+    check(
+      Number(element.getAttribute('aria-valuenow')) !== before,
+      'Resize did not update the layout'
+    )
+  }
+  await useSettingsStore.getState().update({ queueViewMode: 'list' })
+  await until(() => !!document.querySelector('.file-queue'), 'List view did not mount')
+  await until(
+    () => !!document.querySelector('.file-queue canvas.opacity-100'),
+    'List thumbnail did not paint'
+  )
+  const name = edge(t('layout.resize_column', { name: t('queue.column.name') }))
+  await resize(name)
+  reset(name)
+  await painted()
+  const rows = document.querySelectorAll<HTMLElement>('.file-queue-row')
+  check(
+    rows.length > 1 &&
+      getComputedStyle(rows[0]).gridTemplateColumns ===
+        getComputedStyle(rows[1]).gridTemplateColumns,
+    'Column headers and rows are misaligned'
+  )
+  for (const index of [1, 2]) {
+    const heading = rows[0].children[index].querySelector('button > span')!
+    const text = document.createRange()
+    text.selectNodeContents(rows[1].children[index])
+    check(
+      Math.abs(heading.getBoundingClientRect().left - text.getBoundingClientRect().left) < 1,
+      'Date/Size values are not aligned with their column titles'
+    )
+  }
+  check(
+    Number(name.getAttribute('aria-valuenow')) < 2000,
+    'Column double-click did not fit contents'
+  )
+  const info = edge(t('layout.resize_panel', { name: t('inspector.title') }))
+  await resize(info)
+  reset(info)
+  await painted()
+  check(
+    document.querySelector('aside')?.getBoundingClientRect().width === 300,
+    'Info panel did not reset'
+  )
+  useQueueStore.getState().openExport()
+  await until(() => !!document.querySelector('button svg.lucide-info'), 'Export help did not mount')
+  const panel = edge(t('layout.resize_panel', { name: t('export.settings_heading') }))
+  await resize(panel)
+  reset(panel)
+  await painted()
+  check(
+    document.querySelector('aside')?.getBoundingClientRect().width === 380,
+    'Export panel did not reset'
+  )
+  const help = document.querySelector<HTMLButtonElement>('button:has(svg.lucide-info)')!
+  help.focus()
+  await until(() => !!document.querySelector('.export-help-tooltip'), 'Export help did not open')
+  const tooltip = document.querySelector('.export-help-tooltip')!
+  const supported = CSS.supports('-apple-visual-effect', '-apple-system-glass-material')
+  const glass =
+    document.documentElement.dataset.platform === 'darwin' &&
+    supported &&
+    !matchMedia('(prefers-reduced-transparency: reduce)').matches
+  const style = getComputedStyle(tooltip)
+  check(
+    glass
+      ? style.getPropertyValue('-apple-visual-effect') === '-apple-system-glass-material'
+      : style.backgroundColor === 'rgb(38, 38, 38)',
+    'Incorrect Export help material'
+  )
+  check(
+    document.querySelectorAll('.app-tooltip').length === 1 &&
+      !!document.querySelector('button[title]'),
+    'Native title tooltips were replaced'
+  )
+  help.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+  await until(() => !document.querySelector('.app-tooltip'), 'Escape did not dismiss help')
+  useQueueStore.getState().cancelExport()
+  await useSettingsStore.getState().update({ queueViewMode: 'filmstrip' })
+  await painted()
+  return {
+    columnResizeAndFit: true,
+    alignedColumns: true,
+    thumbnail: true,
+    panelResizeAndReset: true,
+    exportHelpGlass: glass,
+    nativeTitles: true
+  }
+}
+
 async function run(input: string): Promise<Record<string, unknown>> {
   check(
     location.protocol === 'tauri:' || location.hostname === 'tauri.localhost',
@@ -414,6 +520,7 @@ async function run(input: string): Promise<Record<string, unknown>> {
     const worker = await checkScopeWorker()
     const fitWorker = await checkFitWorker()
     const fitHandoff = await checkFitHandoff()
+    const layout = await checkLayout()
     const revision = crypto.randomUUID()
     const files = Array.from({ length: 1000 }, (_, index) => ({
       ...file,
@@ -466,6 +573,7 @@ async function run(input: string): Promise<Record<string, unknown>> {
       },
       scopeWorker: worker,
       fitPreview: { worker: fitWorker, handoff: fitHandoff },
+      layout,
       filmstrip: {
         synthetic: true,
         rows: files.length,

@@ -43,7 +43,7 @@
   "settings.denoise.intensity.more": "強",
   "settings.concurrency": "同時書き出し数",
   "settings.concurrency.auto": "自動",
-  "settings.concurrency.help": "一度に書き出す写真の枚数です。「自動」はこのデバイスのプロセッサに適した値（コア数の約半分、最大4）を選択します。値を大きくすると大量の書き出しが早く終わりますが、CPUとメモリの使用量が増えます。書き出し中に動作が重くなったり本体が熱くなったりする場合は、小さい値を選んでください。1を選ぶと1枚ずつ書き出します。",
+  "settings.concurrency.help": "「自動」はプロセッサに応じた値を選びます。値が大きいほどCPUとメモリの使用量が増えます。",
   "settings.dng_highlight_recovery": "ハイライト復元（Merrill世代）",
   "settings.dng_highlight_recovery.help": "Merrill世代のDNGで白飛びしたハイライトを復元します",
   "settings.dng_highlight_recovery.warning": "ハイライト復元により、一部のアプリでDNGが正しく表示されない場合があります。問題が発生した場合は、復元を無効にしてください。",
@@ -172,5 +172,9 @@
   "batch.status.cancelled": "キャンセル済み",
   "batch.status.unstarted": "未開始",
   "button.close": "閉じる",
-  "batch.image_count": "{{count}} 枚の画像"
+  "batch.image_count": "{{count}} 枚の画像",
+  "layout.resize_column": "{{name}}列の幅を変更",
+  "layout.fit_column": "ドラッグして幅を変更。ダブルクリックまたはEnterキーで内容に合わせます。",
+  "layout.resize_panel": "{{name}}パネルの幅を変更",
+  "layout.reset_panel": "ドラッグして幅を変更。ダブルクリックまたはEnterキーで既定の幅に戻します。"
 }

@@ -178,7 +178,7 @@ describe('renderer smoke', () => {
     }
   )
 
-  it('keeps toolbar controls in order and disables them when the queue empties', async () => {
+  it('keeps toolbar controls in order and only disables image controls when the queue empties', async () => {
     const { Toolbar } = await import('../src/renderer/src/components/Toolbar')
     const { useQueueStore } = await import('../src/renderer/src/stores/queueStore')
     const { useSettingsStore } = await import('../src/renderer/src/stores/settingsStore')
@@ -187,13 +187,13 @@ describe('renderer smoke', () => {
       loaded: true
     })
     const { container } = render(<Toolbar />)
+    const viewControls = screen.getByRole('button', { name: 'List view' }).parentElement!
+    expect(viewControls.previousElementSibling).toBeNull()
     const controls = Array.from(container.querySelectorAll('button, [role="separator"]'))
     const order = controls.map(
       (element) =>
-        element.getAttribute('aria-label') ??
-        element.getAttribute('title') ??
-        element.getAttribute('role') ??
-        element.textContent
+        (element.getAttribute('aria-label') ?? element.getAttribute('role') ?? element.textContent) ||
+        element.getAttribute('title')
     )
     expect(order).toEqual([
       'List view',
@@ -203,11 +203,15 @@ describe('renderer smoke', () => {
       'Zoom out',
       'Zoom in',
       'Zoom level',
-      'Export selected',
+      'Export',
       'Export options',
       'Toggle info panel'
     ])
-    const buttons = screen.getAllByRole('button') as HTMLButtonElement[]
+    const toggle = screen.getByRole('button', { name: 'Toggle info panel' }) as HTMLButtonElement
+    expect(toggle.disabled).toBe(false)
+    const buttons = (screen.getAllByRole('button') as HTMLButtonElement[]).filter(
+      (button) => button !== toggle
+    )
     for (const button of buttons) {
       expect(button.disabled).toBe(true)
       fireEvent.click(button)
@@ -225,14 +229,17 @@ describe('renderer smoke', () => {
         activeId: 'a'
       })
     )
+    expect(viewControls.previousElementSibling).toBe(screen.getByText('1 file'))
     for (const title of [
       'List view',
       'Grid view',
       'Filmstrip view',
-      'Export selected',
+      'Export',
       'Toggle info panel'
     ]) {
-      expect((screen.getByTitle(title) as HTMLButtonElement).disabled).toBe(false)
+      expect(
+        (screen.getByRole('button', { name: title, exact: true }) as HTMLButtonElement).disabled
+      ).toBe(false)
     }
     expect(
       (screen.getByRole('button', { name: 'Export options' }) as HTMLButtonElement).disabled
@@ -246,20 +253,41 @@ describe('renderer smoke', () => {
     )
     expect(useSettingsStore.getState().settings.inspectorOpen).toBe(true)
     act(() => useQueueStore.getState().clearQueue())
+    expect(viewControls.previousElementSibling).toBeNull()
     expect(Array.from(container.querySelectorAll('button, [role="separator"]'))).toEqual(controls)
     expect(buttons.every((button) => button.disabled)).toBe(true)
     expect(useSettingsStore.getState().settings.inspectorOpen).toBe(true)
+    expect(toggle.disabled).toBe(false)
+    for (const inspectorOpen of [false, true]) {
+      invoke.mockResolvedValueOnce({ ...DEFAULT_SETTINGS, inspectorOpen })
+      await act(async () => fireEvent.click(toggle))
+      expect(invoke).toHaveBeenLastCalledWith('settings:set', { inspectorOpen })
+      expect(useSettingsStore.getState().settings.inspectorOpen).toBe(inspectorOpen)
+      expect(toggle.getAttribute('aria-pressed')).toBe(String(inspectorOpen))
+    }
     expect(useSettingsStore.getState().settings.queueViewMode).toBe(DEFAULT_SETTINGS.queueViewMode)
   })
 
-  it('mounts MainWindow with the empty drop zone', async () => {
+  it('toggles the info panel alongside the empty drop zone', async () => {
     const { MainWindow } = await import('../src/renderer/src/components/MainWindow')
-    render(<MainWindow />)
+    const { useSettingsStore } = await import('../src/renderer/src/stores/settingsStore')
+    await act(async () => {
+      render(<MainWindow />)
+    })
     expect(screen.getByText('No files in queue')).toBeTruthy()
     expect(screen.getByText('Export')).toBeTruthy()
-    expect(
-      (screen.getByRole('button', { name: 'Toggle info panel' }) as HTMLButtonElement).disabled
-    ).toBe(true)
+    const toggle = screen.getByRole('button', { name: 'Toggle info panel' }) as HTMLButtonElement
+    expect(toggle.disabled).toBe(false)
+    expect(screen.queryByRole('complementary')).toBeNull()
+    for (const inspectorOpen of [true, false]) {
+      invoke.mockResolvedValueOnce({ ...DEFAULT_SETTINGS, inspectorOpen })
+      await act(async () => fireEvent.click(toggle))
+      expect(invoke).toHaveBeenLastCalledWith('settings:set', { inspectorOpen })
+      expect(useSettingsStore.getState().settings.inspectorOpen).toBe(inspectorOpen)
+      expect(toggle.getAttribute('aria-pressed')).toBe(String(inspectorOpen))
+      expect(screen.queryByRole('complementary') !== null).toBe(inspectorOpen)
+      if (inspectorOpen) expect(screen.getByText('Select a file to see its details')).toBeTruthy()
+    }
     expect(screen.queryByTitle('Add files')).toBeNull()
     expect(screen.queryByTitle('Settings')).toBeNull()
   })

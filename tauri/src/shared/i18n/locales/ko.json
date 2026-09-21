@@ -43,7 +43,7 @@
   "settings.denoise.intensity.more": "높음",
   "settings.concurrency": "동시 내보내기 수",
   "settings.concurrency.auto": "자동",
-  "settings.concurrency.help": "한 번에 내보낼 사진 수입니다. '자동'은 이 기기의 프로세서에 맞는 값(코어 수의 약 절반, 최대 4)을 선택합니다. 값이 클수록 대량 내보내기가 빨리 끝나지만 CPU와 메모리 사용량이 늘어납니다. 내보내기 중 기기가 느려지거나 뜨거워지면 더 낮은 값을 선택하십시오. 1을 선택하면 한 장씩 내보냅니다.",
+  "settings.concurrency.help": "'자동'은 프로세서에 맞는 값을 선택합니다. 값이 클수록 CPU와 메모리 사용량이 늘어납니다.",
   "settings.dng_highlight_recovery": "하이라이트 복구 (Merrill 세대)",
   "settings.dng_highlight_recovery.help": "Merrill 세대 DNG에서 날아간 하이라이트를 복구합니다",
   "settings.dng_highlight_recovery.warning": "하이라이트 복구로 인해 일부 앱에서 DNG가 올바르게 표시되지 않을 수 있습니다. 문제가 발생하면 복구를 비활성화하십시오.",
@@ -172,5 +172,9 @@
   "batch.status.cancelled": "취소됨",
   "batch.status.unstarted": "시작되지 않음",
   "button.close": "닫기",
-  "batch.image_count": "이미지 {{count}}개"
+  "batch.image_count": "이미지 {{count}}개",
+  "layout.resize_column": "{{name}} 열 너비 조절",
+  "layout.fit_column": "드래그하여 너비를 조절합니다. 두 번 클릭하거나 Enter 키를 눌러 내용에 맞춥니다.",
+  "layout.resize_panel": "{{name}} 패널 너비 조절",
+  "layout.reset_panel": "드래그하여 너비를 조절합니다. 두 번 클릭하거나 Enter 키를 눌러 기본 너비로 되돌립니다."
 }

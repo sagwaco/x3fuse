@@ -8,6 +8,13 @@ export type ColorProfile = 'sRGB' | 'adobeRGB' | 'proPhotoRGB' | 'none'
 
 export type SortField = 'File Name' | 'Date' | 'Size'
 
+export interface ListColumnWidths {
+  /** Zero lets the filename column fill the remaining space until resized. */
+  name: number
+  date: number
+  size: number
+}
+
 /** How the queue is presented (list, grid, or filmstrip). */
 export type QueueViewMode = 'list' | 'grid' | 'filmstrip'
 
@@ -54,6 +61,9 @@ export interface ConversionSettings {
   queueViewMode: QueueViewMode
   /** Whether the right-hand info inspector (histogram + EXIF) is open. */
   inspectorOpen: boolean
+  inspectorWidth: number
+  exportPanelWidth: number
+  listColumnWidths: ListColumnWidths
   inspectorScopeMode: ScopeMode
   /** Last directory confirmed in the X3F import dialog. */
   lastImportDirectory: string | null
@@ -76,6 +86,9 @@ export const DEFAULT_SETTINGS: ConversionSettings = {
   autoDownloadUpdates: false,
   queueViewMode: 'list',
   inspectorOpen: false,
+  inspectorWidth: 300,
+  exportPanelWidth: 380,
+  listColumnWidths: { name: 0, date: 220, size: 110 },
   inspectorScopeMode: 'rgbParade',
   lastImportDirectory: null
 }

@@ -1,7 +1,7 @@
 import { memo, useRef, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import * as Dialog from '@radix-ui/react-dialog'
-import * as Tooltip from '@radix-ui/react-tooltip'
+import { Tooltip } from './ui/tooltip'
 import {
   Check,
   CircleSlash,
@@ -58,109 +58,107 @@ export function BatchProgress(): React.JSX.Element | null {
   const ResultIcon = hasIssues ? TriangleAlert : summary?.cancelled ? CircleSlash : Check
 
   return (
-    <Tooltip.Provider delayDuration={200}>
-      <Dialog.Root open={open} onOpenChange={setOpen}>
-        <Dialog.Trigger asChild>
-          <Button
-            type="button"
-            variant="ghost"
-            size={isProcessing ? 'md' : 'icon'}
-            className="shrink-0 text-xs tabular-nums"
-            title={title}
-            aria-label={`${t('batch.details')}: ${title}`}
-          >
-            {isProcessing ? (
-              <>
-                <svg
-                  viewBox="0 0 24 24"
-                  className="h-4 w-4 -rotate-90"
-                  role="progressbar"
-                  aria-label={t('batch.progress_label')}
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                  aria-valuenow={Math.round(progress * 100)}
-                >
-                  <circle
-                    cx="12"
-                    cy="12"
-                    r="9"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="3"
-                    className="text-white/15"
-                  />
-                  <circle
-                    cx="12"
-                    cy="12"
-                    r="9"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="3"
-                    pathLength="100"
-                    strokeDasharray="100"
-                    strokeDashoffset={100 - progress * 100}
-                    strokeLinecap={progress ? 'round' : 'butt'}
-                    className="text-blue-500"
-                  />
-                </svg>
-                <span aria-hidden="true">{t('batch.progress', { processed, total })}</span>
-              </>
-            ) : (
-              <ResultIcon
-                aria-hidden="true"
-                className={`h-4 w-4 ${hasIssues ? 'text-red-400' : summary?.cancelled ? 'text-neutral-400' : 'text-green-400'}`}
-              />
+    <Dialog.Root open={open} onOpenChange={setOpen}>
+      <Dialog.Trigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size={isProcessing ? 'md' : 'icon'}
+          className="shrink-0 text-xs tabular-nums"
+          title={title}
+          aria-label={`${t('batch.details')}: ${title}`}
+        >
+          {isProcessing ? (
+            <>
+              <svg
+                viewBox="0 0 24 24"
+                className="h-4 w-4 -rotate-90"
+                role="progressbar"
+                aria-label={t('batch.progress_label')}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={Math.round(progress * 100)}
+              >
+                <circle
+                  cx="12"
+                  cy="12"
+                  r="9"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="3"
+                  className="text-white/15"
+                />
+                <circle
+                  cx="12"
+                  cy="12"
+                  r="9"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="3"
+                  pathLength="100"
+                  strokeDasharray="100"
+                  strokeDashoffset={100 - progress * 100}
+                  strokeLinecap={progress ? 'round' : 'butt'}
+                  className="text-blue-500"
+                />
+              </svg>
+              <span aria-hidden="true">{t('batch.progress', { processed, total })}</span>
+            </>
+          ) : (
+            <ResultIcon
+              aria-hidden="true"
+              className={`h-4 w-4 ${hasIssues ? 'text-red-400' : summary?.cancelled ? 'text-neutral-400' : 'text-green-400'}`}
+            />
+          )}
+          <span role="status" className="sr-only">
+            {title}
+          </span>
+        </Button>
+      </Dialog.Trigger>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-40 bg-black/50" />
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 flex max-h-[80vh] w-[min(560px,90vw)] -translate-x-1/2 -translate-y-1/2 flex-col gap-4 rounded-xl border border-white/10 bg-neutral-900 p-5 text-neutral-100 shadow-xl">
+          <Dialog.Title className="font-semibold">{t('batch.details')}</Dialog.Title>
+          <Dialog.Description className="text-sm text-neutral-400">{title}</Dialog.Description>
+          {error && (
+            <p role="alert" className="text-sm text-red-400">
+              {error}
+            </p>
+          )}
+          <ConversionResults results={batch.results} />
+          <div className="flex justify-end gap-2">
+            {isProcessing && (
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={stop}
+                disabled={isPreparing || isCancelling}
+              >
+                <Square className="h-3 w-3 fill-current" aria-hidden="true" />
+                {t(isCancelling ? 'batch.cancelling' : 'button.stop')}
+              </Button>
             )}
-            <span role="status" className="sr-only">
-              {title}
-            </span>
-          </Button>
-        </Dialog.Trigger>
-        <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 z-40 bg-black/50" />
-          <Dialog.Content className="fixed left-1/2 top-1/2 z-50 flex max-h-[80vh] w-[min(560px,90vw)] -translate-x-1/2 -translate-y-1/2 flex-col gap-4 rounded-xl border border-white/10 bg-neutral-900 p-5 text-neutral-100 shadow-xl">
-            <Dialog.Title className="font-semibold">{t('batch.details')}</Dialog.Title>
-            <Dialog.Description className="text-sm text-neutral-400">{title}</Dialog.Description>
-            {error && (
-              <p role="alert" className="text-sm text-red-400">
-                {error}
-              </p>
+            {!isProcessing && (
+              <Button
+                variant="bordered"
+                size="sm"
+                onClick={() => {
+                  setOpen(false)
+                  useQueueStore.getState().dismissBatch()
+                }}
+              >
+                {t('batch.dismiss')}
+              </Button>
             )}
-            <ConversionResults results={batch.results} />
-            <div className="flex justify-end gap-2">
-              {isProcessing && (
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  onClick={stop}
-                  disabled={isPreparing || isCancelling}
-                >
-                  <Square className="h-3 w-3 fill-current" aria-hidden="true" />
-                  {t(isCancelling ? 'batch.cancelling' : 'button.stop')}
-                </Button>
-              )}
-              {!isProcessing && (
-                <Button
-                  variant="bordered"
-                  size="sm"
-                  onClick={() => {
-                    setOpen(false)
-                    useQueueStore.getState().dismissBatch()
-                  }}
-                >
-                  {t('batch.dismiss')}
-                </Button>
-              )}
-              <Dialog.Close asChild>
-                <Button variant="bordered" size="sm">
-                  {t('button.close')}
-                </Button>
-              </Dialog.Close>
-            </div>
-          </Dialog.Content>
-        </Dialog.Portal>
-      </Dialog.Root>
-    </Tooltip.Provider>
+            <Dialog.Close asChild>
+              <Button variant="bordered" size="sm">
+                {t('button.close')}
+              </Button>
+            </Dialog.Close>
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   )
 }
 
@@ -234,30 +232,19 @@ const ConversionRow = memo(function ConversionRow({
           <FolderOpen className="h-4 w-4" aria-hidden="true" />
         </Button>
       )}
-      <Tooltip.Root>
-        <Tooltip.Trigger asChild>
-          <span
-            tabIndex={0}
-            role="img"
-            aria-label={statusText}
-            className={`flex h-7 w-7 shrink-0 items-center justify-center rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400 ${color}`}
-          >
-            <StatusIcon
-              className={`h-4 w-4 ${r.status === 'processing' ? 'motion-safe:animate-spin' : ''}`}
-              aria-hidden="true"
-            />
-          </span>
-        </Tooltip.Trigger>
-        <Tooltip.Portal>
-          <Tooltip.Content
-            side="top"
-            sideOffset={4}
-            className="z-[60] max-w-sm whitespace-pre-wrap break-words rounded border border-white/15 bg-neutral-800 px-3 py-2 text-xs text-neutral-100 shadow-xl"
-          >
-            {statusText}
-          </Tooltip.Content>
-        </Tooltip.Portal>
-      </Tooltip.Root>
+      <Tooltip text={statusText}>
+        <span
+          tabIndex={0}
+          role="img"
+          aria-label={statusText}
+          className={`flex h-7 w-7 shrink-0 items-center justify-center rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400 ${color}`}
+        >
+          <StatusIcon
+            className={`h-4 w-4 ${r.status === 'processing' ? 'motion-safe:animate-spin' : ''}`}
+            aria-hidden="true"
+          />
+        </span>
+      </Tooltip>
     </li>
   )
 })

@@ -107,6 +107,9 @@ pub struct Settings {
     pub auto_download_updates: bool,
     pub queue_view_mode: String,
     pub inspector_open: bool,
+    pub inspector_width: u16,
+    pub export_panel_width: u16,
+    pub list_column_widths: ListColumnWidths,
     pub inspector_scope_mode: String,
     pub last_import_directory: Option<PathBuf>,
 }
@@ -123,6 +126,13 @@ impl Default for Settings {
             auto_download_updates: false,
             queue_view_mode: "list".into(),
             inspector_open: false,
+            inspector_width: 300,
+            export_panel_width: 380,
+            list_column_widths: ListColumnWidths {
+                name: 0,
+                date: 220,
+                size: 110,
+            },
             inspector_scope_mode: "rgbParade".into(),
             last_import_directory: None,
         }
@@ -132,6 +142,15 @@ impl Default for Settings {
 impl Settings {
     pub fn validate(&self) -> Result<(), String> {
         self.batch.validate()?;
+        let widths = &self.list_column_widths;
+        if !(220..=800).contains(&self.inspector_width)
+            || !(300..=800).contains(&self.export_panel_width)
+            || (widths.name != 0 && !(180..=2000).contains(&widths.name))
+            || !(80..=1000).contains(&widths.date)
+            || !(64..=400).contains(&widths.size)
+        {
+            return Err("Invalid layout width".into());
+        }
         if !["File Name", "Date", "Size"].contains(&self.sort_field.as_str())
             || !["list", "grid", "filmstrip"].contains(&self.queue_view_mode.as_str())
             || !["histogram", "rgbParade", "waveform", "vectorscope"]
@@ -145,6 +164,13 @@ impl Settings {
         }
         Ok(())
     }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ListColumnWidths {
+    pub name: u16,
+    pub date: u16,
+    pub size: u16,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

@@ -43,7 +43,7 @@
   "settings.denoise.intensity.more": "More",
   "settings.concurrency": "Simultaneous exports",
   "settings.concurrency.auto": "Auto",
-  "settings.concurrency.help": "How many photos are exported at once. Auto picks a value suited to this device's processor — about half its cores, up to 4. Higher values finish large batches sooner but use more CPU and memory; if the app makes your device sluggish or hot while exporting, pick a lower value. Choose 1 to export one photo at a time.",
+  "settings.concurrency.help": "Auto chooses a value based on your processor. Higher values use more CPU and memory.",
   "settings.dng_highlight_recovery": "Highlight recovery (Merrill-generation)",
   "settings.dng_highlight_recovery.help": "Recover blown highlights in Merrill-generation DNGs",
   "settings.dng_highlight_recovery.warning": "Highlight recovery may cause DNGs to render incorrectly in some apps. If you encounter issues, disable recovery.",
@@ -172,5 +172,9 @@
   "batch.status.cancelled": "Cancelled",
   "batch.status.unstarted": "Not started",
   "button.close": "Close",
-  "batch.image_count": "{{count}} images"
+  "batch.image_count": "{{count}} images",
+  "layout.resize_column": "Resize {{name}} column",
+  "layout.fit_column": "Drag to resize. Double-click or press Enter to fit contents.",
+  "layout.resize_panel": "Resize {{name}} panel",
+  "layout.reset_panel": "Drag to resize. Double-click or press Enter to restore the default width."
 }
