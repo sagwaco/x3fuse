@@ -31,7 +31,7 @@ percent-encoding = "2"
 url = "2"
 tempfile = "3"
 sys-locale = "0.3"
-x3f-core = { version = "0.1.5", path = "../../../x3fuse-core/crates/x3f-core" }
+x3f-core = "0.1.6"
 x3f-render = { path = "crates/x3f-render" }
 sha2 = "0.10"
 

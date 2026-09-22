@@ -81,12 +81,23 @@ This also checks full-strength denoising with compressed DNG/TIFF and DNG highli
 recovery, with a 60-second limit per conversion. Run it in the default test profile as shown
 to exercise the development-build settings; `--release` alone would miss regressions there.
 
-Use matching app/core revisions when developing or distributing this editor.
-The desktop CI checks out the repositories as siblings and requires a full 40-character
-core commit SHA in the `X3FUSE_CORE_REVISION` repository variable, or the
-`core_revision` input on a manual workflow run. Set it to the reviewed core commit
-containing the scene-linear editor API after that commit is available remotely. A moving branch
-name is deliberately rejected. No crate publication is needed.
+RAW decoding comes from the published `x3f-core` crate, pinned in `Cargo.toml` and
+locked in `Cargo.lock`, so CI needs no x3fuse-core checkout. Move to a newer core with
+`cargo update -p x3f-core` after that version is on crates.io.
+
+To build against a local x3fuse-core checkout instead, override the crate with a
+gitignored config in `src-tauri/`:
+
+```sh
+mkdir -p src-tauri/.cargo
+cat > src-tauri/.cargo/config.toml <<'TOML'
+[patch.crates-io]
+x3f-core = { path = "../../../x3fuse-core/crates/x3f-core" }
+TOML
+```
+
+While that override is in place Cargo rewrites `Cargo.lock` to drop the registry
+source and checksum, so don't commit the lockfile from a patched build.
 
 Build a macOS app bundle with `npm run dist`, or a native executable with
 `npm run pack`. For Windows/Linux, use the executable build until installer targets

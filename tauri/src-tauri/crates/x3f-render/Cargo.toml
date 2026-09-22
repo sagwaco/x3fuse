@@ -7,7 +7,7 @@ license = "GPL-3.0-only"
 description = "Scene-linear GPU RAW editing and spectral film rendering for X3Fuse"
 
 [dependencies]
-x3f-core = { version = "0.1.5", path = "../../../../../x3fuse-core/crates/x3f-core" }
+x3f-core = "0.1.6"
 wgpu = "24"
 pollster = "0.4"
 bytemuck = { version = "1", features = ["derive"] }
