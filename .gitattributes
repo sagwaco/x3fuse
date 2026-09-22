@@ -1,0 +1,2 @@
+# Byte-exact hash assertions (licences, shaders) must survive a Windows checkout.
+* text=auto eol=lf
