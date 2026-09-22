@@ -61,6 +61,7 @@
   "settings.build": "建置",
   "settings.acknowledgements": "致謝",
   "settings.view_licenses": "檢視授權",
+  "settings.film_attribution": "底片模擬：Andrea Volpato 的 spektrafilm（CC BY-SA 4.0），移植自 spektrafilm-rs（GPL-3.0）。",
   "menu.help.X3Fuse_help": "X3Fuse 說明",
   "menu.help.show_debug_logs": "顯示偵錯日誌",
   "menu.help.clear_debug_logs": "清除偵錯日誌",

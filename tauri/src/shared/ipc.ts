@@ -150,6 +150,8 @@ export interface IpcRequestMap {
   'window:openSettings': { payload: void; result: void }
 
   'logs:open': { payload: void; result: void }
+  /** Open the bundled third-party licence notices in the OS file manager. */
+  'licenses:open': { payload: void; result: void }
   'logs:clear': { payload: void; result: void }
   'logs:sizes': { payload: void; result: LogSizes }
 
@@ -209,6 +211,7 @@ export const IPC_REQUEST_CHANNELS: IpcRequestChannel[] = [
   'shell:reveal',
   'window:openSettings',
   'logs:open',
+  'licenses:open',
   'logs:clear',
   'logs:sizes',
   'app:info',

@@ -320,6 +320,26 @@ pub fn open_logs(app: &AppHandle, state: &AppState) -> Result<(), String> {
         .open_path(state.logs.dir.to_string_lossy(), None::<&str>)
         .map_err(|e| e.to_string())
 }
+/// Open the bundled third-party licence notices. CC BY-SA 4.0 requires the
+/// film model's attribution to be reachable from the app itself.
+#[tauri::command]
+pub async fn licenses_open(app: AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir = app
+            .path()
+            .resource_dir()
+            .map_err(|e| e.to_string())?
+            .join("resources/licenses");
+        if !dir.is_dir() {
+            return Err("Bundled licenses are unavailable in this build".into());
+        }
+        app.opener()
+            .open_path(dir.to_string_lossy(), None::<&str>)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
 #[tauri::command]
 pub async fn logs_clear(state: State<'_, Arc<AppState>>) -> Result<(), String> {
     let logs = state.logs.clone();

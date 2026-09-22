@@ -1,13 +1,17 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "desktop",
-  "description": "Local application windows; filesystem and subprocess work stays in Rust.",
+  "description": "Local application windows; filesystem and subprocess work stays in Rust. The single opener grant is the CC BY-SA attribution link in Settings > About, scoped to that one URL.",
   "windows": ["main", "settings"],
   "permissions": [
     "core:event:allow-listen", "core:event:allow-unlisten",
     "core:window:allow-start-dragging",
     "core:window:allow-internal-toggle-maximize",
     "core:menu:allow-new", "core:menu:allow-popup",
-    "core:resources:allow-close"
+    "core:resources:allow-close",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [{ "url": "https://github.com/andreavolpato/spektrafilm" }]
+    }
   ]
 }

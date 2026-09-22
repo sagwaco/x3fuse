@@ -88,6 +88,25 @@ export function SettingsWindow(): React.JSX.Element {
         {/* About */}
         <Section title={t('settings.section.about')}>
           <InfoRow label={t('settings.version')} value={version || '—'} />
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-sm text-neutral-300">{t('settings.acknowledgements')}</span>
+            <Button variant="bordered" size="sm" onClick={() => void ipc.invoke('licenses:open')}>
+              {t('settings.view_licenses')}
+            </Button>
+          </div>
+          {/* CC BY-SA 4.0 asks for attribution wherever the work is used,
+              including an app's About screen. */}
+          <p className="text-xs leading-relaxed text-neutral-500">
+            {t('settings.film_attribution')}{' '}
+            <a
+              className="underline hover:text-neutral-300"
+              href="https://github.com/andreavolpato/spektrafilm"
+              target="_blank"
+              rel="noreferrer"
+            >
+              github.com/andreavolpato/spektrafilm
+            </a>
+          </p>
         </Section>
       </div>
     </div>

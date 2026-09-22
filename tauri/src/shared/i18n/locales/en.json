@@ -61,6 +61,7 @@
   "settings.build": "Build",
   "settings.acknowledgements": "Acknowledgements",
   "settings.view_licenses": "View Licenses",
+  "settings.film_attribution": "Film simulation: spektrafilm by Andrea Volpato, CC BY-SA 4.0, ported from spektrafilm-rs (GPL-3.0).",
   "menu.help.X3Fuse_help": "X3Fuse Help",
   "menu.help.show_debug_logs": "Show Debug Logs",
   "menu.help.clear_debug_logs": "Clear Debug Logs",

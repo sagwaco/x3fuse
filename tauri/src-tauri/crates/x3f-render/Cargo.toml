@@ -1,0 +1,33 @@
+[package]
+name = "x3f-render"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+license = "GPL-3.0-only"
+description = "Scene-linear GPU RAW editing and spectral film rendering for X3Fuse"
+
+[dependencies]
+x3f-core = { version = "0.1.5", path = "../../../../../x3fuse-core/crates/x3f-core" }
+wgpu = "24"
+pollster = "0.4"
+bytemuck = { version = "1", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+# erf/erfc at f64 precision, matching the scipy functions spektrafilm's
+# dichroic filters, spectral window and print curves are fitted against.
+libm = "0.2"
+# float16 decode for the bundled spectral upsampling table.
+half = { version = "2", default-features = false }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+
+[dev-dependencies]
+# Pins the shipped licence text and shader against silent edits.
+sha2 = "0.10"

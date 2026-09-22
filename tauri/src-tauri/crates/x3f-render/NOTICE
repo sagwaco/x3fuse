@@ -1,0 +1,82 @@
+X3Fuse GPU editor / x3f-render
+==============================
+
+Renderer source: GPL-3.0-only. Full text: licenses/GPL-3.0.txt.
+This crate is part of X3Fuse, which is GPL-3.0-only as a whole. The decoder it
+depends on, x3fuse-core, is a separate Apache-2.0 project.
+
+Film simulation model and data
+------------------------------
+
+    spektrafilm by Andrea Volpato
+    https://github.com/andreavolpato/spektrafilm
+    Licensed CC BY-SA 4.0
+
+The physical film/paper model this crate implements is spektrafilm. Its
+simulation code is GPL-v3; the profiles, spectral upsampling table, neutral
+print-filter database and other data tables are CC BY-SA 4.0 under the terms in
+licenses/SPEKTRAFILM_LICENSE.txt (v1.1, 2026-05-28), which is shipped unmodified
+and is also installed with the application under resources/licenses/x3f-render.
+
+Every bundled data file is a byte-identical copy of the upstream file, so no
+CHANGELOG.txt accompanies them:
+
+  - assets/profiles/*.json      20 film and 8 paper profiles
+  - assets/irradiance_xy_tc.npy spectral upsampling table
+  - assets/neutral_print_filters.json  per-stock neutral enlarger filtration
+
+Film and paper names identify the modeled materials and do not imply
+affiliation or endorsement. "spektrafilm" is not used as X3Fuse branding.
+
+Port source
+-----------
+
+spektrafilm-rs by turbasvin, GPL-3.0:
+https://github.com/turbasvin/spektrafilm-rs
+Pinned at v0.1.2, revision 9dd59b0. The WGSL kernels in src/render.wgsl and the
+Rust parameter preparation in src/film/ are a direct port of that project's
+`spektrafilm-shaders/wgsl`, `spektrafilm-core` and `spektrafilm-model` crates.
+It is also used as an external parity oracle; see assets/PROVENANCE.md.
+
+Spectral upsampling table
+-------------------------
+
+assets/irradiance_xy_tc.npy originates from Johannes Hanika's work for vkdt
+(https://github.com/hanatos/vkdt, https://jo.dreggn.org/vkdt/) and is
+distributed by spektrafilm under the CC BY-SA 4.0 terms above.
+
+X3Fuse modifications to the code (not to the data)
+--------------------------------------------------
+
+  - Integration into this crate's single-device, single-submission, tiled pass
+    list instead of spektrafilm-rs's whole-frame CPU round trips.
+  - Spatial parameters are derived from the whole sensor frame at the current
+    render scale, so cropping or requesting a region never changes a diffusion
+    size or a grain particle.
+  - Grain is anchored to native image coordinates rather than the tile-local
+    pixel index, so tiles, regions and whole previews agree.
+  - An added grain chroma control mixes the per-channel noise toward its
+    achromatic mean.
+  - `halation_midtones` gates the added halation by the blurred signal level;
+    spektrafilm's separate highlight-boost stage is not ported.
+  - The enlarger is normalised against an uncompensated mid-gray card
+    (`normalize_print_exposure` without `print_exposure_compensation`).
+    spektrafilm's default re-solves the print exposure at the compensated film
+    exposure, which cancels a film exposure change back out and leaves only a
+    shift in where the scene sits on the H&D curve; X3Fuse's film exposure
+    control has to expose the film and let the print follow it.
+  - Blurs whose radius would round away are skipped.
+  - f32 preview precision throughout, against spektrafilm's f64 export path.
+  - Stages not ported: glare, output gamut compression, highlight boost,
+    unsharp (this crate has its own sharpening), the DIR coupler diffusion
+    tail, camera/enlarger diffusion filters, camera and scanner lens blur, the
+    mallett2019 and arctic2026alpha02 front passes, B&W development-time
+    families, auto-exposure, the PCHIP 3D LUT export path, and the s023 print
+    curve morph.
+
+Runtime dependencies added for rendering/encoding include wgpu (MIT/Apache-2.0),
+pollster (MIT/Apache-2.0), bytemuck (Zlib/Apache-2.0/MIT), serde/serde_json
+(MIT/Apache-2.0), libm (MIT/Apache-2.0), half (MIT/Apache-2.0), and image
+(MIT/Apache-2.0). image supplies PNG and genuine JPEG encoding; TIFF output uses
+x3f-core's existing encoder. Their source and license terms remain available
+through Cargo.lock and the associated crate distributions.

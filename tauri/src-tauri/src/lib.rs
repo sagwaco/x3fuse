@@ -256,6 +256,7 @@ pub fn run() {
             commands::shell_reveal,
             commands::window_open_settings,
             commands::logs_open,
+            commands::licenses_open,
             commands::logs_clear,
             commands::logs_sizes,
             commands::app_info,

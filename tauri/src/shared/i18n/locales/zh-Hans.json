@@ -61,6 +61,7 @@
   "settings.build": "构建",
   "settings.acknowledgements": "致谢",
   "settings.view_licenses": "查看许可证",
+  "settings.film_attribution": "胶片模拟：Andrea Volpato 的 spektrafilm（CC BY-SA 4.0），移植自 spektrafilm-rs（GPL-3.0）。",
   "menu.help.X3Fuse_help": "X3Fuse 帮助",
   "menu.help.show_debug_logs": "显示调试日志",
   "menu.help.clear_debug_logs": "清除调试日志",

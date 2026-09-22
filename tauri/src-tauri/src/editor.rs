@@ -458,8 +458,20 @@ impl Editor {
             region.validate()?;
         }
         let canonical = path.canonicalize().map_err(|e| e.to_string())?;
-        let key = serde_json::to_vec(&(&canonical, source_revision, recipe, max_edge, region))
-            .map_err(|e| e.to_string())?;
+        // The renderer version is part of the key: an unchanged recipe renders
+        // differently after the renderer changes, and the persisted thumbnail
+        // and medium PNGs would otherwise keep showing the old pixels beside
+        // freshly rendered exports. Superseded entries fall out of the caches
+        // through the existing size/count eviction in `store_image`.
+        let key = serde_json::to_vec(&(
+            &canonical,
+            source_revision,
+            recipe,
+            max_edge,
+            region,
+            x3f_render::RENDER_VERSION,
+        ))
+        .map_err(|e| e.to_string())?;
         let id = format!("{:x}", Sha256::digest(key));
         let mut assets = self
             .assets

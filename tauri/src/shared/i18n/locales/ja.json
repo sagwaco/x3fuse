@@ -61,6 +61,7 @@
   "settings.build": "ビルド",
   "settings.acknowledgements": "謝辞",
   "settings.view_licenses": "ライセンスを表示",
+  "settings.film_attribution": "フィルムシミュレーション: Andrea Volpato による spektrafilm（CC BY-SA 4.0）。spektrafilm-rs（GPL-3.0）から移植。",
   "menu.help.X3Fuse_help": "X3Fuseヘルプ",
   "menu.help.show_debug_logs": "デバッグログを表示",
   "menu.help.clear_debug_logs": "デバッグログをクリア",

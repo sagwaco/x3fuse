@@ -27,7 +27,9 @@ for (const name of ['LICENSE', 'NOTICE']) {
   await cp(join(root, 'licenses/x3fuse-core', name), join(coreNotices, name))
 }
 await cp(join(root, '../LICENSE'), join(resources, 'licenses/X3Fuse-LICENSE'))
-const renderer = resolve(root, '../../x3fuse-core/crates/x3f-render')
+const renderer = resolve(root, 'src-tauri/crates/x3f-render')
+// Replace rather than merge: a licence that stops applying must stop shipping.
+await rm(join(resources, 'licenses/x3f-render'), { recursive: true, force: true })
 await cp(join(renderer, 'licenses'), join(resources, 'licenses/x3f-render'), { recursive: true })
 await cp(join(renderer, 'NOTICE'), join(resources, 'licenses/x3f-render/NOTICE'))
 

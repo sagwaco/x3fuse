@@ -61,6 +61,7 @@
   "settings.build": "빌드",
   "settings.acknowledgements": "감사",
   "settings.view_licenses": "라이선스 보기",
+  "settings.film_attribution": "필름 시뮬레이션: Andrea Volpato의 spektrafilm(CC BY-SA 4.0). spektrafilm-rs(GPL-3.0)에서 이식.",
   "menu.help.X3Fuse_help": "X3Fuse 도움말",
   "menu.help.show_debug_logs": "디버그 로그 표시",
   "menu.help.clear_debug_logs": "디버그 로그 지우기",

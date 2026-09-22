@@ -1,3 +1,6 @@
+[workspace]
+members = ["crates/x3f-render"]
+
 [package]
 name = "x3fuse-tauri"
 version = "0.1.0"
@@ -29,7 +32,7 @@ url = "2"
 tempfile = "3"
 sys-locale = "0.3"
 x3f-core = { version = "0.1.5", path = "../../../x3fuse-core/crates/x3f-core" }
-x3f-render = { path = "../../../x3fuse-core/crates/x3f-render" }
+x3f-render = { path = "crates/x3f-render" }
 sha2 = "0.10"
 
 [target.'cfg(target_os = "macos")'.dependencies]

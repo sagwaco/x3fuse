@@ -20,8 +20,9 @@ Install Node.js 22 LTS, the stable Rust toolchain, and the
 - Linux x64: GTK 3, WebKitGTK 4.1 development packages, build tools, Clang/libclang,
   Perl, and `zip`/`unzip` for packaging and archive tests.
 
-The editor uses the sibling `../x3fuse-core` checkout, including its new
-`x3f-render` crate. Keep the repositories next to one another:
+The editor uses the sibling `../x3fuse-core` checkout for RAW decoding and the
+in-repo `src-tauri/crates/x3f-render` crate for rendering. Keep the repositories
+next to one another:
 
 ```text
 Developer/
@@ -84,7 +85,7 @@ Use matching app/core revisions when developing or distributing this editor.
 The desktop CI checks out the repositories as siblings and requires a full 40-character
 core commit SHA in the `X3FUSE_CORE_REVISION` repository variable, or the
 `core_revision` input on a manual workflow run. Set it to the reviewed core commit
-containing `x3f-render` after that commit is available remotely. A moving branch
+containing the scene-linear editor API after that commit is available remotely. A moving branch
 name is deliberately rejected. No crate publication is needed.
 
 Build a macOS app bundle with `npm run dist`, or a native executable with
@@ -219,7 +220,10 @@ Native popup controls retain OS menus. When a control disappears or becomes disa
 queued actions are ignored; an already-visible popup can remain until normal OS
 dismissal. Automatic update preferences are retained, but the updater is not implemented.
 
-License: [GPL-3.0-only](../LICENSE).
+License: [GPL-3.0-only](../LICENSE). Film simulation: spektrafilm by Andrea
+Volpato (https://github.com/andreavolpato/spektrafilm), profiles and data
+CC BY-SA 4.0, ported from spektrafilm-rs (GPL-3.0). Settings -> About ->
+View Licenses opens the bundled notices.
 
 ## RAW editor
 
@@ -228,8 +232,8 @@ filmstrip, zoom/pan and scopes with browsing. Adjust light, calibrated white bal
 curves, HSL, crop/straighten, denoise and sharpening. Film rendering starts enabled;
 its switch and experimental-pipeline tooltip sit above the adjustment sections.
 Light's exposure control adjusts film exposure while this mode is enabled.
-The simulation models the negative, couplers, grain, halation and print paper using the pinned
-sigmadeveloper/vkdt/spektrafilm spectral implementation in `x3f-render`.
+The simulation models the negative, DIR couplers, grain, halation and print paper
+using the spektrafilm model, ported from spektrafilm-rs in `x3f-render`.
 
 Double-click a slider thumb to restore its default. Grain and halation each have
 a simple strength control, with their individual settings in Advanced collapsibles.
@@ -291,10 +295,10 @@ the RAW again, so slider drags defer that operation until release.
 Rendering pauses during export; the last completed frame stays visible.
 A device/driver failure is an editor/export error, never an unnoticed film bypass.
 
-Run GPU correctness checks on supported hardware from the core checkout:
+Run GPU correctness checks on supported hardware from this directory:
 
 ```sh
-cargo test -p x3f-render -- --include-ignored
+cargo test --manifest-path src-tauri/Cargo.toml -p x3f-render -- --include-ignored
 ```
 
 Run real-photo acceptance with source paths supplied explicitly; tests copy photos
