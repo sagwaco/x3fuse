@@ -167,15 +167,19 @@ class ExifService {
         do {
             try process.run()
         } catch {
+            closeParentEnds(of: outputPipe, errorPipe)
             logger.logError("Failed to start ExifTool process: \(error)")
             throw ExifServiceError.processStartFailed(error.localizedDescription)
         }
-        
+
         let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
         let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
-        
+
         process.waitUntilExit()
-        
+
+        // Free the pipe descriptors immediately; see X3FConverter.runX3FConversion.
+        closeParentEnds(of: outputPipe, errorPipe)
+
         let output = String(data: outputData, encoding: .utf8) ?? ""
         let errorOutput = String(data: errorData, encoding: .utf8) ?? ""
         

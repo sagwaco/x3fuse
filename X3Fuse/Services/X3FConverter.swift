@@ -65,6 +65,7 @@ class X3FConverter {
     do {
       try process.run()
     } catch {
+      closeParentEnds(of: outputPipe, errorPipe)
       let nsError = error as NSError
       logger.logError("Failed to start process: \(error.localizedDescription)", file: file.fileName)
       logger.logError(
@@ -83,6 +84,12 @@ class X3FConverter {
     let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
 
     process.waitUntilExit()
+
+    // Release the pipe descriptors now instead of whenever the Pipe objects are finally
+    // freed. The batch loop never suspends, so the handles piled up in the autorelease
+    // pool: four descriptors per file, until the process hit its open-file limit and
+    // every remaining file in a large queue failed instantly.
+    closeParentEnds(of: outputPipe, errorPipe)
 
     // Clear the current process reference
     currentProcess = nil
@@ -280,5 +287,14 @@ class X3FConverter {
 
   var isProcessRunning: Bool {
     return currentProcess?.isRunning ?? false
+  }
+}
+
+/// Closes both ends of each pipe in the parent. Process closes the child-side ends after
+/// spawning, so closing an already-closed handle here is expected and ignored.
+func closeParentEnds(of pipes: Pipe...) {
+  for pipe in pipes {
+    try? pipe.fileHandleForReading.close()
+    try? pipe.fileHandleForWriting.close()
   }
 }
