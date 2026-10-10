@@ -99,6 +99,7 @@ pub async fn queue_add(
                 Err(error) => dto.edit_error = Some(error),
             }
         }
+        state.editor.edits.flush_fingerprints();
         dtos
     })
     .await
@@ -449,7 +450,7 @@ pub async fn editor_load(
     }
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        payload
+        let records = payload
             .paths
             .into_iter()
             .map(|path| match state.editor.load(&path) {
@@ -466,7 +467,9 @@ pub async fn editor_load(
                 },
                 Err(error) => json!({"path":path,"revision":0,"error":error}),
             })
-            .collect()
+            .collect();
+        state.editor.edits.flush_fingerprints();
+        records
     })
     .await
     .map_err(|e| e.to_string())

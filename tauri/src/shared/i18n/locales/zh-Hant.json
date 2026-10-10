@@ -281,5 +281,18 @@
   "editor.filter": "濾鏡",
   "editor.neutral": "中性",
   "editor.monochromeHelp": "在底片算繪前混合經過校準的 Foveon 感光元件各層資料，模擬彩色濾鏡效果。",
-  "editor.visibleArea": "可見區域"
+  "editor.visibleArea": "可見區域",
+  "denoise.algorithm": "降噪演算法",
+  "denoise.advanced": "進階降噪",
+  "denoise.luminance": "亮度降噪",
+  "denoise.chroma": "色度降噪",
+  "denoise.channelsHelp": "亮度控制顆粒雜訊，色度控制彩色雜訊。兩者都關閉時，不進行感光元件降噪。",
+  "denoise.strength": "強度倍率",
+  "denoise.lumaPatch": "亮度區塊大小",
+  "denoise.lumaSearch": "亮度搜尋範圍",
+  "denoise.chromaPatch": "色度區塊大小",
+  "denoise.chromaSearch": "色度搜尋範圍",
+  "denoise.windowsHelp": "大小以奇數像素表示。搜尋範圍越大，耗時越長；區塊越大，細節可能越柔和。低頻色度處理使用21像素的搜尋範圍。",
+  "denoise.reset": "重設進階設定",
+  "denoise.bm3dHelp": "BM3D處理完整解析度RAW可能需要數秒。NLM可提供更快的預覽。"
 }

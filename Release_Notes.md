@@ -1,3 +1,11 @@
+<!-- Not a released version: this section has no version number, so
+     Configuration/inject_release_notes.py skips it when building the appcast. -->
+# Unreleased - Cross-platform editor
+
+- The RAW editor's film simulation now uses the spektrafilm model (Andrea Volpato, https://github.com/andreavolpato/spektrafilm, profiles and data CC BY-SA 4.0), ported from spektrafilm-rs (GPL-3.0). It replaces the previous implementation entirely.
+- Existing saved film edits load unchanged, but render differently because the underlying model changed. The recipe format is unchanged; nothing needs re-saving.
+- Settings -> About -> View Licenses opens the bundled third-party notices.
+
 # 0.1.4 - Beta 1.1.4
 
 - The app is now notarized by Apple, so it launches without Gatekeeper warnings, and is installable via Homebrew with `brew install --cask sagwaco/tap/x3fuse`. No functional changes from 0.1.3.

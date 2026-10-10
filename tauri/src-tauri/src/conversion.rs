@@ -162,6 +162,7 @@ pub fn process_options(settings: &BatchSettings, opcodes: PathBuf) -> x3f_core::
             ColorProfile::None => x3f_core::ColorEncoding::None,
         },
         denoise_intensity: settings.denoise_intensity,
+        denoise_options: settings.denoise_options,
         compress: settings.compress && settings.output_format != OutputFormat::Jpeg,
         dng_highlight_recovery: settings.output_format == OutputFormat::Dng
             && settings.dng_highlight_recovery,

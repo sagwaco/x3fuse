@@ -323,6 +323,27 @@ it('coalesces sensor denoise preparation until the slider gesture is committed',
   )
 })
 
+it('coalesces advanced denoise changes and refines using the complete recipe', async () => {
+  await editor.getState().open(file)
+  const denoiseOptions = { ...defaultRecipe().denoiseOptions, strength: 2, luminance: true }
+  editor.getState().change({ denoiseOptions }, false)
+  await vi.advanceTimersByTimeAsync(0)
+  expect(invoke).toHaveBeenLastCalledWith(
+    'editor:render',
+    expect.objectContaining({
+      recipe: expect.objectContaining({ denoiseOptions: defaultRecipe().denoiseOptions })
+    })
+  )
+  editor.getState().commit()
+  await vi.advanceTimersByTimeAsync(0)
+  expect(invoke).toHaveBeenLastCalledWith(
+    'editor:render',
+    expect.objectContaining({
+      recipe: expect.objectContaining({ denoiseOptions })
+    })
+  )
+})
+
 it('copies development adjustments while retaining each destination crop, rotation and grain seed', async () => {
   const source: EditRecipe = {
     ...defaultRecipe(),

@@ -175,10 +175,14 @@ export const useEditorStore = create<EditorState>((set, get) => {
         }
       : doc.recipe
     if (state.cropping) recipe = { ...recipe, crop: null, rotation: 0, straighten: 0 }
-    // Sensor NLM requires fresh RAW preparation. Coalesce slider moves and do it
+    // Sensor denoising requires fresh RAW preparation. Coalesce slider moves and do it
     // once on commit; other controls keep using the already prepared source.
-    if (doc.gesture && doc.gesture.denoise !== recipe.denoise)
-      recipe = { ...recipe, denoise: doc.gesture.denoise }
+    if (doc.gesture)
+      recipe = {
+        ...recipe,
+        denoise: doc.gesture.denoise,
+        denoiseOptions: doc.gesture.denoiseOptions
+      }
     const region = !state.cropping ? state.viewport : null
     set({ rendering: true })
     try {

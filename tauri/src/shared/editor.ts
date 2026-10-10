@@ -1,3 +1,5 @@
+import { defaultDenoiseOptions, type DenoiseOptions } from './denoise'
+
 /** Versioned, non-destructive adjustments shared with x3f-core's GPU renderer. */
 export interface CurvePoint {
   x: number
@@ -46,6 +48,7 @@ export interface EditRecipe {
   curves: Record<'master' | 'red' | 'green' | 'blue', CurvePoint[]>
   hsl: HslBand[]
   denoise: number
+  denoiseOptions: DenoiseOptions
   sharpen: number
   crop: { x: number; y: number; width: number; height: number } | null
   rotation: number
@@ -95,6 +98,7 @@ export function defaultRecipe(): EditRecipe {
     curves: { master: line(), red: line(), green: line(), blue: line() },
     hsl: Array.from({ length: 8 }, () => ({ hue: 0, saturation: 0, luminance: 0 })),
     denoise: 10,
+    denoiseOptions: defaultDenoiseOptions(),
     sharpen: 0,
     crop: null,
     rotation: 0,

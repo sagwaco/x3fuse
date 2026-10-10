@@ -120,6 +120,9 @@ When cancellation is requested:
 - Executable permissions (0o755) set on app launch (Services/BinaryManager.swift:36)
 - The Xcode build embeds and code-signs the checked-in `X3Fuse/x3f_extract`; the binary is
   not rebuilt during the app build.
+- The build script enables the core's `gpu` feature. Denoising automatically uses Metal
+  when available and falls back to CPU. The core's `-denoise-backend cpu` / `gpu` flags
+  are available for diagnostics; the app uses the default `auto` selection.
 
 #### CLI compatibility notes (x3fuse-core)
 

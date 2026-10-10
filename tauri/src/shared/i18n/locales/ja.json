@@ -281,5 +281,18 @@
   "editor.filter": "フィルター",
   "editor.neutral": "ニュートラル",
   "editor.monochromeHelp": "フィルムレンダリングの前に、補正済みのFoveonセンサー層を混合してカラーフィルターを再現します。",
-  "editor.visibleArea": "表示範囲"
+  "editor.visibleArea": "表示範囲",
+  "denoise.algorithm": "ノイズ除去方式",
+  "denoise.advanced": "ノイズ除去の詳細設定",
+  "denoise.luminance": "輝度ノイズを除去",
+  "denoise.chroma": "色ノイズを除去",
+  "denoise.channelsHelp": "輝度は粒状ノイズ、色差は色ノイズを調整します。両方をオフにするとセンサーノイズ除去は無効になります。",
+  "denoise.strength": "強度の倍率",
+  "denoise.lumaPatch": "輝度パッチサイズ",
+  "denoise.lumaSearch": "輝度探索サイズ",
+  "denoise.chromaPatch": "色差パッチサイズ",
+  "denoise.chromaSearch": "色差探索サイズ",
+  "denoise.windowsHelp": "サイズは奇数のピクセル数です。探索範囲を広げると処理時間が増え、パッチを大きくすると細部が柔らかくなる場合があります。低周波の色差処理は21ピクセルの探索範囲を使用します。",
+  "denoise.reset": "詳細設定をリセット",
+  "denoise.bm3dHelp": "BM3Dはフル解像度のRAWで数秒かかる場合があります。NLMの方がプレビューを速く表示できます。"
 }

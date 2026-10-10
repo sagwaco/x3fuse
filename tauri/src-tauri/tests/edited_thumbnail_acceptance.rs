@@ -38,6 +38,8 @@ fn saved_thumbnails_reuse_pixels_across_requests_and_restarts() {
         let start = Instant::now();
         let record = editor.load(&input).unwrap().unwrap();
         eprintln!("{} edit load: {:?}", original.display(), start.elapsed());
+        // The import command publishes fingerprints once per metadata batch.
+        editor.edits.flush_fingerprints();
         let uri = format!("{}?v=thumbnail", record.preview_url.unwrap());
         // Browsing snapshots must work even when an editor revision was cancelled.
         editor.cancel_preview();
@@ -63,8 +65,14 @@ fn saved_thumbnails_reuse_pixels_across_requests_and_restarts() {
         assert_eq!(width.max(height), 640);
         drop(editor);
 
+        let start = Instant::now();
         let reopened = Editor::new(directory.clone());
         let record = reopened.load(&input).unwrap().unwrap();
+        eprintln!(
+            "{} edit load after restart (including fingerprint cache): {:?}",
+            original.display(),
+            start.elapsed()
+        );
         let uri = format!("{}?v=thumbnail", record.preview_url.unwrap());
         reopened
             .paused

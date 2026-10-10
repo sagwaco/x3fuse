@@ -8,6 +8,7 @@
 # (../x3fuse-core); override with the X3FUSE_CORE env var. The Xcode project
 # still embeds and code-signs the checked-in X3Fuse/x3f_extract, so re-run
 # this whenever x3fuse-core is updated, then commit the new binary.
+# Includes the native GPU denoiser (Metal on macOS), with CPU fallback.
 
 set -euo pipefail
 
@@ -30,7 +31,7 @@ if ! command -v cargo >/dev/null 2>&1; then
 fi
 
 echo "Building x3f_extract from: $CORE_DIR"
-CORE_COMMIT="$(git -C "$CORE_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+CORE_COMMIT="$(git -C "$CORE_DIR" describe --always --dirty 2>/dev/null || echo unknown)"
 echo "x3fuse-core commit: $CORE_COMMIT"
 echo ""
 
@@ -38,8 +39,8 @@ BINS=()
 for target in "${TARGETS[@]}"; do
     echo "→ rustup target add $target"
     rustup target add "$target" >/dev/null
-    echo "→ cargo build --release --target $target"
-    ( cd "$CORE_DIR" && cargo build --release --target "$target" )
+    echo "→ cargo build --release -p x3f-cli --features gpu --target $target"
+    ( cd "$CORE_DIR" && cargo build --release -p x3f-cli --features gpu --target "$target" )
     BINS+=("$CORE_DIR/target/$target/release/x3f_extract")
 done
 

@@ -19,6 +19,7 @@ pub struct EditRecipe {
     pub hsl: [HslBand; 8],
     /// Strength passed to the RAW preparation stage (0..10), not applied twice.
     pub denoise: u8,
+    pub denoise_options: x3f_core::DenoiseOptions,
     pub sharpen: f32,
     /// Rectangle in the EXIF-oriented full image, before user rotation/straighten.
     pub crop: Option<Crop>,
@@ -45,6 +46,7 @@ impl Default for EditRecipe {
             curves: Curves::default(),
             hsl: [HslBand::default(); 8],
             denoise: 10,
+            denoise_options: x3f_core::DenoiseOptions::default(),
             sharpen: 0.,
             crop: None,
             rotation: 0,
@@ -228,6 +230,7 @@ impl EditRecipe {
         if self.rotation > 3 || self.denoise > 10 {
             return Err("Rotation must be 0..3 and denoise 0..10".into());
         }
+        self.denoise_options.validate()?;
         if let Some(c) = self.crop {
             c.validate()?;
         }

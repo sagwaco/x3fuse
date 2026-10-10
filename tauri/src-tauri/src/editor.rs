@@ -30,9 +30,13 @@ struct Prepared {
     path: PathBuf,
     source_revision: String,
     denoise: u8,
+    denoise_options: x3f_core::DenoiseOptions,
     image: PreparedImage,
 }
 impl Prepared {
+    fn matches_denoise(&self, recipe: &EditRecipe) -> bool {
+        self.denoise == recipe.denoise && self.denoise_options == recipe.denoise_options
+    }
     fn matches_source(&self, path: &Path, source_revision: &str) -> bool {
         self.path == path && self.source_revision == source_revision
     }
@@ -517,7 +521,7 @@ impl Editor {
             && worker
                 .prepared
                 .as_ref()
-                .is_some_and(|p| p.denoise == asset.recipe.denoise);
+                .is_some_and(|p| p.matches_denoise(&asset.recipe));
         if !reuse {
             // Keep the responsive source if refinement is interrupted. A different
             // photo releases it first to bound memory while browsing.
@@ -526,6 +530,7 @@ impl Editor {
             }
             let options = SceneLinearOptions {
                 denoise_intensity: asset.recipe.denoise,
+                denoise_options: asset.recipe.denoise_options,
                 highlight_recovery: true,
                 ..Default::default()
             };
@@ -539,6 +544,7 @@ impl Editor {
                 path: asset.path.clone(),
                 source_revision: asset.source_revision.clone(),
                 denoise: asset.recipe.denoise,
+                denoise_options: asset.recipe.denoise_options,
                 image: PreparedImage::new(image, cancel).map_err(|e| e.to_string())?,
             });
         }
@@ -599,13 +605,19 @@ impl Editor {
             .map_err(|_| "Renderer unavailable; restart the app")?;
         let mut recipe = request.recipe.clone();
         if request.interactive {
-            recipe.denoise = worker
+            if let Some(prepared) = worker
                 .prepared
                 .as_ref()
                 .filter(|p| p.matches_source(&session.path, &session.source_revision))
-                .map_or(0, |p| p.denoise);
+            {
+                recipe.denoise = prepared.denoise;
+                recipe.denoise_options = prepared.denoise_options;
+            } else {
+                recipe.denoise = 0;
+            }
         }
-        let draft = recipe.denoise != request.recipe.denoise;
+        let draft = recipe.denoise != request.recipe.denoise
+            || recipe.denoise_options != request.recipe.denoise_options;
         let url = self.register(
             &session.path,
             &session.source_revision,
@@ -961,7 +973,7 @@ impl Editor {
                 active.as_ref() == Some(&prepared.path)
                     && (prepared.path != asset.path
                         || prepared.source_revision != asset.source_revision
-                        || prepared.denoise != asset.recipe.denoise)
+                        || !prepared.matches_denoise(&asset.recipe))
             });
             let previous = if preserve {
                 worker.prepared.take()
@@ -1155,6 +1167,7 @@ mod tests {
                 path: path.clone(),
                 source_revision: source_revision.clone(),
                 denoise: 0,
+                denoise_options: Default::default(),
                 image: PreparedImage::new(
                     SceneLinearImage {
                         width: 1,
@@ -1179,6 +1192,30 @@ mod tests {
             max_edge: 2048,
             region: None,
         };
+        asset.recipe.denoise = 0;
+        assert!(editor.prepare(&mut worker, &asset, &cancel).is_ok());
+        for options in [
+            x3f_core::DenoiseOptions {
+                algorithm: x3f_core::DenoiseAlgorithm::Bm3d,
+                ..Default::default()
+            },
+            x3f_core::DenoiseOptions {
+                luminance: true,
+                ..Default::default()
+            },
+            x3f_core::DenoiseOptions {
+                strength: 1.5,
+                ..Default::default()
+            },
+        ] {
+            asset.recipe.denoise_options = options;
+            assert!(editor.prepare(&mut worker, &asset, &cancel).is_err());
+            assert_eq!(
+                worker.prepared.as_ref().unwrap().denoise_options,
+                x3f_core::DenoiseOptions::default()
+            );
+        }
+        asset.recipe = EditRecipe::default();
         assert!(editor.prepare(&mut worker, &asset, &cancel).is_err());
         assert_eq!(worker.prepared.as_ref().unwrap().denoise, 0);
         assert_eq!(
@@ -1323,6 +1360,7 @@ mod tests {
             path: path.clone(),
             source_revision: "a".repeat(64),
             denoise: recipe.denoise,
+            denoise_options: recipe.denoise_options,
             image: PreparedImage::new(
                 SceneLinearImage {
                     width: 1,
@@ -1411,7 +1449,16 @@ mod tests {
         assert_eq!(*reopened.image_uri(&url).unwrap(), expected);
         let mut draft = recipe.clone();
         draft.denoise = if recipe.denoise == 0 { 1 } else { 0 };
-        for (source, recipe) in [("b".repeat(64), &recipe), (source, &draft)] {
+        let mut bm3d = recipe.clone();
+        bm3d.denoise_options.algorithm = x3f_core::DenoiseAlgorithm::Bm3d;
+        let mut chroma = recipe.clone();
+        chroma.denoise_options.nlm.chroma_search = 21;
+        for (source, recipe) in [
+            ("b".repeat(64), &recipe),
+            (source.clone(), &draft),
+            (source.clone(), &bm3d),
+            (source, &chroma),
+        ] {
             let distinct = reopened
                 .register(&path, &source, recipe, 2048, None)
                 .unwrap();

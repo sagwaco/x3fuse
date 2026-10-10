@@ -1,5 +1,6 @@
 /** Data models serialized by the Rust backend and used by the renderer. */
 import type { EditRecord } from './editor'
+import { defaultDenoiseOptions, type DenoiseOptions } from './denoise'
 
 export type ConversionStatus = 'queued' | 'processing' | 'completed' | 'failed' | 'warning'
 
@@ -43,8 +44,9 @@ export interface ConversionSettings {
   editorPanelWidth: number
   outputFormat: OutputFormat
   compress: boolean
-  /** NLM denoise intensity, 0 = off ... 10 = full strength. */
+  /** Sensor denoising intensity, 0 = off ... 10 = full strength. */
   denoiseIntensity: number
+  denoiseOptions: DenoiseOptions
   colorProfile: ColorProfile
   /** Merrill-generation DNG highlight recovery. */
   dngHighlightRecovery: boolean
@@ -81,6 +83,7 @@ export const DEFAULT_SETTINGS: ConversionSettings = {
   outputFormat: 'dng',
   compress: false,
   denoiseIntensity: 10,
+  denoiseOptions: defaultDenoiseOptions(),
   colorProfile: 'sRGB',
   dngHighlightRecovery: false,
   cineon: false,
@@ -168,6 +171,7 @@ export type BatchConversionSettings = Pick<
   | 'jpegQuality'
   | 'compress'
   | 'denoiseIntensity'
+  | 'denoiseOptions'
   | 'colorProfile'
   | 'dngHighlightRecovery'
   | 'cineon'
@@ -182,6 +186,7 @@ export function batchSettings(settings: BatchConversionSettings): BatchConversio
     outputFormat,
     compress,
     denoiseIntensity,
+    denoiseOptions,
     colorProfile,
     dngHighlightRecovery,
     cineon,
@@ -194,6 +199,7 @@ export function batchSettings(settings: BatchConversionSettings): BatchConversio
     outputFormat,
     compress,
     denoiseIntensity,
+    denoiseOptions: structuredClone(denoiseOptions ?? defaultDenoiseOptions()),
     colorProfile,
     dngHighlightRecovery,
     cineon,

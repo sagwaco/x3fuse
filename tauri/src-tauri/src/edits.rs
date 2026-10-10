@@ -1,9 +1,12 @@
 //! Non-destructive recipes. Originals are opened read-only; failed writes stay pending.
-use crate::{model::source_path, storage::write_json_atomic};
+use crate::{
+    model::source_path,
+    storage::{read_json_bounded, write_bytes_atomic, write_json_atomic},
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     fs,
     io::Read,
     path::{Path, PathBuf},
@@ -11,6 +14,10 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use x3f_render::EditRecipe;
+
+const FINGERPRINTS_FILE: &str = "fingerprints-v2.json";
+const FINGERPRINT_LIMIT: usize = 1024;
+const JSON_LIMIT: usize = 1024 * 1024;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -34,38 +41,165 @@ struct Document {
     recipe: EditRecipe,
 }
 
-type FingerprintCache = HashMap<PathBuf, (u64, SystemTime, String)>;
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct SourceStamp {
+    size: u64,
+    modified: SystemTime,
+    created: Option<SystemTime>,
+    // Detect replacements and same-size writes that restore the old mtime.
+    #[cfg(unix)]
+    identity: (u64, u64, i64, i64),
+}
+
+impl SourceStamp {
+    fn new(metadata: &fs::Metadata) -> Result<Self, String> {
+        #[cfg(unix)]
+        use std::os::unix::fs::MetadataExt;
+        Ok(Self {
+            size: metadata.len(),
+            modified: metadata.modified().map_err(|e| e.to_string())?,
+            created: metadata.created().ok(),
+            #[cfg(unix)]
+            identity: (
+                metadata.dev(),
+                metadata.ino(),
+                metadata.ctime(),
+                metadata.ctime_nsec(),
+            ),
+        })
+    }
+}
+
+type Fingerprint = (PathBuf, SourceStamp, String);
+
+#[derive(Default)]
+struct FingerprintCache {
+    // ponytail: linear LRU lookup, bounded to 1024 sources like the preview cache.
+    entries: VecDeque<Fingerprint>,
+    dirty: bool,
+}
+
+impl FingerprintCache {
+    fn get(&mut self, path: &Path, stamp: &SourceStamp) -> Option<String> {
+        let index = self
+            .entries
+            .iter()
+            .position(|(p, s, _)| p == path && s == stamp)?;
+        let entry = self.entries.remove(index)?;
+        let hash = entry.2.clone();
+        self.entries.push_back(entry);
+        Some(hash)
+    }
+
+    fn put(&mut self, path: PathBuf, stamp: SourceStamp, hash: String) {
+        self.entries.retain(|(p, _, _)| p != &path);
+        self.entries.push_back((path, stamp, hash));
+        while self.entries.len() > FINGERPRINT_LIMIT {
+            self.entries.pop_front();
+        }
+        self.dirty = true;
+    }
+}
+
+fn fingerprint_snapshot(entries: &VecDeque<Fingerprint>) -> Vec<u8> {
+    // Newest first on disk. Bad paths/timestamps only omit their own entry;
+    // long paths cannot make us publish a file the bounded reader rejects.
+    let mut bytes = vec![b'['];
+    for entry in entries.iter().rev() {
+        let Ok(json) = serde_json::to_vec(entry) else {
+            continue;
+        };
+        if bytes.len() + json.len() + 2 > JSON_LIMIT {
+            continue;
+        }
+        if bytes.len() > 1 {
+            bytes.push(b',');
+        }
+        bytes.extend(json);
+    }
+    bytes.push(b']');
+    bytes
+}
 
 pub struct Edits {
     directory: PathBuf,
     // Serializes saves/flush so an older request cannot publish after a newer one.
     pending: Mutex<HashMap<PathBuf, Document>>,
     fingerprints: Mutex<FingerprintCache>,
+    fingerprint_writer: Mutex<()>,
 }
 
 impl Edits {
     pub fn new(directory: PathBuf) -> Self {
+        // PNGs already survive restarts; their source validation must too, or
+        // importing saved edits reads every full RAW before showing cached pixels.
+        // ponytail: Windows keeps session-only hashes until file-ID/change-time
+        // validation is available; size/mtime/creation time cannot safely persist.
+        let mut entries = if cfg!(unix) {
+            read_json_bounded::<VecDeque<Fingerprint>>(
+                &directory.join(FINGERPRINTS_FILE),
+                JSON_LIMIT,
+            )
+            .ok()
+            .flatten()
+            .unwrap_or_default()
+        } else {
+            VecDeque::new()
+        };
+        entries.retain(|(path, _, hash)| {
+            path.is_absolute() && hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_hexdigit())
+        });
+        entries.truncate(FINGERPRINT_LIMIT);
+        entries.make_contiguous().reverse();
         Self {
             directory,
             pending: Mutex::new(HashMap::new()),
-            fingerprints: Mutex::new(HashMap::new()),
+            fingerprints: Mutex::new(FingerprintCache {
+                entries,
+                dirty: false,
+            }),
+            fingerprint_writer: Mutex::new(()),
+        }
+    }
+
+    pub fn flush_fingerprints(&self) {
+        if !cfg!(unix) {
+            return;
+        }
+        // Serialize publishers, not readers. A later flush must not be replaced
+        // by an older snapshot, and changes during the write must stay dirty.
+        let Ok(_writer) = self.fingerprint_writer.lock() else {
+            return;
+        };
+        let entries = {
+            let Ok(mut cache) = self.fingerprints.lock() else {
+                return;
+            };
+            if !cache.dirty {
+                return;
+            }
+            cache.dirty = false;
+            cache.entries.clone()
+        };
+        let bytes = fingerprint_snapshot(&entries);
+        if write_bytes_atomic(&self.directory.join(FINGERPRINTS_FILE), &bytes, false).is_err() {
+            if let Ok(mut cache) = self.fingerprints.lock() {
+                cache.dirty = true;
+            }
         }
     }
 
     pub fn source_revision(&self, path: &Path) -> Result<String, String> {
         source_path(path)?;
         let canonical = path.canonicalize().map_err(|e| e.to_string())?;
-        let before = fs::metadata(&canonical).map_err(|e| e.to_string())?;
-        let modified = before.modified().map_err(|e| e.to_string())?;
-        if let Some((size, time, hash)) = self
+        let before = SourceStamp::new(&fs::metadata(&canonical).map_err(|e| e.to_string())?)?;
+        if let Some(hash) = self
             .fingerprints
             .lock()
             .map_err(|_| "Source cache unavailable")?
-            .get(&canonical)
+            .get(&canonical, &before)
         {
-            if *size == before.len() && *time == modified {
-                return Ok(hash.clone());
-            }
+            return Ok(hash);
         }
         let mut file = fs::File::open(&canonical).map_err(|e| e.to_string())?;
         let mut digest = Sha256::new();
@@ -77,8 +211,8 @@ impl Edits {
             }
             digest.update(&bytes[..n]);
         }
-        let after = fs::metadata(&canonical).map_err(|e| e.to_string())?;
-        if after.len() != before.len() || after.modified().map_err(|e| e.to_string())? != modified {
+        let after = SourceStamp::new(&fs::metadata(&canonical).map_err(|e| e.to_string())?)?;
+        if after != before {
             return Err("The source changed while being read; reopen the photo".into());
         }
         let hash = format!("{:x}", digest.finalize());
@@ -86,10 +220,7 @@ impl Edits {
             .fingerprints
             .lock()
             .map_err(|_| "Source cache unavailable")?;
-        if cache.len() >= 1024 {
-            cache.clear();
-        }
-        cache.insert(canonical, (before.len(), modified, hash.clone()));
+        cache.put(canonical, before, hash.clone());
         Ok(hash)
     }
 
@@ -101,23 +232,15 @@ impl Edits {
     }
 
     fn read(path: &Path) -> Result<Option<Document>, String> {
-        let file = match fs::File::open(path) {
-            Ok(file) => file,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(e) => return Err(format!("Cannot read edits at {}: {e}", path.display())),
-        };
-        if file.metadata().map_err(|e| e.to_string())?.len() > 1024 * 1024 {
-            return Err(format!(
-                "Edit document exceeds size limit: {}",
-                path.display()
-            ));
-        }
-        let document: Document = serde_json::from_reader(file).map_err(|e| {
+        let Some(document) = read_json_bounded::<Document>(path, JSON_LIMIT).map_err(|e| {
             format!(
                 "Cannot read edits at {}: {e}. The file has been preserved.",
                 path.display()
             )
-        })?;
+        })?
+        else {
+            return Ok(None);
+        };
         if document.version != 1 {
             return Err(format!(
                 "Unsupported edit version in {}; update X3Fuse. The file has been preserved.",
@@ -207,6 +330,8 @@ impl Edits {
         pending.insert(path.clone(), document.clone());
         let saved = self.publish(&path, document)?;
         pending.remove(&path);
+        drop(pending);
+        self.flush_fingerprints();
         Ok(saved)
     }
 
@@ -264,6 +389,8 @@ impl Edits {
             self.publish(&path, document)?;
             pending.remove(&path);
         }
+        drop(pending);
+        self.flush_fingerprints();
         Ok(())
     }
 
@@ -312,6 +439,261 @@ fn record(document: Document, storage: String, storage_path: PathBuf) -> EditRec
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saved_source_fingerprints_survive_restart_and_reject_changed_raws() {
+        let temp = tempfile::tempdir().unwrap();
+        let input = temp.path().join("photo.X3F");
+        fs::write(&input, b"original RAW bytes").unwrap();
+        let input = input.canonicalize().unwrap();
+        let directory = temp.path().join("edits");
+        let edits = Edits::new(directory.clone());
+        let saved = edits.save(&input, EditRecipe::default(), 1, None).unwrap();
+        drop(edits);
+
+        let reopened = Edits::new(directory.clone());
+        #[cfg(unix)]
+        assert_eq!(
+            reopened
+                .fingerprints
+                .lock()
+                .unwrap()
+                .entries
+                .back()
+                .unwrap()
+                .2,
+            saved.source_revision,
+            "A restart must restore the validated hash before loading saved edits"
+        );
+        assert_eq!(
+            reopened.load(&input).unwrap().unwrap().source_revision,
+            saved.source_revision
+        );
+
+        fs::write(&input, b"replacement RAW contents").unwrap();
+        assert!(reopened
+            .load(&input)
+            .unwrap_err()
+            .contains("different source"));
+        let changed = reopened.source_revision(&input).unwrap();
+        assert_ne!(changed, saved.source_revision);
+        reopened.flush_fingerprints();
+        assert_eq!(
+            Edits::new(directory).source_revision(&input).unwrap(),
+            changed
+        );
+        assert_eq!(fs::read(&input).unwrap(), b"replacement RAW contents");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fingerprints_reject_same_size_rewrites_and_replacements_with_preserved_mtime() {
+        let temp = tempfile::tempdir().unwrap();
+        let input = temp.path().join("photo.X3F");
+        let directory = temp.path().join("edits");
+        fs::write(&input, b"original").unwrap();
+        let edits = Edits::new(directory.clone());
+        let original = edits.source_revision(&input).unwrap();
+        edits.flush_fingerprints();
+        let modified = fs::metadata(&input).unwrap().modified().unwrap();
+
+        for replace in [false, true] {
+            // Older Linux kernels timestamp ctime at clock-tick resolution.
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            let path = if replace {
+                temp.path().join("replacement.X3F")
+            } else {
+                input.clone()
+            };
+            fs::write(&path, if replace { b"replaced" } else { b"modified" }).unwrap();
+            fs::File::options()
+                .write(true)
+                .open(&path)
+                .unwrap()
+                .set_times(fs::FileTimes::new().set_modified(modified))
+                .unwrap();
+            if replace {
+                fs::rename(path, &input).unwrap();
+            }
+            let actual = format!("{:x}", Sha256::digest(fs::read(&input).unwrap()));
+            assert_ne!(actual, original);
+            assert_eq!(
+                Edits::new(directory.clone())
+                    .source_revision(&input)
+                    .unwrap(),
+                actual
+            );
+            assert_eq!(edits.source_revision(&input).unwrap(), actual);
+            edits.flush_fingerprints();
+        }
+    }
+
+    #[test]
+    fn missing_corrupt_or_unwritable_fingerprint_cache_does_not_block_edits() {
+        let temp = tempfile::tempdir().unwrap();
+        let input = temp.path().join("photo.X3F");
+        fs::write(&input, b"RAW").unwrap();
+        let directory = temp.path().join("edits");
+        let saved = Edits::new(directory.clone())
+            .save(&input, EditRecipe::default(), 1, None)
+            .unwrap();
+        fs::create_dir_all(&directory).unwrap();
+        let cache = directory.join(FINGERPRINTS_FILE);
+        fs::write(&cache, b"{incomplete").unwrap();
+        assert_eq!(
+            Edits::new(directory.clone())
+                .load(&input)
+                .unwrap()
+                .unwrap()
+                .source_revision,
+            saved.source_revision
+        );
+        fs::remove_file(&cache).unwrap();
+        fs::create_dir(&cache).unwrap();
+        let edits = Edits::new(directory);
+        assert_eq!(
+            edits.load(&input).unwrap().unwrap().source_revision,
+            saved.source_revision
+        );
+        assert!(edits.save(&input, EditRecipe::default(), 2, None).is_ok());
+        #[cfg(unix)]
+        {
+            assert!(edits.fingerprints.lock().unwrap().dirty);
+            fs::remove_dir(&cache).unwrap();
+            edits.flush_fingerprints();
+            assert!(!edits.fingerprints.lock().unwrap().dirty);
+            assert!(cache.is_file());
+        }
+    }
+
+    #[test]
+    fn fingerprints_evict_only_the_least_recent_source_and_batch_publication() {
+        let temp = tempfile::tempdir().unwrap();
+        let input = temp.path().join("photo.X3F");
+        fs::write(&input, b"RAW").unwrap();
+        let directory = temp.path().join("edits");
+        let edits = Edits::new(directory.clone());
+        let stamp = SourceStamp::new(&fs::metadata(&input).unwrap()).unwrap();
+        let hash = edits.source_revision(&input).unwrap();
+        assert!(
+            !directory.join(FINGERPRINTS_FILE).exists(),
+            "Hashing must not write the cache per file"
+        );
+        let path = |n| temp.path().join(format!("{n}.X3F"));
+        {
+            let mut cache = edits.fingerprints.lock().unwrap();
+            for n in 0..FINGERPRINT_LIMIT {
+                cache.put(path(n), stamp.clone(), hash.clone());
+            }
+            assert_eq!(cache.get(&path(0), &stamp), Some(hash.clone()));
+            cache.put(path(FINGERPRINT_LIMIT), stamp.clone(), hash.clone());
+            assert_eq!(cache.entries.len(), FINGERPRINT_LIMIT);
+            assert!(cache.get(&path(1), &stamp).is_none());
+            assert_eq!(cache.get(&path(0), &stamp), Some(hash.clone()));
+        }
+        edits.flush_fingerprints();
+        let reopened = Edits::new(directory);
+        #[cfg(unix)]
+        {
+            let mut cache = reopened.fingerprints.lock().unwrap();
+            assert_eq!(cache.entries.len(), FINGERPRINT_LIMIT);
+            assert_eq!(cache.get(&path(0), &stamp), Some(hash));
+            assert!(cache.get(&path(1), &stamp).is_none());
+        }
+        #[cfg(not(unix))]
+        assert!(reopened.fingerprints.lock().unwrap().entries.is_empty());
+    }
+
+    #[test]
+    fn fingerprint_snapshot_skips_bad_entries_and_respects_the_read_limit() {
+        let temp = tempfile::tempdir().unwrap();
+        let input = temp.path().join("photo.X3F");
+        fs::write(&input, b"RAW").unwrap();
+        let stamp = SourceStamp::new(&fs::metadata(&input).unwrap()).unwrap();
+        let mut entries = VecDeque::new();
+        for n in 0..FINGERPRINT_LIMIT {
+            entries.push_back((
+                temp.path().join(format!("{n}-{}.X3F", "long".repeat(400))),
+                stamp.clone(),
+                "a".repeat(64),
+            ));
+        }
+        let mut before_epoch = stamp.clone();
+        before_epoch.modified = UNIX_EPOCH - std::time::Duration::from_secs(1);
+        entries.push_back((input.clone(), before_epoch, "a".repeat(64)));
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStringExt;
+            entries.push_back((
+                temp.path()
+                    .join(std::ffi::OsString::from_vec(b"bad-\xff.X3F".to_vec())),
+                stamp.clone(),
+                "a".repeat(64),
+            ));
+        }
+        entries.push_back((input.clone(), stamp, "b".repeat(64)));
+        let bytes = fingerprint_snapshot(&entries);
+        assert!(bytes.len() <= JSON_LIMIT);
+        let cache_path = temp.path().join(FINGERPRINTS_FILE);
+        write_bytes_atomic(&cache_path, &bytes, false).unwrap();
+        let saved: VecDeque<Fingerprint> =
+            read_json_bounded(&cache_path, JSON_LIMIT).unwrap().unwrap();
+        assert!(saved.len() > 1 && saved.len() < FINGERPRINT_LIMIT);
+        assert_eq!(saved.front().unwrap().0, input);
+        assert_eq!(saved.front().unwrap().2, "b".repeat(64));
+        assert_eq!(
+            saved.iter().filter(|(path, _, _)| path == &input).count(),
+            1
+        );
+        assert!(saved.iter().all(|(path, _, _)| path.to_str().is_some()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fingerprint_readers_do_not_wait_for_a_pending_publisher() {
+        let temp = tempfile::tempdir().unwrap();
+        let input = temp.path().join("photo.X3F");
+        fs::write(&input, b"RAW").unwrap();
+        let edits = Edits::new(temp.path().join("edits"));
+        let hash = edits.source_revision(&input).unwrap();
+        let writer = edits.fingerprint_writer.lock().unwrap();
+        let (send, receive) = std::sync::mpsc::channel();
+        std::thread::scope(|scope| {
+            let publisher = scope.spawn(|| edits.flush_fingerprints());
+            scope.spawn(|| send.send(edits.source_revision(&input)).unwrap());
+            let hit = receive.recv_timeout(std::time::Duration::from_secs(1));
+            drop(writer);
+            publisher.join().unwrap();
+            assert_eq!(hit.unwrap().unwrap(), hash);
+        });
+    }
+
+    #[cfg(not(unix))]
+    #[test]
+    fn persisted_hashes_are_not_trusted_without_change_time_validation() {
+        let temp = tempfile::tempdir().unwrap();
+        let input = temp.path().join("photo.X3F");
+        fs::write(&input, b"original").unwrap();
+        let directory = temp.path().join("edits");
+        let edits = Edits::new(directory.clone());
+        edits.save(&input, EditRecipe::default(), 1, None).unwrap();
+        let snapshot = fingerprint_snapshot(&edits.fingerprints.lock().unwrap().entries);
+        write_bytes_atomic(&directory.join(FINGERPRINTS_FILE), &snapshot, false).unwrap();
+        let modified = fs::metadata(&input).unwrap().modified().unwrap();
+        fs::write(&input, b"replaced").unwrap();
+        fs::File::options()
+            .write(true)
+            .open(&input)
+            .unwrap()
+            .set_times(fs::FileTimes::new().set_modified(modified))
+            .unwrap();
+        let reopened = Edits::new(directory);
+        assert!(reopened.fingerprints.lock().unwrap().entries.is_empty());
+        assert!(reopened
+            .load(&input)
+            .unwrap_err()
+            .contains("different source"));
+    }
 
     #[test]
     fn recipes_follow_original_bytes_and_never_replace_invalid_documents() {
@@ -373,6 +755,7 @@ mod tests {
         fs::write(&input, b"RAW").unwrap();
         let input = input.canonicalize().unwrap();
         let edits = Edits::new(temp.path().join("backup"));
+        fs::write(&edits.directory, b"unavailable directory").unwrap();
         let document = Document {
             version: 1,
             source_revision: edits.source_revision(&input).unwrap(),
@@ -380,10 +763,9 @@ mod tests {
             updated_ms: 1,
             recipe: EditRecipe::default(),
         };
-        // Simulate storage becoming unavailable after save accepts the document.
+        // Simulate accepted pending edits while both storage locations are unavailable.
         // This is deterministic on Windows too, unlike directory permissions.
         fs::create_dir(sidecar(&input)).unwrap();
-        fs::write(&edits.directory, b"unavailable directory").unwrap();
         edits
             .pending
             .lock()

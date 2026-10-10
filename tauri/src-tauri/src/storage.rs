@@ -2,24 +2,62 @@ use crate::model::Settings;
 use serde_json::Value;
 use std::{
     fs,
-    io::Write,
-    path::PathBuf,
+    io::{self, Read, Write},
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
         Mutex,
     },
 };
 
+/// Bound both the allocation and the read, even if the file grows after stat.
+pub fn read_json_bounded<T: serde::de::DeserializeOwned>(
+    path: &Path,
+    limit: usize,
+) -> io::Result<Option<T>> {
+    let file = match fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let too_large = || {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "JSON document exceeds size limit",
+        )
+    };
+    if file.metadata()?.len() > limit as u64 {
+        return Err(too_large());
+    }
+    let mut bytes = Vec::new();
+    file.take((limit as u64).saturating_add(1))
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > limit {
+        return Err(too_large());
+    }
+    serde_json::from_slice(&bytes)
+        .map(Some)
+        .map_err(io::Error::other)
+}
+
 /// Publish a complete JSON document on the destination filesystem.
 pub fn write_json_atomic(
     path: &std::path::Path,
     value: &impl serde::Serialize,
 ) -> Result<(), String> {
+    let bytes = serde_json::to_vec_pretty(value).map_err(|e| e.to_string())?;
+    write_bytes_atomic(path, &bytes, true)
+}
+
+/// Disposable caches need atomic publication, but not a durable disk sync.
+pub fn write_bytes_atomic(path: &Path, bytes: &[u8], durable: bool) -> Result<(), String> {
     let parent = path.parent().ok_or("Missing storage directory")?;
     fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     let mut temp = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
-    serde_json::to_writer_pretty(&mut temp, value).map_err(|e| e.to_string())?;
-    temp.as_file().sync_all().map_err(|e| e.to_string())?;
+    temp.write_all(bytes).map_err(|e| e.to_string())?;
+    if durable {
+        temp.as_file().sync_all().map_err(|e| e.to_string())?;
+    }
     temp.persist(path).map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -144,6 +182,32 @@ impl Logs {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn json_reads_are_bounded_and_failed_atomic_writes_clean_up_temporary_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("document.json");
+        assert!(read_json_bounded::<Value>(&path, 2).unwrap().is_none());
+        write_bytes_atomic(&path, b"{}", false).unwrap();
+        assert_eq!(
+            read_json_bounded::<Value>(&path, 2).unwrap(),
+            Some(serde_json::json!({}))
+        );
+        assert!(read_json_bounded::<Value>(&path, 1)
+            .unwrap_err()
+            .to_string()
+            .contains("size limit"));
+        write_bytes_atomic(&path, b"{", false).unwrap();
+        assert!(read_json_bounded::<Value>(&path, 2).is_err());
+        fs::remove_file(&path).unwrap();
+        fs::create_dir(&path).unwrap();
+        for durable in [false, true] {
+            assert!(write_bytes_atomic(&path, b"{}", durable).is_err());
+            assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+            assert!(path.is_dir());
+        }
+    }
+
     #[test]
     fn settings_are_atomic_and_invalid_patches_do_not_change_saved_values() {
         let dir = tempfile::tempdir().unwrap();

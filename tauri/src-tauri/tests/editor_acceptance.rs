@@ -391,3 +391,42 @@ fn real_editor_preview_persistence_exports_and_cancellation() {
         eprintln!("Editor acceptance camera {camera}: {:?}", started.elapsed());
     }
 }
+
+#[test]
+#[ignore = "Requires X3FUSE_TEST_MERRILL/QUATTRO and a physical GPU"]
+fn denoiser_selection_reprepares_raw_and_survives_reopening() {
+    let temporary = tempfile::tempdir().unwrap();
+    let editor = Editor::new(temporary.path().join("edits"));
+    for (camera, key) in ["X3FUSE_TEST_MERRILL", "X3FUSE_TEST_QUATTRO"]
+        .into_iter()
+        .enumerate()
+    {
+        let input = temporary.path().join(format!("denoise-{camera}.X3F"));
+        fs::copy(fixture(key), &input).unwrap();
+        let session = editor.open(input.clone()).unwrap();
+        let mut recipe = EditRecipe {
+            film: None,
+            ..session.recipe.clone()
+        };
+        let (nlm, original) = render(&editor, &session, &recipe, 1);
+        recipe.denoise_options.algorithm = x3f_core::DenoiseAlgorithm::Bm3d;
+        recipe.denoise_options.luminance = true;
+        let (bm3d, filtered) = render(&editor, &session, &recipe, 2);
+        assert_ne!(nlm["url"], bm3d["url"]);
+        assert_ne!(png_image_data(&original), png_image_data(&filtered));
+        let (_, repeated) = render(&editor, &session, &recipe, 3);
+        assert!(filtered == repeated, "cached preview changed");
+        editor
+            .save(&input, recipe.clone(), 1, Some(&session.source_revision))
+            .unwrap();
+        editor.close(&session.session_id).unwrap();
+        let reopened = editor.open(input).unwrap();
+        assert_eq!(reopened.recipe.denoise_options, recipe.denoise_options);
+        let (_, restored) = render(&editor, &reopened, &reopened.recipe, 4);
+        assert!(
+            filtered == restored,
+            "reopening changed the BM3D preview pixels"
+        );
+        editor.close(&reopened.session_id).unwrap();
+    }
+}

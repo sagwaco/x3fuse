@@ -96,6 +96,44 @@ it('starts new photos with independent film settings and retains explicit film-d
   expect(screen.queryByRole('slider', { name: t('editor.evFilm') })).toBeNull()
 })
 
+it('selects BM3D and controls luminance and chroma independently', async () => {
+  render(<Controls />)
+  showAllSections()
+  fireEvent.click(screen.getByRole('switch', { name: t('denoise.luminance') }))
+  fireEvent.click(screen.getByRole('switch', { name: t('denoise.chroma') }))
+  expect(change).toHaveBeenLastCalledWith(
+    { denoiseOptions: expect.objectContaining({ luminance: true, chroma: false }) },
+    true
+  )
+  expect(
+    screen.getByRole('button', { name: t('denoise.chromaPatch') }).hasAttribute('disabled')
+  ).toBe(true)
+  invoke.mockResolvedValueOnce('7')
+  await act(async () =>
+    fireEvent.click(screen.getByRole('button', { name: t('denoise.lumaPatch') }))
+  )
+  expect(change).toHaveBeenLastCalledWith(
+    { denoiseOptions: expect.objectContaining({ nlm: expect.objectContaining({ lumaPatch: 7 }) }) },
+    true
+  )
+  invoke.mockResolvedValueOnce('bm3d')
+  await act(async () =>
+    fireEvent.click(screen.getByRole('button', { name: t('denoise.algorithm') }))
+  )
+  expect(change).toHaveBeenLastCalledWith(
+    {
+      denoiseOptions: expect.objectContaining({ algorithm: 'bm3d', luminance: true, chroma: false })
+    },
+    true
+  )
+  expect(screen.queryByRole('button', { name: t('denoise.lumaPatch') })).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: t('denoise.reset') }))
+  expect(change).toHaveBeenLastCalledWith(
+    { denoiseOptions: { ...defaultRecipe().denoiseOptions, algorithm: 'bm3d' } },
+    undefined
+  )
+})
+
 it('places the film toggle above Light, explains it in a Radix tooltip, and switches the exposure binding', async () => {
   vi.stubGlobal('PointerEvent', MouseEvent)
   const view = render(<Controls />)

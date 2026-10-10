@@ -281,5 +281,18 @@
   "editor.filter": "Filter",
   "editor.neutral": "Neutral",
   "editor.monochromeHelp": "Simulates color filters by mixing the calibrated Foveon sensor layers before film rendering.",
-  "editor.visibleArea": "Visible area"
+  "editor.visibleArea": "Visible area",
+  "denoise.algorithm": "Denoiser",
+  "denoise.advanced": "Advanced denoising",
+  "denoise.luminance": "Denoise luminance",
+  "denoise.chroma": "Denoise chroma",
+  "denoise.channelsHelp": "Luminance controls grain; chroma controls color noise. Both off leaves sensor denoising disabled.",
+  "denoise.strength": "Strength multiplier",
+  "denoise.lumaPatch": "Luminance patch size",
+  "denoise.lumaSearch": "Luminance search size",
+  "denoise.chromaPatch": "Chroma patch size",
+  "denoise.chromaSearch": "Chroma search size",
+  "denoise.windowsHelp": "Odd sizes in pixels. Larger searches cost more time; larger patches can soften detail. The low-frequency chroma pass uses a 21-pixel search.",
+  "denoise.reset": "Reset advanced settings",
+  "denoise.bm3dHelp": "BM3D can take several seconds on full-resolution RAWs. NLM gives faster previews."
 }

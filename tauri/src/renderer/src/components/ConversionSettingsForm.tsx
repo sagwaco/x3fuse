@@ -18,6 +18,7 @@ import { Slider } from './ui/slider'
 import { Select } from './ui/select'
 import { Divider, Row, ToggleRow } from './ui/settingsLayout'
 import { PanelSection as Section } from './ui/panelSection'
+import { DenoiseControls } from './DenoiseControls'
 
 const FORMAT_OPTIONS: { value: OutputFormat; label: string }[] = [
   { value: 'dng', label: 'DNG (default)' },
@@ -251,6 +252,10 @@ export function ConversionSettingsForm({
                     <span>{t('settings.denoise.intensity.less')}</span>
                     <span>{t('settings.denoise.intensity.more')}</span>
                   </div>
+                  <DenoiseControls
+                    value={settings.denoiseOptions}
+                    change={(denoiseOptions) => update({ denoiseOptions })}
+                  />
                 </div>
               )}
             </>

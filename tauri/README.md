@@ -81,23 +81,38 @@ This also checks full-strength denoising with compressed DNG/TIFF and DNG highli
 recovery, with a 60-second limit per conversion. Run it in the default test profile as shown
 to exercise the development-build settings; `--release` alone would miss regressions there.
 
-RAW decoding comes from the published `x3f-core` crate, pinned in `Cargo.toml` and
-locked in `Cargo.lock`, so CI needs no x3fuse-core checkout. Move to a newer core with
-`cargo update -p x3f-core` after that version is on crates.io.
+For local denoising testing, `src-tauri/Cargo.toml` patches `x3f-core` to the
+sibling `../x3fuse-core` checkout (currently `feat/gpu-denoising`) and enables
+the upcoming 0.2.0 API's `gpu` feature. The workspace patch applies to both
+the desktop app and `x3f-render`, so conversion and editor preparation use
+the same local core.
+`npm run dev` enables GPU NLM automatically, with CPU fallback when unavailable;
+no extra launch flags or replacement `x3f_extract` binary are needed.
 
-To build against a local x3fuse-core checkout instead, override the crate with a
-gitignored config in `src-tauri/`:
+Choose **NLM** or **BM3D** in the editor's Detail section or the original-export
+settings. **Advanced denoising** exposes independent luminance/chroma switches,
+a strength multiplier, and separate NLM patch/search sizes. NLM remains the
+default with luminance off and chroma on. BM3D estimates noise from the current
+RAW and runs both hard-thresholding and Wiener filtering; its fixed block
+profile does not use the NLM window settings. Both algorithms use GPU
+acceleration when available, with CPU fallback. BM3D can take longer than NLM.
 
-```sh
-mkdir -p src-tauri/.cargo
-cat > src-tauri/.cargo/config.toml <<'TOML'
-[patch.crates-io]
-x3f-core = { path = "../../../x3fuse-core/crates/x3f-core" }
-TOML
-```
+Denoise options persist in preferences and per-photo recipes. Existing saved
+settings use the original NLM defaults. Changing any denoise option invalidates
+the prepared RAW and preview cache; slider gestures defer that preparation until
+release, while edited exports use the complete saved recipe.
 
-While that override is in place Cargo rewrites `Cargo.lock` to drop the registry
-source and checksum, so don't commit the lockfile from a patched build.
+To confirm GPU execution, enable **Debug logging** in Settings before preparing
+a RAW and look for `NLM: gpu`, `BM3D: gpu`, or `Denoise stage:` in the debug log. Test an uncached
+image or change the denoise strength to force RAW preparation: existing preview
+caches can otherwise avoid denoising entirely. Slider adjustments defer RAW
+preparation until release.
+
+These are local testing overrides, including the rewritten `Cargo.lock`. Before
+returning to published dependencies, remove the workspace patch, select a
+published core version that supports the requested features, and run
+`cargo update -p x3f-core`. To return to 0.1.6 before 0.2 is published, set
+both the app and `x3f-render` dependencies back to 0.1.6 and remove `gpu`.
 
 Build a macOS app bundle with `npm run dist`, or a native executable with
 `npm run pack`. For Windows/Linux, use the executable build until installer targets
@@ -342,6 +357,19 @@ After restarting the backend, disk-cache reads took 0.26–4.3 ms and did not
 prepare RAW. Optimizing SHA-256 reduced initial edit loading from 2.7–2.8 s to
 0.18–0.19 s. A first uncached thumbnail still needed 8.5–9.4 s of RAW processing;
 the cache and completed-editor-frame reuse avoid repeating that work.
+
+On macOS/Linux, validated RAW fingerprints persist in `edits/fingerprints-v2.json`
+(up to 1024 recently used sources / 1 MiB), so cached thumbnails no longer wait
+for a full RAW hash on every restart. Import batches, saves and editor close
+publish compact snapshots without a disk sync or holding up fingerprint readers.
+Unserializable entries are skipped individually. Sidecars still use durable writes.
+Reuse checks file size, timestamps, device and file identity, and change time.
+The first import populates this cache; changed files or changed volume identities
+are rehashed. Windows retains session-only hashes until reliable file identity
+and change-time validation is available for persistent reuse.
+With buffered sidecar reads, local Merrill and Quattro saved edits reloaded in
+0.42–0.47 ms after a backend restart (including loading the fingerprint cache),
+versus 177–233 ms on a cold import. These timings exclude webview image decoding.
 
 Interactive editor requests now reuse the current prepared source, or skip NLM
 for the first frame, then refine using the saved denoise setting after input

@@ -281,5 +281,18 @@
   "editor.filter": "滤镜",
   "editor.neutral": "中性",
   "editor.monochromeHelp": "在胶片渲染前混合经过校准的 Foveon 传感器各层数据，模拟彩色滤镜效果。",
-  "editor.visibleArea": "可见区域"
+  "editor.visibleArea": "可见区域",
+  "denoise.algorithm": "降噪算法",
+  "denoise.advanced": "高级降噪",
+  "denoise.luminance": "亮度降噪",
+  "denoise.chroma": "色度降噪",
+  "denoise.channelsHelp": "亮度控制颗粒噪点，色度控制彩色噪点。两者都关闭时，不进行传感器降噪。",
+  "denoise.strength": "强度倍率",
+  "denoise.lumaPatch": "亮度补丁大小",
+  "denoise.lumaSearch": "亮度搜索范围",
+  "denoise.chromaPatch": "色度补丁大小",
+  "denoise.chromaSearch": "色度搜索范围",
+  "denoise.windowsHelp": "大小以奇数像素表示。搜索范围越大，耗时越长；补丁越大，细节可能越柔和。低频色度处理使用21像素的搜索范围。",
+  "denoise.reset": "重置高级设置",
+  "denoise.bm3dHelp": "BM3D处理全分辨率RAW可能需要数秒。NLM可提供更快的预览。"
 }

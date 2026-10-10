@@ -281,5 +281,18 @@
   "editor.filter": "필터",
   "editor.neutral": "중립",
   "editor.monochromeHelp": "필름 렌더링 전에 보정된 Foveon 센서 레이어를 혼합하여 컬러 필터 효과를 재현합니다.",
-  "editor.visibleArea": "보이는 영역"
+  "editor.visibleArea": "보이는 영역",
+  "denoise.algorithm": "노이즈 제거 방식",
+  "denoise.advanced": "고급 노이즈 제거",
+  "denoise.luminance": "휘도 노이즈 제거",
+  "denoise.chroma": "색 노이즈 제거",
+  "denoise.channelsHelp": "휘도는 입자 노이즈를, 색차는 색 노이즈를 조절합니다. 둘 다 끄면 센서 노이즈 제거가 비활성화됩니다.",
+  "denoise.strength": "강도 배율",
+  "denoise.lumaPatch": "휘도 패치 크기",
+  "denoise.lumaSearch": "휘도 검색 크기",
+  "denoise.chromaPatch": "색차 패치 크기",
+  "denoise.chromaSearch": "색차 검색 크기",
+  "denoise.windowsHelp": "크기는 홀수 픽셀 단위입니다. 검색 범위가 클수록 처리 시간이 늘고, 패치가 클수록 디테일이 부드러워질 수 있습니다. 저주파 색차 처리는 21픽셀 검색 범위를 사용합니다.",
+  "denoise.reset": "고급 설정 초기화",
+  "denoise.bm3dHelp": "BM3D는 전체 해상도 RAW에서 몇 초가 걸릴 수 있습니다. NLM은 더 빠른 미리보기를 제공합니다."
 }

@@ -60,6 +60,8 @@ pub struct BatchSettings {
     pub jpeg_quality: u8,
     pub compress: bool,
     pub denoise_intensity: u8,
+    #[serde(default)]
+    pub denoise_options: x3f_core::DenoiseOptions,
     pub color_profile: ColorProfile,
     pub dng_highlight_recovery: bool,
     pub cineon: bool,
@@ -75,6 +77,7 @@ impl Default for BatchSettings {
             jpeg_quality: default_jpeg_quality(),
             compress: false,
             denoise_intensity: 10,
+            denoise_options: x3f_core::DenoiseOptions::default(),
             color_profile: ColorProfile::Srgb,
             dng_highlight_recovery: false,
             cineon: false,
@@ -90,6 +93,7 @@ impl BatchSettings {
     }
 
     pub fn validate(&self) -> Result<(), String> {
+        self.denoise_options.validate()?;
         if self.denoise_intensity > 10
             || self.concurrency > 8
             || !(1..=100).contains(&self.jpeg_quality)
@@ -368,5 +372,32 @@ mod tests {
             .is_ok());
         settings.denoise_intensity = 11;
         assert!(settings.validate().is_err());
+    }
+
+    #[test]
+    fn denoise_options_migrate_and_validate_at_the_api_boundary() {
+        let mut wire = serde_json::to_value(BatchSettings::default()).unwrap();
+        wire.as_object_mut().unwrap().remove("denoiseOptions");
+        let mut settings: BatchSettings = serde_json::from_value(wire).unwrap();
+        assert_eq!(
+            settings.denoise_options,
+            x3f_core::DenoiseOptions::default()
+        );
+        settings.denoise_options.algorithm = x3f_core::DenoiseAlgorithm::Bm3d;
+        settings.denoise_options.luminance = true;
+        settings.denoise_options.chroma = false;
+        let options = crate::conversion::process_options(&settings, PathBuf::new());
+        assert_eq!(options.denoise_options, settings.denoise_options);
+        let recipe: x3f_render::EditRecipe = serde_json::from_str("{}").unwrap();
+        assert_eq!(recipe.denoise_options, x3f_core::DenoiseOptions::default());
+        let mut wire = serde_json::to_value(settings).unwrap();
+        assert_eq!(wire["denoiseOptions"]["algorithm"], "bm3d");
+        wire["denoiseOptions"]["nlm"]["chromaPatch"] = serde_json::json!(4);
+        assert!(serde_json::from_value::<BatchSettings>(wire.clone())
+            .unwrap()
+            .validate()
+            .is_err());
+        wire["denoiseOptions"]["algorithm"] = serde_json::json!("unknown");
+        assert!(serde_json::from_value::<BatchSettings>(wire).is_err());
     }
 }

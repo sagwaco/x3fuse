@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react'
+import { DenoiseControls } from './DenoiseControls'
 import { RotateCw, Pipette, Plus, Trash2 } from 'lucide-react'
 import {
   DEFAULT_FILM,
@@ -357,6 +358,13 @@ export function EditorControls({
       </Section>
       <Section name={t('editor.detail')}>
         {control('denoise', 0, 10)}
+        {recipe.denoise > 0 && (
+          <DenoiseControls
+            value={recipe.denoiseOptions}
+            change={(denoiseOptions, committed) => change({ denoiseOptions }, committed)}
+            commit={commit}
+          />
+        )}
         {control('sharpen', 0, 100)}
       </Section>
       {recipe.film && (
