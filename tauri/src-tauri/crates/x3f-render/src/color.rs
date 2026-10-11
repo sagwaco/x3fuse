@@ -164,8 +164,17 @@ pub fn pick_white_balance(
     if target.iter().any(|&v| !v.is_finite() || v <= 0.) {
         return Err("This point cannot define a camera neutral".into());
     }
+    Ok(fit_neutral(&image.white_balance, target))
+}
+/// The temperature and tint the sliders show for the camera's own white balance.
+pub fn as_shot_white_balance(cal: &WhiteBalanceCalibration) -> (f32, f32) {
+    let n = cal.as_shot_neutral;
+    fit_neutral(cal, [n[0] / n[1], 1., n[2] / n[1]])
+}
+/// Grid-search the slider values whose camera neutral matches `target`.
+fn fit_neutral(cal: &WhiteBalanceCalibration, target: [f64; 3]) -> (f32, f32) {
     let error = |k: f64, t: f64| {
-        let n = neutral(&image.white_balance, k, t);
+        let n = neutral(cal, k, t);
         (n[0] / target[0]).ln().powi(2) + (n[2] / target[2]).ln().powi(2)
     };
     let mut best = (6500., 0., f64::INFINITY);
@@ -188,7 +197,7 @@ pub fn pick_white_balance(
             }
         }
     }
-    Ok((best.0 as f32, best.1 as f32))
+    (best.0 as f32, best.1 as f32)
 }
 fn eval(points: &[Point], x: f32) -> f32 {
     let next = points

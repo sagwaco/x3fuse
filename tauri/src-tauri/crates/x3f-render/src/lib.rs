@@ -4,7 +4,7 @@ mod film;
 mod geometry;
 mod recipe;
 mod stocks;
-pub use color::pick_white_balance;
+pub use color::{as_shot_white_balance, pick_white_balance};
 pub use recipe::{
     Crop, Curves, EditRecipe, FilmSettings, HslBand, MonochromeFilter, MonochromeSettings, Point,
 };

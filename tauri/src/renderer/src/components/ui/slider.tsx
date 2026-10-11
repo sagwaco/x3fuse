@@ -16,6 +16,8 @@ export interface SliderProps {
   onValueChange: (value: number) => void
   onValueCommit?: (value: number) => void
   onReset?: () => void
+  /** CSS background for the track, e.g. a gradient showing what the slider does. */
+  track?: string
   'aria-label'?: string
 }
 
@@ -28,6 +30,7 @@ export function Slider({
   onValueChange,
   onValueCommit,
   onReset,
+  track,
   'aria-label': label
 }: SliderProps): React.JSX.Element {
   // Bipolar ranges fill outward from zero, like a camera's exposure scale.
@@ -73,7 +76,10 @@ export function Slider({
       }}
       onValueCommit={(v) => onValueCommit?.(v[0])}
     >
-      <SliderPrimitive.Track className="relative h-0.5 w-full grow bg-white/15">
+      <SliderPrimitive.Track
+        className={cn('relative w-full grow', track ? 'h-1 rounded-full' : 'h-0.5 bg-white/15')}
+        style={track ? { background: track } : undefined}
+      >
         {detents.map((d, i) => (
           <div
             key={i}
@@ -82,10 +88,15 @@ export function Slider({
             style={{ left: `${percent(d)}%` }}
           />
         ))}
-        <div
-          className="absolute h-full bg-white/45"
-          style={{ left: `${Math.min(origin, current)}%`, width: `${Math.abs(current - origin)}%` }}
-        />
+        {!track && (
+          <div
+            className="absolute h-full bg-white/45"
+            style={{
+              left: `${Math.min(origin, current)}%`,
+              width: `${Math.abs(current - origin)}%`
+            }}
+          />
+        )}
       </SliderPrimitive.Track>
       <SliderPrimitive.Thumb
         aria-label={label}

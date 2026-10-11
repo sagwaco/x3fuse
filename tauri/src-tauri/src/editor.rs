@@ -177,6 +177,8 @@ pub struct RenderedPreview {
     source_height: u32,
     region: Option<Crop>,
     draft: bool,
+    as_shot_temperature: Option<f32>,
+    as_shot_tint: Option<f32>,
 }
 
 impl Editor {
@@ -635,6 +637,10 @@ impl Editor {
         };
         let (rendered, (source_width, source_height)) =
             self.render_with_worker(&mut worker, &asset, &cancel)?;
+        let as_shot = worker
+            .prepared
+            .as_ref()
+            .map(|p| x3f_render::as_shot_white_balance(&p.image.image().white_balance));
         drop(worker);
         let bytes = rendered.png().map_err(|e| e.to_string())?;
         check_cancel(&cancel)?;
@@ -660,6 +666,8 @@ impl Editor {
             source_height,
             region: rendered.region,
             draft,
+            as_shot_temperature: as_shot.map(|(k, _)| k),
+            as_shot_tint: as_shot.map(|(_, t)| t),
         })
     }
 

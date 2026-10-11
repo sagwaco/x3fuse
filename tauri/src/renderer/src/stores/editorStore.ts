@@ -48,6 +48,8 @@ interface EditorState {
   close: () => Promise<boolean>
   render: (navigation?: boolean) => void
   pickWhiteBalance: (x: number, y: number) => Promise<void>
+  /** A small look preview, rendered only while the editor is idle; edits preempt it. */
+  renderThumbnail: (recipe: EditRecipe) => Promise<string | null>
 }
 
 const same = (a: EditRecipe, b: EditRecipe): boolean => JSON.stringify(a) === JSON.stringify(b)
@@ -578,6 +580,18 @@ export const useEditorStore = create<EditorState>((set, get) => {
       } catch (error) {
         set({ error: String(error) })
       }
+    },
+    async renderThumbnail(recipe) {
+      const { session, closing, loading } = get()
+      if (!session || closing || loading || renderRunning || renderPending) return null
+      const preview = await ipc.invoke('editor:render', {
+        sessionId: session.sessionId,
+        recipe,
+        revision: renderRevision,
+        interactive: true,
+        maxEdge: 240
+      })
+      return preview.sessionId === get().session?.sessionId ? preview.url : null
     }
   }
 })

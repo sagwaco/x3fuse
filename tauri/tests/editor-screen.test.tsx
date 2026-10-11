@@ -26,6 +26,9 @@ vi.mock('../src/renderer/src/components/ZoomablePreview', () => ({
 vi.mock('../src/renderer/src/components/CropPreview', () => ({
   CropPreview: () => <div data-crop-preview />
 }))
+vi.mock('../src/renderer/src/components/CropControls', () => ({
+  CropControls: () => <div data-crop-controls />
+}))
 vi.mock('../src/renderer/src/components/ColorScope', () => ({
   ColorScope: ({ url }: { url?: string }) => <div data-scope-url={url} />
 }))

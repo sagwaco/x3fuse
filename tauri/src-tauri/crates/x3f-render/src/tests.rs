@@ -121,6 +121,19 @@ fn monochrome_layer_calibration_preserves_neutrals_and_iso() {
     assert!(color::monochrome_mix(&cal, MonochromeFilter::Neutral).is_err());
 }
 #[test]
+fn as_shot_slider_values_reproduce_the_camera_balance() {
+    let mut cal = image(1, 1).white_balance;
+    // A warm, slightly green as-shot neutral, as the camera would record it.
+    let warm = color::white_balance_matrix(&cal, Some(3800.), 12.).unwrap();
+    cal.as_shot_neutral = [1. / warm[0], 1., 1. / warm[8]];
+    let (k, t) = as_shot_white_balance(&cal);
+    let m = color::white_balance_matrix(&cal, Some(k), t).unwrap();
+    for (i, v) in m.iter().enumerate() {
+        let identity = if i % 4 == 0 { 1. } else { 0. };
+        assert!((v - identity).abs() < 0.01, "{k} K, tint {t}: {m:?}");
+    }
+}
+#[test]
 fn prepared_input_checks_entire_image_and_cancellation() {
     let cancel = AtomicBool::new(false);
     let prepared = PreparedImage::new(image(4, 3), &cancel).unwrap();

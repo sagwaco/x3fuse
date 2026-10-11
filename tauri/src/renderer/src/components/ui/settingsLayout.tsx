@@ -68,7 +68,7 @@ export function Divider(): React.JSX.Element {
   return <div className="h-px bg-white/10" />
 }
 
-function HelpTooltip({ label, text }: { label: string; text: string }): React.JSX.Element {
+export function HelpTooltip({ label, text }: { label: string; text: string }): React.JSX.Element {
   return (
     <Tooltip
       text={text}

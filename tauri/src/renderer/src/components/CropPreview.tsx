@@ -1,135 +1,256 @@
-import { useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { EditRecipe, RenderedPreview } from '@shared/editor'
 import { useEditorStore } from '../stores/editorStore'
 import { t } from '../lib/strings'
+import {
+  FULL,
+  cropToFrame,
+  dragFrame,
+  fitDrag,
+  frameToCrop,
+  type Frame,
+  type Rect
+} from '../lib/cropGeometry'
 
-type Rect = NonNullable<EditRecipe['crop']>
-const clamp = (n: number, max = 1): number => Math.max(0, Math.min(max, n))
+/** Grab distance and handle size, in screen pixels. */
+const GRAB = 14
+const HANDLE = 18
+const CURSORS: Record<string, string> = {
+  n: 'ns-resize',
+  s: 'ns-resize',
+  e: 'ew-resize',
+  w: 'ew-resize',
+  ne: 'nesw-resize',
+  sw: 'nesw-resize',
+  nw: 'nwse-resize',
+  se: 'nwse-resize',
+  move: 'move',
+  new: 'crosshair'
+}
+/** Screen arrow direction in frame space, per quarter turn. */
+const TURNS = [
+  [1, 0, 0, 1],
+  [0, 1, -1, 0],
+  [-1, 0, 0, -1],
+  [0, -1, 1, 0]
+]
 
-/** Crop in the EXIF-oriented full-image coordinate space, before rotation. */
+/**
+ * Crop on the uncropped preview. The picture turns under an upright frame as
+ * you straighten, and quarter turns rotate the whole view.
+ */
 export function CropPreview({
   preview,
-  recipe
+  recipe,
+  locked,
+  onDone
 }: {
   preview: RenderedPreview
   recipe: EditRecipe
+  /** Keep the frame's current aspect ratio while resizing. */
+  locked: boolean
+  onDone: () => void
 }): React.JSX.Element {
-  const start = useRef<{ x: number; y: number; crop: Rect; handle: string }>()
   const change = useEditorStore((state) => state.change)
   const commit = useEditorStore((state) => state.commit)
-  const crop = recipe.crop ?? { x: 0, y: 0, width: 1, height: 1 }
-  const width = preview.width,
-    height = preview.height
-  const point = (event: React.PointerEvent<SVGSVGElement>): { x: number; y: number } => {
-    const rect = event.currentTarget.getBoundingClientRect()
-    const scale = Math.min(rect.width / width, rect.height / height)
-    return {
-      x: clamp((event.clientX - rect.left - (rect.width - width * scale) / 2) / (width * scale)),
-      y: clamp((event.clientY - rect.top - (rect.height - height * scale) / 2) / (height * scale))
-    }
+  const svg = useRef<SVGSVGElement>(null)
+  const layer = useRef<SVGGElement>(null)
+  const drag = useRef<{ x: number; y: number; frame: Frame; handle: string; fresh: boolean }>()
+  const [hover, setHover] = useState('new')
+  const [scale, setScale] = useState(1)
+  const { width: W, height: H } = preview
+  const angle = recipe.straighten
+  const rotation = recipe.rotation % 4
+  const frame = cropToFrame(recipe.crop ?? FULL, angle, W, H)
+  const ratio = locked ? frame.width / frame.height : undefined
+  const smallest = Math.min(W, H) * 0.03
+  const [viewWidth, viewHeight] = rotation % 2 ? [H, W] : [W, H]
+  const turn = [
+    '',
+    `translate(${H} 0) rotate(90)`,
+    `translate(${W} ${H}) rotate(180)`,
+    `translate(0 ${W}) rotate(270)`
+  ][rotation]
+
+  useEffect(() => {
+    const element = svg.current
+    if (!element || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(([entry]) =>
+      setScale(
+        Math.min(entry.contentRect.width / viewWidth, entry.contentRect.height / viewHeight) || 1
+      )
+    )
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [viewWidth, viewHeight])
+
+  const point = (event: React.PointerEvent): { x: number; y: number } | null => {
+    const matrix = layer.current?.getScreenCTM()
+    if (!matrix) return null
+    const p = new DOMPoint(event.clientX, event.clientY).matrixTransform(matrix.inverse())
+    return { x: p.x, y: p.y }
   }
+  const handleAt = (p: { x: number; y: number }): string => {
+    const grab = GRAB / scale
+    const right = frame.x + frame.width
+    const bottom = frame.y + frame.height
+    const alongX = p.x > frame.x - grab && p.x < right + grab
+    const alongY = p.y > frame.y - grab && p.y < bottom + grab
+    const v = !alongX
+      ? ''
+      : Math.abs(p.y - frame.y) < grab
+        ? 'n'
+        : Math.abs(p.y - bottom) < grab
+          ? 's'
+          : ''
+    const h = !alongY
+      ? ''
+      : Math.abs(p.x - frame.x) < grab
+        ? 'w'
+        : Math.abs(p.x - right) < grab
+          ? 'e'
+          : ''
+    if (v || h) return v + h
+    // A frame filling the picture can't move; dragging inside draws a new crop.
+    const whole = !recipe.crop || (recipe.crop.width > 0.999 && recipe.crop.height > 0.999)
+    const inside = p.x > frame.x && p.x < right && p.y > frame.y && p.y < bottom
+    return inside && !whole ? 'move' : 'new'
+  }
+  /** Apply as much of a drag as keeps the crop inside the picture. */
+  const apply = (
+    start: Frame,
+    handle: string,
+    dx: number,
+    dy: number,
+    save: boolean,
+    fresh = false
+  ): void => {
+    const crop = fitDrag(
+      (x, y) => {
+        const next = dragFrame(start, handle, x, y, ratio)
+        return fresh || (next.width >= smallest && next.height >= smallest)
+          ? frameToCrop(next, angle, W, H)
+          : null
+      },
+      dx,
+      dy
+    )
+    if (crop && (!fresh || (crop.width * W >= smallest && crop.height * H >= smallest)))
+      change({ crop }, save)
+  }
+  const scaleFrame = (factor: number): void => {
+    const width = frame.width * factor
+    const height = frame.height * factor
+    const crop: Rect | null =
+      width >= smallest && height >= smallest
+        ? frameToCrop(
+            {
+              x: frame.x + (frame.width - width) / 2,
+              y: frame.y + (frame.height - height) / 2,
+              width,
+              height
+            },
+            angle,
+            W,
+            H
+          )
+        : null
+    if (crop) change({ crop })
+  }
+  const end = (): void => {
+    if (!drag.current) return
+    drag.current = undefined
+    commit()
+  }
+  const line = { vectorEffect: 'non-scaling-stroke', stroke: 'white', fill: 'none' } as const
+  const { x, y, width, height } = frame
+  const r = x + width
+  const b = y + height
+  const L = HANDLE / scale
   return (
     <svg
-      viewBox={`0 0 ${width} ${height}`}
-      className="h-full w-full touch-none"
-      role="img"
+      ref={svg}
+      viewBox={`0 0 ${viewWidth} ${viewHeight}`}
+      className="h-full w-full touch-none focus-visible:outline-none"
+      style={{ cursor: CURSORS[drag.current?.handle ?? hover] }}
+      tabIndex={0}
+      role="application"
       aria-label={t('editor.cropCanvas')}
       onPointerDown={(event) => {
-        if (event.button !== 0) return
-        const p = point(event)
-        const inside =
-          p.x >= crop.x &&
-          p.x <= crop.x + crop.width &&
-          p.y >= crop.y &&
-          p.y <= crop.y + crop.height
-        const edge = 0.025
-        const horizontal =
-          Math.abs(p.x - crop.x) < edge
-            ? 'w'
-            : Math.abs(p.x - crop.x - crop.width) < edge
-              ? 'e'
-              : ''
-        const vertical =
-          Math.abs(p.y - crop.y) < edge
-            ? 'n'
-            : Math.abs(p.y - crop.y - crop.height) < edge
-              ? 's'
-              : ''
-        start.current = {
-          ...p,
-          crop,
-          handle: inside ? horizontal + vertical || (recipe.crop ? 'move' : 'new') : 'new'
-        }
+        const p = event.button === 0 ? point(event) : null
+        if (!p) return
+        const handle = handleAt(p)
+        const fresh = handle === 'new'
+        drag.current = fresh
+          ? { ...p, frame: { ...p, width: 0, height: 0 }, handle: 'se', fresh }
+          : { ...p, frame, handle, fresh }
         event.currentTarget.setPointerCapture(event.pointerId)
       }}
       onPointerMove={(event) => {
-        const initial = start.current
-        if (!initial) return
-        const p = point(event),
-          dx = p.x - initial.x,
-          dy = p.y - initial.y
-        let next = { ...initial.crop }
-        if (initial.handle === 'move')
-          next = {
-            ...next,
-            x: clamp(next.x + dx, 1 - next.width),
-            y: clamp(next.y + dy, 1 - next.height)
-          }
-        else if (initial.handle === 'new')
-          next = {
-            x: Math.min(initial.x, p.x),
-            y: Math.min(initial.y, p.y),
-            width: Math.abs(dx),
-            height: Math.abs(dy)
-          }
-        else {
-          if (initial.handle.includes('w')) {
-            next.x = clamp(p.x, initial.crop.x + initial.crop.width - 0.01)
-            next.width = initial.crop.x + initial.crop.width - next.x
-          }
-          if (initial.handle.includes('e')) next.width = Math.max(0.01, p.x - initial.crop.x)
-          if (initial.handle.includes('n')) {
-            next.y = clamp(p.y, initial.crop.y + initial.crop.height - 0.01)
-            next.height = initial.crop.y + initial.crop.height - next.y
-          }
-          if (initial.handle.includes('s')) next.height = Math.max(0.01, p.y - initial.crop.y)
+        const p = point(event)
+        if (!p) return
+        const start = drag.current
+        if (!start) return setHover(handleAt(p))
+        apply(start.frame, start.handle, p.x - start.x, p.y - start.y, false, start.fresh)
+      }}
+      onPointerUp={end}
+      onPointerCancel={end}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault()
+          return onDone()
         }
-        if (next.width >= 0.01 && next.height >= 0.01) change({ crop: next }, false)
-      }}
-      onPointerUp={() => {
-        start.current = undefined
-        commit()
-      }}
-      onPointerCancel={() => {
-        start.current = undefined
-        commit()
+        if (event.key === '=' || event.key === '+' || event.key === '-') {
+          event.preventDefault()
+          return scaleFrame(event.key === '-' ? 0.95 : 1 / 0.95)
+        }
+        const [sx, sy] =
+          { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[
+            event.key
+          ] ?? []
+        if (sx === undefined) return
+        event.preventDefault()
+        const [a, c, d, e] = TURNS[rotation]
+        const step = Math.min(W, H) * (event.shiftKey ? 0.1 : 0.01)
+        apply(frame, 'move', (a * sx + c * sy) * step, (d * sx + e * sy) * step, true)
       }}
     >
-      <image href={preview.url} width={width} height={height} />
-      <path
-        fill="black"
-        opacity="0.55"
-        fillRule="evenodd"
-        d={`M0 0H${width}V${height}H0Z M${crop.x * width} ${crop.y * height}h${crop.width * width}v${crop.height * height}h${-crop.width * width}Z`}
-      />
-      <rect
-        x={crop.x * width}
-        y={crop.y * height}
-        width={crop.width * width}
-        height={crop.height * height}
-        fill="none"
-        stroke="white"
-        strokeWidth={Math.max(width, height) / 700}
-      />
-      {[1, 2].map((i) => (
-        <path
-          key={i}
-          d={`M${(crop.x + (crop.width * i) / 3) * width} ${crop.y * height}v${crop.height * height} M${crop.x * width} ${(crop.y + (crop.height * i) / 3) * height}h${crop.width * width}`}
-          stroke="white"
-          opacity="0.35"
-          strokeWidth={Math.max(width, height) / 1000}
+      <g ref={layer} transform={turn}>
+        <image
+          href={preview.url}
+          width={W}
+          height={H}
+          transform={angle ? `rotate(${angle} ${W / 2} ${H / 2})` : undefined}
         />
-      ))}
+        <path
+          fill="black"
+          opacity="0.6"
+          fillRule="evenodd"
+          d={`M${-W} ${-H}H${2 * W}V${2 * H}H${-W}Z M${x} ${y}H${r}V${b}H${x}Z`}
+        />
+        {/* Thirds for composing; a finer grid while straightening. */}
+        {(angle ? [1, 2, 3, 4, 5].map((i) => i / 6) : [1 / 3, 2 / 3]).map((f) => (
+          <path
+            key={f}
+            {...line}
+            opacity={angle && f !== 1 / 3 && f !== 2 / 3 ? 0.18 : 0.4}
+            d={`M${x + width * f} ${y}V${b} M${x} ${y + height * f}H${r}`}
+          />
+        ))}
+        <rect {...line} x={x} y={y} width={width} height={height} strokeWidth={1} />
+        <path
+          {...line}
+          strokeWidth={3}
+          d={[
+            `M${x} ${y + L}V${y}H${x + L}`,
+            `M${r - L} ${y}H${r}V${y + L}`,
+            `M${r} ${b - L}V${b}H${r - L}`,
+            `M${x + L} ${b}H${x}V${b - L}`,
+            `M${x + width / 2 - L / 2} ${y}h${L} M${x + width / 2 - L / 2} ${b}h${L}`,
+            `M${x} ${y + height / 2 - L / 2}v${L} M${r} ${y + height / 2 - L / 2}v${L}`
+          ].join(' ')}
+        />
+      </g>
     </svg>
   )
 }

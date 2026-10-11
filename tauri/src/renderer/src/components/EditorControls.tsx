@@ -1,13 +1,15 @@
 import { useRef, useState } from 'react'
 import { DenoiseControls } from './DenoiseControls'
-import { ChevronDown, RotateCcw, RotateCw, Pipette, Plus, Trash2 } from 'lucide-react'
+import { ChevronDown, RotateCcw, Pipette, Plus, Trash2 } from 'lucide-react'
 import {
   DEFAULT_FILM,
+  FILM_MONOCHROME_FILTERS,
   MONOCHROME_FILTERS,
   defaultRecipe,
   type EditRecipe,
   type FilmSettings,
-  type CurvePoint
+  type CurvePoint,
+  type MonochromeFilter
 } from '@shared/editor'
 import stocks from '@shared/film-stocks.json'
 import { useEditorStore } from '../stores/editorStore'
@@ -15,8 +17,37 @@ import { useQueueStore } from '../stores/queueStore'
 import { t } from '../lib/strings'
 import { Button } from './ui/button'
 import { Slider } from './ui/slider'
-import { Select } from './ui/select'
-import { ToggleRow } from './ui/settingsLayout'
+import { HelpTooltip, ToggleRow } from './ui/settingsLayout'
+import { LookPicker } from './LookPicker'
+
+/** Tracks that show which way a slider moves the picture. */
+const TEMPERATURE = 'linear-gradient(to right, #4f7cff, #d4d4d4, #ffb43d)'
+const TINT = 'linear-gradient(to right, #3fbf5a, #d4d4d4, #e14fd0)'
+const hsl = (hue: number, saturation = 75, lightness = 55): string =>
+  `hsl(${hue} ${saturation}% ${lightness}%)`
+/** Color mixer bands, in the renderer's order, by hue in degrees. */
+const BANDS = [
+  ['red', 0],
+  ['orange', 30],
+  ['yellow', 60],
+  ['green', 120],
+  ['aqua', 180],
+  ['blue', 240],
+  ['purple', 270],
+  ['magenta', 300]
+] as const
+const FILTER_COLORS: Record<MonochromeFilter, string> = {
+  neutral: '#a3a3a3',
+  red: hsl(0),
+  orange: hsl(30),
+  yellow: hsl(55),
+  green: hsl(120),
+  blue: hsl(225)
+}
+const filmStock = (film: FilmSettings | null): (typeof stocks)[number] | undefined =>
+  stocks.find((stock) => !stock.isPaper && stock.index === film?.film)
+const monochromeFilm = (film: FilmSettings | null): boolean => !!filmStock(film)?.monochrome
+const positiveFilm = (film: FilmSettings | null): boolean => !!filmStock(film)?.isPositive
 
 export function Adjustment({
   label,
@@ -24,6 +55,8 @@ export function Adjustment({
   min = -100,
   max = 100,
   step = 1,
+  help,
+  track,
   change,
   reset,
   commit
@@ -33,6 +66,9 @@ export function Adjustment({
   min?: number
   max?: number
   step?: number
+  /** Only for controls whose effect the label can't convey on its own. */
+  help?: string
+  track?: string
   change: (value: number, commit: boolean) => void
   reset: () => void
   commit: () => void
@@ -44,7 +80,10 @@ export function Adjustment({
   return (
     <div className="space-y-1.5 py-2">
       <div className="flex items-center justify-between gap-2">
-        <span className="control-label">{label}</span>
+        <span className="flex min-w-0 items-center gap-1.5">
+          <span className="control-label truncate">{label}</span>
+          {help && <HelpTooltip label={label} text={help} />}
+        </span>
         <div className="flex shrink-0 items-center gap-1.5">
           <input
             aria-label={label}
@@ -54,7 +93,7 @@ export function Adjustment({
             max={max}
             step={step}
             value={Number(value.toFixed(4))}
-            className="h-6 w-[4.5rem] rounded-md border border-white/10 bg-white/[0.03] px-2 text-right font-mono text-xs tabular-nums text-neutral-400 [appearance:textfield] focus:border-white/40 focus:text-neutral-100 focus:outline-none disabled:opacity-40 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+            className="h-6 w-14 rounded-md border border-white/10 bg-white/[0.03] px-2 text-right font-mono text-xs tabular-nums text-neutral-400 [appearance:textfield] focus:border-white/40 focus:text-neutral-100 focus:outline-none disabled:opacity-40 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
             onChange={(event) => {
               const value = event.currentTarget.valueAsNumber
               if (Number.isFinite(value))
@@ -80,6 +119,7 @@ export function Adjustment({
         min={min}
         max={max}
         step={step}
+        track={track}
         onValueChange={(value) => change(value, false)}
         onValueCommit={commit}
         onReset={reset}
@@ -88,7 +128,7 @@ export function Adjustment({
   )
 }
 
-function Section({
+export function Section({
   name,
   open = false,
   children
@@ -100,7 +140,7 @@ function Section({
   return (
     <details
       open={open || undefined}
-      className="mx-3 mt-3 rounded-xl border border-white/10 px-4 [details_&]:mx-0"
+      className="mx-3 mt-3 rounded-xl border border-white/10 px-4 [details_&]:mx-0 [details_&]:rounded-none [details_&]:border-x-0 [details_&]:border-b-0 [details_&]:px-0"
     >
       <summary className="control-label flex cursor-pointer list-none items-center justify-between rounded py-3 tracking-[0.16em] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50 [&::-webkit-details-marker]:hidden">
         {name}
@@ -111,6 +151,37 @@ function Section({
       </summary>
       <div className="space-y-2 pb-3">{children}</div>
     </details>
+  )
+}
+
+/** One-of-many color choice shown as swatches rather than names. */
+function Swatches<T extends string>({
+  label,
+  value,
+  options,
+  onChange
+}: {
+  label: string
+  value: T
+  options: Array<{ value: T; label: string; color: string }>
+  onChange: (value: T) => void
+}): React.JSX.Element {
+  return (
+    <div role="radiogroup" aria-label={label} className="flex flex-wrap gap-2.5 py-1">
+      {options.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          role="radio"
+          aria-checked={option.value === value}
+          aria-label={option.label}
+          title={option.label}
+          onClick={() => onChange(option.value)}
+          className="h-5 w-5 rounded-full ring-offset-2 ring-offset-neutral-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60 disabled:opacity-40 aria-checked:ring-2 aria-checked:ring-white"
+          style={{ background: option.color }}
+        />
+      ))}
+    </div>
   )
 }
 
@@ -125,90 +196,79 @@ export function EditorControls({
 }): React.JSX.Element {
   const change = useEditorStore((state) => state.change)
   const commit = useEditorStore((state) => state.commit)
-  const busy = useQueueStore((state) => state.isProcessing || state.isPreparing)
-  const inactive = useEditorStore(
-    (state) => state.before || state.loading || state.closing || !state.preview
-  )
-  const [band, setBand] = useState('0')
-  const session = useEditorStore((state) => state.session)
-  const asShotCrop = session?.asShotCrop ?? null
-  const [freeCrop, setFreeCrop] = useState<{ path?: string; crop: EditRecipe['crop'] }>()
-  const sourceWidth = useEditorStore((state) => state.preview?.sourceWidth)
-  const sourceHeight = useEditorStore((state) => state.preview?.sourceHeight)
-  const control = (key: keyof EditRecipe, min = -100, max = 100, step = 1): React.JSX.Element => (
+  const asShotTemperature = useEditorStore((state) => state.preview?.asShotTemperature)
+  const asShotTint = useEditorStore((state) => state.preview?.asShotTint)
+  const [band, setBand] = useState(0)
+  const hue = BANDS[band][1]
+  const control = (
+    key: keyof EditRecipe,
+    options: Partial<Parameters<typeof Adjustment>[0]> = {}
+  ): React.JSX.Element => (
     <Adjustment
       key={key}
       label={t(`editor.${key}`)}
       value={Number(recipe[key])}
-      min={min}
-      max={max}
-      step={step}
       change={(value, commit) => change({ [key]: value }, commit)}
       reset={() => change({ [key]: defaultRecipe()[key] })}
       commit={commit}
+      {...options}
     />
   )
-  const crop = recipe.crop ?? { x: 0, y: 0, width: 1, height: 1 }
-  const defaultCrop = asShotCrop ?? { x: 0, y: 0, width: 1, height: 1 }
-  const presets = ['1:1', '3:2', '4:3', '5:7', '6:7', '16:9', '21:9', '65:24']
-  const sameAsShot = (Object.keys(crop) as Array<keyof typeof crop>).every(
-    (key) => Math.abs(crop[key] - defaultCrop[key]) < 0.00001
+  const mixer = (key: 'hue' | 'saturation' | 'luminance', track: string): React.JSX.Element => (
+    <Adjustment
+      key={key}
+      label={t(`editor.${key}`)}
+      value={recipe.hsl[band][key]}
+      track={track}
+      commit={commit}
+      reset={() =>
+        change({
+          hsl: recipe.hsl.map((entry, index) => (index === band ? { ...entry, [key]: 0 } : entry))
+        })
+      }
+      change={(value, commit) =>
+        change(
+          {
+            hsl: recipe.hsl.map((entry, index) =>
+              index === band ? { ...entry, [key]: value } : entry
+            )
+          },
+          commit
+        )
+      }
+    />
   )
-  const cropRatio =
-    sourceWidth && sourceHeight ? (crop.width * sourceWidth) / (crop.height * sourceHeight) : 0
-  const outputRatio = recipe.rotation % 2 ? 1 / cropRatio : cropRatio
-  const ratio =
-    freeCrop?.path === session?.path && freeCrop?.crop === recipe.crop
-      ? 'free'
-      : sameAsShot
-        ? 'asShot'
-        : (presets.find((value) => {
-            const [w, h] = value.split(':').map(Number)
-            return Math.abs(outputRatio / (w / h) - 1) < 0.001
-          }) ?? 'free')
-  const setCrop = (key: keyof typeof crop, value: number, save: boolean): void => {
-    const next = { ...crop, [key]: value / 100 }
-    next.width = Math.max(0.01, Math.min(1 - next.x, next.width))
-    next.height = Math.max(0.01, Math.min(1 - next.y, next.height))
-    change({ crop: next }, save)
-  }
   return (
     <>
-      <div className="mx-3 space-y-3 rounded-xl border border-white/10 px-4 py-3">
-        <ToggleRow
-          label={t('editor.filmEnabled')}
-          help={t('editor.filmHelp')}
-          checked={recipe.film !== null}
-          onChange={(enabled) => change({ film: enabled ? { ...DEFAULT_FILM } : null })}
-        />
-        <ToggleRow
-          label={t('editor.monochrome')}
-          help={t('editor.monochromeHelp')}
-          checked={recipe.monochrome != null}
-          disabled={busy || inactive}
-          onChange={(enabled) => change({ monochrome: enabled ? { filter: 'neutral' } : null })}
-        />
+      <Section name={t('editor.look')} open>
+        <LookPicker kind="film" recipe={recipe} />
         {recipe.monochrome && (
-          <Select
-            card
-            aria-label={t('editor.filter')}
+          <p className="control-label flex items-center gap-1.5 pt-2 text-[10px] text-neutral-500">
+            {t('editor.filter')}
+            <HelpTooltip label={t('editor.filter')} text={t('editor.monochromeHelp')} />
+          </p>
+        )}
+        {recipe.monochrome && (
+          <Swatches
+            label={t('editor.filter')}
             value={recipe.monochrome.filter}
-            disabled={busy || inactive}
-            options={MONOCHROME_FILTERS.map((filter) => ({
+            options={(monochromeFilm(recipe.film)
+              ? FILM_MONOCHROME_FILTERS
+              : MONOCHROME_FILTERS
+            ).map((filter) => ({
               value: filter,
-              label: t(`editor.${filter}`)
+              label: t(`editor.${filter}`),
+              color: FILTER_COLORS[filter]
             }))}
-            onValueChange={(filter) => {
-              const selected = MONOCHROME_FILTERS.find((value) => value === filter)
-              if (selected) change({ monochrome: { filter: selected } })
-            }}
+            onChange={(filter) => change({ monochrome: { filter } })}
           />
         )}
-      </div>
+        {recipe.film && <FilmControls film={recipe.film} recipe={recipe} />}
+      </Section>
       <Section name={t('editor.light')} open>
         {recipe.film ? (
           <Adjustment
-            label={t('editor.evFilm')}
+            label={t('editor.exposure')}
             value={recipe.film.evFilm}
             min={-3}
             max={3}
@@ -218,7 +278,7 @@ export function EditorControls({
             commit={commit}
           />
         ) : (
-          control('exposure', -5, 5, 0.05)
+          control('exposure', { min: -5, max: 5, step: 0.05 })
         )}
         {(['contrast', 'highlights', 'shadows', 'whites', 'blacks'] as const).map((key) =>
           control(key)
@@ -229,6 +289,7 @@ export function EditorControls({
           <Button
             size="sm"
             variant="bordered"
+            aria-pressed={recipe.temperature === null && recipe.tint === 0}
             onClick={() => change({ temperature: null, tint: 0 })}
           >
             {t('editor.asShot')}
@@ -250,131 +311,49 @@ export function EditorControls({
         )}
         <Adjustment
           label={t('editor.temperature')}
-          value={recipe.temperature ?? 6500}
+          value={recipe.temperature ?? Math.round(asShotTemperature ?? 6500)}
           min={2000}
           max={12000}
           step={50}
-          change={(temperature, commit) => change({ temperature }, commit)}
+          track={TEMPERATURE}
+          // Leaving As shot starts from the camera's own tint, so nothing jumps.
+          change={(temperature, commit) =>
+            change(
+              recipe.temperature === null && recipe.tint === 0 && asShotTint !== undefined
+                ? { temperature, tint: Math.round(asShotTint) }
+                : { temperature },
+              commit
+            )
+          }
           reset={() => change({ temperature: null })}
           commit={commit}
         />
-        {recipe.temperature === null && (
-          <p className="control-label text-[10px] text-neutral-500">{t('editor.asShot')}</p>
-        )}
-        {control('tint')}
+        {control('tint', { track: TINT })}
+      </Section>
+      <Section name={t('editor.color')}>
+        {control('saturation')}
+        {control('vibrance', { help: t('editor.vibranceHelp') })}
+        <p className="control-label pt-2 text-[10px] text-neutral-500">{t('editor.colorBand')}</p>
+        <Swatches
+          label={t('editor.colorBand')}
+          value={String(band)}
+          options={BANDS.map(([name, hue], index) => ({
+            value: String(index),
+            label: t(`editor.${name}`),
+            color: hsl(hue)
+          }))}
+          onChange={(value) => setBand(Number(value))}
+        />
+        {mixer('hue', `linear-gradient(to right, ${hsl(hue - 30)}, ${hsl(hue)}, ${hsl(hue + 30)})`)}
+        {mixer('saturation', `linear-gradient(to right, ${hsl(hue, 0)}, ${hsl(hue, 100, 50)})`)}
+        {mixer('luminance', `linear-gradient(to right, ${hsl(hue, 70, 15)}, ${hsl(hue, 70, 85)})`)}
       </Section>
       <Section name={t('editor.curves')}>
         <Curves recipe={recipe} />
       </Section>
-      <Section name={t('editor.color')}>
-        {control('saturation')}
-        {control('vibrance')}
-        <Select
-          card
-          aria-label={t('editor.colorBand')}
-          value={band}
-          onValueChange={setBand}
-          options={['red', 'orange', 'yellow', 'green', 'aqua', 'blue', 'purple', 'magenta'].map(
-            (name, index) => ({ value: String(index), label: t(`editor.${name}`) })
-          )}
-        />
-        {(['hue', 'saturation', 'luminance'] as const).map((key) => (
-          <Adjustment
-            key={key}
-            label={t(`editor.${key}`)}
-            value={recipe.hsl[Number(band)][key]}
-            commit={commit}
-            reset={() =>
-              change({
-                hsl: recipe.hsl.map((entry, index) =>
-                  index === Number(band) ? { ...entry, [key]: 0 } : entry
-                )
-              })
-            }
-            change={(value, commit) => {
-              change(
-                {
-                  hsl: recipe.hsl.map((entry, index) =>
-                    index === Number(band) ? { ...entry, [key]: value } : entry
-                  )
-                },
-                commit
-              )
-            }}
-          />
-        ))}
-      </Section>
-      <Section name={t('editor.geometry')}>
-        <div className="flex flex-wrap gap-2">
-          <Button
-            size="sm"
-            variant="bordered"
-            onClick={() => change({ rotation: (recipe.rotation + 1) % 4 })}
-          >
-            <RotateCw aria-hidden="true" className="h-3.5 w-3.5" />
-            {t('editor.rotate')}
-          </Button>
-          <Button
-            size="sm"
-            variant="bordered"
-            onClick={() => {
-              change({ crop: asShotCrop, straighten: 0, rotation: 0 })
-              setFreeCrop(undefined)
-            }}
-          >
-            {t('editor.resetCrop')}
-          </Button>
-        </div>
-        <Select
-          card
-          aria-label={t('editor.aspectRatio')}
-          disabled={!sourceWidth || !sourceHeight}
-          value={ratio}
-          options={['asShot', 'free', ...presets].map((value) => ({
-            value,
-            label:
-              value === 'free' || value === 'asShot'
-                ? t(`editor.${value}`)
-                : value === '65:24'
-                  ? '65:24 (XPan)'
-                  : value
-          }))}
-          onValueChange={(value) => {
-            if (value === 'free') {
-              setFreeCrop({ path: session?.path, crop: recipe.crop })
-              return
-            }
-            setFreeCrop(undefined)
-            if (value === 'asShot') {
-              change({ crop: asShotCrop })
-              return
-            }
-            const [w, h] = value.split(':').map(Number)
-            if (!sourceWidth || !sourceHeight) return
-            const imageRatio = sourceWidth / sourceHeight
-            const target = (recipe.rotation % 2 ? h / w : w / h) / imageRatio
-            const width = Math.min(1, target),
-              height = Math.min(1, 1 / target)
-            change({ crop: { x: (1 - width) / 2, y: (1 - height) / 2, width, height } })
-          }}
-        />
-        {(['x', 'y', 'width', 'height'] as const).map((key) => (
-          <Adjustment
-            key={key}
-            label={`${t(`editor.crop_${key}`)} (%)`}
-            value={crop[key] * 100}
-            min={key === 'width' || key === 'height' ? 1 : 0}
-            max={key === 'x' || key === 'y' ? 99 : 100}
-            step={0.1}
-            change={(value, commit) => setCrop(key, value, commit)}
-            reset={() => setCrop(key, defaultCrop[key] * 100, true)}
-            commit={commit}
-          />
-        ))}
-        {control('straighten', -45, 45, 0.1)}
-      </Section>
       <Section name={t('editor.detail')}>
-        {control('denoise', 0, 10)}
+        {control('sharpen', { min: 0, max: 100 })}
+        {control('denoise', { min: 0, max: 10, help: t('editor.denoiseHelp') })}
         {recipe.denoise > 0 && (
           <DenoiseControls
             value={recipe.denoiseOptions}
@@ -382,16 +361,17 @@ export function EditorControls({
             commit={commit}
           />
         )}
-        {control('sharpen', 0, 100)}
       </Section>
-      {recipe.film && (
-        <Section name={t('editor.film')}>
-          <FilmControls film={recipe.film} />
-        </Section>
-      )}
     </>
   )
 }
+
+const CHANNELS = {
+  master: 'conic-gradient(#f87171, #4ade80, #60a5fa, #f87171)',
+  red: '#f87171',
+  green: '#4ade80',
+  blue: '#60a5fa'
+} as const
 
 function Curves({ recipe }: { recipe: EditRecipe }): React.JSX.Element {
   const [channel, setChannel] = useState<keyof EditRecipe['curves']>('master')
@@ -401,6 +381,7 @@ function Curves({ recipe }: { recipe: EditRecipe }): React.JSX.Element {
   const commit = useEditorStore((state) => state.commit)
   const points = recipe.curves[channel]
   const active = Math.min(selected, points.length - 1)
+  const endpoint = (index: number): boolean => index === 0 || index === points.length - 1
   const setPoints = (points: CurvePoint[], save = true): void =>
     change({ curves: { ...recipe.curves, [channel]: points } }, save)
   const move = (index: number, x: number, y: number, save: boolean): void => {
@@ -419,6 +400,11 @@ function Curves({ recipe }: { recipe: EditRecipe }): React.JSX.Element {
     )
     setPoints(next, save)
   }
+  const remove = (index: number): void => {
+    if (endpoint(index)) return
+    setPoints(points.filter((_, i) => i !== index))
+    setSelected(Math.max(0, index - 1))
+  }
   const position = (event: React.PointerEvent<SVGSVGElement>): CurvePoint => {
     const bounds = event.currentTarget.getBoundingClientRect()
     return {
@@ -426,29 +412,79 @@ function Curves({ recipe }: { recipe: EditRecipe }): React.JSX.Element {
       y: Math.max(0, Math.min(1, 1 - (event.clientY - bounds.top) / bounds.height))
     }
   }
+  const near = (point: CurvePoint): number =>
+    points.findIndex((p) => Math.hypot(p.x - point.x, p.y - point.y) < 0.06)
   return (
     <>
-      <Select
-        card
-        aria-label={t('editor.curveChannel')}
-        value={channel}
-        options={(['master', 'red', 'green', 'blue'] as const).map((value) => ({
-          value,
-          label: t(`editor.${value}`)
-        }))}
-        onValueChange={(value) => {
-          setChannel(value)
-          setSelected(0)
-        }}
-      />
+      <div className="flex items-center justify-between gap-2">
+        <Swatches
+          label={t('editor.curveChannel')}
+          value={channel}
+          options={(['master', 'red', 'green', 'blue'] as const).map((value) => ({
+            value,
+            label: t(`editor.${value}`),
+            color: CHANNELS[value]
+          }))}
+          onChange={(value) => {
+            setChannel(value)
+            setSelected(0)
+          }}
+        />
+        <div className="flex gap-1">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            aria-label={t('editor.addPoint')}
+            title={t('editor.addPoint')}
+            disabled={points.length >= 16}
+            onClick={() => {
+              const gaps = points.slice(1).map((p, i) => ({ i, size: p.x - points[i].x }))
+              const gap = gaps.reduce((a, b) => (a.size > b.size ? a : b))
+              const point = {
+                x: (points[gap.i].x + points[gap.i + 1].x) / 2,
+                y: (points[gap.i].y + points[gap.i + 1].y) / 2
+              }
+              setPoints([...points.slice(0, gap.i + 1), point, ...points.slice(gap.i + 1)])
+              setSelected(gap.i + 1)
+            }}
+          >
+            <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            aria-label={t('editor.removePoint')}
+            title={t('editor.removePoint')}
+            disabled={endpoint(active)}
+            onClick={() => remove(active)}
+          >
+            <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            aria-label={t('editor.resetCurve')}
+            title={t('editor.resetCurve')}
+            onClick={() => {
+              setPoints(defaultRecipe().curves[channel])
+              setSelected(0)
+            }}
+          >
+            <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+          </Button>
+        </div>
+      </div>
       <svg
         viewBox="0 0 200 200"
         aria-label={t('editor.curves')}
-        role="img"
+        role="group"
         className="aspect-square w-full touch-none rounded-lg border border-white/10 bg-black"
         onPointerDown={(event) => {
           const point = position(event)
-          let index = points.findIndex((p) => Math.hypot(p.x - point.x, p.y - point.y) < 0.06)
+          let index = near(point)
           if (
             index < 0 &&
             points.length < 16 &&
@@ -480,6 +516,15 @@ function Curves({ recipe }: { recipe: EditRecipe }): React.JSX.Element {
           drag.current = null
           commit()
         }}
+        onDoubleClick={(event) => {
+          const bounds = event.currentTarget.getBoundingClientRect()
+          remove(
+            near({
+              x: (event.clientX - bounds.left) / bounds.width,
+              y: 1 - (event.clientY - bounds.top) / bounds.height
+            })
+          )
+        }}
       >
         {[50, 100, 150].map((v) => (
           <path key={v} d={`M${v} 0V200 M0 ${v}H200`} stroke="white" opacity="0.07" />
@@ -488,190 +533,116 @@ function Curves({ recipe }: { recipe: EditRecipe }): React.JSX.Element {
         <polyline
           points={points.map((point) => `${point.x * 200},${(1 - point.y) * 200}`).join(' ')}
           fill="none"
-          stroke={
-            channel === 'master'
-              ? '#ddd'
-              : channel === 'red'
-                ? '#f87171'
-                : channel === 'green'
-                  ? '#4ade80'
-                  : '#60a5fa'
-          }
+          stroke={channel === 'master' ? '#ddd' : CHANNELS[channel]}
           strokeWidth="2"
         />
         {points.map((point, index) => (
           <circle
             key={index}
+            role="slider"
+            tabIndex={0}
+            aria-label={`${t('editor.curvePoint')} ${index + 1}`}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={Math.round(point.y * 100)}
+            aria-valuetext={`${Math.round(point.x * 100)} → ${Math.round(point.y * 100)}`}
             cx={point.x * 200}
             cy={(1 - point.y) * 200}
-            r={index === active ? 4 : 3}
+            r={index === active ? 4.5 : 3.5}
             fill={index === active ? '#fff' : '#888'}
             stroke="#000"
             strokeWidth="1.5"
+            className="outline-none focus-visible:stroke-white"
+            onFocus={() => setSelected(index)}
+            onKeyDown={(event) => {
+              const step = event.shiftKey ? 0.1 : 0.01
+              const [dx, dy] =
+                {
+                  ArrowLeft: [-step, 0],
+                  ArrowRight: [step, 0],
+                  ArrowUp: [0, step],
+                  ArrowDown: [0, -step]
+                }[event.key] ?? []
+              if (dx !== undefined) {
+                event.preventDefault()
+                move(index, point.x + dx, point.y + dy, true)
+              } else if (event.key === 'Delete' || event.key === 'Backspace') {
+                event.preventDefault()
+                remove(index)
+              }
+            }}
           />
         ))}
       </svg>
-      <div className="flex flex-wrap gap-2">
-        <Select
-          aria-label={t('editor.curvePoint')}
-          value={String(active)}
-          options={points.map((_, index) => ({
-            value: String(index),
-            label: `${t('editor.curvePoint')} ${index + 1}`
-          }))}
-          onValueChange={(value) => setSelected(Number(value))}
-        />
-        <Button
-          variant="bordered"
-          size="sm"
-          aria-label={t('editor.addPoint')}
-          disabled={points.length >= 16}
-          onClick={() => {
-            const gaps = points.slice(1).map((p, i) => ({ i, size: p.x - points[i].x }))
-            const gap = gaps.reduce((a, b) => (a.size > b.size ? a : b))
-            const point = {
-              x: (points[gap.i].x + points[gap.i + 1].x) / 2,
-              y: (points[gap.i].y + points[gap.i + 1].y) / 2
-            }
-            setPoints([...points.slice(0, gap.i + 1), point, ...points.slice(gap.i + 1)])
-            setSelected(gap.i + 1)
-          }}
-        >
-          <Plus className="h-3.5 w-3.5" aria-hidden="true" />
-        </Button>
-        <Button
-          variant="bordered"
-          size="sm"
-          aria-label={t('editor.removePoint')}
-          disabled={active === 0 || active === points.length - 1}
-          onClick={() => {
-            setPoints(points.filter((_, index) => index !== active))
-            setSelected(Math.max(0, active - 1))
-          }}
-        >
-          <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-        </Button>
-      </div>
-      <Adjustment
-        label={t('editor.curveInput')}
-        value={points[active].x * 100}
-        min={0}
-        max={100}
-        step={0.1}
-        change={(value, save) => move(active, value / 100, points[active].y, save)}
-        reset={() => move(active, points[active].y, points[active].y, true)}
-        commit={commit}
-      />
-      <Adjustment
-        label={t('editor.curveOutput')}
-        value={points[active].y * 100}
-        min={0}
-        max={100}
-        step={0.1}
-        change={(value, save) => move(active, points[active].x, value / 100, save)}
-        reset={() => move(active, points[active].x, points[active].x, true)}
-        commit={commit}
-      />
+      <p className="text-[11px] leading-snug text-neutral-500">{t('editor.curveHint')}</p>
     </>
   )
 }
 
-function FilmControls({ film }: { film: FilmSettings }): React.JSX.Element {
+function FilmControls({
+  film,
+  recipe
+}: {
+  film: FilmSettings
+  recipe: EditRecipe
+}): React.JSX.Element {
   const change = useEditorStore((state) => state.change)
   const commit = useEditorStore((state) => state.commit)
   const update = (patch: Partial<FilmSettings>, save = true): void =>
     change({ film: { ...film, ...patch } }, save)
+  /** A friendlier scale over one film setting; `to`/`from` convert between them. */
   const slider = (
     key: keyof FilmSettings,
-    min: number,
-    max: number,
-    step = 0.01
+    options: {
+      min?: number
+      max?: number
+      step?: number
+      to: (value: number) => number
+      from: (setting: number) => number
+      help?: string
+      track?: string
+    }
   ): React.JSX.Element => (
     <Adjustment
       key={key}
       label={t(`editor.${key}`)}
-      value={Number(film[key] ?? 0)}
-      min={min}
-      max={max}
-      step={step}
-      change={(value, save) => update({ [key]: value }, save)}
+      value={
+        Math.round(options.from(Number(film[key] ?? 0)) / (options.step ?? 1)) * (options.step ?? 1)
+      }
+      min={options.min}
+      max={options.max}
+      step={options.step}
+      help={options.help}
+      track={options.track}
+      change={(value, save) => update({ [key]: options.to(value) }, save)}
       reset={() => update({ [key]: DEFAULT_FILM[key] })}
       commit={commit}
     />
   )
+  // Contrast as stops of gamma: 0 is the stock's own, ±100 halves or doubles it.
+  const contrast = { to: (v: number) => 2 ** (v / 100), from: (g: number) => Math.log2(g) * 100 }
   return (
     <>
-      <Select
-        card
-        aria-label={t('editor.filmStock')}
-        value={String(film.film)}
-        onValueChange={(value) => update({ film: Number(value) })}
-        options={stocks
-          .filter((stock) => !stock.isPaper)
-          .map((stock) => ({ value: String(stock.index), label: stock.name }))}
-      />
-      <Select
-        card
-        aria-label={t('editor.paperStock')}
-        value={String(film.paper)}
-        onValueChange={(value) => update({ paper: Number(value) })}
-        options={stocks
-          .filter((stock) => stock.isPaper)
-          .map((stock) => ({ value: String(stock.index), label: stock.name }))}
-      />
-      <ToggleRow
-        label={t('editor.autoPaperExposure')}
-        checked={film.evPaper === null}
-        onChange={(enabled) => update({ evPaper: enabled ? null : 0 })}
-      />
-      {film.evPaper !== null && slider('evPaper', -6, 6, 0.05)}
-      <ToggleRow
-        label={t('editor.negative')}
-        checked={film.negative}
-        onChange={(negative) => update({ negative })}
-      />
       <Adjustment
         label={t('editor.grain')}
         value={film.grain ? film.grainAmount * 50 : 0}
         min={0}
         max={100}
-        change={(value, save) =>
-          update(
-            {
-              grain: value > 0,
-              grainAmount: value / 50,
-              grainSize: value <= 50 ? 0.25 + value * 0.015 : 1 + (value - 50) * 0.06,
-              grainSaturation: Math.min(1, 0.5 + value / 100)
-            },
-            save
-          )
-        }
-        reset={() =>
-          update({
-            grain: DEFAULT_FILM.grain,
-            grainAmount: DEFAULT_FILM.grainAmount,
-            grainSize: DEFAULT_FILM.grainSize,
-            grainSaturation: DEFAULT_FILM.grainSaturation
-          })
-        }
+        change={(value, save) => update({ grain: value > 0, grainAmount: value / 50 }, save)}
+        reset={() => update({ grain: DEFAULT_FILM.grain, grainAmount: DEFAULT_FILM.grainAmount })}
         commit={commit}
       />
-      <Section name={t('editor.grainAdvanced')}>
-        <ToggleRow
-          label={t('editor.grain')}
-          checked={film.grain}
-          onChange={(grain) => update({ grain })}
-        />
-        {film.grain && (
-          <>
-            {slider('grainSize', 0.25, 4)}
-            {slider('grainAmount', 0, 2)}
-            {slider('grainSaturation', 0, 1)}
-          </>
-        )}
-      </Section>
+      {/* Logarithmic, so the stock's natural grain sits in the middle. */}
+      {film.grain &&
+        slider('grainSize', {
+          min: 0,
+          max: 100,
+          to: (v) => 0.25 * 16 ** (v / 100),
+          from: (size) => (Math.log(size / 0.25) / Math.log(16)) * 100
+        })}
       <Adjustment
         label={t('editor.halation')}
+        help={t('editor.halationHelp')}
         value={film.halation ? film.halationStrength * 50 : 0}
         min={0}
         max={100}
@@ -706,26 +677,61 @@ function FilmControls({ film }: { film: FilmSettings }): React.JSX.Element {
         }
         commit={commit}
       />
-      <Section name={t('editor.halationAdvanced')}>
-        <ToggleRow
-          label={t('editor.halation')}
-          checked={film.halation}
-          onChange={(halation) => update({ halation })}
-        />
-        {film.halation && (
+      <Section name={t('editor.darkroom')}>
+        {/* Scanning the film directly skips the print, so its controls do nothing. */}
+        {!film.negative && (
           <>
-            {slider('halationStrength', 0, 2)}
-            {slider('halationRadius', 0.0005, 0.006, 0.0001)}
-            {slider('halationMidtones', 0, 1)}
+            <LookPicker kind="paper" recipe={recipe} />
+            {/* Enlarger settings are inverted so dragging right brightens and warms the print. */}
+            <Adjustment
+              label={t('editor.evPaper')}
+              help={t('editor.evPaperHelp')}
+              value={-(film.evPaper ?? 0)}
+              min={-3}
+              max={3}
+              step={0.05}
+              change={(value, save) => update({ evPaper: -value }, save)}
+              reset={() => update({ evPaper: null })}
+              commit={commit}
+            />
+            {/* Color filtration has no effect on a black-and-white print. */}
+            {!monochromeFilm(film) && (
+              <>
+                {slider('tuneY', {
+                  to: (v) => -v / 100,
+                  from: (tune) => -tune * 100,
+                  track: TEMPERATURE
+                })}
+                {slider('tuneM', {
+                  to: (v) => -v / 100,
+                  from: (tune) => -tune * 100,
+                  track: TINT
+                })}
+              </>
+            )}
           </>
         )}
+        {slider('gammaFilm', { ...contrast, help: t('editor.gammaFilmHelp') })}
+        {!film.negative && slider('gammaPaper', { ...contrast, help: t('editor.gammaPaperHelp') })}
+        {/* One silver layer has no colors to separate; the default amount still applies. */}
+        {!monochromeFilm(film) &&
+          slider('couplers', {
+            min: 0,
+            max: 100,
+            to: (v) => v / 100,
+            from: (amount) => amount * 100,
+            help: t('editor.couplersHelp')
+          })}
+        {/* A positive (slide) film is viewed directly. Printing it on negative
+            paper inverts it, so offer the switch only to undo that. */}
+        {(!positiveFilm(film) || !film.negative) && (
+          <ToggleRow
+            label={t('editor.negative')}
+            checked={film.negative}
+            onChange={(negative) => update({ negative })}
+          />
+        )}
       </Section>
-      {slider('couplers', 0, 1)}
-      {slider('couplersRadius', 0, 0.05, 0.0001)}
-      {slider('gammaFilm', 0.5, 2)}
-      {slider('gammaPaper', 0.5, 2)}
-      {slider('tuneM', -1, 1)}
-      {slider('tuneY', -1, 1)}
     </>
   )
 }

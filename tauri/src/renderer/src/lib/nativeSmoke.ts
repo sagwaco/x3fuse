@@ -692,7 +692,7 @@ async function runEditor(input: string): Promise<Record<string, unknown>> {
     )
     check(initial.fullWidth && initial.fullHeight, 'Native RAW dimensions were not returned')
     const exposure = document.querySelector<HTMLInputElement>(
-      `input[aria-label="${CSS.escape(t('editor.evFilm'))}"]`
+      `input[aria-label="${CSS.escape(t('editor.exposure'))}"]`
     )
     check(exposure, 'Accessible exposure control is missing')
     const changed = performance.now()
@@ -723,7 +723,7 @@ async function runEditor(input: string): Promise<Record<string, unknown>> {
       const previous = e().preview!.url
       const value = e().documents[path].recipe.film!.evFilm
       const knob = document.querySelector<HTMLElement>(
-        `[role="slider"][aria-label="${CSS.escape(t('editor.evFilm'))}"]`
+        `[role="slider"][aria-label="${CSS.escape(t('editor.exposure'))}"]`
       )
       check(knob, 'Film exposure slider knob is missing')
       const began = performance.now()
@@ -737,10 +737,12 @@ async function runEditor(input: string): Promise<Record<string, unknown>> {
       await painted()
       inputToPaint.push(performance.now() - began)
     }
-    const knob = document.querySelector<HTMLElement>(
-      `[role="slider"][aria-label="${CSS.escape(t('editor.evFilm'))}"]`
-    )!
-    knob.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+    // A look change can mount a new Exposure slider, so find it again each time.
+    const knob = (): HTMLElement =>
+      document.querySelector<HTMLElement>(
+        `[role="slider"][aria-label="${CSS.escape(t('editor.exposure'))}"]`
+      )!
+    knob().dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
     check(e().documents[path].recipe.film!.evFilm === 0, 'Double-click did not reset film exposure')
     e().change({ film: { ...e().documents[path].recipe.film!, evFilm: 1 } })
     check(await e().flush(), 'Benchmark adjustment autosave failed')
@@ -750,12 +752,12 @@ async function runEditor(input: string): Promise<Record<string, unknown>> {
       'Idle preview did not refine',
       15000
     )
-    const monochrome = document.querySelector<HTMLButtonElement>(
-      `[role="switch"][aria-label="${CSS.escape(t('editor.monochrome'))}"]`
+    button(t('editor.monochrome')).click()
+    check(
+      !e().documents[path].recipe.film &&
+        e().documents[path].recipe.monochrome?.filter === 'neutral',
+      'Monochrome look did not apply'
     )
-    check(monochrome, 'Monochrome switch is missing')
-    monochrome.click()
-    check(e().documents[path].recipe.monochrome?.filter === 'neutral', 'Monochrome did not enable')
     let previous = e().preview!.url
     e().change({ monochrome: { filter: 'red' } })
     await until(
@@ -782,6 +784,19 @@ async function runEditor(input: string): Promise<Record<string, unknown>> {
       () => e().preview?.url !== previous && previewPainted(),
       'Restored monochrome filter did not paint'
     )
+    // A black-and-white film keeps the red filter and gives the rest of the flow a film again.
+    previous = e().preview!.url
+    button('Kodak Double-X 5222').click()
+    check(
+      e().documents[path].recipe.film?.film === 20 &&
+        e().documents[path].recipe.monochrome?.filter === 'red',
+      'Black-and-white film look did not apply'
+    )
+    await until(
+      () => e().preview?.url !== previous && previewReady() && previewPainted(),
+      'Black-and-white film did not paint'
+    )
+    monochromePixels()
 
     usePreviewStore.getState().controls!.zoomTo(1)
     await until(
@@ -842,7 +857,7 @@ async function runEditor(input: string): Promise<Record<string, unknown>> {
     for (let index = 0; index < 6; index++) {
       const previousTile = e().tile!.url
       const began = performance.now()
-      knob.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
+      knob().dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
       await until(
         () => e().tile?.url !== previousTile && tilePainted(),
         'Zoomed adjustment did not paint'

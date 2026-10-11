@@ -33,6 +33,14 @@ export interface FilmSettings {
 }
 export const MONOCHROME_FILTERS = ['neutral', 'red', 'orange', 'yellow', 'green', 'blue'] as const
 export type MonochromeFilter = (typeof MONOCHROME_FILTERS)[number]
+/** Taking filters with measured data for black-and-white film stocks. There is no blue filter. */
+export const FILM_MONOCHROME_FILTERS: readonly MonochromeFilter[] = [
+  'neutral',
+  'yellow',
+  'orange',
+  'red',
+  'green'
+]
 export interface EditRecipe {
   version: 1
   exposure: number
@@ -138,6 +146,9 @@ export interface RenderedPreview {
   region?: PreviewRegion | null
   /** Temporary denoise quality; the saved recipe is applied by idle refinement. */
   draft?: boolean
+  /** Slider values equivalent to the camera's white balance (temperature: null). */
+  asShotTemperature?: number
+  asShotTint?: number
 }
 
 /** Geometry and the per-photo stochastic seed never travel with adjustments. */

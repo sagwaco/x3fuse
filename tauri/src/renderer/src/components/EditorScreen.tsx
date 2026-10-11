@@ -22,7 +22,9 @@ import { ColorScope } from './ColorScope'
 import { ScopeMenu } from './ScopeMenu'
 import { BatchProgress } from './BatchProgress'
 import { EditorControls } from './EditorControls'
+import { CropControls } from './CropControls'
 import { CropPreview } from './CropPreview'
+import { FULL, matchAspect } from '../lib/cropGeometry'
 import { OrientedImage } from './OrientedImage'
 
 // Camera-style tool tiles: icon over a caption.
@@ -36,6 +38,8 @@ export function EditorScreen(): React.JSX.Element {
   const busy = useQueueStore((state) => state.isProcessing || state.isPreparing)
   const scope = useSettingsStore((state) => state.settings.inspectorScopeMode)
   const [picking, setPicking] = useState(false)
+  // The aspect option is fixed on entering crop mode so resizing keeps its shape.
+  const [aspect, setAspect] = useState('free')
   const active = files.find((file) => file.id === activeId)
   const file = files.find((file) => file.path === editor.session?.path)
   const currentFile = active ?? file
@@ -80,6 +84,7 @@ export function EditorScreen(): React.JSX.Element {
       } else if (event.key === 'Escape') {
         event.preventDefault()
         if (picking) setPicking(false)
+        else if (editor.cropping) editor.setCropping(false)
         else if (!busy) void editor.close()
       }
     }
@@ -212,7 +217,12 @@ export function EditorScreen(): React.JSX.Element {
           preview={
             <div className="relative h-full w-full">
               {displayFile && editor.preview && doc && editor.cropping && !unavailable ? (
-                <CropPreview preview={editor.preview} recipe={doc.recipe} />
+                <CropPreview
+                  preview={editor.preview}
+                  recipe={doc.recipe}
+                  locked={aspect !== 'free'}
+                  onDone={() => editor.setCropping(false)}
+                />
               ) : displayFile ? (
                 <ZoomablePreview
                   key={file?.id}
@@ -304,6 +314,18 @@ export function EditorScreen(): React.JSX.Element {
                 aria-pressed={editor.cropping}
                 onClick={() => {
                   setPicking(false)
+                  const width = editor.preview?.sourceWidth
+                  const height = editor.preview?.sourceHeight
+                  if (!editor.cropping && doc && width && height)
+                    setAspect(
+                      matchAspect(
+                        doc.recipe.crop ?? FULL,
+                        editor.session?.asShotCrop ?? FULL,
+                        doc.recipe.rotation,
+                        width,
+                        height
+                      )
+                    )
                   editor.setCropping(!editor.cropping)
                 }}
               >
@@ -356,14 +378,11 @@ export function EditorScreen(): React.JSX.Element {
                   )}
                 </p>
                 <fieldset disabled={unavailable || editor.before} className="contents">
-                  <EditorControls
-                    recipe={doc.recipe}
-                    picking={picking}
-                    setPicking={(value) => {
-                      if (value && editor.cropping) editor.setCropping(false)
-                      setPicking(value)
-                    }}
-                  />
+                  {editor.cropping ? (
+                    <CropControls recipe={doc.recipe} aspect={aspect} setAspect={setAspect} />
+                  ) : (
+                    <EditorControls recipe={doc.recipe} picking={picking} setPicking={setPicking} />
+                  )}
                 </fieldset>
               </>
             )}
