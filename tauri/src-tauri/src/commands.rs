@@ -366,6 +366,19 @@ pub fn app_info(app: AppHandle) -> Value {
     };
     json!({"version":app.package_info().version.to_string(),"platform":platform,"autoConcurrency":auto_concurrency()})
 }
+/// Sync commands run on the main thread, as AppKit expects. Force Touch
+/// trackpads only play this while a finger is on the trackpad.
+#[tauri::command]
+pub fn haptics_detent() {
+    #[cfg(target_os = "macos")]
+    unsafe {
+        use objc2::{class, msg_send, runtime::AnyObject};
+        let performer: *mut AnyObject =
+            msg_send![class!(NSHapticFeedbackManager), defaultPerformer];
+        // NSHapticFeedbackPatternAlignment, NSHapticFeedbackPerformanceTimeNow
+        let _: () = msg_send![performer, performFeedbackPattern: 1isize, performanceTime: 1usize];
+    }
+}
 #[tauri::command]
 pub fn update_check() { /* Release/update work remains out of scope, as in Electron. */
 }

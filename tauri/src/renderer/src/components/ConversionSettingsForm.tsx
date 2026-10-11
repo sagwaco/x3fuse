@@ -95,7 +95,6 @@ export function ConversionSettingsForm({
       <Section title={t('settings.section.output')}>
         <div className="flex flex-col gap-3">
           <ToggleRow
-            labelClassName="text-xs text-neutral-300"
             label={t('settings.save_alongside_original')}
             help={`${t('settings.save_alongside_original.help')} ${t('settings.save_alongside_original.description')}`}
             checked={saveAlongside}
@@ -103,7 +102,7 @@ export function ConversionSettingsForm({
           />
           {!saveAlongside && (
             <div className="flex items-center justify-between gap-3">
-              <span className="text-xs text-neutral-300">{t('settings.output_location')}</span>
+              <span className="control-label">{t('settings.output_location')}</span>
               <div className="flex min-w-0 items-center gap-2">
                 <span
                   className="truncate font-mono text-xs text-neutral-400"
@@ -124,7 +123,7 @@ export function ConversionSettingsForm({
       <Section title={t('settings.section.conversion')}>
         <div className="flex flex-col gap-3">
           {!renderedOnly && (
-            <Row labelClassName="text-xs text-neutral-300" label={t('editor.exportRendering')}>
+            <Row label={t('editor.exportRendering')}>
               <Select
                 aria-label={t('editor.exportRendering')}
                 value={settings.rendering ?? 'original'}
@@ -149,9 +148,8 @@ export function ConversionSettingsForm({
             </Row>
           )}
           {rendered && <p className="text-xs text-neutral-500">{t('editor.renderedExportHint')}</p>}
-          <Row labelClassName="text-xs text-neutral-300" label={t('settings.conversion_format')}>
+          <Row label={t('settings.conversion_format')}>
             <Select
-              className="text-xs text-neutral-200"
               aria-label={t('settings.conversion_format')}
               value={format}
               options={
@@ -168,7 +166,6 @@ export function ConversionSettingsForm({
 
           {shouldShowCompressionOption(format) && (
             <ToggleRow
-              labelClassName="text-xs text-neutral-300"
               label={t('settings.raw_compression')}
               help={t('settings.raw_compression.warning')}
               checked={settings.compress}
@@ -178,7 +175,6 @@ export function ConversionSettingsForm({
 
           {!rendered && shouldShowDngHighlightRecoveryOption(format) && (
             <ToggleRow
-              labelClassName="text-xs text-neutral-300"
               label={t('settings.dng_highlight_recovery')}
               help={t('settings.dng_highlight_recovery.warning')}
               checked={settings.dngHighlightRecovery}
@@ -188,7 +184,6 @@ export function ConversionSettingsForm({
 
           {!rendered && shouldShowCineonOption(format) && (
             <ToggleRow
-              labelClassName="text-xs text-neutral-300"
               label={t('settings.cineon')}
               help={t('settings.cineon.help')}
               checked={settings.cineon}
@@ -197,9 +192,8 @@ export function ConversionSettingsForm({
           )}
 
           {(rendered || shouldShowColorProfileOption(format)) && (
-            <Row labelClassName="text-xs text-neutral-300" label={t('settings.color_profile')}>
+            <Row label={t('settings.color_profile')}>
               <Select
-                className="text-xs text-neutral-200"
                 aria-label={t('settings.color_profile')}
                 value={settings.colorProfile}
                 options={
@@ -214,7 +208,7 @@ export function ConversionSettingsForm({
 
           {rendered && format === 'jpeg' && (
             <div className="space-y-2">
-              <span className="text-xs text-neutral-300">
+              <span className="control-label">
                 {t('editor.jpegQuality')} ({settings.jpegQuality})
               </span>
               <Slider
@@ -231,7 +225,6 @@ export function ConversionSettingsForm({
               <Divider />
 
               <ToggleRow
-                labelClassName="text-xs text-neutral-300"
                 label={t('settings.denoise')}
                 help={t('settings.denoise.help')}
                 checked={settings.denoiseIntensity > 0}
@@ -239,16 +232,14 @@ export function ConversionSettingsForm({
               />
               {settings.denoiseIntensity > 0 && (
                 <div className="flex flex-col gap-1.5">
-                  <span className="text-xs text-neutral-300">
-                    {t('settings.denoise.intensity')}
-                  </span>
+                  <span className="control-label">{t('settings.denoise.intensity')}</span>
                   <Slider
                     value={settings.denoiseIntensity}
                     min={1}
                     max={10}
                     onValueChange={(v) => update({ denoiseIntensity: v })}
                   />
-                  <div className="flex justify-between text-xs font-semibold text-neutral-500">
+                  <div className="control-label flex justify-between text-[10px] text-neutral-500">
                     <span>{t('settings.denoise.intensity.less')}</span>
                     <span>{t('settings.denoise.intensity.more')}</span>
                   </div>
@@ -264,13 +255,8 @@ export function ConversionSettingsForm({
             <>
               <Divider />
 
-              <Row
-                labelClassName="text-xs text-neutral-300"
-                label={t('settings.concurrency')}
-                help={t('settings.concurrency.help')}
-              >
+              <Row label={t('settings.concurrency')} help={t('settings.concurrency.help')}>
                 <Select
-                  className="text-xs text-neutral-200"
                   aria-label={t('settings.concurrency')}
                   value={String(settings.concurrency)}
                   options={concurrencyOptions()}

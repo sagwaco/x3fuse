@@ -156,6 +156,8 @@ export interface IpcRequestMap {
   'logs:sizes': { payload: void; result: LogSizes }
 
   'app:info': { payload: void; result: AppInfo }
+  /** Trackpad click as a slider drag reaches a detent (macOS only). */
+  'haptics:detent': { payload: void; result: void }
 
   'update:check': { payload: void; result: void }
 }
@@ -215,6 +217,7 @@ export const IPC_REQUEST_CHANNELS: IpcRequestChannel[] = [
   'logs:clear',
   'logs:sizes',
   'app:info',
+  'haptics:detent',
   'update:check'
 ]
 

@@ -10,9 +10,7 @@ export function PanelSection({
   return (
     <div className="border-b border-white/10 px-3 py-3">
       <div className="mb-2 flex items-baseline justify-between gap-2">
-        <h3 className="text-[10px] font-semibold uppercase tracking-wide text-neutral-500">
-          {title}
-        </h3>
+        <h3 className="control-label text-[10px] tracking-[0.16em] text-neutral-500">{title}</h3>
         {action}
       </div>
       {children}

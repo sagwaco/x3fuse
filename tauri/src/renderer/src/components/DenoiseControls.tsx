@@ -21,7 +21,7 @@ export function DenoiseControls({
     max: number,
     disabled: boolean
   ): React.JSX.Element => (
-    <Row labelClassName="text-xs" label={t(`denoise.${key}`)}>
+    <Row label={t(`denoise.${key}`)}>
       <Select
         aria-label={t(`denoise.${key}`)}
         value={String(value.nlm[key])}
@@ -36,7 +36,7 @@ export function DenoiseControls({
   )
   return (
     <div className="space-y-3">
-      <Row labelClassName="text-xs" label={t('denoise.algorithm')}>
+      <Row label={t('denoise.algorithm')}>
         <Select
           aria-label={t('denoise.algorithm')}
           value={value.algorithm}
@@ -51,22 +51,22 @@ export function DenoiseControls({
         <p className="text-xs text-neutral-500">{t('denoise.bm3dHelp')}</p>
       )}
       <details className="space-y-3 text-xs text-neutral-300">
-        <summary className="cursor-pointer select-none">{t('denoise.advanced')}</summary>
+        <summary className="control-label cursor-pointer select-none text-neutral-400">
+          {t('denoise.advanced')}
+        </summary>
         <ToggleRow
-          labelClassName="text-xs"
           label={t('denoise.luminance')}
           checked={value.luminance}
           onChange={(luminance) => update({ luminance })}
         />
         <ToggleRow
-          labelClassName="text-xs"
           label={t('denoise.chroma')}
           checked={value.chroma}
           onChange={(chroma) => update({ chroma })}
         />
         <p className="text-neutral-500">{t('denoise.channelsHelp')}</p>
         <div className="space-y-2">
-          <span>
+          <span className="control-label">
             {t('denoise.strength')} ({value.strength.toFixed(1)}×)
           </span>
           <Slider
@@ -90,7 +90,7 @@ export function DenoiseControls({
         )}
         <button
           type="button"
-          className="text-blue-400 hover:underline"
+          className="control-label text-neutral-500 hover:text-neutral-100"
           onClick={() => change({ ...defaultDenoiseOptions(), algorithm: value.algorithm })}
         >
           {t('denoise.reset')}

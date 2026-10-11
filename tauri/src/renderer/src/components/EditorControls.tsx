@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { DenoiseControls } from './DenoiseControls'
-import { RotateCw, Pipette, Plus, Trash2 } from 'lucide-react'
+import { ChevronDown, RotateCcw, RotateCw, Pipette, Plus, Trash2 } from 'lucide-react'
 import {
   DEFAULT_FILM,
   MONOCHROME_FILTERS,
@@ -42,24 +42,36 @@ export function Adjustment({
     (state) => state.before || state.loading || state.closing || !state.preview
   )
   return (
-    <div className="space-y-1.5 py-1.5">
+    <div className="space-y-1.5 py-2">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-xs text-neutral-300">{label}</span>
-        <input
-          aria-label={label}
-          type="number"
-          disabled={busy || inactive}
-          min={min}
-          max={max}
-          step={step}
-          value={Number(value.toFixed(4))}
-          className="w-20 rounded border border-white/10 bg-neutral-950 px-1 py-0.5 text-right text-xs tabular-nums focus:border-blue-500 focus:outline-none"
-          onChange={(event) => {
-            const value = event.currentTarget.valueAsNumber
-            if (Number.isFinite(value))
-              change(Math.max(min, Math.min(max, Math.round(value / step) * step)), true)
-          }}
-        />
+        <span className="control-label">{label}</span>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <input
+            aria-label={label}
+            type="number"
+            disabled={busy || inactive}
+            min={min}
+            max={max}
+            step={step}
+            value={Number(value.toFixed(4))}
+            className="h-6 w-[4.5rem] rounded-md border border-white/10 bg-white/[0.03] px-2 text-right font-mono text-xs tabular-nums text-neutral-400 [appearance:textfield] focus:border-white/40 focus:text-neutral-100 focus:outline-none disabled:opacity-40 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+            onChange={(event) => {
+              const value = event.currentTarget.valueAsNumber
+              if (Number.isFinite(value))
+                change(Math.max(min, Math.min(max, Math.round(value / step) * step)), true)
+            }}
+          />
+          <button
+            type="button"
+            aria-label={`${t('editor.reset')} ${label}`}
+            title={t('editor.reset')}
+            disabled={busy || inactive}
+            onClick={reset}
+            className="rounded p-0.5 text-neutral-500 hover:text-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50 disabled:opacity-40"
+          >
+            <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+          </button>
+        </div>
       </div>
       <Slider
         disabled={busy || inactive}
@@ -86,11 +98,18 @@ function Section({
   children: React.ReactNode
 }): React.JSX.Element {
   return (
-    <details open={open || undefined} className="border-b border-white/10 px-3 py-2">
-      <summary className="cursor-pointer py-1 text-xs font-semibold text-neutral-300 focus-visible:outline-blue-500">
+    <details
+      open={open || undefined}
+      className="mx-3 mt-3 rounded-xl border border-white/10 px-4 [details_&]:mx-0"
+    >
+      <summary className="control-label flex cursor-pointer list-none items-center justify-between rounded py-3 tracking-[0.16em] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50 [&::-webkit-details-marker]:hidden">
         {name}
+        <ChevronDown
+          aria-hidden="true"
+          className="h-3.5 w-3.5 text-neutral-500 transition-transform [details[open]>summary>&]:rotate-180"
+        />
       </summary>
-      <div className="space-y-2 pt-2">{children}</div>
+      <div className="space-y-2 pb-3">{children}</div>
     </details>
   )
 }
@@ -155,15 +174,13 @@ export function EditorControls({
   }
   return (
     <>
-      <div className="border-b border-white/10 px-3 py-3">
+      <div className="mx-3 space-y-3 rounded-xl border border-white/10 px-4 py-3">
         <ToggleRow
           label={t('editor.filmEnabled')}
           help={t('editor.filmHelp')}
           checked={recipe.film !== null}
           onChange={(enabled) => change({ film: enabled ? { ...DEFAULT_FILM } : null })}
         />
-      </div>
-      <div className="space-y-2 border-b border-white/10 px-3 py-3">
         <ToggleRow
           label={t('editor.monochrome')}
           help={t('editor.monochromeHelp')}
@@ -172,22 +189,20 @@ export function EditorControls({
           onChange={(enabled) => change({ monochrome: enabled ? { filter: 'neutral' } : null })}
         />
         {recipe.monochrome && (
-          <label className="flex items-center justify-between gap-2 text-xs text-neutral-300">
-            <span>{t('editor.filter')}</span>
-            <Select
-              aria-label={t('editor.filter')}
-              value={recipe.monochrome.filter}
-              disabled={busy || inactive}
-              options={MONOCHROME_FILTERS.map((filter) => ({
-                value: filter,
-                label: t(`editor.${filter}`)
-              }))}
-              onValueChange={(filter) => {
-                const selected = MONOCHROME_FILTERS.find((value) => value === filter)
-                if (selected) change({ monochrome: { filter: selected } })
-              }}
-            />
-          </label>
+          <Select
+            card
+            aria-label={t('editor.filter')}
+            value={recipe.monochrome.filter}
+            disabled={busy || inactive}
+            options={MONOCHROME_FILTERS.map((filter) => ({
+              value: filter,
+              label: t(`editor.${filter}`)
+            }))}
+            onValueChange={(filter) => {
+              const selected = MONOCHROME_FILTERS.find((value) => value === filter)
+              if (selected) change({ monochrome: { filter: selected } })
+            }}
+          />
         )}
       </div>
       <Section name={t('editor.light')} open>
@@ -229,7 +244,7 @@ export function EditorControls({
           </Button>
         </div>
         {picking && (
-          <p role="status" className="text-xs text-blue-300">
+          <p role="status" className="control-label text-neutral-100">
             {t('editor.pickNeutral')}
           </p>
         )}
@@ -244,7 +259,7 @@ export function EditorControls({
           commit={commit}
         />
         {recipe.temperature === null && (
-          <p className="text-[11px] text-neutral-500">{t('editor.asShot')}</p>
+          <p className="control-label text-[10px] text-neutral-500">{t('editor.asShot')}</p>
         )}
         {control('tint')}
       </Section>
@@ -255,6 +270,7 @@ export function EditorControls({
         {control('saturation')}
         {control('vibrance')}
         <Select
+          card
           aria-label={t('editor.colorBand')}
           value={band}
           onValueChange={setBand}
@@ -310,6 +326,7 @@ export function EditorControls({
           </Button>
         </div>
         <Select
+          card
           aria-label={t('editor.aspectRatio')}
           disabled={!sourceWidth || !sourceHeight}
           value={ratio}
@@ -412,6 +429,7 @@ function Curves({ recipe }: { recipe: EditRecipe }): React.JSX.Element {
   return (
     <>
       <Select
+        card
         aria-label={t('editor.curveChannel')}
         value={channel}
         options={(['master', 'red', 'green', 'blue'] as const).map((value) => ({
@@ -427,7 +445,7 @@ function Curves({ recipe }: { recipe: EditRecipe }): React.JSX.Element {
         viewBox="0 0 200 200"
         aria-label={t('editor.curves')}
         role="img"
-        className="aspect-square w-full touch-none rounded border border-white/15 bg-neutral-950"
+        className="aspect-square w-full touch-none rounded-lg border border-white/10 bg-black"
         onPointerDown={(event) => {
           const point = position(event)
           let index = points.findIndex((p) => Math.hypot(p.x - point.x, p.y - point.y) < 0.06)
@@ -487,7 +505,9 @@ function Curves({ recipe }: { recipe: EditRecipe }): React.JSX.Element {
             cx={point.x * 200}
             cy={(1 - point.y) * 200}
             r={index === active ? 4 : 3}
-            fill={index === active ? '#60a5fa' : '#ddd'}
+            fill={index === active ? '#fff' : '#888'}
+            stroke="#000"
+            strokeWidth="1.5"
           />
         ))}
       </svg>
@@ -582,6 +602,7 @@ function FilmControls({ film }: { film: FilmSettings }): React.JSX.Element {
   return (
     <>
       <Select
+        card
         aria-label={t('editor.filmStock')}
         value={String(film.film)}
         onValueChange={(value) => update({ film: Number(value) })}
@@ -590,6 +611,7 @@ function FilmControls({ film }: { film: FilmSettings }): React.JSX.Element {
           .map((stock) => ({ value: String(stock.index), label: stock.name }))}
       />
       <Select
+        card
         aria-label={t('editor.paperStock')}
         value={String(film.paper)}
         onValueChange={(value) => update({ paper: Number(value) })}

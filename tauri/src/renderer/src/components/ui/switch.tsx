@@ -24,17 +24,19 @@ export function Switch({
       onCheckedChange={onCheckedChange}
       disabled={disabled}
       className={cn(
-        'peer inline-flex h-[22px] w-[38px] shrink-0 cursor-pointer items-center rounded-full',
-        'border border-transparent transition-colors',
-        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60',
-        'disabled:cursor-not-allowed disabled:opacity-50',
-        'data-[state=checked]:bg-blue-600 data-[state=unchecked]:bg-white/15'
+        'peer inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full',
+        'border transition-colors',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50',
+        'disabled:cursor-not-allowed disabled:opacity-40',
+        'data-[state=checked]:border-white data-[state=checked]:bg-white',
+        'data-[state=unchecked]:border-white/20 data-[state=unchecked]:bg-white/[0.03]'
       )}
     >
       <SwitchPrimitive.Thumb
         className={cn(
-          'pointer-events-none block h-[18px] w-[18px] rounded-full bg-white shadow-sm transition-transform',
-          'data-[state=checked]:translate-x-[17px] data-[state=unchecked]:translate-x-[2px]'
+          'pointer-events-none block h-3.5 w-3.5 rounded-full transition-transform',
+          'data-[state=checked]:translate-x-[18px] data-[state=checked]:bg-black',
+          'data-[state=unchecked]:translate-x-[2px] data-[state=unchecked]:bg-neutral-400'
         )}
       />
     </SwitchPrimitive.Root>

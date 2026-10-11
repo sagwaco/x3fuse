@@ -260,6 +260,7 @@ pub fn run() {
             commands::logs_clear,
             commands::logs_sizes,
             commands::app_info,
+            commands::haptics_detent,
             commands::update_check
         ])
         .on_window_event(|window, event| {

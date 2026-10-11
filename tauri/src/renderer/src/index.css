@@ -2,6 +2,13 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Camera-style control caption: monospace, uppercase, wide tracking. */
+@layer components {
+  .control-label {
+    @apply font-mono text-[11px] uppercase leading-tight tracking-[0.12em] text-neutral-300;
+  }
+}
+
 :root {
   color-scheme: dark;
   /* Paint the document canvas before React and between WebKit resize frames. */

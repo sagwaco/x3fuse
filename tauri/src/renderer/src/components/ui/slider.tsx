@@ -1,5 +1,11 @@
+import { useRef } from 'react'
 import * as SliderPrimitive from '@radix-ui/react-slider'
 import { cn } from '../../lib/cn'
+import { ipc } from '../../lib/ipc'
+import { detent } from '../../lib/detent'
+
+/** How close (in pixels) a drag must come to a detent to snap onto it. */
+const SNAP_PX = 4
 
 export interface SliderProps {
   value: number
@@ -24,22 +30,62 @@ export function Slider({
   onReset,
   'aria-label': label
 }: SliderProps): React.JSX.Element {
+  // Bipolar ranges fill outward from zero, like a camera's exposure scale.
+  const percent = (v: number): number =>
+    ((Math.max(min, Math.min(max, v)) - min) / (max - min)) * 100
+  const origin = percent(min < 0 && max > 0 ? 0 : min)
+  const current = percent(value)
+  // Every 10% of the range (zero on symmetric scales), rounded onto the step grid.
+  const detents = Array.from({ length: 11 }, (_, i) =>
+    Number((min + Math.round(((max - min) / 10 / step) * i) * step).toFixed(10))
+  )
+  const root = useRef<HTMLSpanElement>(null)
+  const drag = useRef<{ last: number; tolerance: number } | null>(null)
+  const endDrag = (): void => {
+    drag.current = null
+  }
   return (
     <SliderPrimitive.Root
+      ref={root}
+      onPointerDown={() => {
+        const width = root.current?.getBoundingClientRect().width || 1
+        drag.current = { last: value, tolerance: (SNAP_PX / width) * (max - min) }
+      }}
+      onPointerUp={endDrag}
+      onPointerCancel={endDrag}
       className={cn(
-        'relative flex w-full touch-none select-none items-center',
-        disabled && 'opacity-50'
+        'relative flex h-5 w-full touch-none select-none items-center',
+        disabled && 'opacity-40'
       )}
       value={[value]}
       min={min}
       max={max}
       step={step}
       disabled={disabled}
-      onValueChange={(v) => onValueChange(v[0])}
+      onValueChange={([next]) => {
+        // Keyboard steps stay exact; only pointer drags snap and click.
+        if (!drag.current) return onValueChange(next)
+        const { value, click } = detent(drag.current.last, next, detents, drag.current.tolerance)
+        drag.current.last = value
+        // macOS plays this on Force Touch trackpads; elsewhere it's a no-op.
+        if (click) ipc.invoke('haptics:detent').catch(() => {})
+        onValueChange(value)
+      }}
       onValueCommit={(v) => onValueCommit?.(v[0])}
     >
-      <SliderPrimitive.Track className="relative h-1.5 w-full grow overflow-hidden rounded-full bg-white/15">
-        <SliderPrimitive.Range className="absolute h-full bg-blue-600" />
+      <SliderPrimitive.Track className="relative h-0.5 w-full grow bg-white/15">
+        {detents.map((d, i) => (
+          <div
+            key={i}
+            aria-hidden="true"
+            className="absolute top-1/2 h-1.5 w-px -translate-x-1/2 -translate-y-1/2 bg-white/20"
+            style={{ left: `${percent(d)}%` }}
+          />
+        ))}
+        <div
+          className="absolute h-full bg-white/45"
+          style={{ left: `${Math.min(origin, current)}%`, width: `${Math.abs(current - origin)}%` }}
+        />
       </SliderPrimitive.Track>
       <SliderPrimitive.Thumb
         aria-label={label}
@@ -50,8 +96,8 @@ export function Slider({
           onReset()
         }}
         className={cn(
-          'block h-4 w-4 rounded-full border border-black/20 bg-white shadow',
-          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60'
+          'block h-3.5 w-[3px] rounded-[1px] bg-white shadow-[0_0_0_2px_rgb(0_0_0/0.85)]',
+          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60'
         )}
       />
     </SliderPrimitive.Root>

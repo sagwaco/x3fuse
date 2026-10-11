@@ -25,6 +25,10 @@ import { EditorControls } from './EditorControls'
 import { CropPreview } from './CropPreview'
 import { OrientedImage } from './OrientedImage'
 
+// Camera-style tool tiles: icon over a caption.
+const TOOL =
+  'h-auto flex-col justify-center gap-1.5 rounded-xl px-1 py-2.5 text-[10px] leading-tight'
+
 export function EditorScreen(): React.JSX.Element {
   const editor = useEditorStore()
   const files = useQueueStore((state) => state.files)
@@ -272,10 +276,12 @@ export function EditorScreen(): React.JSX.Element {
             <span>{t('editor.adjustments')}</span>
             <ScopeMenu />
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto">
+          <div className="min-h-0 flex-1 overflow-y-auto pb-3">
             <div className="p-3">
               {editor.viewport && (
-                <p className="mb-1 text-[11px] text-neutral-500">{t('editor.visibleArea')}</p>
+                <p className="control-label mb-1 text-[10px] text-neutral-500">
+                  {t('editor.visibleArea')}
+                </p>
               )}
               <ColorScope
                 url={
@@ -290,10 +296,10 @@ export function EditorScreen(): React.JSX.Element {
                 mode={scope}
               />
             </div>
-            <div className="flex flex-wrap gap-1 border-y border-white/10 px-2 py-2">
+            <div className="grid grid-cols-4 gap-2 px-3">
               <Button
-                variant="ghost"
-                size="sm"
+                variant="bordered"
+                className={TOOL}
                 disabled={unavailable}
                 aria-pressed={editor.cropping}
                 onClick={() => {
@@ -301,24 +307,34 @@ export function EditorScreen(): React.JSX.Element {
                   editor.setCropping(!editor.cropping)
                 }}
               >
-                <Crop className="h-3.5 w-3.5" aria-hidden="true" />
+                <Crop className="h-4 w-4" aria-hidden="true" />
                 {t(editor.cropping ? 'editor.applyCrop' : 'editor.crop')}
               </Button>
-              <Button variant="ghost" size="sm" disabled={unavailable} onClick={editor.copy}>
-                <Copy className="h-3.5 w-3.5" aria-hidden="true" />
+              <Button
+                variant="bordered"
+                className={TOOL}
+                disabled={unavailable}
+                onClick={editor.copy}
+              >
+                <Copy className="h-4 w-4" aria-hidden="true" />
                 {t('editor.copy')}
               </Button>
               <Button
-                variant="ghost"
-                size="sm"
+                variant="bordered"
+                className={TOOL}
                 disabled={unavailable || !editor.clipboard}
                 onClick={() => void editor.paste()}
               >
-                <ClipboardPaste className="h-3.5 w-3.5" aria-hidden="true" />
+                <ClipboardPaste className="h-4 w-4" aria-hidden="true" />
                 {t('editor.paste')}
               </Button>
-              <Button variant="ghost" size="sm" disabled={unavailable} onClick={editor.reset}>
-                <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+              <Button
+                variant="bordered"
+                className={TOOL}
+                disabled={unavailable}
+                onClick={editor.reset}
+              >
+                <RotateCcw className="h-4 w-4" aria-hidden="true" />
                 {t('editor.reset')}
               </Button>
             </div>
@@ -326,7 +342,7 @@ export function EditorScreen(): React.JSX.Element {
               <>
                 <p
                   role="status"
-                  className="px-3 py-2 text-[11px] text-neutral-500"
+                  className="control-label px-4 py-2.5 text-[10px] text-neutral-500"
                   title={doc.storagePath}
                 >
                   {t(
