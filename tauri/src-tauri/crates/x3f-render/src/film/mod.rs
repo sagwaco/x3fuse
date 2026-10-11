@@ -6,10 +6,11 @@
 //! solve, and every scalar the shader stages need. GPU side: `render.wgsl`.
 pub mod data;
 pub mod enlarger;
+pub mod filter;
 pub mod profile;
 pub mod spectra;
 
-use crate::{recipe::FilmSettings, RenderError};
+use crate::{recipe::FilmSettings, MonochromeFilter, RenderError};
 use data::N_WL;
 
 /// Fixed 35 mm frame; spektrafilm's spatial parameters are physical (µm).
@@ -40,6 +41,10 @@ const DIR_GAMMA_NEGATIVE: ([f64; 3], [f64; 2], [f64; 2], [f64; 2]) = (
 );
 const DIR_GAMMA_POSITIVE: ([f64; 3], [f64; 2], [f64; 2], [f64; 2]) =
     ([0.12, 0.08, 0.06], [0.12, 0.06], [0.08, 0.06], [0.06, 0.06]);
+/// One silver layer inhibits only itself: spektrafilm experimental
+/// `presets/couplers.toml` `bw.negative` / `bw.positive` same-layer gamma.
+const DIR_GAMMA_BW_NEGATIVE: f64 = 0.5159;
+const DIR_GAMMA_BW_POSITIVE: f64 = 0.2291;
 /// The recipe's halation radius is a fraction of the long edge; this default
 /// reproduces spektrafilm's `halation_first_sigma_um` exactly.
 const HALATION_RADIUS_DEFAULT: f64 = 0.0015;
@@ -86,6 +91,10 @@ pub(crate) fn pairwise_sum(xs: &[f64]) -> f64 {
 /// survives paper, trim and exposure changes.
 pub struct FilmLut {
     film: u32,
+    /// The taking filter folded into the LUT. Only B&W films use one.
+    filter: Option<MonochromeFilter>,
+    /// A B&W film: one silver layer, loaded as three identical channels.
+    pub monochrome: bool,
     /// Grid values in f64 for the mid-gray solve.
     pub data: Vec<f64>,
     /// The same grid the shader samples.
@@ -94,22 +103,54 @@ pub struct FilmLut {
     pub rgb_to_adapted_xyz: [[f64; 3]; 3],
 }
 impl FilmLut {
-    pub fn matches(&self, settings: &FilmSettings) -> bool {
-        self.film == settings.film
+    /// `filter` is the recipe's monochrome filter. Colour films ignore it, so
+    /// a filter change does not rebuild their LUT.
+    pub fn matches(&self, settings: &FilmSettings, filter: Option<MonochromeFilter>) -> bool {
+        self.film == settings.film && self.filter == self.effective(filter)
     }
-    pub fn build(film_index: u32) -> Result<Self, RenderError> {
+    fn effective(&self, filter: Option<MonochromeFilter>) -> Option<MonochromeFilter> {
+        filter.filter(|&f| self.monochrome && filter::has_curve(f))
+    }
+    pub fn build(film_index: u32, filter: Option<MonochromeFilter>) -> Result<Self, RenderError> {
         let film = profile::load(film_index as usize)?;
         let (reference, white) = data::reference_illuminant(&film.info.reference_illuminant);
-        let lut = spectra::tc_lut(
-            &spectra::spectra_table()?,
-            &film.sensitivity(),
-            &film.data.hanatos2025_adaptation_window_params,
-            reference,
-        );
+        let monochrome = film.is_monochrome();
+        let filter = filter.filter(|&f| monochrome && filter::has_curve(f));
+        let table = spectra::spectra_table()?;
         let sum = white[0] + white[1] + white[2];
-        let data = spectra::compress_input_gamut(&lut, [white[0] / sum, white[1] / sum]);
+        let white_xy = [white[0] / sum, white[1] / sum];
+        let build = |sensitivity: &[[f64; 3]]| {
+            let lut = spectra::tc_lut(
+                &table,
+                sensitivity,
+                &film.data.hanatos2025_adaptation_window_params,
+                reference,
+            );
+            spectra::compress_input_gamut(&lut, white_xy)
+        };
+        let mut data = build(&film.sensitivity());
+        if let Some(transmittance) = filter.and_then(filter::transmittance) {
+            let filtered: Vec<[f64; 3]> = film
+                .sensitivity()
+                .iter()
+                .zip(transmittance)
+                .map(|(row, t)| row.map(|s| s * t))
+                .collect();
+            // The filter changes tone, not exposure: a neutral subject exposes
+            // the film as without it, like a meter that reads through the
+            // filter. spektrafilm leaves the loss to its auto exposure, which
+            // this renderer does not run. Match at the LUT's own neutral point,
+            // which is where the print exposure is solved.
+            let (tx, ty) = data::xy_to_tc(white_xy[0], white_xy[1]);
+            let plain = spectra::sample(&data, tx, ty)[0];
+            data = build(&filtered);
+            let factor = plain / spectra::sample(&data, tx, ty)[0];
+            data.iter_mut().for_each(|v| *v *= factor);
+        }
         Ok(Self {
             film: film_index,
+            filter,
+            monochrome,
             uploadable: data.iter().map(|&v| v as f32).collect(),
             data,
             rgb_to_adapted_xyz: data::mat_mul(
@@ -124,6 +165,8 @@ impl FilmLut {
 /// settings, not on the image or the tile.
 pub struct FilmPair {
     key: Key,
+    /// A B&W film; see [`FilmLut::monochrome`].
+    pub monochrome: bool,
     pub spectral: Vec<f32>,
     /// Per-channel `halation_strength * halation_amount`.
     pub halation_a_tot: [f32; 3],
@@ -181,6 +224,7 @@ impl FilmPair {
         out.extend(self.dir_matrix.iter().flatten());
         out.extend(self.dir_density_max);
         out.push(f32::from(self.dir_positive));
+        out.push(f32::from(self.monochrome));
         out.extend(self.grain_density_max);
         out.extend(self.rgb_to_adapted_xyz.iter().flatten());
         out.extend(self.scan_xyz_to_rgb.iter().flatten());
@@ -194,17 +238,24 @@ impl FilmPair {
     pub fn build(settings: &FilmSettings, lut: &FilmLut) -> Result<Self, RenderError> {
         let key = Key::new(settings);
         let film = profile::load(settings.film as usize)?;
-        let paper = profile::load(20 + settings.paper as usize)?;
+        let paper = profile::load(profile::FILM_COUNT + settings.paper as usize)?;
         let scan = if settings.negative { &film } else { &paper };
         let rgb_to_adapted_xyz = lut.rgb_to_adapted_xyz;
 
         // ── Enlarger: per-stock neutral filtration plus the user's trim ────
-        let neutral = enlarger::neutral_filters(&paper.info.stock, &film.info.stock)?;
-        let print_illuminant = enlarger::filtered_illuminant([
-            neutral[0],
-            neutral[1] + settings.tune_m as f64 * TUNE_RANGE_CC,
-            neutral[2] + settings.tune_y as f64 * TUNE_RANGE_CC,
-        ]);
+        // A B&W negative has the same density at every wavelength, so the
+        // print exposure normalisation below cancels any filtration. Skip it.
+        let monochrome = lut.monochrome;
+        let print_illuminant = if monochrome {
+            enlarger::filtered_illuminant([0.; 3])
+        } else {
+            let neutral = enlarger::neutral_filters(&paper.info.stock, &film.info.stock)?;
+            enlarger::filtered_illuminant([
+                neutral[0],
+                neutral[1] + settings.tune_m as f64 * TUNE_RANGE_CC,
+                neutral[2] + settings.tune_y as f64 * TUNE_RANGE_CC,
+            ])
+        };
         let paper_sensitivity = paper.sensitivity();
 
         // ── Print exposure normalisation around a mid-gray card ────────────
@@ -264,6 +315,17 @@ impl FilmPair {
         dir[1][2] = g_rb[1] * DIR_INHIBITION;
         dir[2][0] = b_rg[0] * DIR_INHIBITION;
         dir[2][1] = b_rg[1] * DIR_INHIBITION;
+        if monochrome {
+            let gamma = if dir_positive {
+                DIR_GAMMA_BW_POSITIVE
+            } else {
+                DIR_GAMMA_BW_NEGATIVE
+            };
+            dir = [[0.; 3]; 3];
+            for (c, row) in dir.iter_mut().enumerate() {
+                row[c] = gamma * DIR_INHIBITION;
+            }
+        }
         for row in &mut dir {
             for v in row.iter_mut() {
                 *v *= amount;
@@ -340,8 +402,11 @@ impl FilmPair {
 
         Ok(Self {
             key,
+            monochrome,
             spectral,
-            halation_a_tot: HALATION_STRENGTH.map(|v| v as f32),
+            // One silver layer takes the first channel's value, as
+            // spektrafilm's `match_channels` does.
+            halation_a_tot: channels(HALATION_STRENGTH, monochrome).map(|v| v as f32),
             dir_matrix: mat_f32(&dir),
             dir_density_max: density_max.map(|v| v as f32),
             dir_positive,
@@ -440,6 +505,20 @@ fn curves_before_dir(
             })
         })
         .collect()
+}
+
+/// Per-channel constants for a film: B&W films repeat the first channel.
+///
+/// ponytail: B&W grain and halation reuse the first colour channel's
+/// defaults. spektrafilm experimental calibrates B&W grain for its newer
+/// rms-granularity model, which this crate does not port; port it if B&W
+/// grain must match the reference.
+pub fn channels<T: Copy>(values: [T; 3], monochrome: bool) -> [T; 3] {
+    if monochrome {
+        [values[0]; 3]
+    } else {
+        values
+    }
 }
 
 /// Per-stage blur sigmas in output pixels, derived from spektrafilm's physical

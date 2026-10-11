@@ -21,9 +21,14 @@ and is also installed with the application under resources/licenses/x3f-render.
 Every bundled data file is a byte-identical copy of the upstream file, so no
 CHANGELOG.txt accompanies them:
 
-  - assets/profiles/*.json      20 film and 8 paper profiles
+  - assets/profiles/*.json      22 film and 9 paper profiles
   - assets/irradiance_xy_tc.npy spectral upsampling table
   - assets/neutral_print_filters.json  per-stock neutral enlarger filtration
+  - assets/filters/hoya/*.csv   coloured taking-filter transmittance
+
+The B&W profiles (kodak_doublex, kodak_trix, kodak_2302) and the Hoya filter
+curves come from the spektrafilm `experimental` branch, revision 28bf883
+(2026-07-08). All other data comes from the spektrafilm-rs revision below.
 
 Film and paper names identify the modeled materials and do not imply
 affiliation or endorsement. "spektrafilm" is not used as X3Fuse branding.
@@ -70,9 +75,23 @@ X3Fuse modifications to the code (not to the data)
   - Stages not ported: glare, output gamut compression, highlight boost,
     unsharp (this crate has its own sharpening), the DIR coupler diffusion
     tail, camera/enlarger diffusion filters, camera and scanner lens blur, the
-    mallett2019 and arctic2026alpha02 front passes, B&W development-time
-    families, auto-exposure, the PCHIP 3D LUT export path, and the s023 print
-    curve morph.
+    mallett2019 and arctic2026alpha02 front passes, development-time choice
+    (B&W stocks use spektrafilm's default middle time), auto-exposure, the
+    PCHIP 3D LUT export path, and the s023 print curve morph.
+  - B&W stocks run through the three-channel pipeline as three identical
+    channels. Each carries a third of the silver density, all channels share
+    one grain draw, DIR couplers inhibit only the same layer, and per-channel
+    constants take the first channel's value, as spektrafilm's
+    `match_channels` does. Grain and halation use this crate's colour
+    defaults, not the experimental branch's B&W presets for its newer
+    granularity model.
+  - A B&W negative is printed without enlarger filtration: its density is the
+    same at every wavelength, so the print exposure normalisation cancels any
+    filtration.
+  - A taking filter is scaled so a neutral subject exposes the film as
+    without it, like a meter that reads through the filter. spektrafilm
+    leaves the loss to its auto exposure. Filter curves are interpolated
+    linearly onto the 5 nm grid where spektrafilm uses Akima.
 
 Runtime dependencies added for rendering/encoding include wgpu (MIT/Apache-2.0),
 pollster (MIT/Apache-2.0), bytemuck (Zlib/Apache-2.0/MIT), serde/serde_json

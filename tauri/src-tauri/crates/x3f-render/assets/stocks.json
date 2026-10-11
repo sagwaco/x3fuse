@@ -180,6 +180,26 @@
     "targetPaperKey": "kodak_2383"
   },
   {
+    "index": 20,
+    "key": "kodak_doublex",
+    "name": "Kodak Double-X 5222",
+    "isPaper": false,
+    "isPositive": false,
+    "antihalation": "strong",
+    "targetPaperKey": "kodak_2302",
+    "monochrome": true
+  },
+  {
+    "index": 21,
+    "key": "kodak_trix",
+    "name": "Kodak Tri-X 7266",
+    "isPaper": false,
+    "isPositive": true,
+    "antihalation": "strong",
+    "targetPaperKey": null,
+    "monochrome": true
+  },
+  {
     "index": 0,
     "key": "kodak_endura_premier",
     "name": "Kodak Professional Endura Premier",
@@ -250,5 +270,15 @@
     "isPositive": false,
     "antihalation": "strong",
     "targetPaperKey": null
+  },
+  {
+    "index": 8,
+    "key": "kodak_2302",
+    "name": "Kodak 2302",
+    "isPaper": true,
+    "isPositive": false,
+    "antihalation": "strong",
+    "targetPaperKey": null,
+    "monochrome": true
   }
 ]

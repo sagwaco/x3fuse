@@ -689,15 +689,16 @@ impl Renderer {
             .lock()
             .map_err(|_| RenderError::Gpu("Renderer unavailable".into()))?;
         if let Some(settings) = &recipe.film {
-            let stale = film_cache
-                .as_ref()
-                .is_none_or(|(lut, pair)| !lut.matches(settings) || !pair.matches(settings));
+            let filter = recipe.monochrome.map(|m| m.filter);
+            let stale = film_cache.as_ref().is_none_or(|(lut, pair)| {
+                !lut.matches(settings, filter) || !pair.matches(settings)
+            });
             if stale {
-                // Rebuild the LUT only when the film itself changed; paper,
-                // trim and exposure changes reuse it.
+                // Rebuild the LUT only when the film or its taking filter
+                // changed; paper, trim and exposure changes reuse it.
                 let lut = match film_cache.take() {
-                    Some((lut, _)) if lut.matches(settings) => lut,
-                    _ => film::FilmLut::build(settings.film)?,
+                    Some((lut, _)) if lut.matches(settings, filter) => lut,
+                    _ => film::FilmLut::build(settings.film, filter)?,
                 };
                 let pair = film::FilmPair::build(settings, &lut)?;
                 *film_cache = Some((lut, pair));
@@ -835,11 +836,15 @@ impl Renderer {
         spatial: Option<&film::Spatial>,
     ) -> Result<Parameters, RenderError> {
         let mut p: Parameters = [[0.; 4]; 40];
+        // A B&W film already makes a neutral image; the sensor-layer mix is
+        // only for colour film or no film. Both neutralize the output.
+        let silver = r.film.is_some() && pair.is_some_and(|pair| pair.monochrome);
+        let sensor_mix = r.monochrome.filter(|_| !silver);
         p[1] = [
             g.scale,
             o.color_profile.index(),
             f32::from(r.film.is_some()),
-            f32::from(r.monochrome.is_some()),
+            f32::from(r.monochrome.is_some() || silver),
         ];
         p[2] = [
             r.exposure,
@@ -854,7 +859,7 @@ impl Renderer {
             r.vibrance / 100.,
         ];
         p[4][0] = r.sharpen / 100.;
-        if let Some(monochrome) = r.monochrome {
+        if let Some(monochrome) = sensor_mix {
             p[4][1..].copy_from_slice(&color::monochrome_mix(
                 &image.white_balance,
                 monochrome.filter,
@@ -877,7 +882,10 @@ impl Renderer {
         }
         if let (Some(f), Some(pair), Some(_)) = (&r.film, pair, spatial) {
             let (grain_min, grain_uniformity, sub_layers) = film::grain_constants();
-            let particles = film::grain_particles(f, g.long_edge());
+            let channels = |values| film::channels(values, pair.monochrome);
+            let (grain_min, grain_uniformity) = (channels(grain_min), channels(grain_uniformity));
+            let particles = channels(film::grain_particles(f, g.long_edge()));
+            let scatter_tail_weight = channels(film::scatter_tail_weight());
             // The recipe's halation strength scales spektrafilm's per-channel
             // baseline, which its own default reproduces exactly.
             let strength = f.halation_strength / recipe::FilmSettings::default().halation_strength;
@@ -902,11 +910,13 @@ impl Renderer {
                 p[34][i] = pair.grain_density_max[i];
                 p[35][i] = particles[i];
                 p[36][i] = grain_uniformity[i];
-                p[37][i] = film::scatter_tail_weight()[i];
+                p[37][i] = scatter_tail_weight[i];
                 p[38][i] = pair.halation_a_tot[i] * strength;
                 p[39][i] = 1. / (1. + p[38][i]);
             }
             p[32][3] = f32::from(pair.dir_positive);
+            // One silver layer: every channel draws the same grain.
+            p[37][3] = f32::from(pair.monochrome);
             p[33][3] = sub_layers as f32;
             p[34][3] = f32::from_bits(r.seed);
             p[38][3] = f.halation_midtones;

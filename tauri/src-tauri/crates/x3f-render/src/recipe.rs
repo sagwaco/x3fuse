@@ -267,7 +267,11 @@ impl EditRecipe {
 }
 impl FilmSettings {
     pub fn validate(&self) -> Result<(), String> {
-        if self.film >= 20 || self.paper >= 8 {
+        let (films, profiles) = (
+            crate::film::profile::FILM_COUNT,
+            crate::film::profile::PROFILE_JSON.len(),
+        );
+        if self.film as usize >= films || self.paper as usize >= profiles - films {
             return Err("Unknown film or paper stock".into());
         }
         for (n, v, lo, hi) in [

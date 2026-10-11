@@ -180,6 +180,8 @@ fn grain(@builtin(global_invocation_id) id:vec3<u32>) {
     let coord=cell.y*u32(p.v[22].w)+cell.x;
     let layers=u32(p.v[33].w);
     let seed=bitcast<u32>(p.v[34].w);
+    // B&W film has one silver layer: all channels draw the same grains.
+    let silver=p.v[37].w>0.5;
     var developed_density=vec3<f32>(0);
     for (var c=0u; c<3u; c++) {
         let dmin=p.v[33][c];let dmax=p.v[34][c];let npp=p.v[35][c];
@@ -189,7 +191,7 @@ fn grain(@builtin(global_invocation_id) id:vec3<u32>) {
         let lambda=npp/saturation;
         var total=0.0;
         for (var layer=0u; layer<layers; layer++) {
-            var rng=splitmix32(c+layer*10u+seed)^splitmix32(coord);
+            var rng=splitmix32(select(c,0u,silver)+layer*10u+seed)^splitmix32(coord);
             let seeds=max(0.0,round(lambda+sqrt(lambda)*standard_normal(&rng)));
             let mean=seeds*ratio;let variance=mean*(1.0-ratio);
             var grains=mean;
@@ -250,7 +252,8 @@ fn adjust(@builtin(global_invocation_id) id:vec3<u32>) {
     var rgb=vec3<f32>(dot(p.v[5].xyz,c),dot(p.v[6].xyz,c),dot(p.v[7].xyz,c))*exp2(p.v[2].x);
     // Calibrated inverse camera matrix recovers the B/M/T layer mixture. Keep
     // signed samples and highlight headroom until the ordinary output transform.
-    if p.v[1].w>0.5 { rgb=vec3<f32>(dot(p.v[4].yzw,rgb)); }
+    // B&W film takes the colour image; its spectral sensitivity makes it gray.
+    if p.v[1].w>0.5 && p.v[37].w<0.5 { rgb=vec3<f32>(dot(p.v[4].yzw,rgb)); }
     let y=max(0.0,dot(rgb,vec3<f32>(0.2126,0.7152,0.0722)));
     let shadow=1.0-smoothstep(0.01,0.4,y);let high=smoothstep(0.18,1.0,y);
     let stops=p.v[2].w*shadow*2.0+p.v[2].z*high*2.0+p.v[3].x*smoothstep(0.5,2.0,y)+p.v[3].y*(1.0-smoothstep(0.0,0.08,y));

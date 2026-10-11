@@ -177,7 +177,7 @@ fn geometry_obeys_exif_crop_rotation_and_native_regions() {
 #[test]
 fn bundled_spektrafilm_assets_cover_every_stock() {
     let stocks: Vec<serde_json::Value> = serde_json::from_str(STOCKS_JSON).unwrap();
-    assert_eq!(stocks.len(), 28);
+    assert_eq!(stocks.len(), film::profile::PROFILE_JSON.len());
     assert_eq!(
         STOCKS_JSON,
         include_str!("../../../../src/shared/film-stocks.json"),
@@ -186,26 +186,39 @@ fn bundled_spektrafilm_assets_cover_every_stock() {
     for (index, stock) in stocks.iter().enumerate() {
         let profile = film::profile::load(index).unwrap();
         assert_eq!(profile.info.stock, stock["key"].as_str().unwrap());
-        assert_eq!(profile.is_positive(), stock["isPositive"].as_bool().unwrap());
+        assert_eq!(
+            profile.is_positive(),
+            stock["isPositive"].as_bool().unwrap()
+        );
         assert_eq!(profile.data.log_exposure.len(), film::CURVE_SAMPLES);
         assert_eq!(profile.data.density_curves.len(), film::CURVE_SAMPLES);
         assert_eq!(profile.data.log_sensitivity.len(), 81);
         assert_eq!(profile.data.channel_density.len(), 81);
         assert_eq!(profile.data.base_density.len(), 81);
         // The shader interpolates on a uniform grid; a non-uniform axis would
-        // silently shift every density lookup.
+        // silently shift every density lookup. The B&W profiles round the
+        // axis to 6 decimals, which is 2e-5 of a step.
         let axis = &profile.data.log_exposure;
         let step = (axis[axis.len() - 1] - axis[0]) / (axis.len() - 1) as f64;
         for (i, x) in axis.iter().enumerate() {
-            assert!((x - (axis[0] + step * i as f64)).abs() < 1e-9, "{index} axis");
+            assert!(
+                (x - (axis[0] + step * i as f64)).abs() < 1e-6,
+                "{index} axis"
+            );
         }
-        if index < 20 {
+        let monochrome = stock["monochrome"].as_bool().unwrap_or(false);
+        assert_eq!(profile.is_monochrome(), monochrome, "{index} channel model");
+        if index < film::profile::FILM_COUNT {
             assert_eq!(
                 film::data::reference_illuminant(&profile.info.reference_illuminant).0[0],
                 film::data::ILLUMINANT_D55_F64[0],
                 "film {index} must resolve to the D55 reference illuminant"
             );
-            assert!(profile.data.hanatos2025_adaptation_window_params.len() >= 4);
+            // spektrafilm skips the camera window for B&W profiles.
+            assert_eq!(
+                profile.data.hanatos2025_adaptation_window_params.len() >= 4,
+                !monochrome
+            );
         } else {
             profile.model_curves().unwrap();
         }
@@ -217,11 +230,126 @@ fn bundled_spektrafilm_assets_cover_every_stock() {
 }
 
 #[test]
+fn bw_profiles_load_as_three_identical_channels() {
+    let at = |key: &str| {
+        film::profile::PROFILE_JSON
+            .iter()
+            .position(|(k, _)| *k == key)
+            .unwrap()
+    };
+    let doublex = film::profile::load(at("kodak_doublex")).unwrap();
+    assert!(doublex.is_monochrome() && !doublex.is_positive());
+    // Middle development time (6.5 min of 4, 5, 6.5, 9, 12): third column.
+    assert_eq!(doublex.data.base_density[0], 0.209166);
+    assert_eq!(doublex.data.density_curves[128], [1.09603; 3]);
+    for row in &doublex.data.channel_density {
+        assert_eq!(
+            *row,
+            [1. / 3.; 3],
+            "the three channels add up to the silver"
+        );
+    }
+    for row in doublex.sensitivity() {
+        assert!(row[0] == row[1] && row[1] == row[2] && row[0] >= 0.);
+    }
+    // No measurement means no sensitivity, not 10^0.
+    assert_eq!(doublex.sensitivity()[60], [0.; 3]);
+    let model = &doublex.data.density_curves_model;
+    assert!(model.centers.len() == 3 && model.centers[0] == model.centers[2]);
+    doublex.model_curves().unwrap();
+    let trix = film::profile::load(at("kodak_trix")).unwrap();
+    assert!(trix.is_monochrome() && trix.is_positive());
+    assert_eq!(trix.data.base_density[0], 0.215639);
+    let print = film::profile::load(at("kodak_2302")).unwrap();
+    assert!(print.is_monochrome());
+    assert_eq!(at("kodak_2302"), film::profile::FILM_COUNT + 8);
+    let curves = print.model_curves().unwrap();
+    assert!(curves
+        .iter()
+        .all(|row| row[0] == row[1] && row[1] == row[2]));
+}
+
+#[test]
+fn taking_filters_use_the_measured_curves() {
+    use film::filter::transmittance;
+    let at = |t: [f64; 81], wl: usize| t[(wl - 380) / 5];
+    let red = transmittance(MonochromeFilter::Red).unwrap();
+    assert!(at(red, 450) < 0.01 && at(red, 700) > 0.9);
+    let yellow = transmittance(MonochromeFilter::Yellow).unwrap();
+    assert!(at(yellow, 400) < 0.05 && at(yellow, 600) > 0.9);
+    let green = transmittance(MonochromeFilter::Green).unwrap();
+    assert!(at(green, 540) > at(green, 450) && at(green, 540) > at(green, 650));
+    assert!(transmittance(MonochromeFilter::Orange).is_some());
+    assert!(transmittance(MonochromeFilter::Neutral).is_none());
+    assert!(transmittance(MonochromeFilter::Blue).is_none());
+}
+
+#[test]
+fn taking_filters_rebuild_only_bw_luts() {
+    let settings = |film| FilmSettings {
+        film,
+        ..Default::default()
+    };
+    let color = film::FilmLut::build(2, Some(MonochromeFilter::Red)).unwrap();
+    assert!(!color.monochrome);
+    assert!(color.matches(&settings(2), Some(MonochromeFilter::Yellow)));
+    assert!(color.matches(&settings(2), None));
+    assert_eq!(
+        color.data,
+        film::FilmLut::build(2, None).unwrap().data,
+        "colour films ignore the filter"
+    );
+    let bw = film::FilmLut::build(20, Some(MonochromeFilter::Red)).unwrap();
+    assert!(bw.monochrome);
+    assert!(bw.matches(&settings(20), Some(MonochromeFilter::Red)));
+    assert!(!bw.matches(&settings(20), Some(MonochromeFilter::Yellow)));
+    assert!(!bw.matches(&settings(20), None));
+    let plain = film::FilmLut::build(20, Some(MonochromeFilter::Blue)).unwrap();
+    assert!(
+        plain.matches(&settings(20), None),
+        "no blue curve: same as no filter"
+    );
+    assert_ne!(bw.data, plain.data);
+    // Metering through the filter: a neutral subject exposes the film the same.
+    let (reference, white) = film::data::reference_illuminant("D55");
+    assert_eq!(reference[0], film::data::ILLUMINANT_D55_F64[0]);
+    let sum = white[0] + white[1] + white[2];
+    let (tx, ty) = film::data::xy_to_tc(white[0] / sum, white[1] / sum);
+    let neutral = |lut: &film::FilmLut| film::spectra::sample(&lut.data, tx, ty)[0];
+    for filter in [MonochromeFilter::Red, MonochromeFilter::Green] {
+        let lut = film::FilmLut::build(21, Some(filter)).unwrap();
+        let plain = film::FilmLut::build(21, None).unwrap();
+        assert!(
+            (neutral(&lut) / neutral(&plain) - 1.).abs() < 1e-12,
+            "{filter:?}"
+        );
+    }
+    let pair = film::FilmPair::build(
+        &FilmSettings {
+            film: 20,
+            paper: 8,
+            couplers: 1.,
+            ..Default::default()
+        },
+        &bw,
+    )
+    .unwrap();
+    assert!(pair.monochrome);
+    for (i, row) in pair.dir_matrix.iter().enumerate() {
+        for (j, v) in row.iter().enumerate() {
+            assert_eq!(*v == 0., i != j, "one silver layer inhibits only itself");
+        }
+    }
+}
+
+#[test]
 fn every_film_paper_pair_prepares_finite_tables() {
-    for stock in 0..20u32 {
-        let lut = film::FilmLut::build(stock).unwrap();
+    let films = film::profile::FILM_COUNT as u32;
+    let papers = film::profile::PROFILE_JSON.len() as u32 - films;
+    for stock in 0..films {
+        let lut = film::FilmLut::build(stock, Some(MonochromeFilter::Red)).unwrap();
         assert!(lut.data.iter().all(|v| v.is_finite()) && lut.data.iter().any(|&v| v > 0.));
-        for paper in 0..8u32 {
+        for paper in 0..papers {
             for (negative, ev_paper, gamma) in [(false, None, 1.), (true, Some(1.5), 0.5)] {
                 let settings = FilmSettings {
                     film: stock,
@@ -290,7 +418,9 @@ fn prepared_pairs_are_keyed_on_every_setting_they_read() {
         ("tune_m", variant(|s| s.tune_m = 0.5)),
         ("tune_y", variant(|s| s.tune_y = -0.5)),
     ];
-    let luts: Vec<film::FilmLut> = (0..20).map(|f| film::FilmLut::build(f).unwrap()).collect();
+    let luts: Vec<film::FilmLut> = (0..film::profile::FILM_COUNT as u32)
+        .map(|f| film::FilmLut::build(f, None).unwrap())
+        .collect();
     let prepare = |s: &FilmSettings| {
         film::FilmPair::build(s, &luts[s.film as usize])
             .unwrap()
@@ -331,7 +461,7 @@ fn spektrafilm_license_ships_unmodified() {
     );
     let shader = sha256(include_bytes!("render.wgsl"));
     assert_eq!(
-        shader, "b2a80a72c5085b70b1a5b023ec3aa13873821e7e74e6bac815a86de74287a838",
+        shader, "2bee97ebe5c4e2591a94c62ff0d6fc0223336164b1b8b475502c3c7ab232dd0f",
         "render.wgsl changed; update assets/PROVENANCE.md and this hash, and          bump RENDER_VERSION if rendered pixels moved"
     );
 }
@@ -552,6 +682,119 @@ fn gpu_preview_matches_tiled(renderer: &Renderer) {
     );
 }
 
+fn gpu_bw_film(renderer: &Renderer) {
+    let cancel = AtomicBool::new(false);
+    // Gray, red, blue, green and dark gray patches.
+    let mut source = image(5, 1);
+    source.data = vec![
+        0.18, 0.18, 0.18, 0.4, 0.05, 0.05, 0.05, 0.08, 0.4, 0.05, 0.3, 0.05, 0.03, 0.03, 0.03,
+    ];
+    let render = |film: FilmSettings, filter| {
+        let recipe = EditRecipe {
+            film: Some(film),
+            monochrome: Some(MonochromeSettings { filter }),
+            ..Default::default()
+        };
+        let rendered = renderer
+            .render(&source, &recipe, RenderOptions::default(), &cancel)
+            .unwrap();
+        rendered
+            .data
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|p| {
+                assert!(
+                    p[0] == p[1] && p[1] == p[2],
+                    "B&W film must be neutral: {p:?}"
+                );
+                p[0] as f64
+            })
+            .collect::<Vec<_>>()
+    };
+    // No couplers or grain: their blurs would mix these one-pixel patches.
+    let doublex = FilmSettings {
+        film: 20,
+        paper: 8,
+        couplers: 0.,
+        grain: false,
+        ..Default::default()
+    };
+    let plain = render(doublex.clone(), MonochromeFilter::Neutral);
+    let red = render(doublex.clone(), MonochromeFilter::Red);
+    let green = render(doublex.clone(), MonochromeFilter::Green);
+    // A red filter lightens red and darkens blue; a green one does the reverse
+    // for green against red. Metering through the filter keeps gray close.
+    assert!(
+        red[1] - red[2] > plain[1] - plain[2] + 2000.,
+        "{plain:?} {red:?}"
+    );
+    assert!(
+        green[3] - green[1] > plain[3] - plain[1] + 2000.,
+        "{plain:?} {green:?}"
+    );
+    assert!((red[0] - plain[0]).abs() < 1000., "{plain:?} {red:?}");
+    assert!(plain[0] > plain[4] + 5000.);
+    // Blue has no measured curve: it renders as no filter.
+    assert_eq!(render(doublex.clone(), MonochromeFilter::Blue), plain);
+    // One silver layer: every channel draws the same grains. The output is
+    // neutralized anyway, so check the draw itself: identical channel noise
+    // has no chroma for the grain saturation control to remove.
+    let mut flat = image(2000, 2);
+    flat.data.fill(0.18);
+    let grain = |grain: bool, grain_saturation: f32| {
+        let recipe = EditRecipe {
+            film: Some(FilmSettings {
+                grain,
+                grain_amount: 2.,
+                grain_saturation,
+                ..doublex.clone()
+            }),
+            monochrome: Some(MonochromeSettings::default()),
+            ..Default::default()
+        };
+        renderer
+            .render(&flat, &recipe, RenderOptions::default(), &cancel)
+            .unwrap()
+            .data
+    };
+    assert_ne!(
+        grain(true, 1.),
+        grain(false, 1.),
+        "grain must be visible here"
+    );
+    assert_eq!(grain(true, 1.), grain(true, 0.));
+    // Reversal Tri-X is viewed directly, so a brighter scene stays brighter.
+    let trix = render(
+        FilmSettings {
+            film: 21,
+            paper: 8,
+            negative: true,
+            couplers: 0.,
+            grain: false,
+            ..Default::default()
+        },
+        MonochromeFilter::Neutral,
+    );
+    assert!(trix[0] > trix[4] + 5000., "{trix:?}");
+    // Without a print to normalize, gray still holds through the filter.
+    let trix_red = render(
+        FilmSettings {
+            film: 21,
+            paper: 8,
+            negative: true,
+            couplers: 0.,
+            grain: false,
+            ..Default::default()
+        },
+        MonochromeFilter::Red,
+    );
+    assert!(
+        (trix_red[0] - trix[0]).abs() < 300.,
+        "{trix:?} {trix_red:?}"
+    );
+}
+
 fn gpu_monochrome(renderer: &Renderer) {
     let cancel = AtomicBool::new(false);
     let source = layer_test_image();
@@ -726,7 +969,10 @@ fn spektrafilm_parity() {
     const N: u32 = 64;
     let quantized: Vec<u16> = (0..N * N)
         .flat_map(|i| {
-            let (x, y) = ((i % N) as f32 / (N - 1) as f32, (i / N) as f32 / (N - 1) as f32);
+            let (x, y) = (
+                (i % N) as f32 / (N - 1) as f32,
+                (i / N) as f32 / (N - 1) as f32,
+            );
             [x, y, 0.5 * (x + y)].map(|v| (v * 1.6 * 65535.).min(65535.).round() as u16)
         })
         .collect();
@@ -751,7 +997,12 @@ fn spektrafilm_parity() {
         .arg(&input)
         .arg("-o")
         .arg(&output)
-        .args(["--film", "kodak_portra_400", "--paper", "kodak_portra_endura"])
+        .args([
+            "--film",
+            "kodak_portra_400",
+            "--paper",
+            "kodak_portra_endura",
+        ])
         .arg("--data-dir")
         .arg(&data)
         .arg("--params")
@@ -815,6 +1066,7 @@ fn gpu_pipeline() {
     gpu_preview_matches_tiled(&renderer);
     gpu_film_exposure_moves_print_brightness(&renderer);
     gpu_monochrome(&renderer);
+    gpu_bw_film(&renderer);
     let img = image(96, 64);
     let cancel = AtomicBool::new(false);
     let recipe = EditRecipe {
@@ -1037,15 +1289,16 @@ fn gpu_pipeline() {
         assert!(converted.png().is_ok());
         assert!(converted.jpeg(90).is_ok());
     }
-    for stock in 0..20 {
-        for paper in 0..8 {
+    let films = film::profile::FILM_COUNT as u32;
+    for stock in 0..films {
+        for paper in 0..film::profile::PROFILE_JSON.len() as u32 - films {
             let mut flat = image(2, 2);
             flat.data.fill(0.184);
             let recipe = EditRecipe {
                 film: Some(FilmSettings {
                     film: stock,
                     paper,
-                    negative: (15..=18).contains(&stock),
+                    negative: film::profile::load(stock as usize).unwrap().is_positive(),
                     couplers: 0.,
                     grain: false,
                     ..Default::default()
@@ -1157,13 +1410,33 @@ fn gpu_pipeline() {
 /// `Pipeline::{tc_lut, print_illuminant_slice, print_exposure_factor}`.
 #[test]
 fn spektrafilm_calibration_matches_reference() {
-    let lut = film::FilmLut::build(2).unwrap();
+    let lut = film::FilmLut::build(2, None).unwrap();
     for (i, j, want) in [
-        (0usize, 0usize, [8.037559559490e0, 3.838885502449e-1, 4.583906389200e0]),
-        (37, 91, [6.727003906276e0, 3.026833599327e-1, 2.571768047361e0]),
-        (95, 95, [1.409664979721e0, 2.087212094499e0, 1.883525499154e0]),
-        (191, 191, [5.184326951427e-1, 6.284266336399e0, 9.586498740657e-2]),
-        (10, 180, [9.282101411120e0, 2.261275489813e-1, 2.512172937174e0]),
+        (
+            0usize,
+            0usize,
+            [8.037559559490e0, 3.838885502449e-1, 4.583906389200e0],
+        ),
+        (
+            37,
+            91,
+            [6.727003906276e0, 3.026833599327e-1, 2.571768047361e0],
+        ),
+        (
+            95,
+            95,
+            [1.409664979721e0, 2.087212094499e0, 1.883525499154e0],
+        ),
+        (
+            191,
+            191,
+            [5.184326951427e-1, 6.284266336399e0, 9.586498740657e-2],
+        ),
+        (
+            10,
+            180,
+            [9.282101411120e0, 2.261275489813e-1, 2.512172937174e0],
+        ),
     ] {
         let at = (i * film::spectra::LUT_SIZE + j) * 3;
         for (c, want) in want.iter().enumerate() {
@@ -1175,7 +1448,7 @@ fn spektrafilm_calibration_matches_reference() {
         }
     }
     let film = film::profile::load(2).unwrap();
-    let paper = film::profile::load(23).unwrap();
+    let paper = film::profile::load(film::profile::FILM_COUNT + 3).unwrap();
     let neutral = film::enlarger::neutral_filters(&paper.info.stock, &film.info.stock).unwrap();
     assert_eq!(neutral, [0.0, 51.56801468495496, 52.53400422349596]);
     let illuminant = film::enlarger::filtered_illuminant(neutral);
