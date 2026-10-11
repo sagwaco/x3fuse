@@ -35,6 +35,33 @@ function request(): ScopeRenderRequest {
   }
 }
 
+/** One mock serves the scope canvas and the per-channel layer canvases it splats into. */
+function canvasContext() {
+  const context = {
+    scale: vi.fn(),
+    beginPath: vi.fn(),
+    arc: vi.fn(),
+    stroke: vi.fn(),
+    moveTo: vi.fn(),
+    lineTo: vi.fn(),
+    fillText: vi.fn(),
+    fill: vi.fn(),
+    setLineDash: vi.fn(),
+    strokeRect: vi.fn(),
+    drawImage: vi.fn(),
+    putImageData: vi.fn(),
+    createImageData: vi.fn((width: number, height: number) => ({
+      width,
+      height,
+      data: new Uint8ClampedArray(width * height * 4)
+    }))
+  }
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(
+    context as unknown as CanvasRenderingContext2D
+  )
+  return context
+}
+
 function bitmap(width = 548, height = 400): ImageBitmap {
   return { width, height, close: vi.fn() } as unknown as ImageBitmap
 }
@@ -136,19 +163,7 @@ describe('scope rendering scheduler', () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     let clock = 0
     vi.spyOn(performance, 'now').mockImplementation(() => clock++)
-    const context = {
-      scale: vi.fn(),
-      beginPath: vi.fn(),
-      arc: vi.fn(),
-      stroke: vi.fn(),
-      moveTo: vi.fn(),
-      lineTo: vi.fn(),
-      fillText: vi.fn(),
-      fill: vi.fn()
-    }
-    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(
-      context as unknown as CanvasRenderingContext2D
-    )
+    const context = canvasContext()
     const renderer = createScopeRenderer()
     const old = vi.fn(),
       latest = vi.fn(),
@@ -167,32 +182,16 @@ describe('scope rendering scheduler', () => {
     expect(latest).toHaveBeenCalledOnce()
     expect(latest.mock.calls[0][0]).toBeInstanceOf(HTMLCanvasElement)
     expect(failed).not.toHaveBeenCalled()
-    expect(context.arc).toHaveBeenCalledWith(
-      expect.any(Number),
-      expect.any(Number),
-      0.75 / request().pixelRatio,
-      0,
-      Math.PI * 2
-    )
+    expect(context.putImageData).toHaveBeenCalled()
+    expect(context.arc).not.toHaveBeenCalled()
     renderer.dispose()
   })
 })
 
 describe('scope trace resolution', () => {
-  it.each([1, 1.5, 2])('draws density bins and points at %sx device resolution', (pixelRatio) => {
+  it.each([1, 1.5, 2])('splats density bins at %sx device resolution', (pixelRatio) => {
     for (const mode of ['waveform', 'rgbParade', 'vectorscope'] as const) {
-      const context = {
-        scale: vi.fn(),
-        beginPath: vi.fn(),
-        arc: vi.fn(),
-        stroke: vi.fn(),
-        moveTo: vi.fn(),
-        lineTo: vi.fn(),
-        fillText: vi.fn(),
-        fill: vi.fn(),
-        setLineDash: vi.fn(),
-        strokeRect: vi.fn()
-      }
+      const context = canvasContext()
       const image = {
         width: 1,
         height: 1,
@@ -207,22 +206,40 @@ describe('scope trace resolution', () => {
       while (!steps.next().done) {
         /* Drain the shared worker/fallback renderer. */
       }
-      const points = context.arc.mock.calls.filter(([, , radius]) => radius === 0.75 / pixelRatio)
-      expect(points.length).toBeGreaterThan(0)
+      // Each layer is put into its own canvas, then drawn at one layer pixel per device pixel.
+      const layers = context.putImageData.mock.calls.map(([pixels], i) => {
+        const [, x, y, width, height] = context.drawImage.mock.calls[i]
+        expect(width * pixelRatio).toBeCloseTo(pixels.width)
+        expect(height * pixelRatio).toBeCloseTo(pixels.height)
+        const lit = [...Array(pixels.width * pixels.height).keys()].filter(
+          (p) => pixels.data[p * 4 + 3] > 0
+        )
+        return { pixels, x, y, lit }
+      })
+      expect(layers).toHaveLength(mode === 'vectorscope' ? 1 : mode === 'waveform' ? 4 : 3)
       if (mode === 'vectorscope') {
-        expect(points).toHaveLength(1)
+        const [{ pixels, x, y }] = layers
+        const peak = pixels.data.reduce(
+          (best: number, value: number, i: number) =>
+            i % 4 === 3 && value > pixels.data[best * 4 + 3] ? i >> 2 : best,
+          0
+        )
         // A neutral trace aligns with the center of the graticule to half a device pixel.
         const circle = context.arc.mock.calls.at(-1)!
-        expect(Math.abs(points[0][0] - circle[0])).toBeLessThanOrEqual(0.5 / pixelRatio + 1e-8)
-        expect(Math.abs(points[0][1] - circle[1])).toBeLessThanOrEqual(0.5 / pixelRatio + 1e-8)
+        const px = x + ((peak % pixels.width) + 0.5) / pixelRatio
+        const py = y + (Math.floor(peak / pixels.width) + 0.5) / pixelRatio
+        expect(Math.abs(px - circle[0])).toBeLessThanOrEqual(0.5 / pixelRatio + 1e-8)
+        expect(Math.abs(py - circle[1])).toBeLessThanOrEqual(0.5 / pixelRatio + 1e-8)
       } else {
-        const columns = [...new Set(points.map(([x]) => x))].sort((a, b) => a - b)
-        expect(columns).toHaveLength(
-          mode === 'waveform' ? Math.round(230 * pixelRatio) : 3 * Math.round(73 * pixelRatio)
-        )
-        expect(columns[0]).toBeCloseTo(36 + 0.5 / pixelRatio)
-        expect(columns[1] - columns[0]).toBeCloseTo(1 / pixelRatio)
-        expect(Math.min(...points.map(([, y]) => y))).toBeCloseTo(15 + 0.5 / pixelRatio)
+        const columns = mode === 'waveform' ? 230 : 73
+        for (const [c, { pixels, x, y, lit }] of layers.entries()) {
+          expect(pixels.width).toBe(Math.round(columns * pixelRatio))
+          expect(x).toBe(36 + (mode === 'rgbParade' ? c * (columns + 5) : 0))
+          expect(y).toBe(15)
+          // White fills every device column, starting at the 100% row.
+          expect(new Set(lit.map((p) => p % pixels.width)).size).toBe(pixels.width)
+          expect(Math.min(...lit.map((p) => Math.floor(p / pixels.width)))).toBe(0)
+        }
       }
     }
   })

@@ -33,15 +33,10 @@ export function useScopeImage(
       try {
         const source = await loadSmallPreview(url, orientation, aspectRatio, controller.signal)
         if (controller.signal.aborted) return
-        const canvas = document.createElement('canvas')
-        const context = canvas.getContext('2d')
+        const context = source.getContext('2d')
         if (!context) throw new Error('no 2d context')
-        // ponytail: cap at the usual embedded preview size; use full JPEGs if more detail is needed.
-        const scale = Math.min(1, 640 / Math.max(source.width, source.height))
-        canvas.width = Math.max(1, Math.round(source.width * scale))
-        canvas.height = Math.max(1, Math.round(source.height * scale))
-        context.drawImage(source, 0, 0, canvas.width, canvas.height)
-        const image = context.getImageData(0, 0, canvas.width, canvas.height)
+        // ponytail: small previews are capped at 640 px; use full JPEGs if more detail is needed.
+        const image = context.getImageData(0, 0, source.width, source.height)
         cache.set(key, image)
         if (cache.size > 16) cache.delete(cache.keys().next().value!)
         save(image)

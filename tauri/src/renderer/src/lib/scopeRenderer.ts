@@ -154,26 +154,44 @@ function* drawDensity(
   opacity = 1
 ): Generator<void> {
   let max = 0
-  for (const count of counts) max = Math.max(max, count)
+  for (let i = 0; i < counts.length; i++) if (counts[i] > max) max = counts[i]
   if (max === 0) return
-  const scale = Math.log1p(max)
-  ctx.fillStyle = color
-  ctx.globalCompositeOperation = 'lighter'
-  for (let i = 0; i < width * height; i++) {
-    if (i > 0 && i % 256 === 0) yield
-    if (!counts[i]) continue
-    // Density bins and point radius stay in physical pixels on high-DPI displays.
-    ctx.globalAlpha = (0.6 * opacity * Math.log1p(counts[i])) / scale
-    ctx.beginPath()
-    ctx.arc(
-      x + ((i % width) + 0.5) / pixelRatio,
-      y + (Math.floor(i / width) + 0.5) / pixelRatio,
-      0.75 / pixelRatio,
-      0,
-      Math.PI * 2
-    )
-    ctx.fill()
+  const scale = (0.6 * opacity) / Math.log1p(max)
+  // One density bin per device pixel. Splat each as a round point 0.75 device px in
+  // radius: it covers its own pixel and ~0.19 of each edge neighbour. Accumulating
+  // alpha here and compositing once replaces one canvas arc per bin.
+  const edge = 0.19
+  const alpha = new Float32Array(width * height)
+  for (let row = 0, i = 0; row < height; row++) {
+    if (row % 128 === 127) yield
+    for (let column = 0; column < width; column++, i++) {
+      if (!counts[i]) continue
+      const a = Math.log1p(counts[i]) * scale
+      alpha[i] += a
+      if (column > 0) alpha[i - 1] += a * edge
+      if (column < width - 1) alpha[i + 1] += a * edge
+      if (row > 0) alpha[i - width] += a * edge
+      if (row < height - 1) alpha[i + width] += a * edge
+    }
   }
-  ctx.globalAlpha = 1
+  const layer =
+    typeof OffscreenCanvas === 'undefined'
+      ? Object.assign(document.createElement('canvas'), { width, height })
+      : new OffscreenCanvas(width, height)
+  const layerContext = layer.getContext('2d') as Context | null
+  if (!layerContext) throw new Error('2D canvas unavailable')
+  const pixels = layerContext.createImageData(width, height)
+  const { data } = pixels
+  const [r, g, b] = [1, 3, 5].map((offset) => parseInt(color.slice(offset, offset + 2), 16))
+  for (let i = 0; i < alpha.length; i++) {
+    if (!alpha[i]) continue
+    data[i * 4] = r
+    data[i * 4 + 1] = g
+    data[i * 4 + 2] = b
+    data[i * 4 + 3] = alpha[i] * 255
+  }
+  layerContext.putImageData(pixels, 0, 0)
+  ctx.globalCompositeOperation = 'lighter'
+  ctx.drawImage(layer, x, y, width / pixelRatio, height / pixelRatio)
   ctx.globalCompositeOperation = 'source-over'
 }

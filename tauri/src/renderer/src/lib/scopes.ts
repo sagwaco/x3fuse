@@ -52,42 +52,61 @@ export function* scopeDensitySteps(
   width: number,
   height: number
 ): Generator<void, Float32Array[]> {
+  const { data, width: imageWidth } = image
   const layers = Array.from(
     { length: mode === 'vectorscope' ? 1 : mode === 'waveform' ? 4 : 3 },
     () => new Float32Array(width * height)
   )
-  const bin = (value: number, size: number): number =>
-    Math.max(0, Math.min(size - 1, Math.round(value * (size - 1))))
-  for (let i = 0; i < image.data.length; i += 4) {
-    if (i > 0 && i % 4096 === 0) yield
-    const r = image.data[i] / 255
-    const g = image.data[i + 1] / 255
-    const b = image.data[i + 2] / 255
-    if (mode === 'vectorscope') {
-      const [cb, cr] = chroma(r, g, b)
+  if (mode === 'vectorscope') {
+    const bin = (value: number, size: number): number =>
+      Math.max(0, Math.min(size - 1, Math.round(value * (size - 1))))
+    for (let i = 0; i < data.length; i += 4) {
+      if (i > 0 && i % 65536 === 0) yield
+      const [cb, cr] = chroma(data[i] / 255, data[i + 1] / 255, data[i + 2] / 255)
       layers[0][bin((1 - cr) / 2, height) * width + bin((cb + 1) / 2, width)]++
-    } else {
-      const sourceX = (i / 4) % image.width
-      // Cover the source column's full footprint when shrinking or stretching.
-      // Fractional overlap avoids both empty columns and alternating column density.
-      const columnWidth = width / image.width
-      const xStart = sourceX * columnWidth
-      const xEnd = (sourceX + 1) * columnWidth
-      const values = [r, g, b, luma(r, g, b)]
-      for (let c = 0; c < layers.length; c++) {
-        // An 8-bit level covers 1/256 of the signal range. Area-weight that
-        // interval into display rows: a uniform ramp stays uniform at any height.
-        // This also splits fractional luma levels without discarding their weight.
-        const footprint = height / 256
-        const yStart = (1 - values[c]) * 255 * footprint
-        const yEnd = yStart + footprint
-        for (let y = Math.max(0, Math.floor(yStart)); y < Math.min(height, Math.ceil(yEnd)); y++) {
-          const weight = (Math.min(y + 1, yEnd) - Math.max(y, yStart)) / footprint
-          for (let x = Math.floor(xStart); x < Math.min(width, Math.ceil(xEnd)); x++) {
-            const coverage = (Math.min(x + 1, xEnd) - Math.max(x, xStart)) / columnWidth
-            layers[c][y * width + x] += weight * coverage
-          }
-        }
+    }
+    return layers
+  }
+  // Cover the source column's full footprint when shrinking or stretching.
+  // Fractional overlap avoids both empty columns and alternating column density.
+  const columnWidth = width / imageWidth
+  // An 8-bit level covers 1/256 of the signal range. Area-weight that interval into
+  // display rows: a uniform ramp stays uniform at any height. This also splits
+  // fractional luma levels without discarding their weight.
+  const footprint = height / 256
+  const splat = (layer: Float32Array, sourceX: number, level: number, weight: number): void => {
+    const xStart = sourceX * columnWidth
+    const xEnd = (sourceX + 1) * columnWidth
+    const yStart = (255 - level) * footprint
+    const yEnd = yStart + footprint
+    for (let y = Math.max(0, Math.floor(yStart)); y < Math.min(height, Math.ceil(yEnd)); y++) {
+      const rowWeight = (weight * (Math.min(y + 1, yEnd) - Math.max(y, yStart))) / footprint
+      for (let x = Math.floor(xStart); x < Math.min(width, Math.ceil(xEnd)); x++) {
+        const coverage = (Math.min(x + 1, xEnd) - Math.max(x, xStart)) / columnWidth
+        layer[y * width + x] += rowWeight * coverage
+      }
+    }
+  }
+  // Same column and 8-bit level means the same footprint: count R, G and B per
+  // column first, then splat each occupied level once instead of once per pixel.
+  const counts = new Uint32Array(imageWidth * 3 * 256)
+  for (let i = 0; i < data.length; i += 4) {
+    if (i > 0 && i % 65536 === 0) yield
+    const sourceX = (i / 4) % imageWidth
+    const r = data[i]
+    const g = data[i + 1]
+    const b = data[i + 2]
+    counts[sourceX * 768 + r]++
+    counts[sourceX * 768 + 256 + g]++
+    counts[sourceX * 768 + 512 + b]++
+    if (mode === 'waveform') splat(layers[3], sourceX, luma(r, g, b), 1)
+  }
+  for (let sourceX = 0; sourceX < imageWidth; sourceX++) {
+    if (sourceX > 0 && sourceX % 64 === 0) yield
+    for (let c = 0; c < 3; c++) {
+      for (let level = 0; level < 256; level++) {
+        const count = counts[sourceX * 768 + c * 256 + level]
+        if (count) splat(layers[c], sourceX, level, count)
       }
     }
   }

@@ -35,6 +35,7 @@ export function ColorScope({
   const width = useElementWidth(container)
   const [pixelRatio, setPixelRatio] = useState(() => window.devicePixelRatio || 1)
   const [completed, setCompleted] = useState<string>()
+  const [painted, setPainted] = useState<string>()
   const [error, setError] = useState<string>()
   const request = useMemo(
     () =>
@@ -46,22 +47,28 @@ export function ColorScope({
   const ready = !!key && (!!cached || completed === key)
   const failed = !!key && error === key
   const loading = pending || image === 'loading' || (!!image && !ready && !failed)
-  const showLoading = useDelayedLoading(loading, fileId ?? url)
+  // Edits and zooming re-render the same file: keep its last scope on the persistent
+  // canvas until the next one paints instead of blanking it for every slider step.
+  const subject = fileId && `${fileId}:${mode}`
+  const holding = loading && !!subject && painted === subject
+  const visible = (ready && !failed) || holding
+  const showLoading = useDelayedLoading(loading, fileId ?? url) && !holding
 
-  const paint = (result: RenderedScope): void => {
+  const paint = (result: RenderedScope, shown?: string): void => {
     const element = canvas.current
     if (!element) return
     element.width = result.width
     element.height = result.height
     element.getContext('2d')?.drawImage(result, 0, 0)
+    setPainted(shown)
   }
 
   // A revisit only copies the already rendered surface before paint.
   useLayoutEffect(() => {
     if (!cached || !key) return
-    paint(cached)
+    paint(cached, subject)
     setCompleted(key)
-  }, [cached, key])
+  }, [cached, key, subject])
 
   useEffect(() => {
     const engine = createScopeRenderer()
@@ -75,12 +82,12 @@ export function ColorScope({
     return renderer.current!.render(
       request,
       (result) => {
-        paint(result)
+        paint(result, subject)
         setCompleted(key)
       },
       () => setError(key)
     )
-  }, [request, key])
+  }, [request, key, subject])
 
   useEffect(() => {
     // Width changes arrive through ResizeObserver. A window resize only matters
@@ -96,19 +103,18 @@ export function ColorScope({
       aria-busy={loading}
       className="relative h-[200px] overflow-hidden rounded bg-neutral-950/60"
     >
-      {image && image !== 'loading' && !failed ? (
-        <canvas
-          ref={canvas}
-          className={`h-full w-full ${ready ? '' : 'invisible'}`}
-          role="img"
-          aria-hidden={!ready || undefined}
-          aria-label={t(`inspector.scope_${mode}`)}
-        />
-      ) : !loading ? (
-        <p className="flex h-full items-center justify-center text-xs text-neutral-600">
+      <canvas
+        ref={canvas}
+        className={`h-full w-full ${visible ? '' : 'invisible'}`}
+        role="img"
+        aria-hidden={!visible || undefined}
+        aria-label={t(`inspector.scope_${mode}`)}
+      />
+      {!visible && !loading && (
+        <p className="absolute inset-0 flex items-center justify-center text-xs text-neutral-600">
           {t('inspector.no_preview')}
         </p>
-      ) : null}
+      )}
       {showLoading && (
         <div className="absolute inset-0" role="status" aria-label={t('inspector.scope_loading')}>
           <Skeleton className="preview-skeleton h-full w-full" />
