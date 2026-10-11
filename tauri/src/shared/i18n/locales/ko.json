@@ -185,7 +185,6 @@
   "editor.undo": "조정 실행 취소",
   "editor.redo": "조정 다시 실행",
   "editor.before": "편집 전",
-  "editor.after": "편집 후",
   "editor.copy": "조정 복사",
   "editor.paste": "조정 붙여넣기",
   "editor.reset": "초기화",

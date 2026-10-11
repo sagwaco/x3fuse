@@ -7,7 +7,8 @@ import {
   Redo2,
   RotateCcw,
   Loader2,
-  Crop
+  Crop,
+  SquareSplitHorizontal
 } from 'lucide-react'
 import { useEditorStore, isTextEditing } from '../stores/editorStore'
 import { useQueueStore } from '../stores/queueStore'
@@ -215,12 +216,14 @@ export function EditorScreen(): React.JSX.Element {
           </Button>
           <Button
             variant="ghost"
-            size="sm"
+            size="icon"
+            aria-label={t('editor.before')}
+            title={t('editor.before')}
             aria-pressed={editor.before}
             disabled={unavailable}
             onClick={() => editor.compare(!editor.before)}
           >
-            {t(editor.before ? 'editor.before' : 'editor.after')}
+            <SquareSplitHorizontal className="h-4 w-4" />
           </Button>
           <Button
             variant="prominent"
