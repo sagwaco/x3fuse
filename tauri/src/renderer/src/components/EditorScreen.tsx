@@ -27,10 +27,6 @@ import { CropPreview } from './CropPreview'
 import { FULL, matchAspect } from '../lib/cropGeometry'
 import { OrientedImage } from './OrientedImage'
 
-// Camera-style tool tiles: icon over a caption.
-const TOOL =
-  'h-auto flex-col justify-center gap-1.5 rounded-xl px-1 py-2.5 text-[10px] leading-tight'
-
 export function EditorScreen(): React.JSX.Element {
   const editor = useEditorStore()
   const files = useQueueStore((state) => state.files)
@@ -151,6 +147,52 @@ export function EditorScreen(): React.JSX.Element {
         </div>
         <div className="flex shrink-0 items-center gap-1">
           <BatchProgress />
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={unavailable}
+            aria-pressed={editor.cropping}
+            onClick={() => {
+              setPicking(false)
+              const width = editor.preview?.sourceWidth
+              const height = editor.preview?.sourceHeight
+              if (!editor.cropping && doc && width && height)
+                setAspect(
+                  matchAspect(
+                    doc.recipe.crop ?? FULL,
+                    editor.session?.asShotCrop ?? FULL,
+                    doc.recipe.rotation,
+                    width,
+                    height
+                  )
+                )
+              editor.setCropping(!editor.cropping)
+            }}
+          >
+            <Crop className="h-4 w-4" aria-hidden="true" />
+            {t(editor.cropping ? 'editor.applyCrop' : 'editor.crop')}
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label={t('editor.copy')}
+            title={t('editor.copy')}
+            disabled={unavailable}
+            onClick={editor.copy}
+          >
+            <Copy className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label={t('editor.paste')}
+            title={t('editor.paste')}
+            disabled={unavailable || !editor.clipboard}
+            onClick={() => void editor.paste()}
+          >
+            <ClipboardPaste className="h-4 w-4" />
+          </Button>
+          <div role="separator" aria-orientation="vertical" className="mx-1 h-5 w-px bg-white/15" />
           <Button
             variant="ghost"
             size="icon"
@@ -306,77 +348,35 @@ export function EditorScreen(): React.JSX.Element {
                 mode={scope}
               />
             </div>
-            <div className="grid grid-cols-4 gap-2 px-3">
-              <Button
-                variant="bordered"
-                className={TOOL}
-                disabled={unavailable}
-                aria-pressed={editor.cropping}
-                onClick={() => {
-                  setPicking(false)
-                  const width = editor.preview?.sourceWidth
-                  const height = editor.preview?.sourceHeight
-                  if (!editor.cropping && doc && width && height)
-                    setAspect(
-                      matchAspect(
-                        doc.recipe.crop ?? FULL,
-                        editor.session?.asShotCrop ?? FULL,
-                        doc.recipe.rotation,
-                        width,
-                        height
-                      )
-                    )
-                  editor.setCropping(!editor.cropping)
-                }}
-              >
-                <Crop className="h-4 w-4" aria-hidden="true" />
-                {t(editor.cropping ? 'editor.applyCrop' : 'editor.crop')}
-              </Button>
-              <Button
-                variant="bordered"
-                className={TOOL}
-                disabled={unavailable}
-                onClick={editor.copy}
-              >
-                <Copy className="h-4 w-4" aria-hidden="true" />
-                {t('editor.copy')}
-              </Button>
-              <Button
-                variant="bordered"
-                className={TOOL}
-                disabled={unavailable || !editor.clipboard}
-                onClick={() => void editor.paste()}
-              >
-                <ClipboardPaste className="h-4 w-4" aria-hidden="true" />
-                {t('editor.paste')}
-              </Button>
-              <Button
-                variant="bordered"
-                className={TOOL}
-                disabled={unavailable}
-                onClick={editor.reset}
-              >
-                <RotateCcw className="h-4 w-4" aria-hidden="true" />
-                {t('editor.reset')}
-              </Button>
-            </div>
             {doc && (
               <>
-                <p
-                  role="status"
-                  className="control-label px-4 py-2.5 text-[10px] text-neutral-500"
-                  title={doc.storagePath}
-                >
-                  {t(
-                    doc.dirty
-                      ? 'editor.saving'
-                      : doc.storage === 'backup'
-                        ? 'editor.savedBackup'
-                        : doc.storage === 'none'
-                          ? 'editor.original'
-                          : 'editor.saved'
-                  )}
-                </p>
+                <div className="flex items-center justify-between gap-2 px-4 py-1.5">
+                  <p
+                    role="status"
+                    className="control-label text-[10px] text-neutral-500"
+                    title={doc.storagePath}
+                  >
+                    {t(
+                      doc.dirty
+                        ? 'editor.saving'
+                        : doc.storage === 'backup'
+                          ? 'editor.savedBackup'
+                          : doc.storage === 'none'
+                            ? 'editor.original'
+                            : 'editor.saved'
+                    )}
+                  </p>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-[10px] text-neutral-500"
+                    disabled={unavailable}
+                    onClick={editor.reset}
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+                    {t('editor.reset')}
+                  </Button>
+                </div>
                 <fieldset disabled={unavailable || editor.before} className="contents">
                   {editor.cropping ? (
                     <CropControls recipe={doc.recipe} aspect={aspect} setAspect={setAspect} />
