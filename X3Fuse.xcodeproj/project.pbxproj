@@ -10,8 +10,8 @@
 		2571E44B2E2BF7F200044135 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 2571E44A2E2BF7F200044135 /* Sparkle */; };
 		25D57E7D2E1E0003004F6242 /* X3Fuse/x3f_extract in Resources */ = {isa = PBXBuildFile; fileRef = 25D57E7B2E1E0001004F6242 /* X3Fuse/x3f_extract */; };
 		25D57E7E2E1E0004004F6242 /* X3Fuse/opcodes in Resources */ = {isa = PBXBuildFile; fileRef = 25D57E7C2E1E0002004F6242 /* X3Fuse/opcodes */; };
-		25D57E7F2E1E0005004F6242 /* X3Fuse/exiftool in Resources */ = {isa = PBXBuildFile; fileRef = 25D57E7A2E1E0000004F6242 /* X3Fuse/exiftool */; };
-		25D57E802E1E0006004F6242 /* X3Fuse/lib in Resources */ = {isa = PBXBuildFile; fileRef = 25D57E792E1DFFFF004F6242 /* X3Fuse/lib */; };
+		25D57E7F2E1E0005004F6242 /* Vendor/ExifTool/exiftool in Resources */ = {isa = PBXBuildFile; fileRef = 25D57E7A2E1E0000004F6242 /* Vendor/ExifTool/exiftool */; };
+		25D57E802E1E0006004F6242 /* Vendor/ExifTool/lib in Resources */ = {isa = PBXBuildFile; fileRef = 25D57E792E1DFFFF004F6242 /* Vendor/ExifTool/lib */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -35,8 +35,8 @@
 		25D57E4E2E1DFFDD004F6242 /* X3Fuse.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = X3Fuse.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		25D57E5E2E1DFFDE004F6242 /* X3FuseTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = X3FuseTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		25D57E682E1DFFDE004F6242 /* X3FuseUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = X3FuseUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		25D57E792E1DFFFF004F6242 /* X3Fuse/lib */ = {isa = PBXFileReference; lastKnownFileType = folder; path = X3Fuse/lib; sourceTree = "<group>"; };
-		25D57E7A2E1E0000004F6242 /* X3Fuse/exiftool */ = {isa = PBXFileReference; lastKnownFileType = text.script.perl; path = X3Fuse/exiftool; sourceTree = "<group>"; };
+		25D57E792E1DFFFF004F6242 /* Vendor/ExifTool/lib */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Vendor/ExifTool/lib; sourceTree = "<group>"; };
+		25D57E7A2E1E0000004F6242 /* Vendor/ExifTool/exiftool */ = {isa = PBXFileReference; lastKnownFileType = text.script.perl; path = Vendor/ExifTool/exiftool; sourceTree = "<group>"; };
 		25D57E7B2E1E0001004F6242 /* X3Fuse/x3f_extract */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.executable"; path = X3Fuse/x3f_extract; sourceTree = "<group>"; };
 		25D57E7C2E1E0002004F6242 /* X3Fuse/opcodes */ = {isa = PBXFileReference; lastKnownFileType = folder; path = X3Fuse/opcodes; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -104,8 +104,8 @@
 				25D57E502E1DFFDD004F6242 /* X3Fuse */,
 				25D57E7B2E1E0001004F6242 /* X3Fuse/x3f_extract */,
 				25D57E7C2E1E0002004F6242 /* X3Fuse/opcodes */,
-				25D57E7A2E1E0000004F6242 /* X3Fuse/exiftool */,
-				25D57E792E1DFFFF004F6242 /* X3Fuse/lib */,
+				25D57E7A2E1E0000004F6242 /* Vendor/ExifTool/exiftool */,
+				25D57E792E1DFFFF004F6242 /* Vendor/ExifTool/lib */,
 				25D57E612E1DFFDE004F6242 /* X3FuseTests */,
 				25D57E6B2E1DFFDE004F6242 /* X3FuseUITests */,
 				25D57E4F2E1DFFDD004F6242 /* Products */,
@@ -254,8 +254,8 @@
 			files = (
 				25D57E7D2E1E0003004F6242 /* X3Fuse/x3f_extract in Resources */,
 				25D57E7E2E1E0004004F6242 /* X3Fuse/opcodes in Resources */,
-				25D57E7F2E1E0005004F6242 /* X3Fuse/exiftool in Resources */,
-				25D57E802E1E0006004F6242 /* X3Fuse/lib in Resources */,
+				25D57E7F2E1E0005004F6242 /* Vendor/ExifTool/exiftool in Resources */,
+				25D57E802E1E0006004F6242 /* Vendor/ExifTool/lib in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

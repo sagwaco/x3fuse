@@ -6,8 +6,6 @@
 //
 
 import Foundation
-// TODO: Uncomment when ExifTool package is added
-// import ExifTool
 
 class ExifService {
     static let shared = ExifService()
