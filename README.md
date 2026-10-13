@@ -1,12 +1,12 @@
 # X3Fuse
 
-A modern macOS app for converting Sigma Merrill and Quattro X3F RAW files.
+A macOS app for converting Sigma classic, Merrill, and Quattro X3F RAW files.
 
 ![X3Fuse logo and app screeenshot](app-screenshot.png)
 
 ## Overview
 
-X3Fuse is a RAW conversion tool that converts your Sigma Merrill and Quattro X3F files into practical, compatible formats like DNG, TIFF, and JPEG. It's an essential bridge between your Sigma cameras and your preferred editing suite, including apps that use Adobe Camera Raw (Lightroom, Photoshop), LibRaw (Darktable, RawTherapee, RapidRAW), and Apple's RAW engine (Pixelmator, Photomator, Preview).
+X3Fuse converts Sigma X3F files to DNG and TIFF and extracts embedded JPEG previews when available. Supported cameras include the classic SD9, SD10, and SD14, plus the Merrill and Quattro generations. You can use the converted files in editors that support these formats.
 
 ## Features
 
@@ -23,10 +23,14 @@ X3Fuse is a RAW conversion tool that converts your Sigma Merrill and Quattro X3F
 
 ## Supported Cameras
 
-X3Fuse supports X3F files from Sigma cameras including Merrill and Quattro series cameras.
+X3Fuse supports X3F files from the following Sigma cameras.
 
-| Camera Model           | Tested | Untested |
+| Camera Model           | Tested | Notes    |
 | ---------------------- | ------ | -------- |
+| **Classic Generation** |        |          |
+| Sigma SD9              | ✅     | DNG and TIFF; no embedded JPEG |
+| Sigma SD10             | ✅     | DNG and TIFF; no embedded JPEG |
+| Sigma SD14             | ✅     | DNG, TIFF, and embedded JPEG |
 | **Merrill Generation** |        |          |
 | Sigma DP1 Merrill      | ✅     |          |
 | Sigma DP2 Merrill      | ✅     |          |
@@ -40,7 +44,9 @@ X3Fuse supports X3F files from Sigma cameras including Merrill and Quattro serie
 | Sigma SD Quattro       | ✅     |          |
 | Sigma SD Quattro H     | ✅     |          |
 
-If you have a Sigma Foveon camera from the Merrill and Quattro generations that are not listed here, please let us know! We aim to support all Sigma Merrill and Quattro cameras and are actively looking for additional test files to improve compatibility.
+Classic-camera checks use one public sample per model from [raw.pixls.us](https://raw.pixls.us/).
+They verify conversion and metadata, not every camera setting or editor. Other classic bodies
+are not yet tested. If your camera is not listed, please open an issue with a sample X3F.
 
 ## System Requirements
 
@@ -91,9 +97,16 @@ ExifTool, check out the required release tag in `Vendor/ExifTool`, then commit
 the submodule pointer. Update the version in `README.md`, `AGENTS.md`, and
 `X3FuseTests/ExifToolBundleTests.swift` in the same commit.
 
-The app bundles x3fuse-core **0.2.0** for Intel and Apple Silicon, with GPU denoising enabled.
-To rebuild the converter, check out the core's `v0.2.0` tag and run
-`X3FUSE_CORE=/path/to/x3fuse-core ./scripts/build_x3f_extract.sh`.
+The app bundles [x3fuse-core **0.2.1**](https://github.com/sagwaco/x3fuse-core/releases/tag/v0.2.1)
+(commit `ca51a110d6cc553bca45029def116db4c1bd21b1`). This release includes the SD9, SD10,
+and SD14 calibration decoding fix. The universal converter combines the release's Intel
+and Apple Silicon binaries, with GPU denoising enabled.
+To rebuild from source, use a clean core checkout at `v0.2.1`, then run this command
+from the X3Fuse app repository:
+
+```bash
+X3FUSE_CORE=/path/to/x3fuse-core ./scripts/build_x3f_extract.sh
+```
 
 ## Scripts
 
@@ -134,6 +147,44 @@ Existing intensity preferences are retained. New settings use the core defaults:
 color noise reduction on, luminance noise reduction off, strength 1.0, patch size 3,
 search size 11, and Automatic processing. Core 0.2.0 changes the default NLM luminance
 handling, so denoised output can differ from previous versions.
+
+### Converting a classic-camera library
+
+Keep the original X3F files as your archive. A DNG contains converted image data, not a
+complete copy of the X3F. Conversion applies camera calibration and any selected noise
+reduction. You cannot undo these steps in the DNG or recover all Sigma Photo Pro settings.
+
+| Goal | Output and settings |
+| ---- | ------------------- |
+| Continue editing exposure and white balance | DNG. Enable RAW compression to reduce its size. |
+| Apply noise reduction in the destination editor | DNG with Denoise intensity set to Off. |
+| Apply X3Fuse noise reduction during conversion | DNG or TIFF. Start with the defaults and compare a few images at full size. |
+| Save a rendered image for editors without DNG support | 16-bit TIFF. Choose a color profile and enable compression if the editor supports it. |
+| Extract the camera preview | Embedded JPG, when present. SD9 and SD10 files have no embedded JPEG. |
+
+DNG uses lossless compression of the converted pixels. It does not make the conversion
+reversible or guarantee a file smaller than the X3F. TIFF also supports lossless compression,
+but stores rendered RGB data and can be much larger. Embedded JPG extracts an existing
+preview; it does not render a new JPEG with your conversion settings.
+
+These sample sizes use default noise reduction on the CPU, before the app copies additional
+EXIF tags. Sizes are rounded decimal MB. Results depend on the image and settings.
+
+| Sample | Original X3F | DNG | Compressed DNG |
+| ------ | -----------: | --: | -------------: |
+| [SD9](https://raw.pixls.us/getfile.php/700/nice/Sigma%20-%20Sigma%20SD9.X3F) | 7.4 MB | 20.7 MB | 12.5 MB |
+| [SD10](https://raw.pixls.us/getfile.php/571/nice/Sigma%20-%20Sigma%20SD10.X3F) | 8.1 MB | 20.7 MB | 14.0 MB |
+| [SD14](https://raw.pixls.us/getfile.php/4462/nice/Sigma%20-%20SIGMA%20SD14%20-%203:2.X3F) | 12.2 MB | 28.1 MB | 17.6 MB |
+
+Noise reduction is saved in the output pixels. Stronger settings can remove fine detail.
+For future noise-reduction work, retain the X3F and compare an undenoised DNG with a denoised
+copy. X3Fuse uses its own NLM or BM3D processing; it does not reproduce Sigma Photo Pro's
+noise reduction or saved edits. Leave Merrill highlight recovery off when starting with
+classic files. No classic-camera flat-field opcode files are bundled.
+
+Convert a small batch first. Check color, highlights, fine detail, metadata, and file size in
+your destination editor before converting the library. The editor compatibility results
+below apply to Merrill and Quattro files; classic DNGs still need checks in each editor.
 
 ## DNG Compatibility
 

@@ -4,7 +4,7 @@ This file provides guidance to coding agents like Claude Code (claude.ai/code) w
 
 ## Project Overview
 
-X3Fuse is a macOS SwiftUI application for converting Sigma Merrill and Quattro X3F RAW files to DNG, TIFF, and JPEG formats. The app uses embedded x3f_extract and exiftool binaries to perform conversions and handle EXIF metadata.
+X3Fuse is a macOS SwiftUI application for converting Sigma classic (SD9, SD10, SD14), Merrill, and Quattro X3F RAW files to DNG and TIFF. It also extracts embedded JPEG previews when available. SD9 and SD10 files have no embedded JPEG. The app uses embedded x3f_extract and exiftool binaries to perform conversions and handle EXIF metadata.
 
 **System Requirements**: macOS 14.0 (Sonoma) or later, supports both Intel and Apple Silicon.
 
@@ -128,8 +128,9 @@ When cancellation is requested:
 - Executable permissions (0o755) set on app launch (Services/BinaryManager.swift:36)
 - The Xcode build embeds and code-signs the checked-in `X3Fuse/x3f_extract`; the binary is
   not rebuilt during the app build.
-- The bundled core is **v0.2.0** (commit `fc2403054ea56d1549a9fd43f7bb5018943f22f4`).
-  Build from that tag to reproduce this version. The build script enables the `gpu` feature
+- The bundled core is **v0.2.1** (commit `ca51a110d6cc553bca45029def116db4c1bd21b1`).
+  This release includes the classic-camera calibration decoding fix and its regression test.
+  Use a clean checkout of this tag to rebuild from source. The build script enables the `gpu` feature
   for both architectures. Automatic denoising uses Metal when available and falls back to CPU.
 - Denoise settings include NLM/BM3D, luminance and chroma, intensity, strength, NLM window
   sizes, and execution backend. `ConversionSettings.buildDenoiseArguments` builds these flags
@@ -210,7 +211,7 @@ X3Fuse/
 ## Testing Notes
 
 - Tests located in `X3FuseTests/` (unit) and `X3FuseUITests/` (UI)
-- Test X3F files should cover Merrill and Quattro camera models
+- Test X3F files should cover classic, Merrill, and Quattro camera models
 - Universal binary verification critical for release builds
 
 ## Known Issues & Constraints
