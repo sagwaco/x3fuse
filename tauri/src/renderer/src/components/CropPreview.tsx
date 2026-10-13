@@ -100,7 +100,8 @@ export function CropPreview({
     }
   }, [preview.url])
   const [scale, setScale] = useState(1)
-  const { width: W, height: H } = preview
+  // Keep drag coordinates in the same units when a refined preview arrives.
+  const [{ width: W, height: H }] = useState(preview)
   const angle = recipe.straighten
   const rotation = recipe.rotation % 4
   const frame = cropToFrame(recipe.crop ?? FULL, angle, W, H)

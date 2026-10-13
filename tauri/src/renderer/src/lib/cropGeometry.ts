@@ -139,6 +139,11 @@ export function fitDrag(crop: (dx: number, dy: number) => Rect | null, dx: numbe
     return lo
   }
   const tx = furthest((t) => crop(dx * t, 0) !== null)
+  // A new free crop needs both axes to move before it has area.
+  if (tx === 0 && crop(0, 0) === null) {
+    const t = furthest((t) => crop(dx * t, dy * t) !== null)
+    return crop(dx * t, dy * t)
+  }
   const ty = furthest((t) => crop(dx * tx, dy * t) !== null)
   return crop(dx * tx, dy * ty)
 }

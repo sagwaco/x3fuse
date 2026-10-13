@@ -50,6 +50,31 @@ it('slides a dragged frame along the image edge and keeps locked ratios', () => 
   expect(side.y + side.height / 2).toBeCloseTo(start.y + start.height / 2)
 })
 
+it.each([undefined, 1.5])('fits crops drawn from a point with ratio %s', (ratio) => {
+  const start = { x: W / 2, y: H / 2, width: 0, height: 0 }
+  const crop = (dx: number, dy: number): Rect | null =>
+    frameToCrop(dragFrame(start, 'se', dx, dy, ratio), 0, W, H)
+  for (const [dx, dy] of [
+    [300, 200],
+    [-300, 200],
+    [-300, -200],
+    [300, -200]
+  ])
+    close(fitDrag(crop, dx, dy), {
+      x: dx < 0 ? 0.25 : 0.5,
+      y: dy < 0 ? 0.25 : 0.5,
+      width: 0.25,
+      height: 0.25
+    })
+  close(fitDrag(crop, W * 2, H * 2), { x: 0.5, y: 0.5, width: 0.5, height: 0.5 })
+  const quad = pictureQuad(20, 10, W, H)
+  const corrected = (dx: number, dy: number): Rect | null =>
+    frameToCrop(dragFrame(start, 'se', dx, dy, ratio), 0, W, H, quad)
+  const fitted = fitDrag(corrected, W * 2, H * 2)
+  expect(fitted).not.toBeNull()
+  expect(frameToCrop(cropToFrame(fitted!, 0, W, H), 0, W, H, quad)).not.toBeNull()
+})
+
 it('recognizes camera framing and presets in either orientation', () => {
   const asShot = { x: 0, y: 0.05, width: 1, height: 0.9 }
   expect(matchAspect(asShot, asShot, 0, W, H)).toBe('asShot')
@@ -111,4 +136,24 @@ it('turns the picture by the swept angle and snaps with Shift', () => {
   expect(sweptAngle(0, from, { x: 100, y: -30 }, center, true)).toBe(-SNAP)
   // Crossing the half turn does not jump by 360 degrees.
   expect(sweptAngle(0, { x: -100, y: 1 }, { x: -100, y: -1 }, center, false)).toBeCloseTo(1.146, 2)
+})
+
+it('uses the same swept angle in every quadrant around an off-center pivot', () => {
+  const center = { x: 750, y: 300 }
+  for (const [x, y] of [
+    [-400, -250],
+    [400, -250],
+    [400, 250],
+    [-400, 250]
+  ]) {
+    const from = { x: center.x + x, y: center.y + y }
+    for (const degrees of [-5, 5]) {
+      const radians = (degrees * Math.PI) / 180
+      const to = {
+        x: center.x + Math.cos(radians) * x - Math.sin(radians) * y,
+        y: center.y + Math.sin(radians) * x + Math.cos(radians) * y
+      }
+      expect(sweptAngle(2, from, to, center, false)).toBeCloseTo(2 + degrees)
+    }
+  }
 })
