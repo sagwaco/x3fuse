@@ -3,7 +3,10 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{
     path::PathBuf,
-    sync::{atomic::Ordering, Arc},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
 };
 use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
 use tauri_plugin_dialog::DialogExt;
@@ -576,7 +579,9 @@ pub async fn editor_close(
 #[serde(rename_all = "camelCase")]
 pub struct PreviewEditRequest {
     path: PathBuf,
-    recipe: x3f_render::EditRecipe,
+    /// Missing for an unedited photo: render its camera defaults.
+    #[serde(default)]
+    recipe: Option<x3f_render::EditRecipe>,
     #[serde(default)]
     source_revision: Option<String>,
 }
@@ -591,9 +596,17 @@ pub async fn editor_preview(
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let source_revision = state.editor.edits.source_revision(&payload.path)?;
+        let recipe = match payload.recipe {
+            Some(recipe) => recipe,
+            None => state.editor.default_recipe(
+                &payload.path,
+                &source_revision,
+                &AtomicBool::new(false),
+            )?,
+        };
         let url = state.editor.preview(
             &payload.path,
-            &payload.recipe,
+            &recipe,
             Some(
                 payload
                     .source_revision

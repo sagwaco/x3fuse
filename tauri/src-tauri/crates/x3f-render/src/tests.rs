@@ -492,7 +492,7 @@ fn spektrafilm_license_ships_unmodified() {
     );
     let shader = sha256(include_bytes!("render.wgsl"));
     assert_eq!(
-        shader, "a0b10a9bf4a0d00fdcd068e074597d378df4f85d6107919b11fc3ca9529c0d6e",
+        shader, "e8c6ba0ee311d409860e539d10bcf25235506a92c9a3b6876baf0ef875ba4fd1",
         "render.wgsl changed; update assets/PROVENANCE.md and this hash, and          bump RENDER_VERSION if rendered pixels moved"
     );
 }
@@ -923,7 +923,9 @@ fn gpu_rgba8_and_tiling(renderer: &Renderer) {
         );
         assert_eq!(packed.png().unwrap(), plain.png().unwrap());
     }
-    let plan = renderer.plan_source(&img, &recipe, rgba8, None).unwrap();
+    let plan = renderer
+        .plan_source(&img, &recipe, rgba8, None, None)
+        .unwrap();
     assert_eq!(plan.tiles.len(), 1);
     assert_eq!(plan.passes.last().unwrap().entry, "output");
     assert!(plan.passes.iter().all(|pass| pass.params[0] == [0.; 4]));
@@ -935,7 +937,9 @@ fn gpu_rgba8_and_tiling(renderer: &Renderer) {
         ]
     );
     let tables = plan.tables.clone().unwrap();
-    let again = renderer.plan_source(&img, &recipe, rgba8, None).unwrap();
+    let again = renderer
+        .plan_source(&img, &recipe, rgba8, None, None)
+        .unwrap();
     assert!(
         Arc::ptr_eq(&tables, again.tables.as_ref().unwrap()),
         "an unchanged film must keep its tables"

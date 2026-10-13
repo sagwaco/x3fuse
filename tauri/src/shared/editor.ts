@@ -43,6 +43,8 @@ export const FILM_MONOCHROME_FILTERS: readonly MonochromeFilter[] = [
 ]
 export interface EditRecipe {
   version: 1
+  /** CAMF picture mode. Missing or null keeps the legacy color transform. */
+  cameraProfile?: string | null
   exposure: number
   temperature: number | null
   tint: number
@@ -96,6 +98,7 @@ export function defaultRecipe(): EditRecipe {
   ]
   return {
     version: 1,
+    cameraProfile: null,
     exposure: 0,
     temperature: null,
     tint: 0,
@@ -134,6 +137,8 @@ export interface EditorSession extends EditRecord {
   path: string
   /** Camera framing inside the EXIF-oriented active image. */
   asShotCrop?: EditRecipe['crop']
+  cameraProfiles?: Array<{ id: string; name: string }>
+  asShotCameraProfile?: string | null
   width?: number
   height?: number
   stocks?: Array<{ id: string; name: string }>

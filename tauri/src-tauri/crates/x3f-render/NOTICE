@@ -33,6 +33,14 @@ curves come from the spektrafilm `experimental` branch, revision 28bf883
 Film and paper names identify the modeled materials and do not imply
 affiliation or endorsement. "spektrafilm" is not used as X3Fuse branding.
 
+Camera picture modes
+--------------------
+
+Camera mode matrices and hue tables come from each source X3F file.
+assets/camera-tone-deltas.json uses the tone curve reference data from
+x3fuse-core, licensed under Apache-2.0. The application's resources include
+x3fuse-core's LICENSE and NOTICE. See assets/PROVENANCE.md for the source.
+
 Port source
 -----------
 

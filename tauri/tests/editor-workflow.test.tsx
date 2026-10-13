@@ -533,7 +533,7 @@ it('discards paste metadata that arrives while normal editor close is pending', 
   ).toBe(false)
 })
 
-it('persists untouched camera framing and grain seed when returning to the queue without adding undo history', async () => {
+it('keeps untouched camera framing and grain seed clean when returning to the queue', async () => {
   const crop = { x: 0, y: 0.125, width: 1, height: 0.75 }
   const recipe = { ...defaultRecipe(), crop, seed: 123456 }
   const real = invoke.getMockImplementation()!
@@ -543,15 +543,18 @@ it('persists untouched camera framing and grain seed when returning to the queue
       : real(command, payload)
   )
   await editor.getState().open(file)
+  expect(await editor.getState().flush()).toBe(true)
+  expect(await editor.getState().flush()).toBe(true)
   expect(await editor.getState().close()).toBe(true)
-  expect(invoke).toHaveBeenCalledWith('editor:save', {
-    path: file.path,
+  expect(invoke.mock.calls.some(([command]) => command === 'editor:save')).toBe(false)
+  expect(queue.getState().files[0].edit).toBeUndefined()
+  expect(editor.getState().documents[file.path]).toMatchObject({
     recipe,
-    revision: 1,
-    sourceRevision: 'source-a'
+    revision: 0,
+    dirty: false,
+    storage: 'none',
+    past: []
   })
-  expect(queue.getState().files[0].edit).toMatchObject({ recipe, revision: 1 })
-  expect(editor.getState().documents[file.path].past).toHaveLength(0)
   expect(useNavStore.getState().screen).toBe('queue')
 })
 
@@ -572,12 +575,12 @@ it('exports untouched camera framing and grain seed from the active session', as
   await tick()
   expect(queue.getState().draft?.files[0]).toMatchObject({
     sourceRevision: 'source-a',
-    edit: { recipe, revision: 1, sourceRevision: 'source-a' }
+    edit: { recipe, revision: 0, sourceRevision: 'source-a' }
   })
   expect(invoke).toHaveBeenCalledWith('editor:preview', {
     path: file.path,
     recipe,
-    revision: 1,
+    revision: 0,
     sourceRevision: 'source-a'
   })
   await queue.getState().commitExport()
@@ -588,19 +591,158 @@ it('exports untouched camera framing and grain seed from the active session', as
         expect.objectContaining({
           path: file.path,
           recipe,
-          revision: 1,
+          revision: 0,
           sourceRevision: 'source-a'
         })
       ]
     })
   )
-  expect(invoke).toHaveBeenCalledWith('editor:save', {
-    path: file.path,
-    recipe,
-    revision: 1,
-    sourceRevision: 'source-a'
-  })
+  expect(invoke.mock.calls.some(([command]) => command === 'editor:save')).toBe(false)
+  expect(queue.getState().files[0].edit).toBeUndefined()
   expect(editor.getState().documents[file.path].past).toHaveLength(0)
+})
+
+it('does not save a canceled gesture when compare, crop mode and closing flush the session', async () => {
+  await editor.getState().open(file)
+  editor.getState().change({ exposure: 2 }, false)
+  editor.getState().change({ exposure: 0 }, false)
+  editor.getState().compare(true)
+  editor.getState().compare(false)
+  editor.getState().setCropping(true)
+  editor.getState().change({ crop: { x: 0.1, y: 0.1, width: 0.8, height: 0.8 } }, false)
+  editor.getState().change({ crop: null }, false)
+  editor.getState().setCropping(false)
+  expect(await editor.getState().close()).toBe(true)
+  expect(invoke.mock.calls.some(([command]) => command === 'editor:save')).toBe(false)
+  expect(queue.getState().files[0].edit).toBeUndefined()
+  expect(editor.getState().documents[file.path]).toMatchObject({ revision: 0, past: [] })
+})
+
+it('leaves untouched photos clean through navigation and native close', async () => {
+  const other = { id: 'b', path: '/photos/b.X3F', fileName: 'b.X3F' }
+  queue.setState({ files: [file, other] })
+  const real = invoke.getMockImplementation()!
+  invoke.mockImplementation((command, payload) =>
+    command === 'editor:open'
+      ? Promise.resolve({ ...session(), path: payload.path, sessionId: `session:${payload.path}` })
+      : real(command, payload)
+  )
+  await editor.getState().open(file)
+  await editor.getState().open(other)
+  expect(editor.getState().session?.path).toBe(other.path)
+  renderHook(() => useIpcEvents())
+  await act(async () => {
+    events.get('editor:closing')?.({ quit: true } as never)
+    await tick()
+  })
+  expect(invoke).toHaveBeenCalledWith('editor:finishClose', { quit: true })
+  expect(invoke.mock.calls.some(([command]) => command === 'editor:save')).toBe(false)
+  expect(queue.getState().files.every((item) => !item.edit)).toBe(true)
+  expect(
+    Object.values(editor.getState().documents).every((doc) => !doc.dirty && doc.revision === 0)
+  ).toBe(true)
+})
+
+it('preserves an existing saved edit without saving an unchanged session again', async () => {
+  const saved = {
+    recipe: { ...defaultRecipe(), exposure: 1, seed: 789 },
+    revision: 4,
+    sourceRevision: 'source-a',
+    storage: 'backup' as const,
+    storagePath: '/backup/a.json',
+    previewUrl: 'existing-edit'
+  }
+  queue.setState({ files: [{ ...file, edit: saved }] })
+  const real = invoke.getMockImplementation()!
+  invoke.mockImplementation((command, payload) =>
+    command === 'editor:open' ? Promise.resolve({ ...session(), ...saved }) : real(command, payload)
+  )
+  await editor.getState().open(queue.getState().files[0])
+  expect(await editor.getState().close()).toBe(true)
+  expect(invoke.mock.calls.some(([command]) => command === 'editor:save')).toBe(false)
+  expect(queue.getState().files[0].edit).toEqual(saved)
+  expect(editor.getState().documents[file.path]).toMatchObject({ ...saved, dirty: false })
+})
+
+it.each(['Neutral', 'Monochrome'])(
+  'keeps Reset and Before clean for a fresh %s camera recipe with its crop and seed',
+  async (cameraProfile) => {
+    const crop = { x: 0, y: 0.125, width: 1, height: 0.75 }
+    const recipe: EditRecipe = {
+      ...defaultRecipe(),
+      film: null,
+      cameraProfile,
+      monochrome: cameraProfile === 'Monochrome' ? { filter: 'neutral' } : null,
+      crop,
+      seed: 123456
+    }
+    const real = invoke.getMockImplementation()!
+    invoke.mockImplementation((command, payload) =>
+      command === 'editor:open'
+        ? Promise.resolve({
+            ...session(),
+            recipe,
+            asShotCrop: crop,
+            asShotCameraProfile: cameraProfile
+          })
+        : real(command, payload)
+    )
+    await editor.getState().open(file)
+    editor.getState().reset()
+    editor.getState().compare(true)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(invoke).toHaveBeenCalledWith('editor:render', expect.objectContaining({ recipe }))
+    editor.getState().compare(false)
+    expect(await editor.getState().close()).toBe(true)
+    expect(invoke.mock.calls.some(([command]) => command === 'editor:save')).toBe(false)
+    expect(queue.getState().files[0].edit).toBeUndefined()
+    expect(editor.getState().documents[file.path]).toMatchObject({ recipe, revision: 0, past: [] })
+  }
+)
+
+it('restores the as-shot camera look for Reset and Before while preserving actual edits and history', async () => {
+  const crop = { x: 0, y: 0.125, width: 1, height: 0.75 }
+  const editedCrop = { x: 0.1, y: 0.2, width: 0.7, height: 0.6 }
+  const recipe = {
+    ...defaultRecipe(),
+    cameraProfile: 'Vivid',
+    exposure: 2,
+    crop: editedCrop,
+    seed: 456
+  }
+  const original = { ...defaultRecipe(), film: null, cameraProfile: 'Neutral', crop, seed: 456 }
+  const real = invoke.getMockImplementation()!
+  invoke.mockImplementation((command, payload) =>
+    command === 'editor:open'
+      ? Promise.resolve({
+          ...session(),
+          recipe,
+          revision: 4,
+          storage: 'sidecar',
+          asShotCrop: crop,
+          asShotCameraProfile: 'Neutral'
+        })
+      : real(command, payload)
+  )
+  await editor.getState().open(file)
+  editor.getState().compare(true)
+  await vi.advanceTimersByTimeAsync(0)
+  expect(invoke).toHaveBeenCalledWith(
+    'editor:render',
+    expect.objectContaining({ recipe: { ...original, crop: editedCrop } })
+  )
+  expect(editor.getState().documents[file.path].recipe).toEqual(recipe)
+  expect(invoke.mock.calls.some(([command]) => command === 'editor:save')).toBe(false)
+  editor.getState().compare(false)
+  editor.getState().reset()
+  expect(await editor.getState().flush()).toBe(true)
+  expect(queue.getState().files[0].edit).toMatchObject({ recipe: original, revision: 5 })
+  editor.getState().undo()
+  expect(await editor.getState().flush()).toBe(true)
+  expect(queue.getState().files[0].edit?.recipe).toEqual(recipe)
+  editor.getState().redo()
+  expect(await editor.getState().flush()).toBe(true)
+  expect(queue.getState().files[0].edit?.recipe).toEqual(original)
 })
 
 it('freezes rendered recipes and fingerprints for mixed batches and returns shared review to the editor', async () => {
@@ -631,7 +773,15 @@ it('freezes rendered recipes and fingerprints for mixed batches and returns shar
     recipe: { exposure: 2 },
     sourceRevision: `source:${file.path}`
   })
-  expect(request.files[1]).toMatchObject({ recipe: { exposure: 0 } })
+  // An untouched photo sends no recipe: the backend renders its camera defaults.
+  expect(invoke).toHaveBeenCalledWith('editor:preview', {
+    path: other.path,
+    recipe: undefined,
+    revision: 0,
+    sourceRevision: undefined
+  })
+  expect(request.files[1]).toMatchObject({ sourceRevision: `source:${other.path}` })
+  expect(request.files[1].recipe).toBeUndefined()
   queue.getState().onBatchStarted({ batchId: request.batchId, settings: request.settings })
   expect(useNavStore.getState().screen).toBe('editor')
 })

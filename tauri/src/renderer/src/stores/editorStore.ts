@@ -104,17 +104,27 @@ function updateQueue(path: string, edit: EditRecord): void {
 const renderKey = (sessionId: string, recipe: EditRecipe): string =>
   `${sessionId}:${JSON.stringify(recipe)}`
 
+function asShotRecipe(session: EditorSession | null, seed: number): EditRecipe {
+  return {
+    ...defaultRecipe(),
+    film: null,
+    cameraProfile: session?.asShotCameraProfile ?? null,
+    monochrome: session?.asShotCameraProfile === 'Monochrome' ? { filter: 'neutral' } : null,
+    crop: session?.asShotCrop ?? null,
+    seed
+  }
+}
+
 /** The recipe a render of the current view uses. */
 function renderRecipe(state: EditorState, doc: Document): EditRecipe {
   let recipe = state.before
     ? {
-        ...defaultRecipe(),
+        ...asShotRecipe(state.session, doc.recipe.seed),
         crop: doc.recipe.crop,
         rotation: doc.recipe.rotation,
         straighten: doc.recipe.straighten,
         pitch: doc.recipe.pitch,
-        yaw: doc.recipe.yaw,
-        seed: doc.recipe.seed
+        yaw: doc.recipe.yaw
       }
     : doc.recipe
   if (state.cropping) recipe = { ...recipe, crop: null, rotation: 0, straighten: 0 }
@@ -598,11 +608,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
     },
     reset() {
       const path = get().session?.path
-      get().change({
-        ...defaultRecipe(),
-        crop: get().session?.asShotCrop ?? null,
-        seed: path ? get().documents[path].recipe.seed : 0
-      })
+      if (path) get().change(asShotRecipe(get().session, get().documents[path].recipe.seed))
     },
     compare(before) {
       // Crop mode edits geometry; comparing would block its changes and its Cancel.
@@ -676,17 +682,6 @@ export const useEditorStore = create<EditorState>((set, get) => {
     async flush() {
       get().commit()
       await Promise.all([...saves])
-      const path = get().session?.path
-      const doc = path && get().documents[path]
-      // Opening the editor applies film and camera framing even without a gesture.
-      // Persist that recipe so Done and a later queue export reproduce the preview.
-      if (path && doc && doc.storage === 'none' && !doc.dirty)
-        set((state) => ({
-          documents: {
-            ...state.documents,
-            [path]: { ...doc, revision: doc.revision + 1, dirty: true }
-          }
-        }))
       const dirty = Object.entries(get().documents).filter(([, doc]) => doc.dirty)
       for (const [path] of dirty) save(path)
       await Promise.all([...saves])

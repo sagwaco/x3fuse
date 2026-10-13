@@ -5984,6 +5984,7 @@ dependencies = [
  "thiserror 2.0.20",
  "wgpu 24.0.5",
  "x3f-core",
+ "x3f-sys",
 ]
 
 [[package]]

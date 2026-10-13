@@ -70,7 +70,9 @@ The ignored `spektrafilm_parity` test re-checks the same chain against the real
 
 ## SHA-256
 
-- `src/render.wgsl`: a0b10a9bf4a0d00fdcd068e074597d378df4f85d6107919b11fc3ca9529c0d6e
+- `assets/camera-tone-deltas.json`: 2ee2bea81844b572b08d4b5eb1e21f0905798ac571aef66038eaa33482d19144
+
+- `src/render.wgsl`: e8c6ba0ee311d409860e539d10bcf25235506a92c9a3b6876baf0ef875ba4fd1
 - `licenses/SPEKTRAFILM_LICENSE.txt`: 76d629501783ae52e8d63aee1e054c1e1a9713b9fe7d36fb306e25b1d14b24e9
 - `assets/irradiance_xy_tc.npy`: 52f90c724811f5fab80769f8548bf24d08a521eb09e65ab6e016893258d2a783
 - `assets/neutral_print_filters.json`: 8c96ba7089629aa38914492dc65c526551a1decbbb8769c2383d40e4e9632b38
@@ -110,3 +112,9 @@ The ignored `spektrafilm_parity` test re-checks the same chain against the real
 - `assets/filters/hoya/x1.csv`: ab98aa320f521861550316b34e05b99ebe3452ebaec0b4bab7e76dd3f121f3a8
 - `assets/filters/hoya/y2.csv`: e96cb228d81f4a258e8ae61fe0515c5bd7845c724429ce089d0c68a1143976f2
 - `assets/filters/hoya/ya3.csv`: b8a93c1372b88acbf357b7edd8e4f819fd08d1d5167d998bb17c6c316017e177
+
+## Camera picture modes
+
+The editor reads `CMCM_<mode>`, `CMCC_<mode>`, and `MultiAxisTable_<mode>` from each X3F. It folds the color matrix into the calibrated scene transform and uses the core DNG hue map in linear ProPhoto RGB. The tone curve runs in the editor sRGB display encoding. Endpoint slopes retain signed samples and highlight headroom. This path does not reproduce the full Sigma Photo Pro renderer.
+
+`camera-tone-deltas.json` copies the positive and negative 256-point reference deltas from `x3fuse-core/crates/x3f-core/src/output/dng/tone_curves.rs` (Apache-2.0). The core derives these curves from its reference Sigma-aware DNG. The synthesis uses the same contrast scaling and identity threshold.

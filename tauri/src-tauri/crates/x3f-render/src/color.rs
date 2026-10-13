@@ -1,7 +1,7 @@
 use crate::{geometry, Curves, EditRecipe, MonochromeFilter, Point, RenderError, RenderOptions};
 use x3f_core::{SceneLinearImage, WhiteBalanceCalibration};
 
-fn inverse(m: [f64; 9]) -> Result<[f64; 9], RenderError> {
+pub(crate) fn inverse(m: [f64; 9]) -> Result<[f64; 9], RenderError> {
     let d = m[0] * (m[4] * m[8] - m[5] * m[7]) - m[1] * (m[3] * m[8] - m[5] * m[6])
         + m[2] * (m[3] * m[7] - m[4] * m[6]);
     if !d.is_finite() || d.abs() < 1e-14 {
@@ -20,6 +20,9 @@ fn inverse(m: [f64; 9]) -> Result<[f64; 9], RenderError> {
         (m[1] * m[6] - m[0] * m[7]) / d,
         (m[0] * m[4] - m[1] * m[3]) / d,
     ])
+}
+pub(crate) fn multiply(a: [f64; 9], b: [f64; 9]) -> [f64; 9] {
+    std::array::from_fn(|i| (0..3).map(|k| a[i / 3 * 3 + k] * b[k * 3 + i % 3]).sum())
 }
 fn vector(m: [f64; 9], v: [f64; 3]) -> [f64; 3] {
     std::array::from_fn(|i| m[i * 3] * v[0] + m[i * 3 + 1] * v[1] + m[i * 3 + 2] * v[2])

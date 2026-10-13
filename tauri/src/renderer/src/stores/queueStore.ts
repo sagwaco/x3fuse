@@ -15,7 +15,6 @@ import { sortFiles } from '../lib/sortFiles'
 import { useSettingsStore } from './settingsStore'
 import { useNavStore } from './navStore'
 import { useEditorStore } from './editorStore'
-import { defaultRecipe } from '@shared/editor'
 
 const newPlaceholderId = (): string => crypto.randomUUID()
 
@@ -133,19 +132,14 @@ export const useQueueStore = create<QueueState>((set, get) => {
     const files = await Promise.all(
       draft.files.map(async (file) => {
         if (file.sourceRevision && file.displayPreviewUrl) return file
-        const edit = file.edit ?? { recipe: defaultRecipe(), revision: 0 }
+        // Without an edit, the backend renders and exports the photo's camera defaults.
         const preview = await ipc.invoke('editor:preview', {
           path: file.path,
-          recipe: edit.recipe,
-          revision: edit.revision,
-          sourceRevision: file.sourceRevision ?? edit.sourceRevision
+          recipe: file.edit?.recipe,
+          revision: file.edit?.revision ?? 0,
+          sourceRevision: file.sourceRevision ?? file.edit?.sourceRevision
         })
-        return {
-          ...file,
-          edit,
-          displayPreviewUrl: preview.url,
-          sourceRevision: preview.sourceRevision
-        }
+        return { ...file, displayPreviewUrl: preview.url, sourceRevision: preview.sourceRevision }
       })
     )
     return { ...draft, files }
@@ -181,7 +175,7 @@ export const useQueueStore = create<QueueState>((set, get) => {
           path,
           ...(draft!.settings.rendering === 'rendered'
             ? {
-                recipe: edit?.recipe ?? defaultRecipe(),
+                recipe: edit?.recipe,
                 revision: edit?.revision ?? 0,
                 sourceRevision: sourceRevision ?? edit?.sourceRevision
               }
@@ -218,7 +212,7 @@ export const useQueueStore = create<QueueState>((set, get) => {
           path,
           ...(draft!.settings.rendering === 'rendered'
             ? {
-                recipe: edit?.recipe ?? defaultRecipe(),
+                recipe: edit?.recipe,
                 revision: edit?.revision ?? 0,
                 sourceRevision: sourceRevision ?? edit?.sourceRevision
               }

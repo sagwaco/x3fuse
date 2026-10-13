@@ -8,6 +8,7 @@ description = "Scene-linear GPU RAW editing and spectral film rendering for X3Fu
 
 [dependencies]
 x3f-core = { version = "0.2.0", features = ["serde"] }
+x3f-sys = { path = "../../../../../x3fuse-core/crates/x3f-sys" }
 wgpu = "24"
 pollster = "0.4"
 bytemuck = { version = "1", features = ["derive"] }

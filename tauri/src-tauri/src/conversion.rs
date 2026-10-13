@@ -219,7 +219,17 @@ async fn process_file(
     let export_settings = settings.clone();
     let warnings = tauri::async_runtime::spawn_blocking(move || {
         if export_settings.is_rendered() {
-            let recipe = source.recipe.clone().unwrap_or_default();
+            let recipe = match &source.recipe {
+                Some(recipe) => recipe.clone(),
+                None => export_state.editor.default_recipe(
+                    &input,
+                    source
+                        .source_revision
+                        .as_deref()
+                        .ok_or("Review the source before edited export")?,
+                    &cancel,
+                )?,
+            };
             progress(&handle, &batch_id, &source, 0.25);
             export_state.editor.export(
                 &input,

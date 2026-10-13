@@ -75,7 +75,8 @@ export interface NativeMenuRequest {
 export interface IpcRequestMap {
   'editor:finishClose': { payload: { quit: boolean }; result: void }
   'editor:preview': {
-    payload: { path: string; recipe: EditRecipe; revision: number; sourceRevision?: string }
+    /** Without `recipe`, the backend renders the photo's camera defaults. */
+    payload: { path: string; recipe?: EditRecipe; revision: number; sourceRevision?: string }
     result: { url: string; sourceRevision: string }
   }
   'editor:cancelRender': { payload: { sessionId: string; revision: number }; result: void }

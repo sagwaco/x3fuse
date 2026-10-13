@@ -1,9 +1,11 @@
 //! GPU-only scene-linear RAW editing. The physical film implementation is GPL-3.0-only.
+mod camera;
 mod color;
 mod film;
 mod geometry;
 mod recipe;
 mod stocks;
+pub use camera::{read_camera_profiles, CameraProfile, CameraProfiles};
 pub use color::{as_shot_white_balance, pick_white_balance};
 pub use recipe::{
     Crop, Curves, EditRecipe, FilmSettings, HslBand, MonochromeFilter, MonochromeSettings, Point,
@@ -16,7 +18,8 @@ pub use stocks::STOCKS_JSON;
 /// their cache keys, or previews produced by an older build keep being served
 /// next to freshly rendered exports. `2` is the spektrafilm model; `1` was the
 /// implementation it replaced.
-pub const RENDER_VERSION: u32 = 2;
+/// Version 3 adds CAMF camera picture modes.
+pub const RENDER_VERSION: u32 = 3;
 
 use image::ImageEncoder;
 use serde::{Deserialize, Serialize};
@@ -232,6 +235,7 @@ fn cancelled(cancel: &AtomicBool) -> Result<(), RenderError> {
 /// Rebuild after RAW preparation settings (such as denoise) change.
 pub struct PreparedImage {
     image: SceneLinearImage,
+    camera_profiles: CameraProfiles,
     gpu: Mutex<Option<GpuSource>>,
 }
 impl PreparedImage {
@@ -239,11 +243,17 @@ impl PreparedImage {
         validate_scene(&image, cancel)?;
         Ok(Self {
             image,
+            camera_profiles: CameraProfiles::default(),
             gpu: Mutex::new(None),
         })
     }
     pub fn image(&self) -> &SceneLinearImage {
         &self.image
+    }
+    /// Attaches the source file's calibration for camera-profile rendering.
+    pub fn with_camera_profiles(mut self, camera_profiles: CameraProfiles) -> Self {
+        self.camera_profiles = camera_profiles;
+        self
     }
 }
 
@@ -252,7 +262,7 @@ struct GpuSource {
     bind: wgpu::BindGroup,
 }
 
-type Parameters = [[f32; 4]; 41];
+type Parameters = [[f32; 4]; 48];
 const PARAMETER_BYTES: u64 = std::mem::size_of::<Parameters>() as u64;
 const MAX_DISPATCHES: u64 = 36;
 /// Blurs below this radius are indistinguishable from a copy; skipping them
@@ -426,12 +436,12 @@ struct Tile {
     origin: [i32; 2],
 }
 /// One compute dispatch: a `render.wgsl` entry point, its (source, auxiliary,
-/// destination) working buffers and its 41 parameter vectors.
+/// destination) working buffers and its parameter vectors.
 #[derive(Clone, Debug, PartialEq)]
 struct Pass {
     entry: &'static str,
     buffers: [usize; 3],
-    params: [[f32; 4]; 41],
+    params: Parameters,
 }
 /// Film spectral tables (binding 4) and the spectral upsampling LUT (binding 5).
 #[derive(Debug, PartialEq)]
@@ -459,7 +469,7 @@ struct Plan {
     buffer_bytes: u64,
     /// `None` without film. The same `Arc` is returned until the film changes.
     tables: Option<Arc<FilmTables>>,
-    /// The curve table (binding 6): 1024 RGBA rows.
+    /// Edit curves followed by the camera tone curve and hue map (binding 6).
     curves: Vec<[f32; 4]>,
 }
 impl Plan {
@@ -778,8 +788,11 @@ impl Renderer {
     ) -> Result<RenderedImage, RenderError> {
         validate_scene(image, cancel)?;
         recipe.validate().map_err(RenderError::Invalid)?;
+        let recipe = camera::effective_recipe(recipe);
+        let profiles = CameraProfiles::default();
+        let calibration = profiles.selected(&recipe)?;
         let source = self.upload(image, cancel)?;
-        self.render_source(image, &source, recipe, options, cancel, None)
+        self.render_source(image, &source, &recipe, options, cancel, None, calibration)
     }
     pub fn render_prepared(
         &self,
@@ -790,14 +803,17 @@ impl Renderer {
     ) -> Result<RenderedImage, RenderError> {
         cancelled(cancel)?;
         recipe.validate().map_err(RenderError::Invalid)?;
+        let recipe = camera::effective_recipe(recipe);
+        let calibration = image.camera_profiles.selected(&recipe)?;
         let gpu = self.source(image, cancel)?;
         self.render_source(
             image.image(),
             gpu.as_ref().unwrap(),
-            recipe,
+            &recipe,
             options,
             cancel,
             None,
+            calibration,
         )
     }
     /// Uploads the source to this renderer's GPU before its first render.
@@ -835,7 +851,7 @@ impl Renderer {
         tiling: (u32, u32),
     ) -> Result<RenderedImage, RenderError> {
         let source = self.upload(image, cancel)?;
-        self.render_source(image, &source, recipe, options, cancel, Some(tiling))
+        self.render_source(image, &source, recipe, options, cancel, Some(tiling), None)
     }
     fn upload(
         &self,
@@ -919,6 +935,7 @@ impl Renderer {
         recipe: &EditRecipe,
         options: RenderOptions,
         tiling: Option<(u32, u32)>,
+        calibration: Option<&camera::Calibration>,
     ) -> Result<Plan, RenderError> {
         recipe.validate().map_err(RenderError::Invalid)?;
         let geom = geometry::Geometry::new(image, recipe, options)?;
@@ -991,6 +1008,23 @@ impl Renderer {
         )?;
         let tables = prepared.map(|(_, _, tables)| tables.clone());
         drop(film_cache);
+        if let Some(calibration) = calibration {
+            let wb = std::array::from_fn(|i| base[5 + i / 3][i % 3] as f64);
+            let matrix = color::multiply(calibration.matrix, wb);
+            for i in 0..9 {
+                base[5 + i / 3][i % 3] = matrix[i] as f32;
+            }
+            base[41][0] = 1.;
+            let prophoto = [
+                0.529345, 0.330072, 0.140583, 0.098374, 0.873461, 0.028165, 0.016883, 0.117673,
+                0.865444,
+            ];
+            let inverse = color::inverse(prophoto)?;
+            for i in 0..9 {
+                base[42 + i / 3][i % 3] = prophoto[i] as f32;
+                base[45 + i / 3][i % 3] = inverse[i] as f32;
+            }
+        }
         base[0] = [0.; 4];
         let (passes, output) = build_passes(
             base,
@@ -1044,7 +1078,10 @@ impl Renderer {
             output,
             buffer_bytes,
             tables,
-            curves: color::curve_table(&recipe.curves),
+            curves: color::curve_table(&recipe.curves)
+                .into_iter()
+                .chain(camera::look_table(calibration))
+                .collect(),
         })
     }
     fn buffer_limit(&self) -> u64 {
@@ -1063,9 +1100,10 @@ impl Renderer {
         options: RenderOptions,
         cancel: &AtomicBool,
         tiling: Option<(u32, u32)>,
+        calibration: Option<&camera::Calibration>,
     ) -> Result<RenderedImage, RenderError> {
         cancelled(cancel)?;
-        let plan = self.plan_source(image, recipe, options, tiling)?;
+        let plan = self.plan_source(image, recipe, options, tiling, calibration)?;
         let (width, height) = (plan.width, plan.height);
         let frame_bytes = width as u64 * height as u64 * 4;
         if options.rgba8 && frame_bytes > self.buffer_limit() {
@@ -1199,7 +1237,7 @@ impl Renderer {
         pair: Option<&film::FilmPair>,
         spatial: Option<&film::Spatial>,
     ) -> Result<Parameters, RenderError> {
-        let mut p: Parameters = [[0.; 4]; 41];
+        let mut p: Parameters = [[0.; 4]; 48];
         // A B&W film already makes a neutral image; the sensor-layer mix is
         // only for colour film or no film. Both neutralize the output.
         let silver = r.film.is_some() && pair.is_some_and(|pair| pair.monochrome);
@@ -1337,7 +1375,7 @@ impl Renderer {
             ),
             curves: buffer(
                 "Edit curves",
-                1024 * 16,
+                (1024 + camera::LOOK_ROWS) as u64 * 16,
                 wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             ),
             bindings: HashMap::new(),
@@ -1383,7 +1421,7 @@ impl Renderer {
     ) -> wgpu::CommandEncoder {
         let slot0 = plan.slot0(tile);
         let pack = pack.then(|| {
-            let mut params = [[0.; 4]; 41];
+            let mut params: Parameters = [[0.; 4]; 48];
             params[21] = [
                 plan.margin as f32,
                 plan.width as f32,

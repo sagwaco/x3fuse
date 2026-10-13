@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct EditRecipe {
     pub version: u32,
+    /// CAMF picture mode. None keeps the legacy color transform.
+    pub camera_profile: Option<String>,
     pub exposure: f32,
     pub temperature: Option<f32>,
     pub tint: f32,
@@ -37,6 +39,7 @@ impl Default for EditRecipe {
     fn default() -> Self {
         Self {
             version: 1,
+            camera_profile: None,
             exposure: 0.,
             temperature: None,
             tint: 0.,
@@ -214,6 +217,11 @@ impl EditRecipe {
     pub fn validate(&self) -> Result<(), String> {
         if self.version != 1 {
             return Err(format!("Unsupported edit recipe version {}", self.version));
+        }
+        if let Some(id) = &self.camera_profile {
+            if !crate::camera::MODES.iter().any(|(mode, _)| mode == id) {
+                return Err(format!("Unknown camera profile {id}"));
+            }
         }
         range("exposure", self.exposure, -5., 5.)?;
         if let Some(t) = self.temperature {

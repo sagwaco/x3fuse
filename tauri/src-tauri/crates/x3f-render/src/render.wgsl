@@ -4,7 +4,7 @@
 // assets/PROVENANCE.md; source attribution: NOTICE.
 struct Pixels { v: array<vec4<f32>> }
 struct Table { v: array<f32> }
-struct Uniforms { v: array<vec4<f32>, 41> }
+struct Uniforms { v: array<vec4<f32>, 48> }
 @group(0) @binding(0) var<storage, read> source: Pixels;
 @group(0) @binding(1) var<storage, read> auxiliary: Pixels;
 @group(0) @binding(2) var<storage, read_write> destination: Pixels;
@@ -252,6 +252,7 @@ fn sample(@builtin(global_invocation_id) id:vec3<u32>) {
 fn adjust(@builtin(global_invocation_id) id:vec3<u32>) {
     let pos=id.xy;if !in_bounds(pos) { return; }let i=index(pos);let c=source.v[i].rgb;
     var rgb=vec3<f32>(dot(p.v[5].xyz,c),dot(p.v[6].xyz,c),dot(p.v[7].xyz,c))*exp2(p.v[2].x);
+    if p.v[41].x>0.5 { rgb=camera_look(rgb); }
     // Calibrated inverse camera matrix recovers the B/M/T layer mixture. Keep
     // signed samples and highlight headroom until the ordinary output transform.
     // B&W film takes the colour image; its spectral sensitivity makes it gray.
@@ -277,6 +278,24 @@ fn rgb_to_hsv(c:vec3<f32>)->vec3<f32> {
 }
 fn hsv_to_rgb(c:vec3<f32>)->vec3<f32> {
     let q=clamp(abs(fract(c.xxx+vec3<f32>(0,2.0/3.0,1.0/3.0))*6.0-3.0)-1.0,vec3<f32>(0),vec3<f32>(1));return c.z*mix(vec3<f32>(1),q,c.y);
+}
+fn camera_tone(x:f32)->f32 {
+    if x<0.0 { return curves.v[1024].x+x*255.0*(curves.v[1025].x-curves.v[1024].x); }
+    if x>1.0 { return curves.v[1279].x+(x-1.0)*255.0*(curves.v[1279].x-curves.v[1278].x); }
+    let at=x*255.0;let lo=u32(at);
+    return mix(curves.v[1024u+lo].x,curves.v[1024u+min(lo+1u,255u)].x,fract(at));
+}
+fn camera_look(rgb:vec3<f32>)->vec3<f32> {
+    // Match the core DNG hue map in linear ProPhoto RGB, with signed headroom.
+    let prophoto=matrix_at(42u,rgb);let positive=max(prophoto,vec3<f32>(0));
+    var hsv=rgb_to_hsv(positive);let at=hsv.x*21.0;let lo=u32(at)%21u;
+    let correction=mix(curves.v[1280u+lo].xy,curves.v[1280u+(lo+1u)%21u].xy,fract(at));
+    hsv.x=fract(hsv.x+correction.x/360.0+1.0);hsv.y=clamp(hsv.y*correction.y,0.0,1.0);
+    var corrected=rgb;
+    if any(correction!=vec2<f32>(0,1)) { corrected+=matrix_at(45u,hsv_to_rgb(hsv)-positive); }
+    // Use the renderer's display encoding for the core's measured tone curve.
+    let encoded=encode_srgb(corrected);
+    return decode_srgb(vec3<f32>(camera_tone(encoded.x),camera_tone(encoded.y),camera_tone(encoded.z)));
 }
 fn sample_curve(x:f32,ch:u32)->f32 {
     if x<0.0 {return curves.v[0][ch]+x*1023.0*(curves.v[1][ch]-curves.v[0][ch]);}

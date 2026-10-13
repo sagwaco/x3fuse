@@ -177,6 +177,8 @@ pub struct EditorSession {
     pub path: PathBuf,
     pub recipe: EditRecipe,
     pub as_shot_crop: Option<Crop>,
+    pub camera_profiles: Vec<x3f_render::CameraProfile>,
+    pub as_shot_camera_profile: String,
     pub revision: u64,
     pub source_revision: String,
     pub storage: String,
@@ -384,6 +386,8 @@ impl Editor {
                 width,
                 height,
             });
+        let camera_profiles = x3f_render::read_camera_profiles(&path, &AtomicBool::new(false))
+            .map_err(|e| e.to_string())?;
         if self.edits.source_revision(&path)? != source_revision {
             return Err("Source changed while reading camera framing; reopen the photo".into());
         }
@@ -414,20 +418,17 @@ impl Editor {
             return Err("Photo opening superseded".into());
         }
         *active = Some(session.clone());
-        let recipe = saved
-            .as_ref()
-            .map(|r| r.recipe.clone())
-            .unwrap_or_else(|| EditRecipe {
-                crop: as_shot_crop,
-                seed: u32::from_str_radix(&source_revision[..8], 16).unwrap_or(0),
-                ..Default::default()
-            });
+        let recipe = saved.as_ref().map(|r| r.recipe.clone()).unwrap_or_else(|| {
+            as_shot_recipe(as_shot_crop, &camera_profiles.as_shot, &source_revision)
+        });
         Ok(EditorSession {
             session_id: session.id,
             path: requested_path,
             source_revision,
             recipe,
             as_shot_crop,
+            camera_profiles: camera_profiles.available,
+            as_shot_camera_profile: camera_profiles.as_shot,
             revision: saved.as_ref().map_or(0, |s| s.revision),
             storage: saved
                 .as_ref()
@@ -480,11 +481,6 @@ impl Editor {
         if self.close_allowed.load(Ordering::SeqCst) {
             return Err("The window is closing".into());
         }
-        let source_revision = self.edits.source_revision(&path)?;
-        let recipe = self
-            .edits
-            .load(&path)?
-            .map_or_else(EditRecipe::default, |saved| saved.recipe);
         check_cancel(&cancel)?;
         let mut worker = self
             .worker
@@ -499,6 +495,11 @@ impl Editor {
         {
             return Ok(());
         }
+        let source_revision = self.edits.source_revision(&path)?;
+        let recipe = match self.edits.load(&path)? {
+            Some(saved) => saved.recipe,
+            None => self.default_recipe(&path, &source_revision, &cancel)?,
+        };
         let asset = Asset {
             path,
             source_revision,
@@ -603,6 +604,29 @@ impl Editor {
         self.register(path, &actual, recipe, 2048, None)
     }
 
+    /// Returns camera defaults without writing a sidecar or backup.
+    pub fn default_recipe(
+        &self,
+        path: &Path,
+        source_revision: &str,
+        cancel: &AtomicBool,
+    ) -> Result<EditRecipe, String> {
+        check_cancel(cancel)?;
+        let crop = x3f_core::read_as_shot_crop(path)
+            .map_err(|e| e.to_string())?
+            .map(|[x, y, width, height]| Crop {
+                x,
+                y,
+                width,
+                height,
+            });
+        let profiles = x3f_render::read_camera_profiles(path, cancel).map_err(|e| e.to_string())?;
+        if self.edits.source_revision(path)? != source_revision {
+            return Err("Source changed while reading camera defaults".into());
+        }
+        Ok(as_shot_recipe(crop, &profiles.as_shot, source_revision))
+    }
+
     fn register(
         &self,
         path: &Path,
@@ -695,6 +719,8 @@ impl Editor {
                 prepare_scene_linear(&asset.path, &options, cancel, |_| ())
             })
             .map_err(|e| e.to_string())?;
+            let profiles =
+                x3f_render::read_camera_profiles(&asset.path, cancel).map_err(|e| e.to_string())?;
             check_cancel(cancel)?;
             if self.edits.source_revision(&asset.path)? != asset.source_revision {
                 return Err("Source contents changed during RAW preparation".into());
@@ -704,7 +730,9 @@ impl Editor {
                 source_revision: asset.source_revision.clone(),
                 denoise: asset.recipe.denoise,
                 denoise_options: asset.recipe.denoise_options,
-                image: PreparedImage::new(image, cancel).map_err(|e| e.to_string())?,
+                image: PreparedImage::new(image, cancel)
+                    .map_err(|e| e.to_string())?
+                    .with_camera_profiles(profiles),
             });
         }
         Ok(worker
@@ -1388,6 +1416,20 @@ impl Editor {
     }
 }
 
+fn as_shot_recipe(crop: Option<Crop>, profile: &str, source_revision: &str) -> EditRecipe {
+    EditRecipe {
+        camera_profile: Some(profile.into()),
+        film: None,
+        monochrome: (profile == "Monochrome").then(x3f_render::MonochromeSettings::default),
+        crop,
+        seed: source_revision
+            .get(..8)
+            .and_then(|value| u32::from_str_radix(value, 16).ok())
+            .unwrap_or(0),
+        ..Default::default()
+    }
+}
+
 fn check_cancel(cancel: &AtomicBool) -> Result<(), String> {
     if cancel.load(Ordering::SeqCst) {
         Err("Rendering cancelled".into())
@@ -1470,6 +1512,76 @@ pub fn protocol_id(uri: &str) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    #[ignore = "set X3F_CAMERA_PROFILE_INPUT to a real file with FCBlue calibration"]
+    fn real_camera_defaults_do_not_save_and_existing_recipes_are_preserved() {
+        use std::io::{Read, Seek, SeekFrom};
+        let input = std::env::var_os("X3F_CAMERA_PROFILE_INPUT").expect("X3F_CAMERA_PROFILE_INPUT");
+        let temporary = tempfile::tempdir().unwrap();
+        let photo = temporary.path().join("photo.X3F");
+        fs::copy(input, &photo).unwrap();
+        let mut file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&photo)
+            .unwrap();
+        let mut header = [0; 8];
+        file.read_exact(&mut header).unwrap();
+        let version = u32::from_le_bytes(header[4..].try_into().unwrap());
+        assert!((0x0002_0003..0x0004_0000).contains(&version));
+        file.seek(SeekFrom::Start(72)).unwrap();
+        let mut mode = [0; 32];
+        mode[..6].copy_from_slice(b"FCBlue");
+        file.write_all(&mode).unwrap();
+        drop(file);
+        let editor = Editor::new(temporary.path().join("edits"));
+        let session = editor.open(photo.clone()).unwrap();
+        assert_eq!(session.as_shot_camera_profile, "FCBlue");
+        assert_eq!(session.recipe.camera_profile.as_deref(), Some("FCBlue"));
+        assert_eq!(session.recipe.film, None);
+        assert_eq!(session.revision, 0);
+        assert_eq!(session.storage, "none");
+        assert!(!crate::edits::sidecar(&photo).exists());
+        assert_eq!(
+            editor
+                .default_recipe(&photo, &session.source_revision, &AtomicBool::new(false))
+                .unwrap(),
+            session.recipe
+        );
+        let legacy = EditRecipe {
+            exposure: 1.,
+            ..Default::default()
+        };
+        editor
+            .save(&photo, legacy.clone(), 1, Some(&session.source_revision))
+            .unwrap();
+        assert_eq!(editor.open(photo).unwrap().recipe, legacy);
+    }
+    #[test]
+    fn fresh_camera_defaults_are_clean_and_saved_recipes_remain_legacy() {
+        let crop = Some(x3f_render::Crop {
+            x: 0.,
+            y: 0.1,
+            width: 1.,
+            height: 0.8,
+        });
+        let color = super::as_shot_recipe(crop, "FCBlue", "12345678abcdef");
+        assert_eq!(color.camera_profile.as_deref(), Some("FCBlue"));
+        assert_eq!(color.film, None);
+        assert_eq!(color.crop, crop);
+        assert_eq!(color.seed, 0x12345678);
+        assert_eq!(color.monochrome, None);
+        let mono = super::as_shot_recipe(crop, "Monochrome", "12345678abcdef");
+        assert_eq!(
+            mono.monochrome,
+            Some(x3f_render::MonochromeSettings::default())
+        );
+        let legacy: x3f_render::EditRecipe =
+            serde_json::from_str(r#"{"version":1,"exposure":1}"#).unwrap();
+        assert_eq!(legacy.camera_profile, None);
+        assert_eq!(legacy.film, Some(x3f_render::FilmSettings::default()));
+        assert_eq!(legacy.exposure, 1.);
+    }
     use super::*;
 
     #[cfg(target_os = "macos")]
