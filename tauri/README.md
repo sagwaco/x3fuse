@@ -81,11 +81,8 @@ This also checks full-strength denoising with compressed DNG/TIFF and DNG highli
 recovery, with a 60-second limit per conversion. Run it in the default test profile as shown
 to exercise the development-build settings; `--release` alone would miss regressions there.
 
-For local denoising testing, `src-tauri/Cargo.toml` patches `x3f-core` to the
-sibling `../x3fuse-core` checkout (currently `feat/gpu-denoising`) and enables
-the upcoming 0.2.0 API's `gpu` feature. The workspace patch applies to both
-the desktop app and `x3f-render`, so conversion and editor preparation use
-the same local core.
+The desktop app and `x3f-render` use the published `x3f-core` 0.2.1 with the
+`gpu` feature, so conversion and editor preparation use the same core.
 `npm run dev` enables GPU NLM automatically, with CPU fallback when unavailable;
 no extra launch flags or replacement `x3f_extract` binary are needed.
 
@@ -108,11 +105,9 @@ image or change the denoise strength to force RAW preparation: existing preview
 caches can otherwise avoid denoising entirely. Slider adjustments defer RAW
 preparation until release.
 
-These are local testing overrides, including the rewritten `Cargo.lock`. Before
-returning to published dependencies, remove the workspace patch, select a
-published core version that supports the requested features, and run
-`cargo update -p x3f-core`. To return to 0.1.6 before 0.2 is published, set
-both the app and `x3f-render` dependencies back to 0.1.6 and remove `gpu`.
+To test an unpublished core, add a temporary `[patch.crates-io]` entry for
+`x3f-core` and `x3f-sys` that points to a local `x3fuse-core` checkout. Remove it
+before you push: CI and alpha builds cannot get local paths.
 
 Build a macOS app bundle with `npm run dist`, or a native executable with
 `npm run pack`. For Windows/Linux, use the executable build until installer targets

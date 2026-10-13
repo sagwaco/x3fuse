@@ -1,10 +1,6 @@
 [workspace]
 members = ["crates/x3f-render"]
 
-[patch.crates-io]
-# Local GPU-denoising checkout, shared by the desktop app and x3f-render.
-x3f-core = { path = "../../../x3fuse-core/crates/x3f-core" }
-
 [package]
 name = "x3fuse-tauri"
 version = "0.1.0"
@@ -35,7 +31,7 @@ percent-encoding = "2"
 url = "2"
 tempfile = "3"
 sys-locale = "0.3"
-x3f-core = { version = "0.2.0", features = ["gpu", "serde"] }
+x3f-core = { version = "0.2.1", features = ["gpu", "serde"] }
 x3f-render = { path = "crates/x3f-render" }
 sha2 = "0.10"
 
