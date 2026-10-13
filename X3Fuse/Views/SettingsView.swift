@@ -393,6 +393,7 @@ struct SettingsView: View {
 
         DisclosureGroup(isExpanded: $advancedDenoiseExpanded) {
           advancedDenoiseControls
+            .padding(.top, 12)
         } label: {
           Button {
             withAnimation {
