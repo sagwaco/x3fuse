@@ -318,7 +318,7 @@ it('swaps the toolbar for crop actions and cancels back to the geometry crop mod
   })
   at(start)
   render(<EditorScreen />)
-  const normal = [t('editor.copy'), t('editor.paste'), t('editor.before'), t('button.convert')]
+  const normal = [t('editor.copy'), t('editor.paste'), t('editor.compare'), t('button.convert')]
   for (const name of normal) expect(screen.getByRole('button', { name })).toBeTruthy()
   fireEvent.click(screen.getByRole('button', { name: t('editor.crop') }))
   expect(editor.getState().cropping).toBe(true)
@@ -332,14 +332,8 @@ it('swaps the toolbar for crop actions and cancels back to the geometry crop mod
   expect(change).toHaveBeenLastCalledWith({ rotation: 1 })
   fireEvent.click(screen.getByRole('button', { name: t('editor.rotateLeft') }))
   expect(change).toHaveBeenLastCalledWith({ rotation: 3 })
-  fireEvent.click(screen.getByRole('button', { name: t('editor.resetCrop') }))
-  expect(change).toHaveBeenLastCalledWith({
-    crop: null,
-    straighten: 0,
-    rotation: 0,
-    pitch: 0,
-    yaw: 0
-  })
+  // Reset lives at the top of the crop section (editor-controls tests).
+  expect(screen.queryByRole('button', { name: t('editor.resetCrop') })).toBeNull()
   // Hidden actions keep their shortcuts quiet while cropping.
   fireEvent.keyDown(document.body, { key: 'c', metaKey: true, shiftKey: true })
   fireEvent.keyDown(document.body, { key: 'v', metaKey: true, shiftKey: true })

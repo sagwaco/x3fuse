@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ArrowLeft,
   Copy,
   ClipboardPaste,
   Undo2,
@@ -248,14 +247,6 @@ export function EditorScreen(): React.JSX.Element {
         className="window-toolbar flex h-12 shrink-0 items-center justify-between gap-2 border-b border-white/10 px-3"
       >
         <div className="flex min-w-0 items-center gap-2">
-          {!swap.shown && (
-            <div data-swap className="contents" {...inert}>
-              <Button variant="ghost" size="sm" disabled={busy} onClick={() => void editor.close()}>
-                <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-                {t('editor.done')}
-              </Button>
-            </div>
-          )}
           <span
             className="max-w-40 truncate text-xs text-neutral-400"
             title={currentFile?.fileName}
@@ -304,23 +295,6 @@ export function EditorScreen(): React.JSX.Element {
                 aria-orientation="vertical"
                 className="mx-1 h-5 w-px bg-white/15"
               />
-              <Button
-                variant="ghost"
-                size="sm"
-                disabled={unavailable}
-                onClick={() => {
-                  change({
-                    crop: editor.session?.asShotCrop ?? null,
-                    straighten: 0,
-                    rotation: 0,
-                    pitch: 0,
-                    yaw: 0
-                  })
-                  setAspect('asShot')
-                }}
-              >
-                {t('editor.resetCrop')}
-              </Button>
               <Button variant="bordered" size="sm" disabled={unavailable} onClick={cancelCrop}>
                 {t('button.cancel')}
               </Button>
@@ -338,12 +312,13 @@ export function EditorScreen(): React.JSX.Element {
               <Button
                 ref={cropButton}
                 variant="ghost"
-                size="sm"
+                size="icon"
+                aria-label={t('editor.crop')}
+                title={t('editor.crop')}
                 disabled={unavailable}
                 onClick={enterCrop}
               >
-                <Crop className="h-4 w-4" aria-hidden="true" />
-                {t('editor.crop')}
+                <Crop className="h-4 w-4" />
               </Button>
               <Button
                 variant="ghost"
@@ -374,8 +349,8 @@ export function EditorScreen(): React.JSX.Element {
               <Button
                 variant="ghost"
                 size="icon"
-                aria-label={t('editor.before')}
-                title={t('editor.before')}
+                aria-label={t('editor.compare')}
+                title={t('editor.compare')}
                 aria-pressed={editor.before}
                 disabled={unavailable}
                 onClick={() => editor.compare(!editor.before)}
@@ -391,6 +366,14 @@ export function EditorScreen(): React.JSX.Element {
                 }
               >
                 {t('button.convert')}
+              </Button>
+              <div
+                role="separator"
+                aria-orientation="vertical"
+                className="mx-1 h-5 w-px bg-white/15"
+              />
+              <Button variant="ghost" size="sm" disabled={busy} onClick={() => void editor.close()}>
+                {t('editor.done')}
               </Button>
             </div>
           )}

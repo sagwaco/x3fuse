@@ -8,6 +8,7 @@ import { ZoomControls } from './ZoomControls'
 import { useSettingsStore } from '../stores/settingsStore'
 import { NativeMenuButton } from './ui/nativeMenuButton'
 import { useEditorStore } from '../stores/editorStore'
+import { useToolbarSwap } from '../hooks/useToolbarSwap'
 
 /** Browsing controls, export status, and the split Export button. */
 export function Toolbar(): React.JSX.Element {
@@ -25,6 +26,8 @@ export function Toolbar(): React.JSX.Element {
   const hasPrevious = useSettingsStore((s) => s.settings.hasPreviousConversion)
   const inspectorOpen = useSettingsStore((s) => s.settings.inspectorOpen)
   const updateSettings = useSettingsStore((s) => s.update)
+  // Nothing swaps here: the buttons only scale in when the screen opens, as in the editor.
+  const { ref } = useToolbarSwap(false)
 
   const canConvert =
     loaded &&
@@ -36,10 +39,11 @@ export function Toolbar(): React.JSX.Element {
 
   return (
     <div
+      ref={ref}
       data-tauri-drag-region
       className="window-toolbar flex h-12 shrink-0 items-center justify-between border-b border-white/10 px-3"
     >
-      <div className="flex items-center gap-2">
+      <div data-swap className="flex items-center gap-2">
         {fileCount > 0 && (
           <span className="text-xs tabular-nums text-neutral-500">
             {`${fileCount} ${fileCount === 1 ? 'file' : 'files'}`}
@@ -50,7 +54,7 @@ export function Toolbar(): React.JSX.Element {
         <ZoomControls />
       </div>
 
-      <div className="flex min-w-0 items-center gap-2">
+      <div data-swap className="flex min-w-0 items-center gap-2">
         <BatchProgress />
         <Button
           variant="ghost"

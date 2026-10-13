@@ -141,11 +141,9 @@ export function Section({
   open?: boolean
   children: React.ReactNode
 }): React.JSX.Element {
+  // Sections reach the panel edges, divided by rules; a nested one does too.
   return (
-    <details
-      open={open || undefined}
-      className="mx-3 mt-3 rounded-xl border border-white/10 px-4 [details_&]:mx-0 [details_&]:rounded-none [details_&]:border-x-0 [details_&]:border-b-0 [details_&]:px-0"
-    >
+    <details open={open || undefined} className="border-t border-white/10 px-4 [details_&]:-mx-4">
       <summary className="control-label flex cursor-pointer list-none items-center justify-between rounded py-3 tracking-[0.16em] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50 [&::-webkit-details-marker]:hidden">
         {name}
         <ChevronDown

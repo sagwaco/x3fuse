@@ -47,7 +47,7 @@ function play(root: HTMLElement | null, entering: boolean): Animation[] {
 
 /**
  * Swaps toolbar content in two steps: the buttons inside `[data-swap]` scale
- * out, then the new ones scale in. `shown` is the state to render and `leaving`
+ * out, then the new ones scale in. They also scale in when the toolbar mounts. `shown` is the state to render and `leaving`
  * is true during the exit, when the old buttons must ignore input. Without
  * animation support, `shown` follows `target` at once.
  */
@@ -78,10 +78,8 @@ export function useToolbarSwap(target: boolean): {
       out.forEach((a) => a.cancel())
     }
   }, [target, state.shown, animated])
-  const previous = useRef(shown)
+  // This also runs on mount, so a toolbar scales in when its screen opens.
   useLayoutEffect(() => {
-    if (previous.current === shown) return
-    previous.current = shown
     if (!animated) return
     const entering = play(ref.current, true)
     return () => entering.forEach((a) => a.cancel())

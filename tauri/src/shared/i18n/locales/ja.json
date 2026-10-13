@@ -185,6 +185,7 @@
   "editor.undo": "調整を取り消す",
   "editor.redo": "調整をやり直す",
   "editor.before": "調整前",
+  "editor.compare": "比較",
   "editor.copy": "調整をコピー",
   "editor.paste": "調整をペースト",
   "editor.reset": "リセット",

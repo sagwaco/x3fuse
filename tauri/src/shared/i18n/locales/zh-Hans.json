@@ -185,6 +185,7 @@
   "editor.undo": "撤销调整",
   "editor.redo": "重做调整",
   "editor.before": "调整前",
+  "editor.compare": "对比",
   "editor.copy": "复制调整",
   "editor.paste": "粘贴调整",
   "editor.reset": "重置",

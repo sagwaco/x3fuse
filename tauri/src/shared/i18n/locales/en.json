@@ -185,6 +185,7 @@
   "editor.undo": "Undo adjustment",
   "editor.redo": "Redo adjustment",
   "editor.before": "Before",
+  "editor.compare": "Compare",
   "editor.copy": "Copy adjustments",
   "editor.paste": "Paste adjustments",
   "editor.reset": "Reset",

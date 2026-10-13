@@ -1,5 +1,5 @@
 import { useContext, useRef, useState } from 'react'
-import { MoveVertical, RectangleHorizontal, Spline } from 'lucide-react'
+import { MoveVertical, RectangleHorizontal, RotateCcw, Spline } from 'lucide-react'
 import type { EditRecipe } from '@shared/editor'
 import { useEditorStore } from '../stores/editorStore'
 import { t } from '../lib/strings'
@@ -128,8 +128,23 @@ export function CropControls({
     )
   }
   return (
-    <div className="mx-3 mt-3 space-y-4 rounded-xl border border-white/10 px-4 py-3">
-      <h2 className="control-label tracking-[0.16em]">{t('editor.geometry')}</h2>
+    <div className="space-y-4 border-t border-white/10 px-4 py-3">
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="control-label tracking-[0.16em]">{t('editor.geometry')}</h2>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="-my-1 -mr-1.5 h-6 w-6"
+          aria-label={t('editor.resetCrop')}
+          title={t('editor.resetCrop')}
+          onClick={() => {
+            change({ crop: asShotCrop, straighten: 0, rotation: 0, pitch: 0, yaw: 0 })
+            setAspect('asShot')
+          }}
+        >
+          <RotateCcw className="h-3.5 w-3.5" />
+        </Button>
+      </div>
       <div className="flex items-center justify-between gap-2">
         <span className="control-label text-[10px] text-neutral-500">
           {t('editor.aspectRatio')}

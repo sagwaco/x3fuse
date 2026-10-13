@@ -53,11 +53,10 @@ function Crop({ initial = defaultRecipe() }: { initial?: EditRecipe }): React.JS
   setRecipe = update
   return <CropControls recipe={recipe} aspect={aspect} setAspect={setAspect} />
 }
-function open(summary: string): HTMLDetailsElement {
-  const details = screen.getByText(summary, { selector: 'summary, summary *' }).closest('details')!
-  details.open = true
-  fireEvent(details, new Event('toggle'))
-  return details
+/** Open a look picker by its caption and return its dialog. */
+function picker(caption: string): HTMLElement {
+  fireEvent.click(screen.getByText(caption, { selector: '[aria-haspopup] *' }))
+  return screen.getByRole('dialog', { name: caption })
 }
 function reset(label: string): void {
   fireEvent.doubleClick(screen.getByRole('slider', { name: label }))
@@ -72,8 +71,15 @@ const swatch = (group: string, name: string): HTMLElement =>
   within(screen.getByRole('radiogroup', { name: group })).getByRole('radio', { name })
 
 beforeEach(() => {
-  // jsdom does not decode images.
+  // jsdom does not decode images or show modal dialogs.
   HTMLImageElement.prototype.decode = () => Promise.resolve()
+  HTMLDialogElement.prototype.showModal = function () {
+    this.open = true
+  }
+  HTMLDialogElement.prototype.close = function () {
+    this.open = false
+    this.dispatchEvent(new Event('close'))
+  }
   vi.stubGlobal(
     'ResizeObserver',
     class {
@@ -133,7 +139,7 @@ afterEach(() => {
 it('binds Exposure to the film when a stock is chosen and to the digital pipeline for Standard', () => {
   expect(defaultRecipe().film).toEqual(DEFAULT_FILM)
   render(<Controls initial={{ ...defaultRecipe(), film: null, exposure: 1 }} />)
-  expect(screen.getByText(t('editor.standard'), { selector: 'summary *' })).toBeTruthy()
+  expect(screen.getByText(t('editor.standard'), { selector: '[aria-haspopup] *' })).toBeTruthy()
   expect(
     screen.getByRole('slider', { name: t('editor.exposure') }).getAttribute('aria-valuenow')
   ).toBe('1')
@@ -153,11 +159,12 @@ it('previews every film stock on the photo and pairs each with its print paper',
   })
   expect((await screen.findByRole('tooltip')).textContent).toBe(t('editor.filmHelp'))
   expect(renderThumbnail).not.toHaveBeenCalled()
-  open('Kodak Portra 400')
+  const gallery = picker(t('editor.filmStock'))
+  // The current look takes focus, so the keyboard starts there.
+  expect(document.activeElement?.textContent).toBe('Kodak Portra 400')
   await waitFor(() => expect(renderThumbnail).toHaveBeenCalledTimes(24))
   expect(renderThumbnail.mock.calls[0][0].film).toBeNull()
   expect(renderThumbnail.mock.calls[1][0].monochrome).toEqual({ filter: 'neutral' })
-  const gallery = screen.getByRole('group', { name: t('editor.filmStock') })
   await waitFor(() => expect(gallery.querySelectorAll('img')).toHaveLength(24))
   expect(screen.getByText(t('editor.slideFilm'))).toBeTruthy()
   expect(screen.getByText(t('editor.bwFilm'))).toBeTruthy()
@@ -170,6 +177,25 @@ it('previews every film stock on the photo and pairs each with its print paper',
   fireEvent.click(screen.getByRole('button', { name: t('editor.standard') }))
   expect(change).toHaveBeenLastCalledWith({ film: null, monochrome: null })
   expect(screen.queryByRole('slider', { name: t('editor.grain') })).toBeNull()
+  // The dialog owns the keyboard: the editor screen must not see Escape and close the
+  // editor, also when focus fell back to the body.
+  const editorKeys = vi.fn()
+  document.addEventListener('keydown', editorKeys)
+  fireEvent.keyDown(screen.getByRole('button', { name: t('editor.standard') }), { key: 'Escape' })
+  fireEvent.keyDown(document.body, { key: 'Escape' })
+  fireEvent.keyDown(document.body, { key: '\\' })
+  expect(editorKeys).not.toHaveBeenCalled()
+  // A click outside the content lands on the dialog itself and closes it.
+  fireEvent.click(gallery)
+  expect((gallery as HTMLDialogElement).open).toBe(false)
+  expect(
+    screen.getByText(t('editor.filmStock'), { selector: '[aria-haspopup] *' }).parentElement!
+      .ariaExpanded
+  ).toBe('false')
+  // Once it closes, the page has the keyboard again.
+  fireEvent.keyDown(document.body, { key: 'Escape' })
+  document.removeEventListener('keydown', editorKeys)
+  expect(editorKeys).toHaveBeenCalledTimes(1)
 })
 
 it('offers black-and-white looks with their own filters, papers and darkroom', () => {
@@ -178,8 +204,9 @@ it('offers black-and-white looks with their own filters, papers and darkroom', (
     within(screen.getByRole('radiogroup', { name: t('editor.filter') }))
       .getAllByRole('radio')
       .map((radio) => radio.getAttribute('aria-label'))
+  picker(t('editor.filmStock'))
   const papers = (): Array<string | null> =>
-    within(screen.getByRole('group', { name: t('editor.paperStock') }))
+    within(picker(t('editor.paperStock')))
       .getAllByRole('button')
       .map((button) => button.textContent)
   expect(screen.queryByRole('radiogroup', { name: t('editor.filter') })).toBeNull()
@@ -204,7 +231,7 @@ it('offers black-and-white looks with their own filters, papers and darkroom', (
     monochrome: { filter: 'red' }
   })
   // Reversal film is scanned directly: print controls and the switch are gone.
-  expect(screen.queryByRole('group', { name: t('editor.paperStock') })).toBeNull()
+  expect(screen.queryByRole('dialog', { name: t('editor.paperStock'), hidden: true })).toBeNull()
   expect(screen.queryByRole('slider', { name: t('editor.evPaper') })).toBeNull()
   expect(screen.queryByRole('slider', { name: t('editor.gammaPaper') })).toBeNull()
   expect(screen.queryByRole('switch', { name: t('editor.negative') })).toBeNull()
@@ -384,8 +411,18 @@ it('uses camera framing for As shot and reset, and offers the aspect presets as 
   expect(change).toHaveBeenLastCalledWith({ crop: asShot })
   adjust(t('editor.straighten'), -2.5)
   expect(change).toHaveBeenLastCalledWith({ straighten: -2.5 }, true)
-  // Rotate, reset, cancel and apply live in the crop-mode toolbar (editor-screen tests).
-  expect(screen.queryByRole('button', { name: t('editor.resetCrop') })).toBeNull()
+  // Reset, at the section's top right, restores the camera's frame and its aspect.
+  fireEvent.click(screen.getByRole('radio', { name: '1:1' }))
+  fireEvent.click(screen.getByRole('button', { name: t('editor.resetCrop') }))
+  expect(change).toHaveBeenLastCalledWith({
+    crop: asShot,
+    straighten: 0,
+    rotation: 0,
+    pitch: 0,
+    yaw: 0
+  })
+  expect(screen.getByRole('radio', { name: t('editor.asShot') }).ariaChecked).toBe('true')
+  // Rotate, cancel and apply live in the crop-mode toolbar (editor-screen tests).
 })
 
 it('levels and uprights the crop-mode picture and reports when nothing is found', () => {

@@ -185,6 +185,7 @@
   "editor.undo": "復原調整",
   "editor.redo": "重做調整",
   "editor.before": "調整前",
+  "editor.compare": "比較",
   "editor.copy": "複製調整",
   "editor.paste": "貼上調整",
   "editor.reset": "重設",

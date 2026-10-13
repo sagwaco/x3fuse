@@ -57,6 +57,19 @@ function mockAnimate(): void {
 const mode = (c: HTMLElement): string | null =>
   c.querySelector('[data-swap]')!.getAttribute('data-mode')
 
+/** Render the edit toolbar and drop its entrance animations. */
+function mount(): ReturnType<typeof render> {
+  const view = render(<Bar target={false} />)
+  animations = []
+  return view
+}
+
+it('scales the buttons in when the toolbar mounts', () => {
+  mockAnimate()
+  render(<Bar target={false} />)
+  expect(animations.map((a) => a.element.textContent)).toEqual(['Crop', 'Copy'])
+})
+
 it('swaps at once without animation support', () => {
   const view = render(<Bar target={false} />)
   view.rerender(<Bar target />)
@@ -74,7 +87,7 @@ it('swaps at once for reduced motion', () => {
 
 it('keeps the old buttons inert until the exit ends, then scales the new ones in', async () => {
   mockAnimate()
-  const view = render(<Bar target={false} />)
+  const view = mount()
   view.rerender(<Bar target />)
   expect(mode(view.container)).toBe('edit')
   expect(view.container.querySelector('[data-swap]')!.hasAttribute('inert')).toBe(true)
@@ -88,7 +101,7 @@ it('keeps the old buttons inert until the exit ends, then scales the new ones in
 
 it('ends on the latest state after a rapid toggle', async () => {
   mockAnimate()
-  const view = render(<Bar target={false} />)
+  const view = mount()
   view.rerender(<Bar target />)
   view.rerender(<Bar target={false} />)
   // The exit was cancelled, so the first toolbar stays and is usable again.
@@ -102,7 +115,7 @@ it('ends on the latest state after a rapid toggle', async () => {
 
 it('stops a bounce in flight when the toolbar reverses', async () => {
   mockAnimate()
-  const view = render(<Bar target={false} />)
+  const view = mount()
   view.rerender(<Bar target />)
   await act(async () => animations.forEach((a) => a.finish()))
   const entering = animations.slice(2)
