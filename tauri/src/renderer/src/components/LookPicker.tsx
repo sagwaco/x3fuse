@@ -144,15 +144,24 @@ export function LookPicker({
             FILMS.find((film) => film.index === base.film),
             stock
           )
-        ).map((stock) => ({
-          id: stock.key,
-          name: stock.name,
-          recipe: { ...recipe, film: { ...base, paper: stock.index } }
-        }))
+        )
+          .map((stock) => ({
+            id: stock.key,
+            name: stock.name,
+            recipe: { ...recipe, film: { ...base, paper: stock.index, negative: false } }
+          }))
+          // Without a print, the film itself is scanned.
+          .concat({
+            id: 'negative',
+            name: t('editor.negativePrint'),
+            recipe: { ...recipe, film: { ...base, negative: true } }
+          })
   const cameraProfile = recipe.cameraProfile ?? 'Standard'
   const selected =
     kind === 'paper'
-      ? PAPERS.find((stock) => stock.index === base.paper)?.key
+      ? base.negative
+        ? 'negative'
+        : PAPERS.find((stock) => stock.index === base.paper)?.key
       : recipe.film
         ? FILMS.find((stock) => stock.index === recipe.film?.film)?.key
         : recipe.monochrome

@@ -1,11 +1,12 @@
-import { memo, useContext, useRef, useState } from 'react'
+import { memo, useContext, useEffect, useRef, useState } from 'react'
 import { DenoiseControls } from './DenoiseControls'
-import { ChevronDown, ChevronRight, RotateCcw, Pipette, Plus, Trash2 } from 'lucide-react'
+import { ChevronDown, RotateCcw, Pipette, Plus, Trash2 } from 'lucide-react'
 import {
   DEFAULT_FILM,
   FILM_MONOCHROME_FILTERS,
   MONOCHROME_FILTERS,
   defaultRecipe,
+  negativePrint,
   type EditRecipe,
   type FilmSettings,
   type CurvePoint,
@@ -17,6 +18,7 @@ import { DevelopingCloud } from '../lib/developingCloud'
 import { useQueueStore } from '../stores/queueStore'
 import { t } from '../lib/strings'
 import { Button } from './ui/button'
+import { cn } from '../lib/cn'
 import { Slider } from './ui/slider'
 import { HelpTooltip, ToggleRow } from './ui/settingsLayout'
 import { LookPicker } from './LookPicker'
@@ -81,43 +83,72 @@ export function Adjustment({
   const inactive = useEditorStore(
     (state) => cloud || state.before || state.loading || state.closing || !state.preview
   )
+  // Shift-click on the label resets the slider. The label says so while Shift is held.
+  const [hover, setHover] = useState(false)
+  const [shift, setShift] = useState(false)
+  useEffect(() => {
+    if (!hover) return
+    const track = (event: KeyboardEvent): void => setShift(event.shiftKey)
+    window.addEventListener('keydown', track)
+    window.addEventListener('keyup', track)
+    return () => {
+      window.removeEventListener('keydown', track)
+      window.removeEventListener('keyup', track)
+    }
+  }, [hover])
+  const disabled = busy || inactive
+  const resetting = hover && shift && !disabled
   return (
     <div className="space-y-1.5 py-2">
       <div className="flex items-center justify-between gap-2">
         <span className="flex min-w-0 items-center gap-1.5">
-          <span className="control-label truncate">{label}</span>
+          {/* Both texts share one cell, so the label keeps its width and the pointer stays on it. */}
+          <span
+            className={cn(
+              'control-label grid min-w-0 select-none',
+              resetting && 'cursor-pointer text-neutral-100'
+            )}
+            onPointerEnter={(event) => {
+              setHover(true)
+              setShift(event.shiftKey)
+            }}
+            onPointerMove={(event) => setShift(event.shiftKey)}
+            onPointerLeave={() => setHover(false)}
+            onClick={(event) => {
+              if (event.shiftKey && !disabled) reset()
+            }}
+          >
+            <span className={cn('col-start-1 row-start-1 truncate', resetting && 'invisible')}>
+              {label}
+            </span>
+            <span
+              aria-hidden="true"
+              className={cn('col-start-1 row-start-1', !resetting && 'invisible')}
+            >
+              {t('editor.reset')}
+            </span>
+          </span>
           {help && <HelpTooltip label={label} text={help} />}
         </span>
-        <div className="flex shrink-0 items-center gap-1.5">
-          <input
-            aria-label={label}
-            type="number"
-            disabled={busy || inactive}
-            min={min}
-            max={max}
-            step={step}
-            value={Number(value.toFixed(4))}
-            className="h-6 w-14 rounded-md border border-white/10 bg-white/[0.03] px-2 text-right font-mono text-xs tabular-nums text-neutral-400 [appearance:textfield] focus:border-white/40 focus:text-neutral-100 focus:outline-none disabled:opacity-40 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-            onChange={(event) => {
-              const value = event.currentTarget.valueAsNumber
-              if (Number.isFinite(value))
-                change(Math.max(min, Math.min(max, Math.round(value / step) * step)), true)
-            }}
-          />
-          <button
-            type="button"
-            aria-label={`${t('editor.reset')} ${label}`}
-            title={t('editor.reset')}
-            disabled={busy || inactive}
-            onClick={reset}
-            className="rounded p-0.5 text-neutral-500 hover:text-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50 disabled:opacity-40"
-          >
-            <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
-          </button>
-        </div>
+        <input
+          aria-label={label}
+          type="number"
+          disabled={disabled}
+          min={min}
+          max={max}
+          step={step}
+          value={Number(value.toFixed(4))}
+          // Shifted right so its digits end where the slider ends. Focus shows the box, in line.
+          className="h-6 w-14 shrink-0 translate-x-2.5 rounded-md border border-transparent bg-transparent px-2 text-right font-mono text-xs tabular-nums text-neutral-400 transition-transform [appearance:textfield] focus:translate-x-0 focus:border-white/40 focus:bg-white/[0.03] focus:text-neutral-100 focus:outline-none disabled:opacity-40 motion-reduce:transition-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+          onChange={(event) => {
+            const value = event.currentTarget.valueAsNumber
+            if (Number.isFinite(value))
+              change(Math.max(min, Math.min(max, Math.round(value / step) * step)), true)
+          }}
+        />
       </div>
       <Slider
-        disabled={busy || inactive}
+        disabled={disabled}
         aria-label={label}
         value={value}
         min={min}
@@ -142,8 +173,13 @@ export function Section({
   children: React.ReactNode
 }): React.JSX.Element {
   // Sections reach the panel edges, divided by rules; a nested one does too.
+  // An open section fades from a faint light under its header to dark by its first
+  // field, so its start is easy to see.
   return (
-    <details open={open || undefined} className="border-t border-white/10 px-4 [details_&]:-mx-4">
+    <details
+      open={open || undefined}
+      className="border-t border-white/10 px-4 open:bg-gradient-to-b open:from-white/[0.03] open:to-transparent open:bg-[length:100%_3rem] open:bg-no-repeat [details_&]:-mx-4"
+    >
       <summary className="control-label flex cursor-pointer list-none items-center justify-between rounded py-3 font-bold tracking-[0.16em] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50 [&::-webkit-details-marker]:hidden">
         {name}
         <ChevronDown
@@ -198,7 +234,7 @@ export const EditorControls = memo(function EditorControls({
   recipe: EditRecipe
   picking: boolean
   setPicking: (value: boolean) => void
-  onNavigate: (page: 'film' | 'darkroom' | 'paper') => void
+  onNavigate: (page: 'film' | 'paper') => void
 }): React.JSX.Element {
   const change = useEditorStore((state) => state.change)
   const commit = useEditorStore((state) => state.commit)
@@ -249,6 +285,25 @@ export const EditorControls = memo(function EditorControls({
   )
   return (
     <>
+      <Section name={t('editor.light')} open>
+        {recipe.film ? (
+          <Adjustment
+            label={t('editor.exposure')}
+            value={recipe.film.evFilm}
+            min={-3}
+            max={3}
+            step={0.05}
+            change={(evFilm, save) => change({ film: { ...recipe.film!, evFilm } }, save)}
+            reset={() => change({ film: { ...recipe.film!, evFilm: DEFAULT_FILM.evFilm } })}
+            commit={commit}
+          />
+        ) : (
+          control('exposure', { min: -5, max: 5, step: 0.05 })
+        )}
+        {(['contrast', 'highlights', 'shadows', 'whites', 'blacks'] as const).map((key) =>
+          control(key)
+        )}
+      </Section>
       <Section name={t('editor.look')} open>
         <LookPicker kind="film" recipe={recipe} onOpen={() => onNavigate('film')} />
         {recipe.monochrome && (
@@ -274,25 +329,11 @@ export const EditorControls = memo(function EditorControls({
         )}
         {recipe.film && <FilmControls film={recipe.film} recipe={recipe} onNavigate={onNavigate} />}
       </Section>
-      <Section name={t('editor.light')} open>
-        {recipe.film ? (
-          <Adjustment
-            label={t('editor.exposure')}
-            value={recipe.film.evFilm}
-            min={-3}
-            max={3}
-            step={0.05}
-            change={(evFilm, save) => change({ film: { ...recipe.film!, evFilm } }, save)}
-            reset={() => change({ film: { ...recipe.film!, evFilm: DEFAULT_FILM.evFilm } })}
-            commit={commit}
-          />
-        ) : (
-          control('exposure', { min: -5, max: 5, step: 0.05 })
-        )}
-        {(['contrast', 'highlights', 'shadows', 'whites', 'blacks'] as const).map((key) =>
-          control(key)
-        )}
-      </Section>
+      {recipe.film && (
+        <Section name={t('editor.darkroom')}>
+          <FilmControls film={recipe.film} recipe={recipe} darkroom onNavigate={onNavigate} />
+        </Section>
+      )}
       <Section name={t('editor.whiteBalance')} open>
         <div className="flex flex-wrap items-center gap-2">
           <Button
@@ -597,10 +638,11 @@ export function FilmControls({
   film: FilmSettings
   recipe: EditRecipe
   darkroom?: boolean
-  onNavigate: (page: 'darkroom' | 'paper') => void
+  onNavigate: (page: 'paper') => void
 }): React.JSX.Element {
   const change = useEditorStore((state) => state.change)
   const commit = useEditorStore((state) => state.commit)
+  const negativePreview = useEditorStore((state) => state.negativePreview)
   const update = (patch: Partial<FilmSettings>, save = true): void =>
     change({ film: { ...film, ...patch } }, save)
   /** A friendlier scale over one film setting; `to`/`from` convert between them. */
@@ -636,11 +678,23 @@ export function FilmControls({
   const contrast = { to: (v: number) => 2 ** (v / 100), from: (g: number) => Math.log2(g) * 100 }
   if (darkroom)
     return (
-      <div className="space-y-2 p-4">
+      <>
+        {/* A positive (slide) film is viewed directly. Printing it on negative
+            paper inverts it, so offer the papers only to undo that. */}
+        {(!positiveFilm(film) || !film.negative) && (
+          <LookPicker kind="paper" recipe={recipe} onOpen={() => onNavigate('paper')} />
+        )}
+        {negativePrint(film) && (
+          <ToggleRow
+            label={t('editor.negativePreview')}
+            help={t('editor.negativePreviewHelp')}
+            checked={negativePreview}
+            onChange={(negativePreview) => useEditorStore.setState({ negativePreview })}
+          />
+        )}
         {/* Scanning the film directly skips the print, so its controls do nothing. */}
         {!film.negative && (
           <>
-            <LookPicker kind="paper" recipe={recipe} onOpen={() => onNavigate('paper')} />
             {/* Enlarger settings are inverted so dragging right brightens and warms the print. */}
             <Adjustment
               label={t('editor.evPaper')}
@@ -681,16 +735,7 @@ export function FilmControls({
             from: (amount) => amount * 100,
             help: t('editor.couplersHelp')
           })}
-        {/* A positive (slide) film is viewed directly. Printing it on negative
-            paper inverts it, so offer the switch only to undo that. */}
-        {(!positiveFilm(film) || !film.negative) && (
-          <ToggleRow
-            label={t('editor.negative')}
-            checked={film.negative}
-            onChange={(negative) => update({ negative })}
-          />
-        )}
-      </div>
+      </>
     )
   return (
     <>
@@ -748,15 +793,6 @@ export function FilmControls({
         }
         commit={commit}
       />
-      <button
-        type="button"
-        data-sidebar-page="darkroom"
-        onClick={() => onNavigate('darkroom')}
-        className="control-label flex w-full items-center justify-between rounded py-3 font-bold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50"
-      >
-        {t('editor.darkroom')}
-        <ChevronRight className="h-3.5 w-3.5 text-neutral-500" aria-hidden="true" />
-      </button>
     </>
   )
 }

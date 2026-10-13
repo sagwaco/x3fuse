@@ -28,8 +28,8 @@ export function Inspector(): React.JSX.Element {
 
   return (
     <ResizablePanel kind="inspector">
-      <div className="flex h-8 shrink-0 items-center border-b border-white/10 px-3 text-xs font-medium text-neutral-400">
-        <span className="truncate" title={title}>
+      <div className="flex h-8 shrink-0 items-center border-b border-white/10 px-3 font-mono text-xs font-medium uppercase tracking-[0.12em] text-neutral-400">
+        <span className="ml-0.5 truncate" title={title}>
           {t('inspector.title')}
           {title ? ` - ${title}` : ''}
         </span>

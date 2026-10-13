@@ -59,7 +59,8 @@ export function CropPreview({
   recipe,
   locked,
   onDone,
-  onPaint
+  onPaint,
+  inverted = false
 }: {
   preview: RenderedPreview
   recipe: EditRecipe
@@ -68,6 +69,8 @@ export function CropPreview({
   onDone: () => void
   /** Called after the image loads. */
   onPaint?: () => void
+  /** Show the picture inverted, as for a negative preview. The frame keeps its colors. */
+  inverted?: boolean
 }): React.JSX.Element {
   const change = useEditorStore((state) => state.change)
   const commit = useEditorStore((state) => state.commit)
@@ -297,9 +300,21 @@ export function CropPreview({
         apply(frame, 'move', (a * sx + c * sy) * step, (d * sx + e * sy) * step, true)
       }}
     >
+      {/* An SVG filter, because WebKit may not apply CSS filters to SVG elements. */}
+      <filter id="crop-invert" colorInterpolationFilters="sRGB">
+        <feColorMatrix type="matrix" values="-1 0 0 0 1  0 -1 0 0 1  0 0 -1 0 1  0 0 0 1 0" />
+      </filter>
       <g ref={layer} transform={turn}>
         <g transform={angle ? `rotate(${angle} ${W / 2} ${H / 2})` : undefined}>
-          {shown && <image href={shown} width={W} height={H} onLoad={onPaint} />}
+          {shown && (
+            <image
+              href={shown}
+              width={W}
+              height={H}
+              filter={inverted ? 'url(#crop-invert)' : undefined}
+              onLoad={onPaint}
+            />
+          )}
           {quad && (
             <polygon
               {...line}

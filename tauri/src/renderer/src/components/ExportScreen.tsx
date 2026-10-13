@@ -33,7 +33,7 @@ export function ExportScreen(): React.JSX.Element {
         className="window-toolbar flex h-12 shrink-0 items-center justify-between border-b border-white/10 px-3"
       >
         <div className="flex items-center gap-3">
-          <span className="text-xs tabular-nums text-neutral-500">
+          <span className="font-mono text-xs tabular-nums text-neutral-500">
             {t('batch.image_count', { count })}
           </span>
           <ViewControls disabled={count === 0} />
@@ -69,8 +69,8 @@ export function ExportScreen(): React.JSX.Element {
       {/* Body: preview gallery · settings sidebar */}
       <div className="flex min-h-0 flex-1">
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <div className="flex h-8 shrink-0 items-center border-b border-white/10 px-4 text-xs font-medium text-neutral-400">
-            {t('export.images_heading')}
+          <div className="flex h-8 shrink-0 items-center border-b border-white/10 px-4 font-mono text-xs font-medium uppercase tracking-[0.12em] text-neutral-400">
+            <span className="ml-0.5">{t('export.images_heading')}</span>
           </div>
           {count > 0 ? (
             <QueueView
@@ -92,8 +92,8 @@ export function ExportScreen(): React.JSX.Element {
         </div>
 
         <ResizablePanel kind="export">
-          <div className="flex h-8 shrink-0 items-center border-b border-white/10 px-3 text-xs font-medium text-neutral-400">
-            {t('export.settings_heading')}
+          <div className="flex h-8 shrink-0 items-center border-b border-white/10 px-3 font-mono text-xs font-medium uppercase tracking-[0.12em] text-neutral-400">
+            <span className="ml-0.5">{t('export.settings_heading')}</span>
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto">
             <fieldset disabled={busy} className="contents">

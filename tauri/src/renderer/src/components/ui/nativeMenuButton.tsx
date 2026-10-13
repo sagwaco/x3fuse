@@ -77,8 +77,9 @@ export function NativeMenuButton({
       aria-expanded={open}
       onClick={(event) => void show(event.currentTarget)}
       onKeyDown={(event) => {
-        event.stopPropagation()
+        // Other keys reach the screen, so its shortcuts work while the button has focus.
         if (['ArrowDown', 'ArrowUp', 'Enter', ' '].includes(event.key)) {
+          event.stopPropagation()
           event.preventDefault()
           void show(event.currentTarget)
         }

@@ -14,7 +14,7 @@ import { QueueView } from './QueueView'
 import { ExportScreen } from './ExportScreen'
 import { ReconversionDialog } from './ReconversionDialog'
 import { EditorScreen } from './EditorScreen'
-import { useEditorStore } from '../stores/editorStore'
+import { useEditorStore, isTextEditing } from '../stores/editorStore'
 
 /** The conversion-queue window (port of ContentView). */
 export function MainWindow(): React.JSX.Element {
@@ -35,6 +35,26 @@ export function MainWindow(): React.JSX.Element {
     window.addEventListener('focus', refresh)
     return () => window.removeEventListener('focus', refresh)
   }, [])
+
+  // Copy and paste adjustments between selected photos. The editor has its own shortcuts.
+  useEffect(() => {
+    if (onExportScreen || onEditorScreen) return
+    const keydown = (event: KeyboardEvent): void => {
+      const key = event.key.toLowerCase()
+      if (
+        !(event.metaKey || event.ctrlKey) ||
+        (key !== 'c' && key !== 'v') ||
+        isTextEditing(event.target) ||
+        event.defaultPrevented
+      )
+        return
+      event.preventDefault()
+      if (key === 'c') useEditorStore.getState().copy()
+      else void useEditorStore.getState().paste()
+    }
+    document.addEventListener('keydown', keydown)
+    return () => document.removeEventListener('keydown', keydown)
+  }, [onExportScreen, onEditorScreen])
 
   // The Export screen only makes sense with files queued; if the queue empties
   // (e.g. the "Clear queue" menu command), fall back to the queue view.

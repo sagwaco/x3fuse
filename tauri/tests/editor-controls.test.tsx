@@ -10,7 +10,7 @@ import {
   pasteRecipe,
   type EditRecipe
 } from '@shared/editor'
-import { EditorControls, FilmControls } from '../src/renderer/src/components/EditorControls'
+import { EditorControls } from '../src/renderer/src/components/EditorControls'
 import { LookPicker } from '../src/renderer/src/components/LookPicker'
 import { CropControls } from '../src/renderer/src/components/CropControls'
 import { CropPreview } from '../src/renderer/src/components/CropPreview'
@@ -46,7 +46,7 @@ let setRecipe: Dispatch<SetStateAction<EditRecipe>>
 function Controls({ initial = defaultRecipe() }: { initial?: EditRecipe }): React.JSX.Element {
   const [recipe, update] = useState(initial)
   setRecipe = update
-  const [page, setPage] = useState<'edit' | 'film' | 'paper' | 'darkroom'>('edit')
+  const [page, setPage] = useState<'edit' | 'film' | 'paper'>('edit')
   return (
     <>
       {page !== 'edit' && <button onClick={() => setPage('edit')}>Back</button>}
@@ -57,10 +57,6 @@ function Controls({ initial = defaultRecipe() }: { initial?: EditRecipe }): Reac
           setPicking={() => {}}
           onNavigate={setPage}
         />
-      ) : page === 'darkroom' ? (
-        recipe.film && (
-          <FilmControls recipe={recipe} film={recipe.film} darkroom onNavigate={setPage} />
-        )
       ) : (
         <LookPicker kind={page} recipe={recipe} gallery />
       )}
@@ -77,9 +73,11 @@ function back(): void {
   const button = screen.queryByRole('button', { name: 'Back' })
   if (button) fireEvent.click(button)
 }
+const darkroomSection = (): HTMLDetailsElement =>
+  screen.getByText(t('editor.darkroom'), { selector: 'summary' }).closest('details')!
 function darkroom(): void {
   back()
-  fireEvent.click(screen.getByRole('button', { name: t('editor.darkroom') }))
+  darkroomSection().open = true
 }
 /** Open a stock page from the full controls. */
 function picker(caption: string): HTMLElement {
@@ -233,7 +231,7 @@ it('offers black-and-white looks with their own filters, papers and darkroom', (
     cameraProfile: null
   })
   expect(filters()).toEqual(FILM_MONOCHROME_FILTERS.map((filter) => t(`editor.${filter}`)))
-  expect(papers()).toEqual(['Kodak 2302'])
+  expect(papers()).toEqual(['Kodak 2302', t('editor.negativePrint')])
   darkroom()
   for (const key of ['tuneY', 'tuneM', 'couplers'])
     expect(screen.queryByRole('slider', { name: t(`editor.${key}`) })).toBeNull()
@@ -246,7 +244,8 @@ it('offers black-and-white looks with their own filters, papers and darkroom', (
   expect(screen.queryByText(t('editor.paperStock'))).toBeNull()
   expect(screen.queryByRole('slider', { name: t('editor.evPaper') })).toBeNull()
   expect(screen.queryByRole('slider', { name: t('editor.gammaPaper') })).toBeNull()
-  expect(screen.queryByRole('switch', { name: t('editor.negative') })).toBeNull()
+  // A reversal film is already a positive, so there is nothing to invert.
+  expect(screen.queryByRole('switch', { name: t('editor.negativePreview') })).toBeNull()
   expect(screen.getByRole('slider', { name: t('editor.gammaFilm') })).toBeTruthy()
   chooseFilm(t('editor.monochrome'))
   expect(change).toHaveBeenLastCalledWith({
@@ -393,9 +392,66 @@ it('resets sliders to actual nonzero and nullable defaults and prevents resets w
   expect(change).not.toHaveBeenCalled()
 })
 
+it('resets a slider on Shift-click of its label, which reads Reset while Shift is held', () => {
+  render(<Controls initial={{ ...defaultRecipe(), tint: 30 }} />)
+  // Double-clicking the knob and Shift-clicking the label replace the reset buttons.
+  expect(
+    screen.queryByRole('button', { name: `${t('editor.reset')} ${t('editor.tint')}` })
+  ).toBeNull()
+  const name = screen.getByText(t('editor.tint'), { selector: '.control-label > span' })
+  const label = name.parentElement!
+  // Both texts stay in the label, so its width cannot change under the pointer.
+  const resetText = within(label).getByText(t('editor.reset'))
+  const shows = (text: HTMLElement): boolean => !text.classList.contains('invisible')
+  fireEvent.pointerEnter(label)
+  fireEvent.click(label)
+  expect(change).not.toHaveBeenCalled()
+  expect([shows(name), shows(resetText)]).toEqual([true, false])
+  fireEvent.keyDown(window, { key: 'Shift', shiftKey: true })
+  expect([shows(name), shows(resetText)]).toEqual([false, true])
+  fireEvent.click(label, { shiftKey: true })
+  expect(change).toHaveBeenLastCalledWith({ tint: 0 })
+  fireEvent.keyUp(window, { key: 'Shift', shiftKey: false })
+  expect([shows(name), shows(resetText)]).toEqual([true, false])
+  fireEvent.keyDown(window, { key: 'Shift', shiftKey: true })
+  fireEvent.pointerLeave(label)
+  expect([shows(name), shows(resetText)]).toEqual([true, false]) // Delete on the focused slider is the keyboard reset.
+  change.mockClear()
+  fireEvent.keyDown(screen.getByRole('slider', { name: t('editor.tint') }), { key: 'Delete' })
+  expect(change).toHaveBeenLastCalledWith({ tint: 0 })
+})
+
+it('offers Negative print among the papers, with a Negative preview toggle below it', () => {
+  render(<Controls />)
+  darkroom()
+  expect(screen.queryByRole('switch', { name: t('editor.negativePreview') })).toBeNull()
+  fireEvent.click(
+    within(picker(t('editor.paperStock'))).getByRole('button', { name: t('editor.negativePrint') })
+  )
+  expect(film()).toMatchObject({ negative: true, paper: DEFAULT_FILM.paper })
+  darkroom()
+  // The paper box names the choice, and the print controls leave.
+  const paper = screen.getByText(t('editor.negativePrint'), { selector: '[data-sidebar-page] *' })
+  const preview = screen.getByRole('switch', { name: t('editor.negativePreview') })
+  expect(paper.compareDocumentPosition(preview) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  expect(screen.queryByRole('slider', { name: t('editor.evPaper') })).toBeNull()
+  // The toggle only changes the view; the recipe stays the same.
+  change.mockClear()
+  fireEvent.click(preview)
+  expect(editor.getState().negativePreview).toBe(true)
+  expect(change).not.toHaveBeenCalled()
+  act(() => editor.setState({ negativePreview: false }))
+  // Choosing a paper prints the negative again.
+  fireEvent.click(
+    within(picker(t('editor.paperStock'))).getAllByRole('button', { pressed: false })[0]
+  )
+  expect(film()?.negative).toBe(false)
+})
+
 it('maps grain, halation and darkroom sliders so dragging right does what the label says', () => {
   render(<Controls />)
-  expect(screen.queryByRole('slider', { name: t('editor.evPaper') })).toBeNull()
+  // Darkroom is a closed section under the film look.
+  expect(darkroomSection().open).toBe(false)
   adjust(t('editor.grain'), 100)
   expect(film()).toMatchObject({ grain: true, grainAmount: 2 })
   adjust(t('editor.grainSize'), 100)
@@ -578,7 +634,17 @@ it('labels and applies portrait presets after a quarter turn and swaps orientati
   fireEvent.click(screen.getByRole('radio', { name: '5:7' }))
   const crop = change.mock.lastCall?.[0].crop
   expect((crop.height * 4000) / (crop.width * 6000)).toBeCloseTo(5 / 7)
-  fireEvent.click(screen.getByRole('button', { name: t('editor.swapOrientation') }))
+  const orientation = (name: string): HTMLElement =>
+    within(screen.getByRole('group', { name: t('editor.orientation') })).getByRole('button', {
+      name
+    })
+  expect(orientation(t('editor.portrait')).getAttribute('aria-pressed')).toBe('true')
+  expect(orientation(t('editor.landscape')).getAttribute('aria-pressed')).toBe('false')
+  // Choosing the current orientation again changes nothing.
+  change.mockClear()
+  fireEvent.click(orientation(t('editor.portrait')))
+  expect(change).not.toHaveBeenCalled()
+  fireEvent.click(orientation(t('editor.landscape')))
   const swapped = change.mock.lastCall?.[0].crop
   expect((swapped.height * 4000) / (swapped.width * 6000)).toBeCloseTo(7 / 5)
   expect(screen.getByRole('radio', { name: '7:5' })).toBeTruthy()
@@ -602,6 +668,13 @@ it('decodes the crop preview image before it shows, and reports a paint when it 
   expect(onPaint).not.toHaveBeenCalled()
   fireEvent.load(view.container.querySelector('image')!)
   expect(onPaint).toHaveBeenCalledOnce()
+  expect(view.container.querySelector('image')!.getAttribute('filter')).toBeNull()
+  // A negative preview inverts the picture only, not the frame drawn over it.
+  view.rerender(
+    <CropPreview preview={preview} recipe={defaultRecipe()} locked inverted onDone={() => {}} />
+  )
+  expect(view.container.querySelector('image')!.getAttribute('filter')).toBe('url(#crop-invert)')
+  expect(view.container.querySelector('rect')!.getAttribute('filter')).toBeNull()
 })
 
 it('nudges the crop in screen directions from the keyboard and applies on Return', () => {

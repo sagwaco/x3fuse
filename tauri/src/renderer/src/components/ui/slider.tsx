@@ -106,6 +106,12 @@ export function Slider({
           event.stopPropagation()
           onReset()
         }}
+        // The keyboard way to reset, as double-click is for the pointer.
+        onKeyDown={(event) => {
+          if (disabled || !onReset || (event.key !== 'Delete' && event.key !== 'Backspace')) return
+          event.preventDefault()
+          onReset()
+        }}
         className={cn(
           'block h-3.5 w-[3px] rounded-[1px] bg-white shadow-[0_0_0_2px_rgb(0_0_0/0.85)]',
           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60'

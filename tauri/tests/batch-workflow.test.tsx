@@ -10,7 +10,7 @@ const { useQueueStore: store } = await import('../src/renderer/src/stores/queueS
 const { useSettingsStore } = await import('../src/renderer/src/stores/settingsStore')
 const { useNavStore } = await import('../src/renderer/src/stores/navStore')
 const { usePreviewStore } = await import('../src/renderer/src/stores/previewStore')
-const { Toolbar } = await import('../src/renderer/src/components/Toolbar')
+const { Toolbar, ExportButton } = await import('../src/renderer/src/components/Toolbar')
 const { BatchProgress } = await import('../src/renderer/src/components/BatchProgress')
 const files: X3FFileDTO[] = ['b', 'a', 'c'].map((id) => ({
   id,
@@ -111,6 +111,24 @@ describe('batch workflow', () => {
     expect(dropdown.getAttribute('aria-expanded')).toBe('false')
   })
 
+  it('offers only exports that include the edit from the editor', async () => {
+    invoke.mockResolvedValueOnce(null)
+    render(<ExportButton disabled={false} ids={new Set(['a'])} returnScreen="editor" />)
+    fireEvent.click(screen.getByRole('button', { name: 'Export options' }))
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith(
+        'menu:popup',
+        expect.objectContaining({
+          items: [
+            { value: 'jpeg', label: 'Export JPEG' },
+            { value: 'tiff', label: 'Export TIFF' },
+            { value: 'previous', label: 'Export with Previous Settings', disabled: true }
+          ]
+        })
+      )
+    )
+  })
+
   it('dismisses a native popup without consuming the primary action', async () => {
     invoke.mockResolvedValueOnce(null)
     render(<Toolbar />)
@@ -209,6 +227,29 @@ describe('batch workflow', () => {
     await pending
     expect(store.getState().draft?.files.map((file) => file.id)).toEqual(['a', 'b'])
     expect(store.getState().files).toBe(files)
+  })
+
+  it('exports only the editor photo with a preset or previous settings and returns to the editor', async () => {
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, hasPreviousConversion: true } })
+    useNavStore.setState({ screen: 'editor' })
+    invoke.mockResolvedValueOnce('/chosen').mockResolvedValueOnce([])
+    await store.getState().exportPreset('dng', new Set(['c']), 'editor')
+    expect(store.getState().draft?.files.map((file) => file.id)).toEqual(['c'])
+    act(() =>
+      store.getState().onBatchStarted({
+        batchId: store.getState().batch!.id,
+        settings: store.getState().draft!.settings
+      })
+    )
+    expect(useNavStore.getState().screen).toBe('editor')
+    store.setState({ isProcessing: false, batch: null })
+    // A failed shortcut opens the Export screen, whose Cancel goes back to the editor.
+    invoke.mockRejectedValueOnce(new Error('Destination unavailable'))
+    await store.getState().convertPrevious(new Set(['c']), 'editor')
+    expect(store.getState().draft?.files.map((file) => file.id)).toEqual(['c'])
+    expect(useNavStore.getState().screen).toBe('export')
+    store.getState().cancelExport()
+    expect(useNavStore.getState().screen).toBe('editor')
   })
 
   it('leaves settings and export state unchanged when the folder picker is cancelled', async () => {

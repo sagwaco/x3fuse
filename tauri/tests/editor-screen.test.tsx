@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import type { ReactNode } from 'react'
-import { defaultRecipe } from '@shared/editor'
+import { DEFAULT_FILM, defaultRecipe } from '@shared/editor'
 import { displayPreviewUrl, previewUrl } from '@shared/preview'
 import { DEFAULT_SETTINGS, type X3FFileDTO } from '@shared/types'
 import { EditorScreen } from '../src/renderer/src/components/EditorScreen'
@@ -70,7 +70,9 @@ vi.mock('../src/renderer/src/components/CropControls', () => ({
   CropControls: () => <div data-crop-controls />
 }))
 vi.mock('../src/renderer/src/components/ColorScope', () => ({
-  ColorScope: ({ url }: { url?: string }) => <div data-scope-url={url} />
+  ColorScope: ({ url, compact }: { url?: string; compact?: boolean }) => (
+    <div data-scope-url={url} data-compact={compact} />
+  )
 }))
 vi.mock('../src/renderer/src/components/EditorControls', async () => {
   const { useContext } = await import('react')
@@ -81,7 +83,7 @@ vi.mock('../src/renderer/src/components/EditorControls', async () => {
       onNavigate
     }: {
       setPicking: (value: boolean) => void
-      onNavigate: (page: 'film' | 'darkroom') => void
+      onNavigate: (page: 'film' | 'paper') => void
     }) {
       return (
         <>
@@ -91,15 +93,12 @@ vi.mock('../src/renderer/src/components/EditorControls', async () => {
           <button data-sidebar-page="film" onClick={() => onNavigate('film')}>
             Choose film
           </button>
-          <button data-sidebar-page="darkroom" onClick={() => onNavigate('darkroom')}>
-            Open darkroom
+          <button data-sidebar-page="paper" onClick={() => onNavigate('paper')}>
+            Choose paper
           </button>
         </>
       )
-    },
-    FilmControls: ({ onNavigate }: { onNavigate: (page: 'paper') => void }) => (
-      <button onClick={() => onNavigate('paper')}>Choose paper</button>
-    )
+    }
   }
 })
 vi.mock('../src/renderer/src/components/BatchProgress', () => ({ BatchProgress: () => null }))
@@ -110,6 +109,8 @@ vi.mock('../src/renderer/src/components/ui/resizablePanel', () => ({
 }))
 
 const initialEditor = editor.getState()
+const initialQueue = queue.getState()
+const initialSettings = useSettingsStore.getState()
 const recipe = defaultRecipe()
 const file: X3FFileDTO = {
   id: 'a',
@@ -151,6 +152,8 @@ beforeEach(() => {
 afterEach(() => {
   cleanup()
   editor.setState(initialEditor, true)
+  queue.setState(initialQueue, true)
+  useSettingsStore.setState(initialSettings, true)
 })
 
 it('shows the saved thumbnail during RAW preparation and enables editing only for the live frame', () => {
@@ -331,8 +334,28 @@ it('swaps the toolbar for crop actions and cancels back to the geometry crop mod
   })
   at(start)
   render(<EditorScreen />)
-  const normal = [t('editor.copy'), t('editor.paste'), t('editor.compare'), t('button.convert')]
+  const normal = [
+    t('editor.copy'),
+    t('editor.paste'),
+    t('editor.reset'),
+    t('editor.compare'),
+    t('button.convert')
+  ]
   for (const name of normal) expect(screen.getByRole('button', { name })).toBeTruthy()
+  // Command-C and Control-V copy and paste adjustments, with or without Shift.
+  fireEvent.keyDown(document.body, { key: 'c', metaKey: true })
+  fireEvent.keyDown(document.body, { key: 'v', ctrlKey: true })
+  fireEvent.keyDown(document.body, { key: 'C', metaKey: true, shiftKey: true })
+  expect(copy).toHaveBeenCalledTimes(2)
+  expect(paste).toHaveBeenCalledTimes(1)
+  // A focused number field keeps its own copy and paste.
+  const field = document.createElement('input')
+  document.body.append(field)
+  fireEvent.keyDown(field, { key: 'c', metaKey: true })
+  field.remove()
+  expect(copy).toHaveBeenCalledTimes(2)
+  copy.mockClear()
+  paste.mockClear()
   fireEvent.click(screen.getByRole('button', { name: t('editor.crop') }))
   expect(editor.getState().cropping).toBe(true)
   // Entering crop mode turns off Before, whose recipe would block geometry edits.
@@ -348,8 +371,8 @@ it('swaps the toolbar for crop actions and cancels back to the geometry crop mod
   // Reset lives at the top of the crop section (editor-controls tests).
   expect(screen.queryByRole('button', { name: t('editor.resetCrop') })).toBeNull()
   // Hidden actions keep their shortcuts quiet while cropping.
-  fireEvent.keyDown(document.body, { key: 'c', metaKey: true, shiftKey: true })
-  fireEvent.keyDown(document.body, { key: 'v', metaKey: true, shiftKey: true })
+  fireEvent.keyDown(document.body, { key: 'c', metaKey: true })
+  fireEvent.keyDown(document.body, { key: 'v', metaKey: true })
   fireEvent.keyDown(document.body, { key: '\\' })
   expect(copy).not.toHaveBeenCalled()
   expect(paste).not.toHaveBeenCalled()
@@ -512,14 +535,81 @@ it('waits for a new paint after a crop mode change clears the preview', () => {
   expect(view.container.querySelector('[data-condensing]')).not.toBeNull()
 })
 
-it('keeps Done and its divider before Export', () => {
+it('puts a divider before Done, then the Export menu and the panel toggle', async () => {
+  const update = vi.fn(async () => {})
+  useSettingsStore.setState({ update })
   editor.setState({ session, documents: { [file.path]: doc }, loading: false, preview: frame })
-  render(<EditorScreen />)
+  const view = render(<EditorScreen />)
   const done = screen.getByRole('button', { name: t('editor.done') })
-  expect(done.nextElementSibling?.getAttribute('role')).toBe('separator')
-  expect(done.nextElementSibling?.nextElementSibling).toBe(
-    screen.getByRole('button', { name: t('button.convert') })
+  expect(done.previousElementSibling?.getAttribute('role')).toBe('separator')
+  const exportGroup = screen.getByRole('group', { name: t('batch.convert_options') })
+  expect(done.nextElementSibling).toBe(exportGroup)
+  const toggle = screen.getByRole('button', { name: t('editor.togglePanel') })
+  expect(exportGroup.nextElementSibling).toBe(toggle)
+  // Export exports the open photo and comes back to the editor.
+  const openExport = vi.fn()
+  act(() => queue.setState({ selectedIds: new Set(), openExport }))
+  fireEvent.click(screen.getByRole('button', { name: t('button.convert') }))
+  expect(openExport).toHaveBeenCalledWith(new Set([file.id]), 'editor')
+  // Crop sits before the divider and Done, with its name shown.
+  const crop = screen.getByRole('button', { name: t('editor.crop') })
+  expect(crop.textContent).toBe(t('editor.crop'))
+  expect(crop.nextElementSibling).toBe(done.previousElementSibling)
+  expect(toggle.getAttribute('aria-pressed')).toBe('true')
+  fireEvent.click(toggle)
+  expect(update).toHaveBeenCalledWith({ editorPanelOpen: false })
+  // Shortcuts still work while the Export menu button has focus.
+  const undo = vi.fn()
+  act(() => editor.setState({ undo }))
+  fireEvent.keyDown(screen.getByRole('button', { name: t('batch.convert_options') }), {
+    key: 'z',
+    metaKey: true
+  })
+  expect(undo).toHaveBeenCalled()
+  act(() =>
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, editorPanelOpen: false } })
   )
+  expect(view.container.querySelector('aside')).toBeNull()
+  // Crop mode keeps the panel open for its controls.
+  act(() => editor.setState({ cropping: true }))
+  expect(view.container.querySelector('[data-crop-controls]')).not.toBeNull()
+})
+
+it('inverts a negative print on request and shows a tiny scope while the scope is scrolled away', () => {
+  let report: (entries: Array<{ isIntersecting: boolean }>) => void = () => {}
+  vi.stubGlobal(
+    'IntersectionObserver',
+    class {
+      constructor(callback: typeof report) {
+        report = callback
+      }
+      observe(): void {}
+      disconnect(): void {}
+    }
+  )
+  const negative = { ...recipe, film: { ...DEFAULT_FILM, negative: true } }
+  editor.setState({
+    session,
+    documents: { [file.path]: { ...doc, recipe: negative } },
+    loading: false,
+    preview: frame
+  })
+  const view = render(<EditorScreen />)
+  const frameBox = (): Element =>
+    view.container.querySelector('[data-editor-frame]')!.parentElement!
+  expect(frameBox().className).not.toContain('invert')
+  act(() => editor.setState({ negativePreview: true }))
+  expect(frameBox().className).toContain('invert')
+  // Before shows the original photo as it is.
+  act(() => editor.setState({ before: true }))
+  expect(frameBox().className).not.toContain('invert')
+  act(() => editor.setState({ before: false, negativePreview: false }))
+  expect(view.container.querySelector('[data-compact="true"]')).toBeNull()
+  act(() => report([{ isIntersecting: false }]))
+  expect(view.container.querySelector('aside .h-8 [data-compact="true"]')).not.toBeNull()
+  act(() => report([{ isIntersecting: true }]))
+  expect(view.container.querySelector('[data-compact="true"]')).toBeNull()
+  vi.unstubAllGlobals()
 })
 
 it('navigates stock and darkroom pages in the sidebar and returns focus without closing the editor', () => {
@@ -547,13 +637,11 @@ it('navigates stock and darkroom pages in the sidebar and returns focus without 
   expect(close).not.toHaveBeenCalled()
   expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Choose film' }))
   expect(body.scrollTop).toBe(120)
-  fireEvent.click(screen.getByRole('button', { name: 'Open darkroom' }))
-  expect(screen.getByRole('heading', { name: t('editor.darkroom') })).toBeTruthy()
   fireEvent.click(screen.getByRole('button', { name: 'Choose paper' }))
   expect(screen.getByRole('heading', { name: t('editor.paperStock') })).toBeTruthy()
   fireEvent.click(screen.getByRole('button', { name: t('editor.backToAdjustments') }))
   expect(screen.getByRole('button', { name: 'Pick white balance' })).toBeTruthy()
-  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Open darkroom' }))
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Choose paper' }))
   fireEvent.keyDown(document.body, { key: 'Escape', repeat: true })
   expect(close).not.toHaveBeenCalled()
 })
@@ -571,18 +659,18 @@ it('returns to adjustments when crop opens or the photo changes', () => {
   act(() => editor.setState({ cropping: true }))
   expect(screen.queryByRole('button', { name: t('editor.backToAdjustments') })).toBeNull()
   act(() => editor.setState({ cropping: false }))
-  fireEvent.click(screen.getByRole('button', { name: 'Open darkroom' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Choose paper' }))
   act(() => editor.setState({ session: { ...session, sessionId: 'new-session' } }))
   expect(screen.queryByRole('button', { name: t('editor.backToAdjustments') })).toBeNull()
 })
 
-it('returns to adjustments when undo removes the film from a darkroom page', () => {
+it('returns to adjustments when undo removes the film from the paper page', () => {
   editor.setState({ session, documents: { [file.path]: doc }, loading: false, preview: frame })
   render(<EditorScreen />)
-  fireEvent.click(screen.getByRole('button', { name: 'Open darkroom' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Choose paper' }))
   act(() =>
     editor.setState({ documents: { [file.path]: { ...doc, recipe: { ...recipe, film: null } } } })
   )
-  expect(screen.queryByRole('heading', { name: t('editor.darkroom') })).toBeNull()
+  expect(screen.queryByRole('heading', { name: t('editor.paperStock') })).toBeNull()
   expect(screen.getByRole('button', { name: 'Choose film' })).toBeTruthy()
 })

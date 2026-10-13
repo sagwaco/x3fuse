@@ -310,6 +310,25 @@ describe('scope preview', () => {
     expect(context.putImageData).not.toHaveBeenCalled()
   })
 
+  it('starts no scope render while paused and renders the latest one when resumed', async () => {
+    const view = render(<ColorScope url={preview} fileId="a" mode="waveform" />)
+    await screen.findByRole('img')
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    view.rerender(<ColorScope url={`${preview}:edit`} fileId="a" mode="waveform" paused />)
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    // The pixels for the new preview are ready, but no scope is drawn from them.
+    const before = context.putImageData.mock.calls.length + context.fillRect.mock.calls.length
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    expect(context.putImageData.mock.calls.length + context.fillRect.mock.calls.length).toBe(before)
+    expect(screen.getByRole('img')).toBeTruthy()
+    view.rerender(<ColorScope url={`${preview}:edit`} fileId="a" mode="waveform" />)
+    await waitFor(() =>
+      expect(
+        context.putImageData.mock.calls.length + context.fillRect.mock.calls.length
+      ).toBeGreaterThan(before)
+    )
+  })
+
   it('keeps the last scope up while the same file re-renders, but not for another file', async () => {
     const view = render(<ColorScope url={preview} fileId="a" mode="waveform" />)
     const canvas = await screen.findByRole('img')

@@ -61,8 +61,12 @@ interface QueueState {
   updateDraft: (patch: Partial<BatchConversionSettings>) => void
   cancelExport: () => void
   commitExport: () => Promise<void>
-  convertPrevious: () => Promise<void>
-  exportPreset: (format: OutputFormat) => Promise<void>
+  convertPrevious: (ids?: Set<string>, returnScreen?: 'queue' | 'editor') => Promise<void>
+  exportPreset: (
+    format: OutputFormat,
+    ids?: Set<string>,
+    returnScreen?: 'queue' | 'editor'
+  ) => Promise<void>
   convertAllMenu: () => void
   applyStatus: (p: IpcEventMap['file:status']) => void
   applyProgress: (p: IpcEventMap['file:progress']) => void
@@ -461,7 +465,7 @@ export const useQueueStore = create<QueueState>((set, get) => {
 
     commitExport: checkAndStart,
 
-    async exportPreset(format) {
+    async exportPreset(format, ids = get().selectedIds, returnScreen = 'queue') {
       if (
         get().isProcessing ||
         get().isPreparing ||
@@ -469,7 +473,7 @@ export const useQueueStore = create<QueueState>((set, get) => {
         useEditorStore.getState().closing
       )
         return
-      const draft = capture(get().selectedIds)
+      const draft = capture(ids, returnScreen)
       if (!draft) return
       draft.settings = {
         ...batchSettings(DEFAULT_SETTINGS),
@@ -498,7 +502,7 @@ export const useQueueStore = create<QueueState>((set, get) => {
       if (get().error) useNavStore.getState().goToExport()
     },
 
-    async convertPrevious() {
+    async convertPrevious(ids = get().selectedIds, returnScreen = 'queue') {
       if (
         get().isProcessing ||
         get().isPreparing ||
@@ -507,7 +511,7 @@ export const useQueueStore = create<QueueState>((set, get) => {
         !useSettingsStore.getState().settings.hasPreviousConversion
       )
         return
-      const draft = capture(get().selectedIds)
+      const draft = capture(ids, returnScreen)
       if (!draft) return
       set({ draft })
       await checkAndStart()

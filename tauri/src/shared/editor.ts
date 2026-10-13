@@ -1,4 +1,5 @@
 import { defaultDenoiseOptions, type DenoiseOptions } from './denoise'
+import stocks from './film-stocks.json'
 
 /** Versioned, non-destructive adjustments shared with x3f-core's GPU renderer. */
 export interface CurvePoint {
@@ -70,6 +71,10 @@ export interface EditRecipe {
   monochrome: { filter: MonochromeFilter } | null
   seed: number
 }
+/** A negative film scanned without a print shows as a negative. */
+export const negativePrint = (film: FilmSettings | null): boolean =>
+  !!film?.negative &&
+  !stocks.find((stock) => !stock.isPaper && stock.index === film.film)?.isPositive
 export const DEFAULT_FILM: FilmSettings = {
   film: 2,
   paper: 3,

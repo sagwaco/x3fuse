@@ -1,5 +1,11 @@
 import { useContext, useRef, useState } from 'react'
-import { MoveVertical, RectangleHorizontal, RotateCcw, Spline } from 'lucide-react'
+import {
+  MoveVertical,
+  RectangleHorizontal,
+  RectangleVertical,
+  RotateCcw,
+  Spline
+} from 'lucide-react'
 import type { EditRecipe } from '@shared/editor'
 import { useEditorStore } from '../stores/editorStore'
 import { t } from '../lib/strings'
@@ -133,8 +139,8 @@ export function CropControls({
         <h2 className="control-label font-bold tracking-[0.16em]">{t('editor.geometry')}</h2>
         <Button
           variant="ghost"
-          size="icon"
-          className="-my-1 -mr-1.5 h-6 w-6"
+          size="sm"
+          className="-my-1 -mr-2.5"
           aria-label={t('editor.resetCrop')}
           title={t('editor.resetCrop')}
           onClick={() => {
@@ -142,28 +148,45 @@ export function CropControls({
             setAspect('asShot')
           }}
         >
-          <RotateCcw className="h-3.5 w-3.5" />
+          <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+          {t('editor.reset')}
         </Button>
       </div>
       <div className="flex items-center justify-between gap-2">
         <span className="control-label text-[10px] text-neutral-500">
           {t('editor.aspectRatio')}
         </span>
-        <Button
-          size="sm"
-          variant="ghost"
-          aria-label={t('editor.swapOrientation')}
-          title={t('editor.swapOrientation')}
-          disabled={!W || !H || Math.abs(current - 1) < 0.001}
-          onClick={() =>
-            W && H && change(withFit({ crop: ratioCrop(1 / current, rotation, W, H) }))
-          }
+        {/* Choosing the other orientation swaps the frame's sides. A square frame has neither. */}
+        <div
+          role="group"
+          aria-label={t('editor.orientation')}
+          className="flex rounded-lg border border-white/15 p-0.5"
         >
-          <RectangleHorizontal
-            aria-hidden="true"
-            className={`h-4 w-4 transition-transform ${portrait ? 'rotate-90' : ''}`}
-          />
-        </Button>
+          {(
+            [
+              ['landscape', RectangleHorizontal, !portrait],
+              ['portrait', RectangleVertical, portrait]
+            ] as const
+          ).map(([name, Icon, checked]) => (
+            <button
+              key={name}
+              type="button"
+              aria-pressed={checked}
+              aria-label={t(`editor.${name}`)}
+              title={t(`editor.${name}`)}
+              disabled={!W || !H || Math.abs(current - 1) < 0.001}
+              onClick={() =>
+                !checked &&
+                W &&
+                H &&
+                change(withFit({ crop: ratioCrop(1 / current, rotation, W, H) }))
+              }
+              className="flex h-6 w-7 items-center justify-center rounded-md text-neutral-400 hover:text-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50 disabled:opacity-40 aria-pressed:bg-white/15 aria-pressed:text-white"
+            >
+              <Icon aria-hidden="true" className="h-4 w-4" />
+            </button>
+          ))}
+        </div>
       </div>
       <div
         role="radiogroup"

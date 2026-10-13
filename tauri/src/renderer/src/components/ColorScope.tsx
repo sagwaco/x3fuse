@@ -6,6 +6,7 @@ import { useScopeImage } from '../hooks/useScopeImage'
 import { useElementWidth } from '../hooks/useElementWidth'
 import { useDelayedLoading } from '../hooks/useDelayedLoading'
 import { t } from '../lib/strings'
+import { cn } from '../lib/cn'
 import {
   cachedScope,
   createScopeRenderer,
@@ -19,7 +20,9 @@ export function ColorScope({
   orientation,
   fileId,
   pending = false,
-  mode
+  mode,
+  compact = false,
+  paused = false
 }: {
   url: string | undefined
   aspectRatio?: number
@@ -27,12 +30,18 @@ export function ColorScope({
   fileId?: string
   pending?: boolean
   mode: ScopeMode
+  /** A tiny copy without states or labels, for a header. */
+  compact?: boolean
+  /** Keep the last scope and start no new renders, as while it is out of view. */
+  paused?: boolean
 }): React.JSX.Element {
   const image = useScopeImage(url, aspectRatio, orientation, fileId)
   const container = useRef<HTMLDivElement>(null)
   const canvas = useRef<HTMLCanvasElement>(null)
   const renderer = useRef<ReturnType<typeof createScopeRenderer>>()
-  const width = useElementWidth(container)
+  const measured = useElementWidth(container)
+  // A compact scope renders square and the canvas scales it down.
+  const width = compact ? 200 : measured
   const [pixelRatio, setPixelRatio] = useState(() => window.devicePixelRatio || 1)
   const [completed, setCompleted] = useState<string>()
   const [painted, setPainted] = useState<string>()
@@ -77,7 +86,7 @@ export function ColorScope({
   }, [])
 
   useEffect(() => {
-    if (!request || !key || cachedScope(key)) return
+    if (paused || !request || !key || cachedScope(key)) return
     setError(undefined)
     return renderer.current!.render(
       request,
@@ -87,7 +96,7 @@ export function ColorScope({
       },
       () => setError(key)
     )
-  }, [request, key, subject])
+  }, [paused, request, key, subject])
 
   useEffect(() => {
     // Width changes arrive through ResizeObserver. A window resize only matters
@@ -101,21 +110,32 @@ export function ColorScope({
     <div
       ref={container}
       aria-busy={loading}
-      className="relative h-[200px] overflow-hidden rounded bg-neutral-950/60"
+      className={
+        compact
+          ? 'relative h-5 w-10 shrink-0 overflow-hidden rounded-sm bg-neutral-950/60'
+          : 'relative h-[200px] overflow-hidden rounded bg-neutral-950/60'
+      }
     >
       <canvas
         ref={canvas}
-        className={`h-full w-full ${visible ? '' : 'invisible'}`}
+        className={cn(
+          'h-full w-full',
+          !visible && 'invisible',
+          compact && mode === 'vectorscope' && 'object-contain'
+        )}
         role="img"
-        aria-hidden={!visible || undefined}
+        aria-hidden={compact || !visible || undefined}
         aria-label={t(`inspector.scope_${mode}`)}
       />
-      {!visible && !loading && (
-        <p className="absolute inset-0 flex items-center justify-center text-xs text-neutral-600">
-          {t('inspector.no_preview')}
-        </p>
-      )}
-      {showLoading && (
+      {compact
+        ? null
+        : !visible &&
+          !loading && (
+            <p className="absolute inset-0 flex items-center justify-center text-xs text-neutral-600">
+              {t('inspector.no_preview')}
+            </p>
+          )}
+      {showLoading && !compact && (
         <div className="absolute inset-0" role="status" aria-label={t('inspector.scope_loading')}>
           <Skeleton className="preview-skeleton h-full w-full" />
         </div>

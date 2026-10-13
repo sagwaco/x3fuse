@@ -37,6 +37,9 @@ fn default_jpeg_quality() -> u8 {
 fn default_editor_width() -> u16 {
     320
 }
+fn default_true() -> bool {
+    true
+}
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub enum ColorProfile {
@@ -157,6 +160,8 @@ pub struct Settings {
     pub export_panel_width: u16,
     #[serde(default = "default_editor_width")]
     pub editor_panel_width: u16,
+    #[serde(default = "default_true")]
+    pub editor_panel_open: bool,
     pub list_column_widths: ListColumnWidths,
     pub inspector_scope_mode: String,
     pub last_import_directory: Option<PathBuf>,
@@ -177,6 +182,7 @@ impl Default for Settings {
             inspector_width: 300,
             export_panel_width: 380,
             editor_panel_width: default_editor_width(),
+            editor_panel_open: true,
             list_column_widths: ListColumnWidths {
                 name: 0,
                 date: 220,

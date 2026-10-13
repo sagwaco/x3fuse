@@ -131,7 +131,7 @@ export function FileQueue({ draft }: { draft?: ExportDraft }): React.JSX.Element
             <div
               className={cn(
                 GRID,
-                'sticky top-0 z-10 h-8 border-b border-white/10 bg-neutral-950 text-xs font-medium text-neutral-400'
+                'sticky top-0 z-10 h-8 border-b border-white/10 bg-neutral-950 font-mono text-xs font-medium text-neutral-400'
               )}
             >
               {COLUMNS.map((column) => (

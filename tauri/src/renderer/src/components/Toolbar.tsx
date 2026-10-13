@@ -1,4 +1,4 @@
-import { ChevronDown, PanelRight, SlidersHorizontal } from 'lucide-react'
+import { ChevronDown, PanelRight, SwatchBook } from 'lucide-react'
 import { useQueueStore } from '../stores/queueStore'
 import { t } from '../lib/strings'
 import { BatchProgress } from './BatchProgress'
@@ -17,14 +17,11 @@ export function Toolbar(): React.JSX.Element {
   const files = useQueueStore((s) => s.files)
   const selectedIds = useQueueStore((s) => s.selectedIds)
   const selected = files.filter((f) => selectedIds.has(f.id))
-  const openExport = useQueueStore((s) => s.openExport)
   const isPreparing = useQueueStore((s) => s.isPreparing)
   const hasDraft = useQueueStore((s) => s.draft !== null)
-  const convertPrevious = useQueueStore((s) => s.convertPrevious)
-  const exportPreset = useQueueStore((s) => s.exportPreset)
   const loaded = useSettingsStore((s) => s.loaded)
-  const hasPrevious = useSettingsStore((s) => s.settings.hasPreviousConversion)
   const inspectorOpen = useSettingsStore((s) => s.settings.inspectorOpen)
+  const filmstrip = useSettingsStore((s) => s.settings.queueViewMode === 'filmstrip')
   const updateSettings = useSettingsStore((s) => s.update)
   // Nothing swaps here: the buttons only scale in when the screen opens, as in the editor.
   const { ref } = useToolbarSwap(false)
@@ -45,13 +42,18 @@ export function Toolbar(): React.JSX.Element {
     >
       <div data-swap className="flex items-center gap-2">
         {fileCount > 0 && (
-          <span className="text-xs tabular-nums text-neutral-500">
+          <span className="font-mono text-xs uppercase tabular-nums tracking-[0.12em] text-neutral-500">
             {`${fileCount} ${fileCount === 1 ? 'file' : 'files'}`}
           </span>
         )}
         <ViewControls disabled={fileCount === 0} />
-        <div role="separator" aria-orientation="vertical" className="h-5 w-px bg-white/15" />
-        <ZoomControls />
+        {/* Only the filmstrip shows a photo to zoom. */}
+        {filmstrip && (
+          <>
+            <div role="separator" aria-orientation="vertical" className="h-5 w-px bg-white/15" />
+            <ZoomControls />
+          </>
+        )}
       </div>
 
       <div data-swap className="flex min-w-0 items-center gap-2">
@@ -66,51 +68,10 @@ export function Toolbar(): React.JSX.Element {
             if (file) void useEditorStore.getState().open(file)
           }}
         >
-          <SlidersHorizontal className="h-4 w-4" aria-hidden="true" />
+          <SwatchBook className="h-4 w-4" aria-hidden="true" />
           {t('editor.edit')}
         </Button>
-        <div
-          role="group"
-          aria-label={t('batch.convert_options')}
-          className="flex shrink-0 items-center rounded-md bg-white/5"
-        >
-          <Button
-            variant="ghost"
-            size="md"
-            className="px-2 rounded-r-none text-xs border-l border-t border-b border-white/10"
-            disabled={!canConvert}
-            onClick={() => openExport()}
-            title={t('toolbar.convert_selected')}
-          >
-            {t('button.convert')}
-          </Button>
-          <NativeMenuButton
-            variant="ghost"
-            size="icon"
-            className="w-6 rounded-l-none border-r border-t border-b border-white/10"
-            disabled={!canConvert}
-            aria-label={t('batch.convert_options')}
-            items={[
-              { value: 'jpeg', label: t('batch.export_jpeg') },
-              { value: 'embeddedJpg', label: t('editor.exportEmbeddedJpeg') },
-              { value: 'dng', label: t('batch.export_dng') },
-              { value: 'tiff', label: t('batch.export_tiff') },
-              { value: 'previous', label: t('batch.convert_previous'), disabled: !hasPrevious }
-            ]}
-            onSelect={(value) => {
-              if (value === 'previous') void convertPrevious()
-              else if (
-                value === 'jpeg' ||
-                value === 'embeddedJpg' ||
-                value === 'dng' ||
-                value === 'tiff'
-              )
-                void exportPreset(value)
-            }}
-          >
-            <ChevronDown className="h-4 w-4" aria-hidden="true" />
-          </NativeMenuButton>
-        </div>
+        <ExportButton disabled={!canConvert} />
         <Button
           variant="ghost"
           size="icon"
@@ -123,6 +84,72 @@ export function Toolbar(): React.JSX.Element {
           <PanelRight className="h-4 w-4" aria-hidden="true" />
         </Button>
       </div>
+    </div>
+  )
+}
+
+/** Export opens the Export screen; its arrow exports at once with a preset. */
+export function ExportButton({
+  disabled,
+  ids,
+  returnScreen
+}: {
+  disabled: boolean
+  /** The files to export. The default is the selection. */
+  ids?: Set<string>
+  returnScreen?: 'queue' | 'editor'
+}): React.JSX.Element {
+  const openExport = useQueueStore((s) => s.openExport)
+  const convertPrevious = useQueueStore((s) => s.convertPrevious)
+  const exportPreset = useQueueStore((s) => s.exportPreset)
+  const hasPrevious = useSettingsStore((s) => s.settings.hasPreviousConversion)
+  return (
+    <div
+      role="group"
+      aria-label={t('batch.convert_options')}
+      className="flex shrink-0 items-center rounded-md bg-white/5"
+    >
+      <Button
+        variant="ghost"
+        size="md"
+        className="px-2 rounded-r-none text-xs border-l border-t border-b border-white/10"
+        disabled={disabled}
+        onClick={() => openExport(ids, returnScreen)}
+        title={t('toolbar.convert_selected')}
+      >
+        {t('button.convert')}
+      </Button>
+      <NativeMenuButton
+        variant="ghost"
+        size="icon"
+        className="w-6 rounded-l-none border-r border-t border-b border-white/10"
+        disabled={disabled}
+        aria-label={t('batch.convert_options')}
+        items={[
+          { value: 'jpeg', label: t('batch.export_jpeg') },
+          // The editor offers only formats that include the edit.
+          ...(returnScreen === 'editor'
+            ? []
+            : [
+                { value: 'embeddedJpg', label: t('editor.exportEmbeddedJpeg') },
+                { value: 'dng', label: t('batch.export_dng') }
+              ]),
+          { value: 'tiff', label: t('batch.export_tiff') },
+          { value: 'previous', label: t('batch.convert_previous'), disabled: !hasPrevious }
+        ]}
+        onSelect={(value) => {
+          if (value === 'previous') void convertPrevious(ids, returnScreen)
+          else if (
+            value === 'jpeg' ||
+            value === 'embeddedJpg' ||
+            value === 'dng' ||
+            value === 'tiff'
+          )
+            void exportPreset(value, ids, returnScreen)
+        }}
+      >
+        <ChevronDown className="h-4 w-4" aria-hidden="true" />
+      </NativeMenuButton>
     </div>
   )
 }

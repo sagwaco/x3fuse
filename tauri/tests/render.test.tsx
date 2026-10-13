@@ -197,14 +197,11 @@ describe('renderer smoke', () => {
           element.textContent) ||
         element.getAttribute('title')
     )
+    // List view has no photo to zoom.
     expect(order).toEqual([
       'List view',
       'Grid view',
       'Filmstrip view',
-      'separator',
-      'Zoom out',
-      'Zoom in',
-      'Zoom level',
       'Edit',
       'Export',
       'Export options',
@@ -247,8 +244,30 @@ describe('renderer smoke', () => {
     expect(
       (screen.getByRole('button', { name: 'Export options' }) as HTMLButtonElement).disabled
     ).toBe(false)
+    // The filmstrip adds the zoom controls after a divider.
+    act(() =>
+      useSettingsStore.setState({
+        settings: { ...useSettingsStore.getState().settings, queueViewMode: 'filmstrip' }
+      })
+    )
+    expect(
+      screen
+        .getByRole('button', { name: 'Filmstrip view' })
+        .parentElement!.nextElementSibling?.getAttribute('role')
+    ).toBe('separator')
     expect((screen.getByRole('button', { name: 'Zoom level' }) as HTMLButtonElement).disabled).toBe(
       true
+    )
+    act(() =>
+      useSettingsStore.setState({
+        settings: { ...useSettingsStore.getState().settings, queueViewMode: 'grid' }
+      })
+    )
+    expect(screen.queryByRole('button', { name: 'Zoom level' })).toBeNull()
+    act(() =>
+      useSettingsStore.setState({
+        settings: { ...useSettingsStore.getState().settings, queueViewMode: 'list' }
+      })
     )
     invoke.mockResolvedValueOnce({ ...DEFAULT_SETTINGS, inspectorOpen: true })
     await act(async () =>
@@ -293,6 +312,31 @@ describe('renderer smoke', () => {
     }
     expect(screen.queryByTitle('Add files')).toBeNull()
     expect(screen.queryByTitle('Settings')).toBeNull()
+  })
+
+  it('copies and pastes adjustments with Command-C and Command-V while browsing', async () => {
+    const { MainWindow } = await import('../src/renderer/src/components/MainWindow')
+    const { useEditorStore } = await import('../src/renderer/src/stores/editorStore')
+    const { useNavStore } = await import('../src/renderer/src/stores/navStore')
+    const initial = useEditorStore.getState()
+    const copy = vi.fn()
+    const paste = vi.fn(async () => {})
+    useEditorStore.setState({ copy, paste })
+    try {
+      await act(async () => {
+        render(<MainWindow />)
+      })
+      fireEvent.keyDown(document.body, { key: 'c', metaKey: true })
+      fireEvent.keyDown(document.body, { key: 'v', ctrlKey: true })
+      fireEvent.keyDown(document.body, { key: 'v' })
+      expect(copy).toHaveBeenCalledTimes(1)
+      expect(paste).toHaveBeenCalledTimes(1)
+      act(() => useNavStore.setState({ screen: 'export' }))
+      fireEvent.keyDown(document.body, { key: 'c', metaKey: true })
+      expect(copy).toHaveBeenCalledTimes(1)
+    } finally {
+      useEditorStore.setState(initial, true)
+    }
   })
 
   it('navigates to the Export screen when the toolbar Export is clicked', async () => {

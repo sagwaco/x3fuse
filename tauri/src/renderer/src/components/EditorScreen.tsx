@@ -10,9 +10,10 @@ import {
   RotateCcwSquare,
   RotateCwSquare,
   SquareSplitHorizontal,
-  ArrowLeft
+  ArrowLeft,
+  PanelRight
 } from 'lucide-react'
-import type { EditRecipe } from '@shared/editor'
+import { negativePrint, type EditRecipe } from '@shared/editor'
 import { useEditorStore, isTextEditing } from '../stores/editorStore'
 import { useQueueStore } from '../stores/queueStore'
 import { useSettingsStore } from '../stores/settingsStore'
@@ -26,15 +27,17 @@ import { FileFilmstrip } from './FileFilmstrip'
 import { ColorScope } from './ColorScope'
 import { ScopeMenu } from './ScopeMenu'
 import { BatchProgress } from './BatchProgress'
-import { EditorControls, FilmControls } from './EditorControls'
+import { EditorControls } from './EditorControls'
 import { LookPicker } from './LookPicker'
 import { CropControls } from './CropControls'
 import { CropPreview } from './CropPreview'
 import { FULL, matchAspect } from '../lib/cropGeometry'
 import { DevelopingPreview } from './DevelopingPreview'
 import { DevelopingCloud } from '../lib/developingCloud'
+import { ExportButton } from './Toolbar'
+import { cn } from '../lib/cn'
 
-type SidebarPage = 'edit' | 'film' | 'paper' | 'darkroom'
+type SidebarPage = 'edit' | 'film' | 'paper'
 
 export function EditorScreen(): React.JSX.Element {
   const editor = useEditorStore()
@@ -42,6 +45,7 @@ export function EditorScreen(): React.JSX.Element {
   const activeId = useQueueStore((state) => state.activeId)
   const busy = useQueueStore((state) => state.isProcessing || state.isPreparing)
   const scope = useSettingsStore((state) => state.settings.inspectorScopeMode)
+  const panelOpen = useSettingsStore((state) => state.settings.editorPanelOpen)
   const [picking, setPicking] = useState(false)
   const [sidebarPage, setSidebarPage] = useState<SidebarPage>('edit')
   const sidebarBody = useRef<HTMLDivElement>(null)
@@ -53,7 +57,7 @@ export function EditorScreen(): React.JSX.Element {
     if (page !== 'edit') {
       if (sidebarOrigin.current === 'edit')
         sidebarScroll.current = sidebarBody.current?.scrollTop ?? 0
-      sidebarOrigin.current = page === 'paper' ? 'darkroom' : page
+      sidebarOrigin.current = page
     }
     setSidebarPage(page)
   }, [])
@@ -86,8 +90,7 @@ export function EditorScreen(): React.JSX.Element {
   const currentFile = active ?? file
   const doc = editor.session ? editor.documents[editor.session.path] : undefined
   useEffect(() => {
-    if (!doc?.recipe.film && (sidebarPage === 'darkroom' || sidebarPage === 'paper'))
-      navigateSidebar('edit')
+    if (!doc?.recipe.film && sidebarPage === 'paper') navigateSidebar('edit')
   }, [doc?.recipe.film, sidebarPage, navigateSidebar])
   // The photo's geometry when crop mode opened; Cancel puts it back.
   const entry = useRef<{ path: string; geometry: Partial<EditRecipe> }>()
@@ -192,10 +195,10 @@ export function EditorScreen(): React.JSX.Element {
         else if (!busy) void editor.close()
       } else if (editor.cropping) {
         // Crop mode hides copy, paste and compare; their shortcuts wait too.
-      } else if (modifier && event.shiftKey && event.key.toLowerCase() === 'c') {
+      } else if (modifier && event.key.toLowerCase() === 'c') {
         event.preventDefault()
         editor.copy()
-      } else if (modifier && event.shiftKey && event.key.toLowerCase() === 'v') {
+      } else if (modifier && event.key.toLowerCase() === 'v') {
         event.preventDefault()
         if (!busy) void editor.paste()
       } else if (!modifier && event.key === '\\') {
@@ -276,6 +279,39 @@ export function EditorScreen(): React.JSX.Element {
         : undefined,
     [editor.preview?.fullWidth, editor.preview?.fullHeight]
   )
+  // A negative print can show as a positive. Before shows the original, so it stays as it is.
+  const inverted =
+    editor.negativePreview && !editor.before && !!doc && negativePrint(doc.recipe.film)
+  const scopeProps = {
+    // The scope reads its pixels after the developing cloud leaves.
+    // The read would make the cloud skip frames.
+    url:
+      displayFile && !cloudFile && sidebarPage === 'edit'
+        ? editor.viewport
+          ? editor.tile?.url
+          : editor.preview?.url
+        : undefined,
+    fileId: currentFile?.id,
+    pending:
+      !!cloudFile || editor.loading || (!!editor.viewport && !editor.tile && editor.rendering),
+    mode: scope
+  }
+  // A tiny scope shows in the header while the full one is scrolled away.
+  const sidebarShown = panelOpen || editor.cropping
+  const scopeBox = useRef<HTMLDivElement>(null)
+  const [scopeHidden, setScopeHidden] = useState(false)
+  useEffect(() => {
+    const target = scopeBox.current
+    if (!target || typeof IntersectionObserver === 'undefined') return
+    const observer = new IntersectionObserver(([entry]) => setScopeHidden(!entry.isIntersecting), {
+      root: sidebarBody.current
+    })
+    observer.observe(target)
+    return () => {
+      observer.disconnect()
+      setScopeHidden(false)
+    }
+  }, [sidebarShown])
   const history = (
     <>
       <Button
@@ -309,7 +345,7 @@ export function EditorScreen(): React.JSX.Element {
       >
         <div className="flex min-w-0 items-center gap-2">
           <span
-            className="max-w-40 truncate text-xs text-neutral-400"
+            className="max-w-40 truncate font-mono text-xs uppercase tracking-[0.12em] text-neutral-400"
             title={currentFile?.fileName}
           >
             {currentFile?.fileName}
@@ -371,17 +407,6 @@ export function EditorScreen(): React.JSX.Element {
           ) : (
             <div key="edit" data-swap className="contents" {...inert}>
               <Button
-                ref={cropButton}
-                variant="ghost"
-                size="icon"
-                aria-label={t('editor.crop')}
-                title={t('editor.crop')}
-                disabled={unavailable}
-                onClick={enterCrop}
-              >
-                <Crop className="h-4 w-4" />
-              </Button>
-              <Button
                 variant="ghost"
                 size="icon"
                 aria-label={t('editor.copy')}
@@ -406,6 +431,17 @@ export function EditorScreen(): React.JSX.Element {
                 aria-orientation="vertical"
                 className="mx-1 h-5 w-px bg-white/15"
               />
+              {/* Resets every adjustment; crop mode's Cancel could not undo it. */}
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label={t('editor.reset')}
+                title={t('editor.reset')}
+                disabled={unavailable}
+                onClick={editor.reset}
+              >
+                <RotateCcw className="h-4 w-4" />
+              </Button>
               {history}
               <Button
                 variant="ghost"
@@ -418,23 +454,42 @@ export function EditorScreen(): React.JSX.Element {
               >
                 <SquareSplitHorizontal className="h-4 w-4" />
               </Button>
-              <Button variant="ghost" size="sm" disabled={busy} onClick={() => void editor.close()}>
-                {t('editor.done')}
+              <Button
+                ref={cropButton}
+                variant="ghost"
+                size="md"
+                disabled={unavailable}
+                onClick={enterCrop}
+              >
+                <Crop className="h-4 w-4" aria-hidden="true" />
+                {t('editor.crop')}
               </Button>
               <div
                 role="separator"
                 aria-orientation="vertical"
                 className="mx-1 h-5 w-px bg-white/15"
               />
-              <Button
-                variant="prominent"
-                size="sm"
+              <Button variant="ghost" size="md" disabled={busy} onClick={() => void editor.close()}>
+                {t('editor.done')}
+              </Button>
+              <ExportButton
                 disabled={unavailable || !file}
+                ids={file && new Set([file.id])}
+                returnScreen="editor"
+              />
+              <Button
+                variant="ghost"
+                size="icon"
+                title={t('editor.togglePanel')}
+                aria-label={t('editor.togglePanel')}
+                aria-pressed={panelOpen}
+                // The same gap as in the browser toolbar.
+                className={cn('ml-1', panelOpen && 'bg-white/15 text-neutral-100')}
                 onClick={() =>
-                  file && useQueueStore.getState().openExport(new Set([file.id]), 'editor')
+                  void useSettingsStore.getState().update({ editorPanelOpen: !panelOpen })
                 }
               >
-                {t('button.convert')}
+                <PanelRight className="h-4 w-4" aria-hidden="true" />
               </Button>
             </div>
           )}
@@ -464,49 +519,53 @@ export function EditorScreen(): React.JSX.Element {
         <FileFilmstrip
           preview={
             <div className="relative h-full w-full">
-              {displayFile && editor.preview && doc && editor.cropping && !unavailable ? (
-                <CropPreview
-                  preview={editor.preview}
-                  recipe={doc.recipe}
-                  locked={aspect !== 'free'}
-                  onDone={() => setCropping(false)}
-                  onPaint={() => setPainted(true)}
-                />
-              ) : displayFile ? (
-                <ZoomablePreview
-                  key={file?.id}
-                  file={displayFile}
-                  naturalSize={naturalSize}
-                  tile={editor.tile}
-                  cache={editor.cache}
-                  onCacheMiss={editor.uncache}
-                  onViewportChange={editor.setViewport}
-                  onViewportMove={editor.holdPrefetch}
-                  onPaint={() => setPainted(true)}
-                  onImagePoint={
-                    picking && !unavailable
-                      ? (x, y) => {
-                          setPicking(false)
-                          void editor.pickWhiteBalance(x, y)
-                        }
-                      : undefined
-                  }
-                />
-              ) : cloudFile ? null : (
-                <div
-                  role="status"
-                  className="flex h-full items-center justify-center gap-2 text-xs text-neutral-500"
-                >
-                  {editor.loading || editor.rendering ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-                      <span className="sr-only">{t('editor.developing')}</span>
-                    </>
-                  ) : (
-                    t('inspector.no_preview')
-                  )}
-                </div>
-              )}
+              {/* Always present, so turning the inversion on does not mount the preview again. */}
+              <div className={cn('contents', inverted && '[&_canvas]:invert [&_img]:invert')}>
+                {displayFile && editor.preview && doc && editor.cropping && !unavailable ? (
+                  <CropPreview
+                    preview={editor.preview}
+                    recipe={doc.recipe}
+                    locked={aspect !== 'free'}
+                    inverted={inverted}
+                    onDone={() => setCropping(false)}
+                    onPaint={() => setPainted(true)}
+                  />
+                ) : displayFile ? (
+                  <ZoomablePreview
+                    key={file?.id}
+                    file={displayFile}
+                    naturalSize={naturalSize}
+                    tile={editor.tile}
+                    cache={editor.cache}
+                    onCacheMiss={editor.uncache}
+                    onViewportChange={editor.setViewport}
+                    onViewportMove={editor.holdPrefetch}
+                    onPaint={() => setPainted(true)}
+                    onImagePoint={
+                      picking && !unavailable
+                        ? (x, y) => {
+                            setPicking(false)
+                            void editor.pickWhiteBalance(x, y)
+                          }
+                        : undefined
+                    }
+                  />
+                ) : cloudFile ? null : (
+                  <div
+                    role="status"
+                    className="flex h-full items-center justify-center gap-2 text-xs text-neutral-500"
+                  >
+                    {editor.loading || editor.rendering ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                        <span className="sr-only">{t('editor.developing')}</span>
+                      </>
+                    ) : (
+                      t('inspector.no_preview')
+                    )}
+                  </div>
+                )}
+              </div>
               {cloudFile && (
                 <DevelopingPreview
                   key={`developing:${cloudFile.id}:${savedMatches && !editor.cropping}`}
@@ -528,134 +587,90 @@ export function EditorScreen(): React.JSX.Element {
             </div>
           }
         />
-        <ResizablePanel kind="editor">
-          <div className="z-10 flex h-8 shrink-0 items-center justify-between border-b border-white/10 px-3 text-xs text-neutral-400">
-            {sidebarPage === 'edit' ? (
-              <>
-                <span className="font-bold">{t('editor.adjustments')}</span>
-                <ScopeMenu />
-              </>
-            ) : (
-              <>
-                <Button
-                  ref={sidebarBack}
-                  variant="ghost"
-                  size="icon"
-                  className="h-6 w-6"
-                  aria-label={t('editor.backToAdjustments')}
-                  title={t('editor.backToAdjustments')}
-                  onClick={() => navigateSidebar('edit')}
-                >
-                  <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-                </Button>
-                <h2 className="font-bold">
-                  {t(
-                    sidebarPage === 'film'
-                      ? 'editor.filmStock'
-                      : sidebarPage === 'paper'
-                        ? 'editor.paperStock'
-                        : 'editor.darkroom'
-                  )}
-                </h2>
-                <span className="w-6" />
-              </>
-            )}
-          </div>
-          <div ref={sidebarBody} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto pb-3">
-            {sidebarPage !== 'edit' && doc && (
-              <fieldset disabled={unavailable || editor.before || !!cloudFile} className="contents">
-                {sidebarPage === 'darkroom' ? (
-                  doc.recipe.film && (
-                    <FilmControls
-                      recipe={doc.recipe}
-                      film={doc.recipe.film}
-                      darkroom
-                      onNavigate={navigateSidebar}
-                    />
-                  )
-                ) : (
-                  <LookPicker kind={sidebarPage} recipe={doc.recipe} gallery />
-                )}
-              </fieldset>
-            )}
-            <div hidden={sidebarPage !== 'edit'}>
-              <div className="p-3">
-                {editor.viewport && (
-                  <p className="control-label mb-1 text-[10px] text-neutral-500">
-                    {t('editor.visibleArea')}
-                  </p>
-                )}
-                <ColorScope
-                  // The scope reads its pixels after the developing cloud leaves.
-                  // The read would make the cloud skip frames.
-                  url={
-                    displayFile && !cloudFile && sidebarPage === 'edit'
-                      ? editor.viewport
-                        ? editor.tile?.url
-                        : editor.preview?.url
-                      : undefined
-                  }
-                  fileId={currentFile?.id}
-                  pending={
-                    !!cloudFile ||
-                    editor.loading ||
-                    (!!editor.viewport && !editor.tile && editor.rendering)
-                  }
-                  mode={scope}
-                />
-              </div>
-              {doc && (
+        {/* Crop mode keeps the panel open for its controls. */}
+        {sidebarShown && (
+          <ResizablePanel kind="editor">
+            <div className="z-10 flex h-8 shrink-0 items-center justify-between border-b border-white/10 px-3 font-mono text-xs uppercase tracking-[0.12em] text-neutral-400">
+              {sidebarPage === 'edit' ? (
                 <>
-                  <div className="flex items-center justify-between gap-2 px-4 py-1.5">
-                    <p
-                      role="status"
-                      className="control-label text-[10px] text-neutral-500"
-                      title={doc.storagePath}
-                    >
-                      {t(
-                        doc.dirty
-                          ? 'editor.saving'
-                          : doc.storage === 'backup'
-                            ? 'editor.savedBackup'
-                            : doc.storage === 'none'
-                              ? 'editor.original'
-                              : 'editor.saved'
-                      )}
-                    </p>
-                    {/* Resets every adjustment; crop mode's Cancel could not undo it. */}
-                    {!editor.cropping && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="text-[10px] text-neutral-500"
-                        disabled={unavailable}
-                        onClick={editor.reset}
-                      >
-                        <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
-                        {t('editor.reset')}
-                      </Button>
-                    )}
+                  <span className="ml-0.5">{t('editor.adjustments')}</span>
+                  <div className="flex min-w-0 items-center gap-2">
+                    {scopeHidden && <ColorScope {...scopeProps} compact />}
+                    <ScopeMenu />
                   </div>
-                  <fieldset
-                    disabled={unavailable || editor.before || !!cloudFile}
-                    className="contents"
-                  >
-                    {editor.cropping ? (
-                      <CropControls recipe={doc.recipe} aspect={aspect} setAspect={setAspect} />
-                    ) : (
-                      <EditorControls
-                        recipe={doc.recipe}
-                        picking={picking}
-                        setPicking={setPicking}
-                        onNavigate={navigateSidebar}
-                      />
-                    )}
-                  </fieldset>
                 </>
+              ) : (
+                <div className="flex items-center gap-1">
+                  {/* Shifted so the arrow lines up with the section text below. */}
+                  <Button
+                    ref={sidebarBack}
+                    variant="ghost"
+                    size="icon"
+                    className="-ml-1 h-6 w-6"
+                    aria-label={t('editor.backToAdjustments')}
+                    title={t('editor.backToAdjustments')}
+                    onClick={() => navigateSidebar('edit')}
+                  >
+                    <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+                  </Button>
+                  <h2>{t(sidebarPage === 'film' ? 'editor.filmStock' : 'editor.paperStock')}</h2>
+                </div>
               )}
             </div>
-          </div>
-        </ResizablePanel>
+            <div
+              ref={sidebarBody}
+              className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto pb-3"
+            >
+              {sidebarPage !== 'edit' && doc && (
+                <fieldset
+                  disabled={unavailable || editor.before || !!cloudFile}
+                  className="contents"
+                >
+                  <LookPicker kind={sidebarPage} recipe={doc.recipe} gallery />
+                </fieldset>
+              )}
+              <div hidden={sidebarPage !== 'edit'}>
+                <div ref={scopeBox} className="p-3">
+                  {editor.viewport && (
+                    <p className="control-label mb-1 text-[10px] text-neutral-500">
+                      {t('editor.visibleArea')}
+                    </p>
+                  )}
+                  {/* While out of view, only the header scope renders. */}
+                  <ColorScope {...scopeProps} paused={scopeHidden} />
+                </div>
+                {doc && (
+                  <>
+                    {doc.storage === 'backup' && (
+                      <p
+                        role="status"
+                        className="control-label px-4 py-1.5 text-[10px] text-neutral-500"
+                        title={doc.storagePath}
+                      >
+                        {t('editor.savedBackup')}
+                      </p>
+                    )}
+                    <fieldset
+                      disabled={unavailable || editor.before || !!cloudFile}
+                      className="contents"
+                    >
+                      {editor.cropping ? (
+                        <CropControls recipe={doc.recipe} aspect={aspect} setAspect={setAspect} />
+                      ) : (
+                        <EditorControls
+                          recipe={doc.recipe}
+                          picking={picking}
+                          setPicking={setPicking}
+                          onNavigate={navigateSidebar}
+                        />
+                      )}
+                    </fieldset>
+                  </>
+                )}
+              </div>
+            </div>
+          </ResizablePanel>
+        )}
       </div>
     </div>
   )

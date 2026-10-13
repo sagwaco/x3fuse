@@ -32,6 +32,8 @@ interface EditorState {
   /** The pitch and yaw `preview` was rendered with; analysis must not use it with other angles. */
   previewPose: { pitch: number; yaw: number } | null
   before: boolean
+  /** Show a negative print inverted, as a positive. Only the view changes. */
+  negativePreview: boolean
   cropping: boolean
   viewport: PreviewRegion | null
   tile: (RenderedPreview & { region: PreviewRegion; viewport: PreviewRegion }) | null
@@ -424,6 +426,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
     preview: null,
     previewPose: null,
     before: false,
+    negativePreview: false,
     clipboard: null,
     cropping: false,
     viewport: null,

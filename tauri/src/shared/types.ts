@@ -42,6 +42,8 @@ export interface ConversionSettings {
   rendering: 'original' | 'rendered'
   jpegQuality: number
   editorPanelWidth: number
+  /** Whether the editor's adjustments sidebar is open. */
+  editorPanelOpen: boolean
   outputFormat: OutputFormat
   compress: boolean
   /** Sensor denoising intensity, 0 = off ... 10 = full strength. */
@@ -80,6 +82,7 @@ export const DEFAULT_SETTINGS: ConversionSettings = {
   rendering: 'original',
   jpegQuality: 92,
   editorPanelWidth: 320,
+  editorPanelOpen: true,
   outputFormat: 'dng',
   compress: false,
   denoiseIntensity: 10,
