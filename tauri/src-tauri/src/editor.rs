@@ -432,6 +432,7 @@ impl Editor {
             revision: saved.as_ref().map_or(0, |s| s.revision),
             storage: saved
                 .as_ref()
+                .filter(|s| s.edited)
                 .map_or_else(|| "none".into(), |s| s.storage.clone()),
             storage_path: saved.as_ref().map(|s| s.storage_path.clone()),
             preview_url: saved.and_then(|s| s.preview_url),
@@ -577,6 +578,11 @@ impl Editor {
             .or(session_source.as_deref())
             .ok_or("Load the photo's current edit record before saving")?;
         let mut record = self.edits.save(path, recipe, revision, Some(expected))?;
+        // Undo or Reset back to the defaults is not an edit. The file stays until
+        // the next load, so the revision order still holds for slower saves.
+        record.edited = self
+            .unedited(path, &record.recipe, &record.source_revision, false)
+            .is_none();
         record.preview_url =
             Some(self.register(path, &record.source_revision, &record.recipe, 2048, None)?);
         Ok(record)
@@ -586,6 +592,26 @@ impl Editor {
         let Some(mut record) = self.edits.load(path)? else {
             return Ok(None);
         };
+        // Stored defaults are not edits. Earlier builds also saved them for each
+        // opened photo. Remove them. If that fails, they still count as unedited.
+        if let Some(defaults) =
+            self.unedited(path, &record.recipe, &record.source_revision, record.legacy)
+        {
+            match self.edits.clear(path, &record) {
+                Ok(true) => return Ok(None),
+                // A newer save replaced the document or waits to publish. Load
+                // the stored one once more, without a second removal.
+                Ok(false) => match self.edits.load(path)? {
+                    Some(current) => record = current,
+                    None => return Ok(None),
+                },
+                Err(error) => {
+                    eprintln!("{error}");
+                    record.edited = false;
+                    record.recipe = defaults;
+                }
+            }
+        }
         record.preview_url =
             Some(self.register(path, &record.source_revision, &record.recipe, 2048, None)?);
         Ok(Some(record))
@@ -625,6 +651,25 @@ impl Editor {
             return Err("Source changed while reading camera defaults".into());
         }
         Ok(as_shot_recipe(crop, &profiles.as_shot, source_revision))
+    }
+
+    /// The photo's defaults when `recipe` is one of them (see `matches_defaults`).
+    /// An error while reading them counts as an edit.
+    fn unedited(
+        &self,
+        path: &Path,
+        recipe: &EditRecipe,
+        source_revision: &str,
+        legacy: bool,
+    ) -> Option<EditRecipe> {
+        // Read the X3F metadata only for a recipe that can be a default.
+        if !near_default(recipe) {
+            return None;
+        }
+        let defaults = self
+            .default_recipe(path, source_revision, &AtomicBool::new(false))
+            .ok()?;
+        matches_defaults(recipe, &defaults, legacy).then_some(defaults)
     }
 
     fn register(
@@ -1430,6 +1475,34 @@ fn as_shot_recipe(crop: Option<Crop>, profile: &str, source_revision: &str) -> E
     }
 }
 
+/// True when only the fields that defaults set differ from `EditRecipe::default()`.
+fn near_default(recipe: &EditRecipe) -> bool {
+    let base = EditRecipe::default();
+    let probe = EditRecipe {
+        camera_profile: base.camera_profile.clone(),
+        film: base.film.clone(),
+        monochrome: base.monochrome,
+        crop: base.crop,
+        seed: base.seed,
+        ..recipe.clone()
+    };
+    probe == base
+}
+
+/// True when `recipe` is the photo's `defaults`. With `legacy` (a document from
+/// an earlier build), also the default film with the as-shot crop and seed: those
+/// builds saved it for every opened photo.
+fn matches_defaults(recipe: &EditRecipe, defaults: &EditRecipe, legacy: bool) -> bool {
+    *recipe == *defaults
+        || legacy
+            && *recipe
+                == EditRecipe {
+                    crop: defaults.crop,
+                    seed: defaults.seed,
+                    ..Default::default()
+                }
+}
+
 fn check_cancel(cancel: &AtomicBool) -> Result<(), String> {
     if cancel.load(Ordering::SeqCst) {
         Err("Rendering cancelled".into())
@@ -1556,6 +1629,42 @@ mod tests {
             .save(&photo, legacy.clone(), 1, Some(&session.source_revision))
             .unwrap();
         assert_eq!(editor.open(photo).unwrap().recipe, legacy);
+    }
+    #[test]
+    fn defaults_and_earlier_untouched_recipes_are_not_edits() {
+        let crop = Some(x3f_render::Crop {
+            x: 0.,
+            y: 0.1,
+            width: 1.,
+            height: 0.8,
+        });
+        let defaults = super::as_shot_recipe(crop, "FCBlue", "12345678abcdef");
+        let earlier = EditRecipe {
+            crop,
+            seed: defaults.seed,
+            ..Default::default()
+        };
+        let exposed = EditRecipe {
+            exposure: 0.5,
+            ..defaults.clone()
+        };
+        let cropped = EditRecipe {
+            crop: None,
+            ..earlier.clone()
+        };
+        for recipe in [&defaults, &earlier, &cropped] {
+            assert!(super::near_default(recipe));
+        }
+        assert!(!super::near_default(&exposed));
+        assert!(super::matches_defaults(&defaults, &defaults, false));
+        // Only documents from earlier builds can hold their untouched film default.
+        assert!(super::matches_defaults(&earlier, &defaults, true));
+        assert!(!super::matches_defaults(&earlier, &defaults, false));
+        assert!(!super::matches_defaults(&cropped, &defaults, true));
+        assert!(!super::matches_defaults(&exposed, &defaults, true));
+        let mono = super::as_shot_recipe(crop, "Monochrome", "12345678abcdef");
+        assert!(super::near_default(&mono));
+        assert!(!super::matches_defaults(&mono, &defaults, true));
     }
     #[test]
     fn fresh_camera_defaults_are_clean_and_saved_recipes_remain_legacy() {

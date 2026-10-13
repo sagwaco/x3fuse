@@ -18,6 +18,9 @@ use x3f_render::EditRecipe;
 const FINGERPRINTS_FILE: &str = "fingerprints-v2.json";
 const FINGERPRINT_LIMIT: usize = 1024;
 const JSON_LIMIT: usize = 1024 * 1024;
+/// Version 2 documents were saved after photos opened with their camera
+/// defaults. Version 1 documents can hold an untouched photo's old defaults.
+const DOCUMENT_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -29,6 +32,11 @@ pub struct EditRecord {
     pub storage_path: PathBuf,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub preview_url: Option<String>,
+    /// False when the recipe is the photo's defaults, as after Reset or Undo.
+    pub edited: bool,
+    /// Saved before camera defaults (document version 1).
+    #[serde(skip)]
+    pub legacy: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -241,7 +249,7 @@ impl Edits {
         else {
             return Ok(None);
         };
-        if document.version != 1 {
+        if !(1..=DOCUMENT_VERSION).contains(&document.version) {
             return Err(format!(
                 "Unsupported edit version in {}; update X3Fuse. The file has been preserved.",
                 path.display()
@@ -321,7 +329,7 @@ impl Edits {
             .as_millis()
             .min(u64::MAX as u128) as u64;
         let document = Document {
-            version: 1,
+            version: DOCUMENT_VERSION,
             source_revision,
             revision,
             updated_ms: updated_ms.max(previous_ms.saturating_add(1)),
@@ -333,6 +341,40 @@ impl Edits {
         drop(pending);
         self.flush_fingerprints();
         Ok(saved)
+    }
+
+    /// Removes stored edits that are not edits. Returns false and keeps the files
+    /// when a newer or unpublished save replaced the loaded document.
+    pub fn clear(&self, path: &Path, loaded: &EditRecord) -> Result<bool, String> {
+        let path = path.canonicalize().map_err(|e| e.to_string())?;
+        let pending = self
+            .pending
+            .lock()
+            .map_err(|_| "Edit storage unavailable")?;
+        let Some((document, _, current)) = self.current(&path)? else {
+            return Ok(false);
+        };
+        if pending.contains_key(&path)
+            || document.revision != loaded.revision
+            || document.recipe != loaded.recipe
+        {
+            return Ok(false);
+        }
+        // Remove the current document last. If a removal fails, it stays the one
+        // that loads, and an older copy cannot return.
+        let older = if current == sidecar(&path) {
+            self.backup(&path)
+        } else {
+            sidecar(&path)
+        };
+        for file in [older, current] {
+            match fs::remove_file(&file) {
+                Ok(()) => (),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+                Err(e) => return Err(format!("Cannot remove edits at {}: {e}", file.display())),
+            }
+        }
+        Ok(true)
     }
 
     fn publish(&self, path: &Path, document: Document) -> Result<EditRecord, String> {
@@ -427,6 +469,8 @@ pub fn sidecar(path: &Path) -> PathBuf {
 
 fn record(document: Document, storage: String, storage_path: PathBuf) -> EditRecord {
     EditRecord {
+        edited: true,
+        legacy: document.version == 1,
         recipe: document.recipe,
         revision: document.revision,
         source_revision: document.source_revision,
@@ -716,6 +760,88 @@ mod tests {
         assert!(edits.save(&moved, recipe, 2, None).is_err());
         assert_eq!(fs::read(sidecar(&moved)).unwrap(), b"{\"version\":999}");
         assert_eq!(fs::read(&moved).unwrap(), b"original RAW bytes");
+    }
+
+    #[test]
+    fn earlier_documents_load_as_legacy_and_clear_removes_only_the_loaded_document() {
+        let temp = tempfile::tempdir().unwrap();
+        let input = temp.path().join("photo.X3F");
+        fs::write(&input, b"RAW").unwrap();
+        let input = input.canonicalize().unwrap();
+        let edits = Edits::new(temp.path().join("backup"));
+        let earlier = Document {
+            version: 1,
+            source_revision: edits.source_revision(&input).unwrap(),
+            revision: 1,
+            updated_ms: 1,
+            recipe: EditRecipe::default(),
+        };
+        // An earlier build saved the sidecar, and a failed write left a backup.
+        write_json_atomic(&sidecar(&input), &earlier).unwrap();
+        fs::create_dir_all(&edits.directory).unwrap();
+        write_json_atomic(&edits.backup(&input), &earlier).unwrap();
+        let loaded = edits.load(&input).unwrap().unwrap();
+        assert!(loaded.legacy && loaded.edited);
+        let changed = EditRecord {
+            revision: 2,
+            ..loaded.clone()
+        };
+        assert!(!edits.clear(&input, &changed).unwrap());
+        assert!(sidecar(&input).is_file());
+        assert!(edits.clear(&input, &loaded).unwrap());
+        assert!(!sidecar(&input).exists() && !edits.backup(&input).exists());
+        assert!(edits.load(&input).unwrap().is_none());
+        // New documents are version 2 and are not legacy.
+        let saved = edits.save(&input, EditRecipe::default(), 1, None).unwrap();
+        assert!(!saved.legacy);
+        let text = fs::read_to_string(sidecar(&input)).unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&text).unwrap()["version"],
+            2
+        );
+        assert!(!edits.load(&input).unwrap().unwrap().legacy);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn clear_keeps_the_current_document_when_an_older_copy_cannot_be_removed() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().unwrap();
+        let input = temp.path().join("photo.X3F");
+        fs::write(&input, b"RAW").unwrap();
+        let input = input.canonicalize().unwrap();
+        let edits = Edits::new(temp.path().join("backup"));
+        let source_revision = edits.source_revision(&input).unwrap();
+        let older = Document {
+            version: 2,
+            source_revision: source_revision.clone(),
+            revision: 1,
+            updated_ms: 1,
+            recipe: EditRecipe {
+                exposure: 1.,
+                ..Default::default()
+            },
+        };
+        let defaults = Document {
+            revision: 2,
+            updated_ms: 2,
+            recipe: EditRecipe::default(),
+            ..older.clone()
+        };
+        fs::create_dir_all(&edits.directory).unwrap();
+        write_json_atomic(&edits.backup(&input), &older).unwrap();
+        write_json_atomic(&sidecar(&input), &defaults).unwrap();
+        let loaded = edits.load(&input).unwrap().unwrap();
+        assert_eq!(loaded.revision, 2);
+        let mode =
+            |mode| fs::set_permissions(&edits.directory, fs::Permissions::from_mode(mode)).unwrap();
+        mode(0o500);
+        let cleared = edits.clear(&input, &loaded);
+        mode(0o700);
+        assert!(cleared.is_err());
+        assert_eq!(edits.load(&input).unwrap().unwrap().revision, 2);
+        assert!(edits.clear(&input, &loaded).unwrap());
+        assert!(edits.load(&input).unwrap().is_none());
     }
 
     #[test]

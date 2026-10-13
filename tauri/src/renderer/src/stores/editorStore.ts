@@ -96,7 +96,10 @@ const PREFETCH_DELAY = 400
 function updateQueue(path: string, edit: EditRecord): void {
   useQueueStore.setState((state) => ({
     files: state.files.map((file) =>
-      file.path === path ? { ...file, edit, editError: undefined } : file
+      file.path === path
+        ? // A photo back at its defaults is not edited: no badge, camera defaults on export.
+          { ...file, edit: edit.edited === false ? undefined : edit, editError: undefined }
+        : file
     )
   }))
 }
@@ -168,7 +171,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
             ...state.documents,
             [path]: {
               ...current,
-              storage: saved.storage,
+              storage: saved.edited === false ? 'none' : saved.storage,
               storagePath: saved.storagePath,
               previewUrl: saved.previewUrl,
               sourceRevision: saved.sourceRevision,
@@ -497,9 +500,11 @@ export const useEditorStore = create<EditorState>((set, get) => {
           return
         }
         const previousDocument = get().documents[file.path]
+        // Opening removes stored defaults, so a document at its defaults keeps its history.
         const existing =
           previousDocument?.sourceRevision === session.sourceRevision &&
-          previousDocument?.revision === session.revision
+          (previousDocument.revision === session.revision ||
+            (previousDocument.storage === 'none' && session.storage === 'none'))
             ? previousDocument
             : undefined
         const doc = existing ?? {

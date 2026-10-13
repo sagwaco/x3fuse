@@ -131,6 +131,8 @@ export interface EditRecord {
   storagePath?: string
   previewUrl?: string
   sourceRevision?: string
+  /** False when the saved recipe is the photo's defaults, as after Reset or Undo. */
+  edited?: boolean
 }
 export interface EditorSession extends EditRecord {
   sessionId: string

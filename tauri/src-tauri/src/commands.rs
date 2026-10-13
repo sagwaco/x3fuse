@@ -98,7 +98,8 @@ pub async fn queue_add(
     tauri::async_runtime::spawn_blocking(move || {
         for dto in &mut dtos {
             match state.editor.load(&dto.path) {
-                Ok(edit) => dto.edit = edit,
+                // Stored defaults that could not be removed are not edits.
+                Ok(edit) => dto.edit = edit.filter(|edit| edit.edited),
                 Err(error) => dto.edit_error = Some(error),
             }
         }
@@ -496,10 +497,19 @@ pub async fn editor_load(
                     value["path"] = json!(path);
                     value
                 }
-                Ok(None) => match state.editor.edits.source_revision(&path) {
-                    Ok(source_revision) => {
-                        json!({"path":path,"revision":0,"sourceRevision":source_revision})
-                    }
+                // Paste starts from the camera defaults, with the as-shot crop and seed.
+                Ok(None) => match state
+                    .editor
+                    .edits
+                    .source_revision(&path)
+                    .and_then(|revision| {
+                        state
+                            .editor
+                            .default_recipe(&path, &revision, &AtomicBool::new(false))
+                            .map(|recipe| (revision, recipe))
+                    }) {
+                    Ok((source_revision, recipe)) => json!({"path":path,"revision":0,
+                        "sourceRevision":source_revision,"recipe":recipe}),
                     Err(error) => json!({"path":path,"revision":0,"error":error}),
                 },
                 Err(error) => json!({"path":path,"revision":0,"error":error}),

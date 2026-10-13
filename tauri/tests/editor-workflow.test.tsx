@@ -745,6 +745,43 @@ it('restores the as-shot camera look for Reset and Before while preserving actua
   expect(queue.getState().files[0].edit?.recipe).toEqual(original)
 })
 
+it('treats Reset back to the camera defaults as unedited and keeps undo history on reopen', async () => {
+  const defaults = { ...defaultRecipe(), film: null, cameraProfile: 'Standard', seed: 7 }
+  const other: X3FFileDTO = { id: 'b', path: '/photos/b.X3F', fileName: 'b.X3F' }
+  queue.setState({ files: [file, other] })
+  const real = invoke.getMockImplementation()!
+  invoke.mockImplementation(async (command, payload) => {
+    if (command === 'editor:open')
+      // Opening removes stored defaults: the session has no edits.
+      return {
+        ...session(),
+        sessionId: `session:${payload.path}`,
+        path: payload.path,
+        recipe: defaults,
+        asShotCameraProfile: 'Standard'
+      }
+    const result = await real(command, payload)
+    // The backend flags a saved recipe that equals the photo's defaults.
+    if (command === 'editor:save')
+      return { ...result, edited: (payload.recipe as EditRecipe).exposure !== 0 }
+    return result
+  })
+  await editor.getState().open(file)
+  editor.getState().change({ exposure: 1 })
+  expect(await editor.getState().flush()).toBe(true)
+  expect(queue.getState().files[0].edit).toMatchObject({ revision: 1 })
+  editor.getState().reset()
+  expect(await editor.getState().flush()).toBe(true)
+  expect(queue.getState().files[0].edit).toBeUndefined()
+  expect(editor.getState().documents[file.path]).toMatchObject({ revision: 2, storage: 'none' })
+  await editor.getState().open(other)
+  await editor.getState().open(file)
+  expect(editor.getState().documents[file.path].revision).toBe(2)
+  editor.getState().undo()
+  expect(await editor.getState().flush()).toBe(true)
+  expect(queue.getState().files[0].edit).toMatchObject({ recipe: { exposure: 1 }, revision: 3 })
+})
+
 it('freezes rendered recipes and fingerprints for mixed batches and returns shared review to the editor', async () => {
   const edited = {
     ...file,
