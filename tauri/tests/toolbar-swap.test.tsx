@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { act, cleanup, render } from '@testing-library/react'
 import { useToolbarSwap } from '../src/renderer/src/hooks/useToolbarSwap'
+import { ZoomControls } from '../src/renderer/src/components/ZoomControls'
 
 function Bar({ target }: { target: boolean }): JSX.Element {
   const { ref, shown, leaving } = useToolbarSwap(target)
@@ -15,7 +16,12 @@ function Bar({ target }: { target: boolean }): JSX.Element {
   )
 }
 
-type Fake = { element: Element; finish: () => void; cancel: ReturnType<typeof vi.fn> }
+type Fake = {
+  element: Element
+  options: KeyframeAnimationOptions
+  finish: () => void
+  cancel: ReturnType<typeof vi.fn>
+}
 let animations: Fake[] = []
 let reduced = false
 
@@ -40,7 +46,7 @@ function mockAnimate(): void {
       .filter((a) => a.element === this && !a.cancel.mock.calls.length)
       .map((a) => ({ cancel: a.cancel }) as unknown as Animation)
   }
-  Element.prototype.animate = function () {
+  Element.prototype.animate = function (_keyframes, options) {
     let finish = (): void => {}
     let fail = (): void => {}
     const finished = new Promise<void>((resolve, reject) => {
@@ -48,7 +54,12 @@ function mockAnimate(): void {
       fail = reject
     })
     finished.catch(() => undefined)
-    const fake: Fake = { element: this, finish, cancel: vi.fn(fail) }
+    const fake: Fake = {
+      element: this,
+      options: options as KeyframeAnimationOptions,
+      finish,
+      cancel: vi.fn(fail)
+    }
     animations.push(fake)
     return { finished, cancel: fake.cancel } as unknown as Animation
   }
@@ -68,6 +79,32 @@ it('scales the buttons in when the toolbar mounts', () => {
   mockAnimate()
   render(<Bar target={false} />)
   expect(animations.map((a) => a.element.textContent)).toEqual(['Crop', 'Copy'])
+})
+
+it('staggers each zoom button separately before buttons to its right', () => {
+  mockAnimate()
+  function Toolbar(): JSX.Element {
+    const { ref } = useToolbarSwap(false)
+    return (
+      <div ref={ref}>
+        <div data-swap>
+          <ZoomControls />
+          <div role="separator" />
+          <button>Edit</button>
+        </div>
+        <div data-swap>
+          <button>Done</button>
+          <button>Export</button>
+        </div>
+      </div>
+    )
+  }
+  render(<Toolbar />)
+  expect(
+    animations.map(({ element }) => element.getAttribute('aria-label') ?? element.textContent)
+  ).toEqual(['Zoom out', 'Zoom in', 'Zoom level', 'Edit', 'Done', 'Export'])
+  expect(animations.map(({ options }) => options.delay)).toEqual([0, 30, 60, 90, 120, 150])
+  expect(animations.every(({ element }) => element.tagName === 'BUTTON')).toBe(true)
 })
 
 it('swaps at once without animation support', () => {

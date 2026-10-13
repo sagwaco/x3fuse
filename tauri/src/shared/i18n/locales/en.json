@@ -247,6 +247,8 @@
   "editor.detail": "Detail",
   "editor.denoise": "Noise reduction",
   "editor.sharpen": "Sharpening",
+  "editor.cameraMatching": "Camera matching",
+  "editor.backToAdjustments": "Back to adjustments",
   "editor.filmStock": "Film stock",
   "editor.paperStock": "Print paper",
   "editor.evPaper": "Print brightness",

@@ -247,6 +247,8 @@
   "editor.detail": "细节",
   "editor.denoise": "降噪",
   "editor.sharpen": "锐化",
+  "editor.cameraMatching": "相机匹配",
+  "editor.backToAdjustments": "返回调整",
   "editor.filmStock": "胶片型号",
   "editor.paperStock": "相纸",
   "editor.evPaper": "印放亮度",

@@ -77,16 +77,29 @@ vi.mock('../src/renderer/src/components/EditorControls', async () => {
   const { DevelopingCloud } = await import('../src/renderer/src/lib/developingCloud')
   return {
     EditorControls: function MockEditorControls({
-      setPicking
+      setPicking,
+      onNavigate
     }: {
       setPicking: (value: boolean) => void
+      onNavigate: (page: 'film' | 'darkroom') => void
     }) {
       return (
-        <button data-cloud={useContext(DevelopingCloud)} onClick={() => setPicking(true)}>
-          Pick white balance
-        </button>
+        <>
+          <button data-cloud={useContext(DevelopingCloud)} onClick={() => setPicking(true)}>
+            Pick white balance
+          </button>
+          <button data-sidebar-page="film" onClick={() => onNavigate('film')}>
+            Choose film
+          </button>
+          <button data-sidebar-page="darkroom" onClick={() => onNavigate('darkroom')}>
+            Open darkroom
+          </button>
+        </>
       )
-    }
+    },
+    FilmControls: ({ onNavigate }: { onNavigate: (page: 'paper') => void }) => (
+      <button onClick={() => onNavigate('paper')}>Choose paper</button>
+    )
   }
 })
 vi.mock('../src/renderer/src/components/BatchProgress', () => ({ BatchProgress: () => null }))
@@ -497,4 +510,79 @@ it('waits for a new paint after a crop mode change clears the preview', () => {
   expect(view.container.querySelector('[data-placeholder]')).not.toBeNull()
   fireEvent.click(view.container.querySelector('[data-crop-paint]')!)
   expect(view.container.querySelector('[data-condensing]')).not.toBeNull()
+})
+
+it('keeps Done and its divider before Export', () => {
+  editor.setState({ session, documents: { [file.path]: doc }, loading: false, preview: frame })
+  render(<EditorScreen />)
+  const done = screen.getByRole('button', { name: t('editor.done') })
+  expect(done.nextElementSibling?.getAttribute('role')).toBe('separator')
+  expect(done.nextElementSibling?.nextElementSibling).toBe(
+    screen.getByRole('button', { name: t('button.convert') })
+  )
+})
+
+it('navigates stock and darkroom pages in the sidebar and returns focus without closing the editor', () => {
+  const close = vi.fn(async () => true)
+  editor.setState({
+    session,
+    documents: { [file.path]: doc },
+    loading: false,
+    preview: frame,
+    close,
+    renderThumbnail: vi.fn(async () => null)
+  })
+  const view = render(<EditorScreen />)
+  const body = view.container.querySelector('aside .overflow-y-auto')!
+  body.scrollTop = 120
+  fireEvent.click(screen.getByRole('button', { name: 'Choose film' }))
+  expect(screen.queryByRole('dialog')).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Pick white balance' })).toBeNull()
+  expect(screen.getByRole('heading', { name: t('editor.cameraMatching') })).toBeTruthy()
+  const back = screen.getByRole('button', { name: t('editor.backToAdjustments') })
+  expect(document.activeElement).toBe(back)
+  expect(back.closest('.overflow-y-auto')).toBeNull()
+  expect(body.scrollTop).toBe(0)
+  fireEvent.keyDown(document.body, { key: 'Escape' })
+  expect(close).not.toHaveBeenCalled()
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Choose film' }))
+  expect(body.scrollTop).toBe(120)
+  fireEvent.click(screen.getByRole('button', { name: 'Open darkroom' }))
+  expect(screen.getByRole('heading', { name: t('editor.darkroom') })).toBeTruthy()
+  fireEvent.click(screen.getByRole('button', { name: 'Choose paper' }))
+  expect(screen.getByRole('heading', { name: t('editor.paperStock') })).toBeTruthy()
+  fireEvent.click(screen.getByRole('button', { name: t('editor.backToAdjustments') }))
+  expect(screen.getByRole('button', { name: 'Pick white balance' })).toBeTruthy()
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Open darkroom' }))
+  fireEvent.keyDown(document.body, { key: 'Escape', repeat: true })
+  expect(close).not.toHaveBeenCalled()
+})
+
+it('returns to adjustments when crop opens or the photo changes', () => {
+  editor.setState({
+    session,
+    documents: { [file.path]: doc },
+    loading: false,
+    preview: frame,
+    renderThumbnail: vi.fn(async () => null)
+  })
+  render(<EditorScreen />)
+  fireEvent.click(screen.getByRole('button', { name: 'Choose film' }))
+  act(() => editor.setState({ cropping: true }))
+  expect(screen.queryByRole('button', { name: t('editor.backToAdjustments') })).toBeNull()
+  act(() => editor.setState({ cropping: false }))
+  fireEvent.click(screen.getByRole('button', { name: 'Open darkroom' }))
+  act(() => editor.setState({ session: { ...session, sessionId: 'new-session' } }))
+  expect(screen.queryByRole('button', { name: t('editor.backToAdjustments') })).toBeNull()
+})
+
+it('returns to adjustments when undo removes the film from a darkroom page', () => {
+  editor.setState({ session, documents: { [file.path]: doc }, loading: false, preview: frame })
+  render(<EditorScreen />)
+  fireEvent.click(screen.getByRole('button', { name: 'Open darkroom' }))
+  act(() =>
+    editor.setState({ documents: { [file.path]: { ...doc, recipe: { ...recipe, film: null } } } })
+  )
+  expect(screen.queryByRole('heading', { name: t('editor.darkroom') })).toBeNull()
+  expect(screen.getByRole('button', { name: 'Choose film' })).toBeTruthy()
 })

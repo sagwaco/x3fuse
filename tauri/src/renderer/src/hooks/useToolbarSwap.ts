@@ -24,7 +24,9 @@ function canAnimate(): boolean {
 }
 
 function play(root: HTMLElement | null, entering: boolean): Animation[] {
-  const items = [...(root?.querySelectorAll<HTMLElement>('[data-swap] > *') ?? [])]
+  const items = [...(root?.querySelectorAll<HTMLElement>('[data-swap] button') ?? [])].sort(
+    (a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left
+  )
   const step = Math.min(entering ? IN_STEP_MS : OUT_STEP_MS, MAX_STAGGER_MS / items.length)
   const easing = !entering
     ? 'ease-in'
@@ -46,8 +48,8 @@ function play(root: HTMLElement | null, entering: boolean): Animation[] {
 }
 
 /**
- * Swaps toolbar content in two steps: the buttons inside `[data-swap]` scale
- * out, then the new ones scale in. They also scale in when the toolbar mounts. `shown` is the state to render and `leaving`
+ * Swaps toolbar buttons from left to right, including buttons inside groups.
+ * They also scale in when the toolbar mounts. `shown` is the state to render and `leaving`
  * is true during the exit, when the old buttons must ignore input. Without
  * animation support, `shown` follows `target` at once.
  */

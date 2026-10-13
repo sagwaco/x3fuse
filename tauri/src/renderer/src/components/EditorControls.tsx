@@ -1,6 +1,6 @@
 import { memo, useContext, useRef, useState } from 'react'
 import { DenoiseControls } from './DenoiseControls'
-import { ChevronDown, RotateCcw, Pipette, Plus, Trash2 } from 'lucide-react'
+import { ChevronDown, ChevronRight, RotateCcw, Pipette, Plus, Trash2 } from 'lucide-react'
 import {
   DEFAULT_FILM,
   FILM_MONOCHROME_FILTERS,
@@ -144,7 +144,7 @@ export function Section({
   // Sections reach the panel edges, divided by rules; a nested one does too.
   return (
     <details open={open || undefined} className="border-t border-white/10 px-4 [details_&]:-mx-4">
-      <summary className="control-label flex cursor-pointer list-none items-center justify-between rounded py-3 tracking-[0.16em] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50 [&::-webkit-details-marker]:hidden">
+      <summary className="control-label flex cursor-pointer list-none items-center justify-between rounded py-3 font-bold tracking-[0.16em] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50 [&::-webkit-details-marker]:hidden">
         {name}
         <ChevronDown
           aria-hidden="true"
@@ -192,11 +192,13 @@ function Swatches<T extends string>({
 export const EditorControls = memo(function EditorControls({
   recipe,
   picking,
-  setPicking
+  setPicking,
+  onNavigate
 }: {
   recipe: EditRecipe
   picking: boolean
   setPicking: (value: boolean) => void
+  onNavigate: (page: 'film' | 'darkroom' | 'paper') => void
 }): React.JSX.Element {
   const change = useEditorStore((state) => state.change)
   const commit = useEditorStore((state) => state.commit)
@@ -223,7 +225,7 @@ export const EditorControls = memo(function EditorControls({
   )
   const mixer = (key: 'hue' | 'saturation' | 'luminance', track: string): React.JSX.Element => (
     <Adjustment
-      key={key}
+      key={`hsl-${key}`}
       label={t(`editor.${key}`)}
       value={recipe.hsl[band][key]}
       track={track}
@@ -248,7 +250,7 @@ export const EditorControls = memo(function EditorControls({
   return (
     <>
       <Section name={t('editor.look')} open>
-        <LookPicker kind="film" recipe={recipe} />
+        <LookPicker kind="film" recipe={recipe} onOpen={() => onNavigate('film')} />
         {recipe.monochrome && (
           <p className="control-label flex items-center gap-1.5 pt-2 text-[10px] text-neutral-500">
             {t('editor.filter')}
@@ -270,7 +272,7 @@ export const EditorControls = memo(function EditorControls({
             onChange={(filter) => change({ monochrome: { filter } })}
           />
         )}
-        {recipe.film && <FilmControls film={recipe.film} recipe={recipe} />}
+        {recipe.film && <FilmControls film={recipe.film} recipe={recipe} onNavigate={onNavigate} />}
       </Section>
       <Section name={t('editor.light')} open>
         {recipe.film ? (
@@ -586,12 +588,16 @@ function Curves({ recipe }: { recipe: EditRecipe }): React.JSX.Element {
   )
 }
 
-function FilmControls({
+export function FilmControls({
   film,
-  recipe
+  recipe,
+  darkroom = false,
+  onNavigate
 }: {
   film: FilmSettings
   recipe: EditRecipe
+  darkroom?: boolean
+  onNavigate: (page: 'darkroom' | 'paper') => void
 }): React.JSX.Element {
   const change = useEditorStore((state) => state.change)
   const commit = useEditorStore((state) => state.commit)
@@ -628,6 +634,64 @@ function FilmControls({
   )
   // Contrast as stops of gamma: 0 is the stock's own, ±100 halves or doubles it.
   const contrast = { to: (v: number) => 2 ** (v / 100), from: (g: number) => Math.log2(g) * 100 }
+  if (darkroom)
+    return (
+      <div className="space-y-2 p-4">
+        {/* Scanning the film directly skips the print, so its controls do nothing. */}
+        {!film.negative && (
+          <>
+            <LookPicker kind="paper" recipe={recipe} onOpen={() => onNavigate('paper')} />
+            {/* Enlarger settings are inverted so dragging right brightens and warms the print. */}
+            <Adjustment
+              label={t('editor.evPaper')}
+              help={t('editor.evPaperHelp')}
+              value={-(film.evPaper ?? 0)}
+              min={-3}
+              max={3}
+              step={0.05}
+              change={(value, save) => update({ evPaper: -value }, save)}
+              reset={() => update({ evPaper: null })}
+              commit={commit}
+            />
+            {/* Color filtration has no effect on a black-and-white print. */}
+            {!monochromeFilm(film) && (
+              <>
+                {slider('tuneY', {
+                  to: (v) => -v / 100,
+                  from: (tune) => -tune * 100,
+                  track: TEMPERATURE
+                })}
+                {slider('tuneM', {
+                  to: (v) => -v / 100,
+                  from: (tune) => -tune * 100,
+                  track: TINT
+                })}
+              </>
+            )}
+          </>
+        )}
+        {slider('gammaFilm', { ...contrast, help: t('editor.gammaFilmHelp') })}
+        {!film.negative && slider('gammaPaper', { ...contrast, help: t('editor.gammaPaperHelp') })}
+        {/* One silver layer has no colors to separate; the default amount still applies. */}
+        {!monochromeFilm(film) &&
+          slider('couplers', {
+            min: 0,
+            max: 100,
+            to: (v) => v / 100,
+            from: (amount) => amount * 100,
+            help: t('editor.couplersHelp')
+          })}
+        {/* A positive (slide) film is viewed directly. Printing it on negative
+            paper inverts it, so offer the switch only to undo that. */}
+        {(!positiveFilm(film) || !film.negative) && (
+          <ToggleRow
+            label={t('editor.negative')}
+            checked={film.negative}
+            onChange={(negative) => update({ negative })}
+          />
+        )}
+      </div>
+    )
   return (
     <>
       <Adjustment
@@ -684,61 +748,15 @@ function FilmControls({
         }
         commit={commit}
       />
-      <Section name={t('editor.darkroom')}>
-        {/* Scanning the film directly skips the print, so its controls do nothing. */}
-        {!film.negative && (
-          <>
-            <LookPicker kind="paper" recipe={recipe} />
-            {/* Enlarger settings are inverted so dragging right brightens and warms the print. */}
-            <Adjustment
-              label={t('editor.evPaper')}
-              help={t('editor.evPaperHelp')}
-              value={-(film.evPaper ?? 0)}
-              min={-3}
-              max={3}
-              step={0.05}
-              change={(value, save) => update({ evPaper: -value }, save)}
-              reset={() => update({ evPaper: null })}
-              commit={commit}
-            />
-            {/* Color filtration has no effect on a black-and-white print. */}
-            {!monochromeFilm(film) && (
-              <>
-                {slider('tuneY', {
-                  to: (v) => -v / 100,
-                  from: (tune) => -tune * 100,
-                  track: TEMPERATURE
-                })}
-                {slider('tuneM', {
-                  to: (v) => -v / 100,
-                  from: (tune) => -tune * 100,
-                  track: TINT
-                })}
-              </>
-            )}
-          </>
-        )}
-        {slider('gammaFilm', { ...contrast, help: t('editor.gammaFilmHelp') })}
-        {!film.negative && slider('gammaPaper', { ...contrast, help: t('editor.gammaPaperHelp') })}
-        {/* One silver layer has no colors to separate; the default amount still applies. */}
-        {!monochromeFilm(film) &&
-          slider('couplers', {
-            min: 0,
-            max: 100,
-            to: (v) => v / 100,
-            from: (amount) => amount * 100,
-            help: t('editor.couplersHelp')
-          })}
-        {/* A positive (slide) film is viewed directly. Printing it on negative
-            paper inverts it, so offer the switch only to undo that. */}
-        {(!positiveFilm(film) || !film.negative) && (
-          <ToggleRow
-            label={t('editor.negative')}
-            checked={film.negative}
-            onChange={(negative) => update({ negative })}
-          />
-        )}
-      </Section>
+      <button
+        type="button"
+        data-sidebar-page="darkroom"
+        onClick={() => onNavigate('darkroom')}
+        className="control-label flex w-full items-center justify-between rounded py-3 font-bold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50"
+      >
+        {t('editor.darkroom')}
+        <ChevronRight className="h-3.5 w-3.5 text-neutral-500" aria-hidden="true" />
+      </button>
     </>
   )
 }

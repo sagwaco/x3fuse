@@ -130,7 +130,7 @@ export function CropControls({
   return (
     <div className="space-y-4 border-t border-white/10 px-4 py-3">
       <div className="flex items-center justify-between gap-2">
-        <h2 className="control-label tracking-[0.16em]">{t('editor.geometry')}</h2>
+        <h2 className="control-label font-bold tracking-[0.16em]">{t('editor.geometry')}</h2>
         <Button
           variant="ghost"
           size="icon"
@@ -223,7 +223,9 @@ export function CropControls({
           {status}
         </p>
       )}
-      <p className="control-label pt-1 text-[10px] text-neutral-500">{t('editor.perspective')}</p>
+      <p className="control-label pt-1 text-[10px] font-bold text-neutral-500">
+        {t('editor.perspective')}
+      </p>
       <Adjustment
         label={t('editor.perspectiveVertical')}
         help={t('editor.perspectiveVerticalHelp')}

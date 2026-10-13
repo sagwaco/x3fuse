@@ -247,6 +247,8 @@
   "editor.detail": "ディテール",
   "editor.denoise": "ノイズ低減",
   "editor.sharpen": "シャープ",
+  "editor.cameraMatching": "カメラマッチング",
+  "editor.backToAdjustments": "調整に戻る",
   "editor.filmStock": "フィルム銘柄",
   "editor.paperStock": "印画紙",
   "editor.evPaper": "プリントの明るさ",

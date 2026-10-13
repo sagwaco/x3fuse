@@ -51,7 +51,7 @@ export function DenoiseControls({
         <p className="text-xs text-neutral-500">{t('denoise.bm3dHelp')}</p>
       )}
       <details className="space-y-3 text-xs text-neutral-300">
-        <summary className="control-label cursor-pointer select-none text-neutral-400">
+        <summary className="control-label cursor-pointer select-none font-bold text-neutral-400">
           {t('denoise.advanced')}
         </summary>
         <ToggleRow

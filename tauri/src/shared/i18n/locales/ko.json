@@ -247,6 +247,8 @@
   "editor.detail": "세부 사항",
   "editor.denoise": "노이즈 감소",
   "editor.sharpen": "선명도",
+  "editor.cameraMatching": "카메라 매칭",
+  "editor.backToAdjustments": "조정으로 돌아가기",
   "editor.filmStock": "필름 종류",
   "editor.paperStock": "인화지",
   "editor.evPaper": "인화 밝기",

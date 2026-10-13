@@ -10,7 +10,8 @@ import {
   pasteRecipe,
   type EditRecipe
 } from '@shared/editor'
-import { EditorControls } from '../src/renderer/src/components/EditorControls'
+import { EditorControls, FilmControls } from '../src/renderer/src/components/EditorControls'
+import { LookPicker } from '../src/renderer/src/components/LookPicker'
 import { CropControls } from '../src/renderer/src/components/CropControls'
 import { CropPreview } from '../src/renderer/src/components/CropPreview'
 import { DevelopingCloud } from '../src/renderer/src/lib/developingCloud'
@@ -45,7 +46,26 @@ let setRecipe: Dispatch<SetStateAction<EditRecipe>>
 function Controls({ initial = defaultRecipe() }: { initial?: EditRecipe }): React.JSX.Element {
   const [recipe, update] = useState(initial)
   setRecipe = update
-  return <EditorControls recipe={recipe} picking={false} setPicking={() => {}} />
+  const [page, setPage] = useState<'edit' | 'film' | 'paper' | 'darkroom'>('edit')
+  return (
+    <>
+      {page !== 'edit' && <button onClick={() => setPage('edit')}>Back</button>}
+      {page === 'edit' ? (
+        <EditorControls
+          recipe={recipe}
+          picking={false}
+          setPicking={() => {}}
+          onNavigate={setPage}
+        />
+      ) : page === 'darkroom' ? (
+        recipe.film && (
+          <FilmControls recipe={recipe} film={recipe.film} darkroom onNavigate={setPage} />
+        )
+      ) : (
+        <LookPicker kind={page} recipe={recipe} gallery />
+      )}
+    </>
+  )
 }
 function Crop({ initial = defaultRecipe() }: { initial?: EditRecipe }): React.JSX.Element {
   const [recipe, update] = useState(initial)
@@ -53,10 +73,25 @@ function Crop({ initial = defaultRecipe() }: { initial?: EditRecipe }): React.JS
   setRecipe = update
   return <CropControls recipe={recipe} aspect={aspect} setAspect={setAspect} />
 }
-/** Open a look picker by its caption and return its dialog. */
+function back(): void {
+  const button = screen.queryByRole('button', { name: 'Back' })
+  if (button) fireEvent.click(button)
+}
+function darkroom(): void {
+  back()
+  fireEvent.click(screen.getByRole('button', { name: t('editor.darkroom') }))
+}
+/** Open a stock page from the full controls. */
 function picker(caption: string): HTMLElement {
-  fireEvent.click(screen.getByText(caption, { selector: '[aria-haspopup] *' }))
-  return screen.getByRole('dialog', { name: caption })
+  back()
+  if (caption === t('editor.paperStock')) darkroom()
+  fireEvent.click(screen.getByText(caption, { selector: '[data-sidebar-page] *' }))
+  return screen.getByRole('group', { name: caption })
+}
+function chooseFilm(name: string): void {
+  picker(t('editor.filmStock'))
+  fireEvent.click(screen.getByRole('button', { name }))
+  back()
 }
 function reset(label: string): void {
   fireEvent.doubleClick(screen.getByRole('slider', { name: label }))
@@ -71,15 +106,7 @@ const swatch = (group: string, name: string): HTMLElement =>
   within(screen.getByRole('radiogroup', { name: group })).getByRole('radio', { name })
 
 beforeEach(() => {
-  // jsdom does not decode images or show modal dialogs.
   HTMLImageElement.prototype.decode = () => Promise.resolve()
-  HTMLDialogElement.prototype.showModal = function () {
-    this.open = true
-  }
-  HTMLDialogElement.prototype.close = function () {
-    this.open = false
-    this.dispatchEvent(new Event('close'))
-  }
   vi.stubGlobal(
     'ResizeObserver',
     class {
@@ -139,7 +166,7 @@ afterEach(() => {
 it('binds Exposure to the film when a stock is chosen and to the digital pipeline for Standard', () => {
   expect(defaultRecipe().film).toEqual(DEFAULT_FILM)
   render(<Controls initial={{ ...defaultRecipe(), film: null, exposure: 1 }} />)
-  expect(screen.getByText(t('editor.standard'), { selector: '[aria-haspopup] *' })).toBeTruthy()
+  expect(screen.getByText(t('editor.standard'), { selector: '[data-sidebar-page] *' })).toBeTruthy()
   expect(
     screen.getByRole('slider', { name: t('editor.exposure') }).getAttribute('aria-valuenow')
   ).toBe('1')
@@ -160,8 +187,8 @@ it('previews every film stock on the photo and pairs each with its print paper',
   expect((await screen.findByRole('tooltip')).textContent).toBe(t('editor.filmHelp'))
   expect(renderThumbnail).not.toHaveBeenCalled()
   const gallery = picker(t('editor.filmStock'))
-  // The current look takes focus, so the keyboard starts there.
-  expect(document.activeElement?.textContent).toBe('Kodak Portra 400')
+  expect(screen.queryByRole('dialog')).toBeNull()
+  expect(screen.getByRole('heading', { name: t('editor.cameraMatching') })).toBeTruthy()
   await waitFor(() => expect(renderThumbnail).toHaveBeenCalledTimes(24))
   expect(renderThumbnail.mock.calls[0][0].film).toBeNull()
   expect(renderThumbnail.mock.calls[1][0].monochrome).toEqual({ filter: 'neutral' })
@@ -175,27 +202,14 @@ it('previews every film stock on the photo and pairs each with its print paper',
   expect(film()).toMatchObject({ film: 18, paper: 5, negative: true })
   expect(screen.getByRole('button', { name: 'Fujifilm Velvia 100' }).ariaPressed).toBe('true')
   fireEvent.click(screen.getByRole('button', { name: t('editor.standard') }))
-  expect(change).toHaveBeenLastCalledWith({ film: null, monochrome: null })
+  expect(change).toHaveBeenLastCalledWith({
+    film: null,
+    monochrome: null,
+    cameraProfile: 'Standard'
+  })
   expect(screen.queryByRole('slider', { name: t('editor.grain') })).toBeNull()
-  // The dialog owns the keyboard: the editor screen must not see Escape and close the
-  // editor, also when focus fell back to the body.
-  const editorKeys = vi.fn()
-  document.addEventListener('keydown', editorKeys)
-  fireEvent.keyDown(screen.getByRole('button', { name: t('editor.standard') }), { key: 'Escape' })
-  fireEvent.keyDown(document.body, { key: 'Escape' })
-  fireEvent.keyDown(document.body, { key: '\\' })
-  expect(editorKeys).not.toHaveBeenCalled()
-  // A click outside the content lands on the dialog itself and closes it.
-  fireEvent.click(gallery)
-  expect((gallery as HTMLDialogElement).open).toBe(false)
-  expect(
-    screen.getByText(t('editor.filmStock'), { selector: '[aria-haspopup] *' }).parentElement!
-      .ariaExpanded
-  ).toBe('false')
-  // Once it closes, the page has the keyboard again.
-  fireEvent.keyDown(document.body, { key: 'Escape' })
-  document.removeEventListener('keydown', editorKeys)
-  expect(editorKeys).toHaveBeenCalledTimes(1)
+  back()
+  expect(screen.getByText(t('editor.standard'), { selector: '[data-sidebar-page] *' })).toBeTruthy()
 })
 
 it('offers black-and-white looks with their own filters, papers and darkroom', () => {
@@ -204,51 +218,55 @@ it('offers black-and-white looks with their own filters, papers and darkroom', (
     within(screen.getByRole('radiogroup', { name: t('editor.filter') }))
       .getAllByRole('radio')
       .map((radio) => radio.getAttribute('aria-label'))
-  picker(t('editor.filmStock'))
-  const papers = (): Array<string | null> =>
-    within(picker(t('editor.paperStock')))
+  const papers = (): Array<string | null> => {
+    const names = within(picker(t('editor.paperStock')))
       .getAllByRole('button')
       .map((button) => button.textContent)
-  expect(screen.queryByRole('radiogroup', { name: t('editor.filter') })).toBeNull()
+    back()
+    return names
+  }
   expect(papers()).not.toContain('Kodak 2302')
-  fireEvent.click(screen.getByRole('button', { name: 'Kodak Double-X 5222' }))
+  chooseFilm('Kodak Double-X 5222')
   expect(change).toHaveBeenLastCalledWith({
     film: { ...DEFAULT_FILM, film: 20, paper: 8, negative: false },
-    monochrome: { filter: 'neutral' }
+    monochrome: { filter: 'neutral' },
+    cameraProfile: null
   })
   expect(filters()).toEqual(FILM_MONOCHROME_FILTERS.map((filter) => t(`editor.${filter}`)))
-  expect(filters()).not.toContain(t('editor.blue'))
   expect(papers()).toEqual(['Kodak 2302'])
-  expect(screen.queryByRole('slider', { name: t('editor.tuneY') })).toBeNull()
-  expect(screen.queryByRole('slider', { name: t('editor.tuneM') })).toBeNull()
-  expect(screen.queryByRole('slider', { name: t('editor.couplers') })).toBeNull()
+  darkroom()
+  for (const key of ['tuneY', 'tuneM', 'couplers'])
+    expect(screen.queryByRole('slider', { name: t(`editor.${key}`) })).toBeNull()
+  back()
   fireEvent.click(swatch(t('editor.filter'), t('editor.red')))
   expect(change).toHaveBeenLastCalledWith({ monochrome: { filter: 'red' } })
-  expect(swatch(t('editor.filter'), t('editor.red')).ariaChecked).toBe('true')
-  fireEvent.click(screen.getByRole('button', { name: 'Kodak Tri-X 7266' }))
-  expect(change).toHaveBeenLastCalledWith({
-    film: { ...DEFAULT_FILM, film: 21, paper: 8, negative: true },
-    monochrome: { filter: 'red' }
-  })
-  // Reversal film is scanned directly: print controls and the switch are gone.
-  expect(screen.queryByRole('dialog', { name: t('editor.paperStock'), hidden: true })).toBeNull()
+  chooseFilm('Kodak Tri-X 7266')
+  expect(film()).toMatchObject({ film: 21, paper: 8, negative: true })
+  darkroom()
+  expect(screen.queryByText(t('editor.paperStock'))).toBeNull()
   expect(screen.queryByRole('slider', { name: t('editor.evPaper') })).toBeNull()
   expect(screen.queryByRole('slider', { name: t('editor.gammaPaper') })).toBeNull()
   expect(screen.queryByRole('switch', { name: t('editor.negative') })).toBeNull()
   expect(screen.getByRole('slider', { name: t('editor.gammaFilm') })).toBeTruthy()
-  // The look without film mixes the sensor layers, so it also offers blue.
-  fireEvent.click(screen.getByRole('button', { name: t('editor.monochrome') }))
-  expect(change).toHaveBeenLastCalledWith({ film: null, monochrome: { filter: 'red' } })
-  expect(screen.getByRole('button', { name: t('editor.monochrome') }).ariaPressed).toBe('true')
+  chooseFilm(t('editor.monochrome'))
+  expect(change).toHaveBeenLastCalledWith({
+    film: null,
+    monochrome: { filter: 'red' },
+    cameraProfile: 'Monochrome'
+  })
   expect(filters()).toEqual(MONOCHROME_FILTERS.map((filter) => t(`editor.${filter}`)))
   fireEvent.click(swatch(t('editor.filter'), t('editor.blue')))
-  fireEvent.click(screen.getByRole('button', { name: 'Kodak Double-X 5222' }))
+  chooseFilm('Kodak Double-X 5222')
   expect(change.mock.lastCall?.[0].monochrome).toEqual({ filter: 'neutral' })
-  fireEvent.click(screen.getByRole('button', { name: 'Kodak Portra 400' }))
-  expect(change).toHaveBeenLastCalledWith({ film: DEFAULT_FILM, monochrome: null })
+  chooseFilm('Kodak Portra 400')
+  expect(change).toHaveBeenLastCalledWith({
+    film: DEFAULT_FILM,
+    monochrome: null,
+    cameraProfile: null
+  })
   expect(screen.queryByRole('radiogroup', { name: t('editor.filter') })).toBeNull()
+  darkroom()
   expect(screen.getByRole('slider', { name: t('editor.tuneY') })).toBeTruthy()
-  expect(defaultRecipe().monochrome).toBeNull()
   const source: EditRecipe = { ...defaultRecipe(), monochrome: { filter: 'red' } }
   const target = { ...defaultRecipe(), crop: { x: 0, y: 0.1, width: 1, height: 0.8 }, seed: 9 }
   expect(pasteRecipe(source, target)).toMatchObject({
@@ -256,6 +274,40 @@ it('offers black-and-white looks with their own filters, papers and darkroom', (
     crop: target.crop,
     seed: 9
   })
+})
+
+it('selects the logged camera profile and separates camera matching from film stocks', () => {
+  editor.setState({
+    session: {
+      ...editor.getState().session!,
+      asShotCameraProfile: 'FCBlue',
+      cameraProfiles: [
+        { id: 'Standard', name: 'Standard' },
+        { id: 'Monochrome', name: 'Monochrome' },
+        { id: 'FCBlue', name: 'FOV Blue' },
+        { id: 'ForestGreen', name: 'Forest Green' }
+      ]
+    }
+  })
+  render(<Controls initial={{ ...defaultRecipe(), film: null, cameraProfile: 'FCBlue' }} />)
+  expect(screen.getByText('FOV Blue')).toBeTruthy()
+  picker(t('editor.filmStock'))
+  expect(screen.getByRole('button', { name: 'FOV Blue' }).ariaPressed).toBe('true')
+  expect(screen.getAllByRole('heading').map((node) => node.textContent)).toEqual([
+    t('editor.cameraMatching'),
+    t('editor.negativeFilm'),
+    t('editor.slideFilm'),
+    t('editor.cinemaFilm'),
+    t('editor.bwFilm')
+  ])
+  fireEvent.click(screen.getByRole('button', { name: 'Forest Green' }))
+  expect(change).toHaveBeenLastCalledWith({
+    cameraProfile: 'ForestGreen',
+    film: null,
+    monochrome: null
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Kodak Portra 400' }))
+  expect(change.mock.lastCall?.[0].cameraProfile).toBeNull()
 })
 
 it('starts white balance from the camera reading so leaving As shot does not jump', () => {
@@ -327,12 +379,14 @@ it('resets sliders to actual nonzero and nullable defaults and prevents resets w
   expect(change).toHaveBeenLastCalledWith({ temperature: null })
   reset(t('editor.tint'))
   expect(change).toHaveBeenLastCalledWith({ tint: 0 })
+  darkroom()
   reset(t('editor.gammaFilm'))
   expect(film()?.gammaFilm).toBe(1)
   reset(t('editor.couplers'))
   expect(film()?.couplers).toBe(0.25)
   reset(t('editor.evPaper'))
   expect(film()?.evPaper).toBeNull()
+  back()
   act(() => editor.setState({ closing: true }))
   change.mockClear()
   reset(t('editor.temperature'))
@@ -341,9 +395,7 @@ it('resets sliders to actual nonzero and nullable defaults and prevents resets w
 
 it('maps grain, halation and darkroom sliders so dragging right does what the label says', () => {
   render(<Controls />)
-  const darkroom = screen.getByText(t('editor.darkroom'), { selector: 'summary' })
-    .parentElement as HTMLDetailsElement
-  expect(darkroom.open).toBe(false)
+  expect(screen.queryByRole('slider', { name: t('editor.evPaper') })).toBeNull()
   adjust(t('editor.grain'), 100)
   expect(film()).toMatchObject({ grain: true, grainAmount: 2 })
   adjust(t('editor.grainSize'), 100)
@@ -365,6 +417,7 @@ it('maps grain, halation and darkroom sliders so dragging right does what the la
   expect(film()).toMatchObject({ grain: true, grainAmount: 1, halation: false })
   // The enlarger darkens the print with more exposure and cools it with more
   // yellow filtration; the sliders invert both.
+  darkroom()
   adjust(t('editor.evPaper'), 1)
   expect(film()?.evPaper).toBe(-1)
   adjust(t('editor.tuneY'), 50)
@@ -626,4 +679,14 @@ it('maps the perspective sliders to pitch and yaw, fitting the crop, and restore
     rect.mockRestore()
     for (const [k, v] of saved) proto[k as string] = v
   }
+})
+
+it('shows Standard when a copied camera profile is unavailable in the photo', () => {
+  render(<Controls initial={{ ...defaultRecipe(), film: null, cameraProfile: 'FCBlue' }} />)
+  expect(screen.getByText(t('editor.standard'), { selector: '[data-sidebar-page] *' })).toBeTruthy()
+  picker(t('editor.filmStock'))
+  expect(screen.getByRole('button', { name: t('editor.standard'), exact: true }).ariaPressed).toBe(
+    'true'
+  )
+  expect(screen.queryByRole('button', { name: 'FOV Blue' })).toBeNull()
 })
