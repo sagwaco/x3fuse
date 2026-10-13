@@ -1,3 +1,11 @@
+# 0.1.8 - Beta 1.1.8
+
+- Update the converter to x3fuse-core 0.2.1 and add DNG and TIFF conversion for Sigma SD9, SD10, and SD14 files. SD9 and SD10 files have no embedded JPEG preview to extract.
+- Add NLM and BM3D denoise controls, separate luminance and color noise settings, strength and NLM window controls, and automatic, CPU, or GPU processing.
+- Update default NLM processing to reduce color noise with luminance noise reduction off. Existing intensity settings are retained; denoised output can differ from earlier releases.
+- Fix large conversion batches exhausting the file limit by closing subprocess pipe descriptors after use.
+- Leave unavailable camera metadata unset instead of substituting Merrill camera details when metadata extraction fails.
+
 # 0.1.7 - Beta 1.1.7
 
 - Fix the primary Convert button processing only one file after adding multiple files; it now converts the entire queue.
