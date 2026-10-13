@@ -12,6 +12,7 @@ struct SettingsView: View {
   @State private var settings = ConversionSettings.shared
   @State private var loggingService = LoggingService.shared
   @State private var lastDenoiseIntensity: Int = 10
+  @State private var advancedDenoiseExpanded = false
   @EnvironmentObject private var updaterService: UpdaterService
 
   var body: some View {
@@ -390,8 +391,19 @@ struct SettingsView: View {
         }
         .disabled(!settings.denoiseLuminance && !settings.denoiseChroma)
 
-        DisclosureGroup(LocalizationService.settingsDenoiseAdvanced) {
+        DisclosureGroup(isExpanded: $advancedDenoiseExpanded) {
           advancedDenoiseControls
+        } label: {
+          Button {
+            withAnimation {
+              advancedDenoiseExpanded.toggle()
+            }
+          } label: {
+            Text(LocalizationService.settingsDenoiseAdvanced)
+              .frame(maxWidth: .infinity, alignment: .leading)
+              .contentShape(Rectangle())
+          }
+          .buttonStyle(.plain)
         }
       }
     }
@@ -435,26 +447,38 @@ struct SettingsView: View {
 
       if settings.denoiseAlgorithm == .nlm {
         Stepper(value: $settings.nlmLumaPatch, in: 1...9, step: 2) {
-          LabeledContent(LocalizationService.settingsDenoiseNlmLumaPatch) {
+          HStack {
+            Text(LocalizationService.settingsDenoiseNlmLumaPatch)
+            Spacer()
             Text(settings.nlmLumaPatch, format: .number)
+              .monospacedDigit()
           }
         }
         .disabled(!settings.denoiseLuminance)
         Stepper(value: $settings.nlmLumaSearch, in: 1...31, step: 2) {
-          LabeledContent(LocalizationService.settingsDenoiseNlmLumaSearch) {
+          HStack {
+            Text(LocalizationService.settingsDenoiseNlmLumaSearch)
+            Spacer()
             Text(settings.nlmLumaSearch, format: .number)
+              .monospacedDigit()
           }
         }
         .disabled(!settings.denoiseLuminance)
         Stepper(value: $settings.nlmChromaPatch, in: 1...9, step: 2) {
-          LabeledContent(LocalizationService.settingsDenoiseNlmChromaPatch) {
+          HStack {
+            Text(LocalizationService.settingsDenoiseNlmChromaPatch)
+            Spacer()
             Text(settings.nlmChromaPatch, format: .number)
+              .monospacedDigit()
           }
         }
         .disabled(!settings.denoiseChroma)
         Stepper(value: $settings.nlmChromaSearch, in: 1...31, step: 2) {
-          LabeledContent(LocalizationService.settingsDenoiseNlmChromaSearch) {
+          HStack {
+            Text(LocalizationService.settingsDenoiseNlmChromaSearch)
+            Spacer()
             Text(settings.nlmChromaSearch, format: .number)
+              .monospacedDigit()
           }
         }
         .disabled(!settings.denoiseChroma)
