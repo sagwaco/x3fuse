@@ -100,6 +100,50 @@ html[data-platform='darwin'] .window-toolbar {
   }
 }
 
+/* Status overlays on the canvas. Order of fallbacks: native glass material,
+   CSS glass, solid dark. The dark tint keeps text readable on bright photos. */
+.glass-overlay {
+  background-color: rgb(20 20 20 / 0.8);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.18);
+}
+
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+  .glass-overlay {
+    /* At least 4.5:1 for white text, even over a white photo. */
+    background-color: rgb(20 20 20 / 0.6);
+    -webkit-backdrop-filter: blur(14px) saturate(1.8);
+    backdrop-filter: blur(14px) saturate(1.8);
+    box-shadow:
+      inset 0 0.5px 0 rgb(255 255 255 / 0.35),
+      inset 0 0 0 1px rgb(255 255 255 / 0.14),
+      0 4px 14px rgb(0 0 0 / 0.3);
+    text-shadow: 0 1px 2px rgb(0 0 0 / 0.5);
+  }
+}
+
+@supports (-apple-visual-effect: -apple-system-glass-material) {
+  html[data-platform='darwin'] .glass-overlay {
+    background-color: rgb(0 0 0 / 0.12);
+    -apple-visual-effect: -apple-system-glass-material;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    box-shadow: none;
+  }
+}
+
+/* Same specificity as the darwin rule above, and later, so it wins there too. */
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .glass-overlay,
+  html[data-platform='darwin'] .glass-overlay {
+    -apple-visual-effect: none;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background-color: #1c1c1c;
+    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.25);
+    text-shadow: none;
+  }
+}
+
 /* Thin, unobtrusive scrollbars to match a native desktop feel. */
 ::-webkit-scrollbar {
   width: 10px;

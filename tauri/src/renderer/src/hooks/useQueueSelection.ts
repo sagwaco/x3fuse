@@ -111,6 +111,8 @@ export function useQueueSelection(ordered: X3FFileDTO[], nav?: ArrowNav): QueueS
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent | globalThis.KeyboardEvent): void => {
+      // A child that used the key, such as the crop canvas nudging its frame, keeps it.
+      if (e.defaultPrevented) return
       const store = useQueueStore.getState()
       if ((e.key === 'Backspace' || e.key === 'Delete') && store.selectedIds.size > 0) {
         e.preventDefault()

@@ -93,6 +93,18 @@ fn probe(webview: &Webview, input: &str) -> Result<Value, String> {
             #[cfg(target_os = "macos")]
             {
                 result["animatedZoom"] = check_animated_zoom(webview)?;
+                // Animation frames follow the display, not WebKit's 60 per second default.
+                if let Some(rate) = result["editor"]["cloudFrameRate"].as_f64() {
+                    let display = display_refresh_rate(webview)?;
+                    result["editor"]["displayRefreshRate"] = display.into();
+                    if let Some(display) = display.filter(|display| rate < display * 0.9) {
+                        result["ok"] = false.into();
+                        result["error"] = format!(
+                            "The cloud drew {rate} frames per second on a {display} Hz display"
+                        )
+                        .into();
+                    }
+                }
             }
             return Ok(result);
         }
@@ -158,6 +170,35 @@ fn check_resize(webview: &Webview) -> Result<Value, String> {
         }
     }
     Ok(json!(samples))
+}
+
+/// The refresh rate of the window's display, or None when Low Power Mode or
+/// heat can make macOS give fewer animation frames.
+#[cfg(target_os = "macos")]
+fn display_refresh_rate(webview: &Webview) -> Result<Option<f64>, String> {
+    let (send, receive) = mpsc::channel();
+    webview
+        .with_webview(move |platform| unsafe {
+            use objc2::{class, msg_send, runtime::AnyObject};
+            let process: *mut AnyObject = msg_send![class!(NSProcessInfo), processInfo];
+            let low_power: bool = msg_send![process, isLowPowerModeEnabled];
+            // 2 is NSProcessInfoThermalStateSerious.
+            let thermal: isize = msg_send![process, thermalState];
+            let hot = thermal >= 2;
+            let window = &*platform.ns_window().cast::<AnyObject>();
+            let screen: *mut AnyObject = msg_send![window, screen];
+            let rate = if low_power || hot || screen.is_null() {
+                None
+            } else {
+                let rate: isize = msg_send![screen, maximumFramesPerSecond];
+                Some(rate as f64)
+            };
+            let _ = send.send(rate);
+        })
+        .map_err(|e| e.to_string())?;
+    receive
+        .recv_timeout(Duration::from_secs(2))
+        .map_err(|e| format!("The display rate did not answer: {e}"))
 }
 
 #[cfg(target_os = "macos")]

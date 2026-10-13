@@ -1,11 +1,19 @@
 import { drawImageWithOrientation } from './orientation'
-import { ipc } from './ipc'
+import {
+  cancelPreview,
+  fetchPreview,
+  isEditedFrame,
+  isEmbeddedPreview,
+  openFrame,
+  ownedFrame,
+  type Frame,
+  type ImageRequest
+} from './frames'
 
 const SMALL_BUDGET = 16 * 1024 * 1024
 const FULL_BUDGET = 64 * 1024 * 1024
 const small = new Map<string, HTMLCanvasElement>()
 let smallBytes = 0
-type ImageRequest = { controller: AbortController; end?: () => Promise<void>; cancelled?: boolean }
 type SmallJob = ImageRequest & {
   key: string
   url: string
@@ -20,34 +28,6 @@ type SmallJob = ImageRequest & {
 const smallJobs = new Map<string, SmallJob>()
 const smallQueue: SmallJob[] = []
 let smallRunning = 0
-
-async function fetchPreview(source: string, request: ImageRequest): Promise<Response> {
-  let url = source
-  if (/^(x3f-edit:\/\/|https?:\/\/x3f-edit\.localhost([/:]|$))/i.test(url)) {
-    const { requestId } = await ipc.invoke('editor:beginImageRequest')
-    let ending: Promise<void> | undefined
-    request.end = () => (ending ??= ipc.invoke('editor:endImageRequest', { requestId }))
-    const uri = new URL(url)
-    uri.searchParams.set('requestId', requestId)
-    url = uri.toString()
-  }
-  if (request.cancelled || request.controller.signal.aborted)
-    throw new DOMException('Cancelled', 'AbortError')
-  return fetch(url, { signal: request.controller.signal })
-}
-
-function cancelPreview(source: string, request: ImageRequest): void {
-  // Embedded JPEG extraction cannot be cancelled; keep its native concurrency bounded.
-  if (/^(x3f-preview:\/\/|https?:\/\/x3f-preview\.localhost([/:]|$))/i.test(source)) return
-  request.cancelled = true
-  if (request.end) {
-    // Wait for native cancellation acknowledgement before freeing a transport slot.
-    void request.end().then(
-      () => request.controller.abort(),
-      () => {}
-    )
-  } else request.controller.abort()
-}
 
 export const smallPreviewKey = (url: string, orientation = 1, aspectRatio?: number): string =>
   JSON.stringify([url, orientation, aspectRatio])
@@ -76,22 +56,27 @@ function pumpSmall(): void {
     smallRunning++
     void (async () => {
       try {
-        const response = await fetchPreview(job.url, job)
-        if (!job.consumers.size) return
-        if (!response.ok) throw new Error(`preview ${response.status}`)
-        const blob = await response.blob()
-        if (!job.consumers.size) return
-        const bitmap = await createImageBitmap(blob, { imageOrientation: 'none' })
+        let frame: Frame
+        // Edited frames need no decode.
+        if (isEditedFrame(job.url)) frame = await openFrame(job.url, job)
+        else {
+          const response = await fetchPreview(job.url, job)
+          if (!job.consumers.size) return
+          if (!response.ok) throw new Error(`preview ${response.status}`)
+          const blob = await response.blob()
+          if (!job.consumers.size) return
+          frame = ownedFrame(await createImageBitmap(blob, { imageOrientation: 'none' }))
+        }
         const canvas = document.createElement('canvas')
         try {
           if (!job.consumers.size) return
           if (!canvas.getContext('2d')) throw new Error('No preview canvas')
-          drawImageWithOrientation(canvas, bitmap, job.orientation, {
+          drawImageWithOrientation(canvas, frame.image, job.orientation, {
             maxEdge: 640,
             aspectRatio: job.aspectRatio
           })
         } finally {
-          bitmap.close()
+          frame.release()
         }
         small.set(job.key, canvas)
         smallBytes += canvas.width * canvas.height * 4
@@ -150,8 +135,7 @@ export function loadSmallPreview(
           // StrictMode/view handoffs can reacquire this fetch before the microtask.
           queueMicrotask(() => {
             if (current.consumers.size) return
-            if (/^(x3f-preview:\/\/|https?:\/\/x3f-preview\.localhost([/:]|$))/i.test(current.url))
-              return
+            if (isEmbeddedPreview(current.url)) return
             if (smallJobs.get(current.key) === current) smallJobs.delete(current.key)
             cancelPreview(current.url, current)
           })

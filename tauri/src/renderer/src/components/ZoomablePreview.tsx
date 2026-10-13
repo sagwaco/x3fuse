@@ -4,12 +4,20 @@ import { t } from '../lib/strings'
 import { FilmstripImage } from './FilmstripImage'
 import { usePreviewStore } from '../stores/previewStore'
 import type { PreviewRegion } from '@shared/editor'
+import type { PreviewCache } from '../lib/previewTiles'
+import { loadFrame } from '../lib/frames'
 
 type View = { zoom: number | null; x: number; y: number }
 type ZoomOptions = { x?: number; y?: number; animate?: boolean; center?: boolean }
 const FIT: View = { zoom: null, x: 0, y: 0 }
 const MAX_ZOOM = 8
 type Tile = { url: string; region: PreviewRegion; viewport: PreviewRegion }
+type CacheLoad = { url: string; x: number; y: number; onMiss?: (url: string) => void }
+const CACHE_LOADS = 4
+/** Milliseconds a view stays still before it goes to the renderer. */
+const REST = 120
+/** The same after an eased zoom, which runs for 240 ms in CSS. */
+const EASED_REST = 260
 
 /** Zoom is relative to the oriented JPEG's natural dimensions; null follows Fit. */
 export function ZoomablePreview({
@@ -17,13 +25,28 @@ export function ZoomablePreview({
   onImagePoint,
   naturalSize,
   tile,
-  onViewportChange
+  cache,
+  onCacheMiss,
+  onViewportChange,
+  onViewportMove,
+  onPaint
 }: {
   file: X3FFileDTO
   onImagePoint?: (x: number, y: number) => void
   naturalSize?: { width: number; height: number }
   tile?: Tile | null
+  /**
+   * Sharp renders of the current recipe around the viewport. They go over
+   * `tile`, which can still show an older recipe until its replacement decodes.
+   */
+  cache?: PreviewCache | null
+  onCacheMiss?: (url: string) => void
+  /** Gets the visible region when a new picture shows and when the view rests. */
   onViewportChange?: (region: PreviewRegion | null) => void
+  /** Called for each change of a view that has not rested yet. */
+  onViewportMove?: () => void
+  /** Called after the image paints its pixels. */
+  onPaint?: () => void
 }): React.JSX.Element {
   const viewportRef = useRef<HTMLDivElement>(null)
   const mediaRef = useRef<HTMLDivElement>(null)
@@ -32,7 +55,14 @@ export function ZoomablePreview({
   const moved = useRef(false)
   const [dragging, setDragging] = useState(false)
   const [size, setSize] = useState({ width: 0, height: 0 })
-  const [image, setImage] = useState({ width: 0, height: 0 })
+  const [loaded, setLoaded] = useState({ width: 0, height: 0 })
+  // Known dimensions apply in the same render as the picture they belong to.
+  const naturalWidth = naturalSize?.width ?? 0
+  const naturalHeight = naturalSize?.height ?? 0
+  const image = useMemo(
+    () => (naturalWidth && naturalHeight ? { width: naturalWidth, height: naturalHeight } : loaded),
+    [naturalWidth, naturalHeight, loaded]
+  )
   const [view, setView] = useState<View>(FIT)
   const latestView = useRef<View>(FIT)
   const frame = useRef<number | null>(null)
@@ -188,9 +218,24 @@ export function ZoomablePreview({
     }
   }, [canPan, image, size, scale, current.x, current.y])
 
-  // Publish the actual viewport before paint, including after a geometry refresh.
+  // A new picture gets its viewport before paint. A moving view sends it when
+  // the view rests: a render for each gesture frame keeps the GPU busy, and the
+  // compositor then skips frames.
+  const published = useRef<string | null | undefined>(null)
+  const move = useRef(onViewportMove)
+  move.current = onViewportMove
   useLayoutEffect(() => {
-    onViewportChange?.(visibleRegion)
+    if (published.current !== file.displayPreviewUrl) {
+      published.current = file.displayPreviewUrl
+      onViewportChange?.(visibleRegion)
+      return
+    }
+    move.current?.()
+    const timer = setTimeout(
+      () => onViewportChange?.(visibleRegion),
+      animateZoom.current ? EASED_REST : REST
+    )
+    return () => clearTimeout(timer)
   }, [onViewportChange, visibleRegion, file.displayPreviewUrl])
 
   useEffect(() => {
@@ -238,18 +283,20 @@ export function ZoomablePreview({
     setDragging(false)
   }
 
-  const onDimensions = useCallback(
+  const onDimensions = useCallback(({ width, height }: { width: number; height: number }): void => {
+    setLoaded((previous) =>
+      previous.width === width && previous.height === height ? previous : { width, height }
+    )
+  }, [])
+  const paint = useRef(onPaint)
+  paint.current = onPaint
+  const painted = useCallback(
     (size: { width: number; height: number }): void => {
-      const { width, height } = naturalSize ?? size
-      setImage((previous) =>
-        previous.width === width && previous.height === height ? previous : { width, height }
-      )
+      onDimensions(size)
+      paint.current?.()
     },
-    [naturalSize]
+    [onDimensions]
   )
-  useEffect(() => {
-    if (naturalSize) onDimensions(naturalSize)
-  }, [naturalSize, onDimensions])
   const fullResolution = ready && scale > fit
   const content = useMemo(
     () => (
@@ -258,10 +305,10 @@ export function ZoomablePreview({
         fullResolution={fullResolution}
         containerClassName="h-full w-full"
         className="h-full w-full object-contain"
-        onDimensions={onDimensions}
+        onDimensions={painted}
       />
     ),
-    [file, fullResolution, onDimensions]
+    [file, fullResolution, painted]
   )
 
   return (
@@ -361,6 +408,7 @@ export function ZoomablePreview({
         >
           {content}
           {tile && visibleRegion && <PreviewTile tile={tile} />}
+          {cache && visibleRegion && <CacheLayer cache={cache} onMiss={onCacheMiss} />}
         </div>
       </div>
     </div>
@@ -371,35 +419,118 @@ export function ZoomablePreview({
 function PreviewTile({ tile }: { tile: Tile }): React.JSX.Element {
   const canvas = useRef<HTMLCanvasElement>(null)
   useLayoutEffect(() => {
-    let cancelled = false
-    const image = new Image()
-    image.crossOrigin = 'anonymous'
-    image.decoding = 'async'
-    image.src = tile.url
-    void image
-      .decode()
-      .then(() => {
-        const element = canvas.current
-        const context = element?.getContext('2d')
-        if (cancelled || !element || !context) return
-        element.width = image.naturalWidth
-        element.height = image.naturalHeight
-        context.drawImage(image, 0, 0)
-        Object.assign(element.style, {
-          left: `${tile.region.x * 100}%`,
-          top: `${tile.region.y * 100}%`,
-          width: `${tile.region.width * 100}%`,
-          height: `${tile.region.height * 100}%`
-        })
-        element.dataset.previewUrl = tile.url
+    const controller = new AbortController()
+    void loadFrame(tile.url, controller.signal)
+      .then((frame) => {
+        try {
+          const element = canvas.current
+          const context = element?.getContext('2d')
+          if (controller.signal.aborted || !element || !context) return
+          element.width = frame.width
+          element.height = frame.height
+          context.drawImage(frame.image, 0, 0)
+          Object.assign(element.style, {
+            left: `${tile.region.x * 100}%`,
+            top: `${tile.region.y * 100}%`,
+            width: `${tile.region.width * 100}%`,
+            height: `${tile.region.height * 100}%`
+          })
+          element.dataset.previewUrl = tile.url
+        } finally {
+          frame.release()
+        }
       })
       .catch(() => {
-        // Retain previously decoded pixels if a replacement was cancelled.
+        // Retain previously drawn pixels if a replacement was cancelled.
       })
-    return () => {
-      cancelled = true
-      image.src = ''
-    }
+    return () => controller.abort()
   }, [tile])
   return <canvas ref={canvas} data-editor-tile aria-hidden="true" className="absolute" />
+}
+
+/**
+ * Paint cached native renders into one canvas of the native image size. They
+ * all use one recipe, so where they overlap their pixels agree and the paint
+ * order does not matter.
+ */
+function CacheLayer({
+  cache,
+  onMiss
+}: {
+  cache: PreviewCache
+  onMiss?: (url: string) => void
+}): React.JSX.Element {
+  const canvas = useRef<HTMLCanvasElement>(null)
+  const painted = useRef({ key: '', urls: new Set<string>() })
+  const loading = useRef(new Set<AbortController>())
+  const queue = useRef<CacheLoad[]>([])
+  // Few loads at a time bound the pixels in flight; the rest wait in order.
+  const pump = useCallback(function next(): void {
+    while (loading.current.size < CACHE_LOADS && queue.current.length) {
+      const { url, x, y, onMiss } = queue.current.shift()!
+      const key = painted.current.key
+      const load = new AbortController()
+      loading.current.add(load)
+      void loadFrame(url, load.signal)
+        .then((frame) => {
+          try {
+            if (painted.current.key !== key) return
+            canvas.current?.getContext('2d')?.drawImage(frame.image, x, y)
+          } finally {
+            frame.release()
+          }
+        })
+        .catch(() => {
+          if (painted.current.key !== key) return
+          // A later render can bring the same URL back.
+          painted.current.urls.delete(url)
+          onMiss?.(url)
+        })
+        .finally(() => {
+          loading.current.delete(load)
+          next()
+        })
+    }
+  }, [])
+  useLayoutEffect(() => {
+    const element = canvas.current!
+    if (painted.current.key !== cache.key) {
+      loading.current.forEach((load) => load.abort())
+      loading.current.clear()
+      queue.current = []
+      // Setting the size also clears the canvas.
+      element.width = cache.width
+      element.height = cache.height
+      painted.current = { key: cache.key, urls: new Set() }
+    }
+    for (const { url, region } of cache.renders) {
+      if (painted.current.urls.has(url)) continue
+      painted.current.urls.add(url)
+      const x = Math.round(region.x * cache.width)
+      const y = Math.round(region.y * cache.height)
+      queue.current.push({ url, x, y, onMiss })
+    }
+    pump()
+  }, [cache, onMiss, pump])
+  useEffect(() => {
+    const loads = loading.current
+    const element = canvas.current
+    return () => {
+      queue.current = []
+      loads.forEach((load) => load.abort())
+      loads.clear()
+      // Give the large backing store back now, not at garbage collection. A
+      // remount (React StrictMode) paints again from the start.
+      if (element) element.width = element.height = 0
+      painted.current = { key: '', urls: new Set() }
+    }
+  }, [])
+  return (
+    <canvas
+      ref={canvas}
+      data-editor-cache
+      aria-hidden="true"
+      className="absolute inset-0 h-full w-full"
+    />
+  )
 }

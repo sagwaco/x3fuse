@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { displayPreviewUrl } from '@shared/preview'
 import { prefetchFitPreviews } from '../lib/fitPreviews'
+import { ipc } from '../lib/ipc'
 import { sortFiles } from '../lib/sortFiles'
 import { useQueueStore } from '../stores/queueStore'
 import { useSettingsStore } from '../stores/settingsStore'
@@ -73,10 +74,16 @@ export function MainWindow(): React.JSX.Element {
   )
 }
 
+/** How long a selection rests before its RAW is prepared for Edit. */
+const WARM_DELAY = 300
+
 /** Prepare Fit images while browsing any view; keep background work out of exports. */
 export function PreviewPreparation(): null {
   const files = useQueueStore((state) => state.files)
   const activeId = useQueueStore((state) => state.activeId)
+  const activePath = useQueueStore(
+    (state) => state.files.find((file) => file.id === state.activeId && !file.pending)?.path
+  )
   const isProcessing = useQueueStore((state) => state.isProcessing)
   const isPreparing = useQueueStore((state) => state.isPreparing)
   const screen = useNavStore((state) => state.screen)
@@ -129,6 +136,14 @@ export function PreviewPreparation(): null {
       clearTimeout(timer)
     }
   }, [activeId, previewSources, isProcessing, isPreparing, screen, editorBusy])
+  // Prepare the selected RAW while it rests, so that Edit opens it without a decode.
+  useEffect(() => {
+    if (!activePath || screen !== 'queue' || isProcessing || isPreparing || editorBusy) return
+    const timer = setTimeout(() => {
+      ipc.invoke('editor:warm', { path: activePath }).catch(() => {})
+    }, WARM_DELAY)
+    return () => clearTimeout(timer)
+  }, [activePath, screen, isProcessing, isPreparing, editorBusy])
   // Reordering/adding photos keeps useful work running. Only pause/unmount cancels it.
   useEffect(() => () => stop.current?.(), [])
 

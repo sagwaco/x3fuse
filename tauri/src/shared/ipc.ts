@@ -82,6 +82,7 @@ export interface IpcRequestMap {
   'editor:beginImageRequest': { payload: void; result: { requestId: string } }
   'editor:endImageRequest': { payload: { requestId: string }; result: void }
   'editor:open': { payload: { path: string }; result: EditorSession }
+  'editor:warm': { payload: { path: string }; result: void }
   'editor:render': {
     payload: {
       sessionId: string
@@ -193,6 +194,7 @@ export const IPC_REQUEST_CHANNELS: IpcRequestChannel[] = [
   'editor:finishClose',
   'editor:preview',
   'editor:open',
+  'editor:warm',
   'editor:render',
   'editor:cancelRender',
   'editor:beginImageRequest',

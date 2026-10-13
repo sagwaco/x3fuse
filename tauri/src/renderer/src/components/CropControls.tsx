@@ -1,8 +1,12 @@
-import { RectangleHorizontal, RotateCcw, RotateCcwSquare, RotateCwSquare } from 'lucide-react'
+import { useContext, useRef, useState } from 'react'
+import { MoveVertical, RectangleHorizontal, Spline } from 'lucide-react'
 import type { EditRecipe } from '@shared/editor'
 import { useEditorStore } from '../stores/editorStore'
 import { t } from '../lib/strings'
-import { PRESETS, FULL, outputRatio, ratioCrop } from '../lib/cropGeometry'
+import { PRESETS, FULL, centeredCrop, fitCrop, outputRatio, ratioCrop } from '../lib/cropGeometry'
+import { level, upright } from '../lib/upright'
+import { useScopeImage } from '../hooks/useScopeImage'
+import { DevelopingCloud } from '../lib/developingCloud'
 import { Button } from './ui/button'
 import { Adjustment } from './EditorControls'
 
@@ -32,10 +36,19 @@ export function CropControls({
 }): React.JSX.Element {
   const change = useEditorStore((state) => state.change)
   const commit = useEditorStore((state) => state.commit)
-  const setCropping = useEditorStore((state) => state.setCropping)
   const asShotCrop = useEditorStore((state) => state.session?.asShotCrop ?? null)
   const W = useEditorStore((state) => state.preview?.sourceWidth)
   const H = useEditorStore((state) => state.preview?.sourceHeight)
+  const url = useEditorStore((state) => state.preview?.url)
+  const rendering = useEditorStore((state) => state.rendering)
+  const pose = useEditorStore((state) => state.previewPose)
+  // The crop-mode preview is the corrected picture, unstraightened and uncropped.
+  // Reading the picture waits until the developing cloud leaves.
+  const picture = useScopeImage(useContext(DevelopingCloud) ? undefined : url)
+  const [status, setStatus] = useState('')
+  // A failed or pending render leaves old pixels; only analyze a preview made with these angles.
+  const posed = pose?.pitch === recipe.pitch && pose?.yaw === recipe.yaw
+  const ready = typeof picture === 'object' && picture !== null && !rendering && posed && !!W && !!H
   const crop = recipe.crop ?? FULL
   const rotation = recipe.rotation
   const current = W && H ? outputRatio(crop, rotation, W, H) : 1
@@ -50,13 +63,69 @@ export function CropControls({
       ratio: portrait ? b / a : a / b
     }))
   ]
+  /**
+   * Shrink the crop when a new angle or perspective would show empty corners.
+   * `from` is the crop to fit; a slider gesture passes the crop it started with.
+   */
+  const withFit = (
+    patch: Partial<EditRecipe>,
+    from: EditRecipe['crop'] = recipe.crop
+  ): Partial<EditRecipe> => {
+    if (!W || !H) return patch
+    const next = { ...recipe, ...patch }
+    const base = 'crop' in patch ? (patch.crop ?? null) : from
+    const fitted = fitCrop(base ?? FULL, next.straighten, next.pitch, next.yaw, W, H)
+    const crop = fitted === (base ?? FULL) ? base : fitted
+    return crop === recipe.crop && !('crop' in patch) ? patch : { ...patch, crop }
+  }
+  // Slider moves refit from the crop at the start of the drag, so dragging back
+  // restores the frame. A drag ends with a saved change or the commit at release.
+  // A drag that returns to its start value has no commit, so any other crop
+  // change (presets, undo, the toolbar) also starts a new drag.
+  const gesture = useRef<{ start: EditRecipe['crop']; last: EditRecipe['crop'] } | null>(null)
+  const slide = (patch: Partial<EditRecipe>, save: boolean): void => {
+    if (gesture.current?.last !== recipe.crop)
+      gesture.current = { start: recipe.crop, last: recipe.crop }
+    const next = withFit(patch, gesture.current.start)
+    gesture.current.last = 'crop' in next ? (next.crop ?? null) : recipe.crop
+    change(next, save)
+    if (save) gesture.current = null
+  }
+  const release = (): void => {
+    gesture.current = null
+    commit()
+  }
   const choose = (value: string): void => {
     setAspect(value)
-    if (value === 'asShot') change({ crop: asShotCrop })
+    if (value === 'asShot') change(withFit({ crop: asShotCrop }))
     else if (value !== 'free' && W && H) {
       const [a, b] = value.split(':').map(Number)
-      change({ crop: ratioCrop(portrait ? b / a : a / b, rotation, W, H) })
+      change(withFit({ crop: ratioCrop(portrait ? b / a : a / b, rotation, W, H) }))
     }
+  }
+  const clamp = (value: number, limit: number): number => Math.max(-limit, Math.min(limit, value))
+  const straightenPicture = (): void => {
+    const angle = ready ? level(picture, { pitch: recipe.pitch, yaw: recipe.yaw }, W!, H!) : null
+    setStatus(angle === null ? t('editor.noLines') : '')
+    if (angle !== null) change(withFit({ straighten: clamp(angle, 45) }), true)
+  }
+  const uprightPicture = (): void => {
+    const found = ready ? upright(picture, { pitch: recipe.pitch, yaw: recipe.yaw }, W, H) : null
+    setStatus(found ? '' : t('editor.noLines'))
+    if (!found) return
+    const straighten = clamp(found.straighten, 45)
+    const pitch = clamp(found.pitch, 40)
+    const yaw = clamp(found.yaw, 40)
+    const aspect = (crop.width * W!) / (crop.height * H!)
+    change(
+      {
+        straighten,
+        pitch,
+        yaw,
+        crop: centeredCrop(aspect, straighten, pitch, yaw, W!, H!) ?? crop
+      },
+      true
+    )
   }
   return (
     <div className="mx-3 mt-3 space-y-4 rounded-xl border border-white/10 px-4 py-3">
@@ -71,7 +140,9 @@ export function CropControls({
           aria-label={t('editor.swapOrientation')}
           title={t('editor.swapOrientation')}
           disabled={!W || !H || Math.abs(current - 1) < 0.001}
-          onClick={() => W && H && change({ crop: ratioCrop(1 / current, rotation, W, H) })}
+          onClick={() =>
+            W && H && change(withFit({ crop: ratioCrop(1 / current, rotation, W, H) }))
+          }
         >
           <RectangleHorizontal
             aria-hidden="true"
@@ -106,49 +177,60 @@ export function CropControls({
         min={-45}
         max={45}
         step={0.1}
-        change={(straighten, save) => change({ straighten }, save)}
-        reset={() => change({ straighten: 0 })}
-        commit={commit}
+        change={(straighten, save) => slide({ straighten }, save)}
+        reset={() => change(withFit({ straighten: 0 }))}
+        commit={release}
       />
       <div className="flex flex-wrap gap-2">
         <Button
           size="sm"
           variant="bordered"
-          aria-label={t('editor.rotateLeft')}
-          title={t('editor.rotateLeft')}
-          onClick={() => change({ rotation: (rotation + 3) % 4 })}
+          title={t('editor.levelPictureHint')}
+          disabled={!ready}
+          onClick={straightenPicture}
         >
-          <RotateCcwSquare aria-hidden="true" className="h-3.5 w-3.5" />
+          <Spline aria-hidden="true" className="h-3.5 w-3.5" />
+          {t('editor.levelPicture')}
         </Button>
         <Button
           size="sm"
           variant="bordered"
-          aria-label={t('editor.rotate')}
-          title={t('editor.rotate')}
-          onClick={() => change({ rotation: (rotation + 1) % 4 })}
+          title={t('editor.uprightHint')}
+          disabled={!ready}
+          onClick={uprightPicture}
         >
-          <RotateCwSquare aria-hidden="true" className="h-3.5 w-3.5" />
-        </Button>
-        <Button
-          size="sm"
-          variant="bordered"
-          onClick={() => {
-            change({ crop: asShotCrop, straighten: 0, rotation: 0 })
-            setAspect('asShot')
-          }}
-        >
-          <RotateCcw aria-hidden="true" className="h-3.5 w-3.5" />
-          {t('editor.resetCrop')}
-        </Button>
-        <Button
-          size="sm"
-          variant="prominent"
-          className="ml-auto"
-          onClick={() => setCropping(false)}
-        >
-          {t('editor.applyCrop')}
+          <MoveVertical aria-hidden="true" className="h-3.5 w-3.5" />
+          {t('editor.upright')}
         </Button>
       </div>
+      {status && (
+        <p role="status" className="text-[11px] leading-snug text-neutral-400">
+          {status}
+        </p>
+      )}
+      <p className="control-label pt-1 text-[10px] text-neutral-500">{t('editor.perspective')}</p>
+      <Adjustment
+        label={t('editor.perspectiveVertical')}
+        help={t('editor.perspectiveVerticalHelp')}
+        value={recipe.pitch}
+        min={-40}
+        max={40}
+        step={0.1}
+        change={(pitch, save) => slide({ pitch }, save)}
+        reset={() => change(withFit({ pitch: 0 }))}
+        commit={release}
+      />
+      <Adjustment
+        label={t('editor.perspectiveHorizontal')}
+        help={t('editor.perspectiveHorizontalHelp')}
+        value={recipe.yaw}
+        min={-40}
+        max={40}
+        step={0.1}
+        change={(yaw, save) => slide({ yaw }, save)}
+        reset={() => change(withFit({ yaw: 0 }))}
+        commit={release}
+      />
       <p className="text-[11px] leading-snug text-neutral-500">{t('editor.cropCanvas')}</p>
     </div>
   )

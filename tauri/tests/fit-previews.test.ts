@@ -2,8 +2,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FitPreview } from '../src/renderer/src/lib/fitPreviews'
 
-const { transport } = vi.hoisted(() => ({ transport: vi.fn() }))
+const { transport, loadFrame } = vi.hoisted(() => ({ transport: vi.fn(), loadFrame: vi.fn() }))
 vi.mock('../src/renderer/src/lib/previewImages', () => ({ subscribeFullPreviewBlob: transport }))
+vi.mock('../src/renderer/src/lib/frames', async (original) => ({
+  ...(await original<typeof import('../src/renderer/src/lib/frames')>()),
+  loadFrame
+}))
 let service: typeof import('../src/renderer/src/lib/fitPreviews')
 const workers: FakeWorker[] = []
 class FakeWorker {
@@ -65,71 +69,51 @@ afterEach(() => {
 })
 
 describe('fit previews', () => {
-  it('greedily warms edited PNGs and hands decoded pixels directly to the viewer', async () => {
-    const sources = ['x3f-edit://localhost/edited-a', 'http://x3f-edit.localhost/edited-b']
+  it('warms edited frames without the worker and releases them on eviction', async () => {
+    const frames: Array<{ image: ImageBitmap; release: () => void }> = []
+    loadFrame.mockImplementation(async () => {
+      const image = { width: 4096, height: 4096, close: vi.fn() } as unknown as ImageBitmap
+      const frame = { image, width: 4096, height: 4096, release: vi.fn() }
+      frames.push(frame)
+      return frame
+    })
+    const sources = [
+      'x3f-edit://localhost/edited-a',
+      'http://x3f-edit.localhost/edited-b',
+      'x3f-edit://localhost/edited-c'
+    ]
     const stop = service.prefetchFitPreviews(sources)
-    await settle()
-    for (const source of sources) {
-      expect(transport.mock.calls.at(-1)![0]).toBe(source)
-      expect(workers[0].postMessage.mock.calls.at(-1)![0].preserveSource).toBe(true)
-      workers[0].reply(output())
-      await settle()
-    }
+    await vi.waitFor(() => expect(service.cachedFitPreview(sources[2])).toBeDefined())
+    expect(loadFrame.mock.calls.map(([source]) => source)).toEqual(sources)
+    expect(transport).not.toHaveBeenCalled()
+    expect(workers).toHaveLength(0)
     const ready = vi.fn()
     const release = service.subscribeFitPreview(sources[0], ready, vi.fn())
-    expect(ready).toHaveBeenCalledWith(service.cachedFitPreview(sources[0]))
-    expect(transport).toHaveBeenCalledTimes(2)
-    release()
+    expect(ready.mock.calls[0][0]).toMatchObject({ image: frames[0].image, width: 4096 })
     stop()
-  })
-
-  it('preserves native PNG bytes in the worker without a second JPEG encode', async () => {
-    const bitmap = { width: 2048, height: 1365, close: vi.fn() }
-    vi.stubGlobal(
-      'createImageBitmap',
-      vi.fn(async () => bitmap)
-    )
-    const canvas = vi.fn()
-    vi.stubGlobal('OffscreenCanvas', canvas)
-    const post = vi.spyOn(self, 'postMessage').mockImplementation(() => {})
-    const previous = self.onmessage
-    try {
-      await import('../src/renderer/src/lib/fitPreview.worker')
-      const blob = new Blob(['native png'], { type: 'image/png' })
-      await self.onmessage!({ data: { id: 5, blob, preserveSource: true } } as MessageEvent)
-      expect(canvas).not.toHaveBeenCalled()
-      expect(post.mock.calls[0][0]).toEqual({
-        id: 5,
-        blob,
-        image: bitmap,
-        width: 2048,
-        height: 1365
-      })
-      expect(bitmap.close).not.toHaveBeenCalled()
-    } finally {
-      self.onmessage = previous
-    }
-  })
-
-  it('preserves native PNG bytes when browser support requires the canvas fallback', async () => {
-    const bitmap = { width: 2048, height: 1365, close: vi.fn() }
-    vi.stubGlobal(
-      'createImageBitmap',
-      vi.fn(async () => bitmap)
-    )
-    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
-      drawImage: vi.fn()
-    } as unknown as CanvasRenderingContext2D)
-    const encode = vi.spyOn(HTMLCanvasElement.prototype, 'toBlob')
-    const ready = vi.fn()
-    const release = service.subscribeFitPreview('x3f-edit://localhost/fallback', ready, vi.fn())
-    await settle()
-    workers[0].reply({ failed: true })
-    await settle()
-    expect(ready).toHaveBeenCalledOnce()
-    expect(encode).not.toHaveBeenCalled()
-    expect(bitmap.close).toHaveBeenCalledOnce()
+    // 64 MB each: only the frame in use stays once the prefetch set is gone.
+    expect(frames[0].release).not.toHaveBeenCalled()
+    expect(frames[1].release).toHaveBeenCalledOnce()
+    expect(frames[2].release).toHaveBeenCalledOnce()
     release()
+    expect(frames[0].release).not.toHaveBeenCalled()
+  })
+
+  it('cancels an edited frame load when its viewer leaves and releases late pixels', async () => {
+    let finish!: () => void
+    const frame = { image: { width: 8, height: 8 }, width: 8, height: 8, release: vi.fn() }
+    loadFrame.mockImplementation(() => new Promise((resolve) => (finish = () => resolve(frame))))
+    const ready = vi.fn()
+    const release = service.subscribeFitPreview('x3f-edit://localhost/leave', ready, vi.fn())
+    await settle()
+    const signal = loadFrame.mock.calls[0][1] as AbortSignal
+    release()
+    expect(signal.aborted).toBe(true)
+    finish()
+    await settle()
+    expect(ready).not.toHaveBeenCalled()
+    expect(frame.release).toHaveBeenCalledOnce()
+    expect(service.cachedFitPreview('x3f-edit://localhost/leave')).toBeUndefined()
   })
 
   it('deduplicates pending preparation, preserves original dimensions, and provides synchronous decoded hits', async () => {
@@ -376,5 +360,43 @@ describe('fit previews', () => {
     } finally {
       self.onmessage = previous
     }
+  })
+
+  it('passes a saved medium through the worker without a second encode', async () => {
+    const decoded = { width: 2048, height: 1365, close: vi.fn() }
+    vi.stubGlobal(
+      'createImageBitmap',
+      vi.fn(async () => decoded)
+    )
+    const canvas = vi.fn()
+    vi.stubGlobal('OffscreenCanvas', canvas)
+    const post = vi.spyOn(self, 'postMessage').mockImplementation(() => {})
+    const previous = self.onmessage
+    try {
+      await import('../src/renderer/src/lib/fitPreview.worker')
+      const blob = new Blob(['medium'], { type: 'image/jpeg' })
+      const original = { width: 6000, height: 4000 }
+      await self.onmessage!({ data: { id: 4, blob, original } } as MessageEvent)
+      expect(canvas).not.toHaveBeenCalled()
+      expect(post.mock.calls[0][0]).toEqual({ id: 4, blob, image: decoded, ...original })
+      expect(decoded.close).not.toHaveBeenCalled()
+    } finally {
+      self.onmessage = previous
+    }
+  })
+
+  it('prefetches rendered frames only in the warm set and embedded JPEGs everywhere', async () => {
+    loadFrame.mockImplementation(async () => ({
+      image: { width: 8, height: 8, close: vi.fn() },
+      width: 8,
+      height: 8,
+      release: vi.fn()
+    }))
+    const rendered = [0, 1, 2, 3, 4, 5].map((i) => `x3f-edit://localhost/edited-${i}`)
+    const stop = service.prefetchFitPreviews([...rendered, 'x3f-preview://localhost/embedded'])
+    await vi.waitFor(() => expect(transport).toHaveBeenCalledOnce())
+    expect(loadFrame.mock.calls.map(([source]) => source)).toEqual(rendered.slice(0, 4))
+    expect(transport.mock.calls[0][0]).toBe('x3f-preview://localhost/embedded')
+    stop()
   })
 })

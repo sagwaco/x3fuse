@@ -1,4 +1,5 @@
 import { subscribeFullPreviewBlob } from './previewImages'
+import { isEditedFrame, loadFrame, type Frame } from './frames'
 
 export type FitPreview = {
   image: ImageBitmap | HTMLCanvasElement
@@ -7,7 +8,7 @@ export type FitPreview = {
   height: number
 }
 type Encoded = { blob: Blob; width: number; height: number; users: number }
-type Decoded = FitPreview & { users: number }
+type Decoded = FitPreview & { users: number; release: () => void }
 type Result = FitPreview & { blob: Blob }
 type Consumer = { ready: (preview: Decoded) => void; error: () => void }
 type Job = {
@@ -44,7 +45,7 @@ function trim(): void {
     if (entry.users || warm.has(source)) continue
     decoded.delete(source)
     decodedBytes -= entry.image.width * entry.image.height * 4
-    releaseImage(entry.image)
+    entry.release()
   }
   for (const [source, entry] of encoded) {
     if (encodedBytes <= 128 * 1024 * 1024) break
@@ -71,7 +72,7 @@ function disableWorker(): void {
   waiting = undefined
 }
 
-function renderWorker(blob: Blob, original?: Encoded, preserveSource = false): Promise<Result> {
+function renderWorker(blob: Blob, original?: Encoded): Promise<Result> {
   return new Promise((resolve, reject) => {
     try {
       if (!worker) {
@@ -104,7 +105,6 @@ function renderWorker(blob: Blob, original?: Encoded, preserveSource = false): P
       worker.postMessage({
         id,
         blob,
-        preserveSource,
         original: original && { width: original.width, height: original.height }
       })
     } catch {
@@ -117,8 +117,7 @@ function renderWorker(blob: Blob, original?: Encoded, preserveSource = false): P
 async function renderFallback(
   blob: Blob,
   original: Encoded | undefined,
-  job: Job,
-  preserveSource: boolean
+  job: Job
 ): Promise<Result> {
   let image: ImageBitmap | HTMLImageElement
   let url: string | undefined
@@ -150,16 +149,14 @@ async function renderFallback(
     context.drawImage(image, 0, 0, canvas.width, canvas.height)
     const medium =
       original?.blob ??
-      (preserveSource
-        ? blob
-        : await new Promise<Blob>((resolve, reject) => {
-            canvas.toBlob(
-              (result) =>
-                result ? resolve(result) : reject(new Error('Could not encode fit preview')),
-              'image/jpeg',
-              0.9
-            )
-          }))
+      (await new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob(
+          (result) =>
+            result ? resolve(result) : reject(new Error('Could not encode fit preview')),
+          'image/jpeg',
+          0.9
+        )
+      }))
     return { image: canvas, blob: medium, width, height }
   } finally {
     if ('close' in image) image.close()
@@ -170,6 +167,47 @@ async function renderFallback(
 function cancel(job: Job): void {
   job.cancelled = true
   job.cancelWaiting?.()
+}
+
+/** Native editor frames are already sized and color-managed; draw their pixels as they are. */
+async function renderedFrame(job: Job): Promise<Frame> {
+  const controller = new AbortController()
+  job.cancelWaiting = () => controller.abort()
+  try {
+    return await loadFrame(job.source, controller.signal)
+  } finally {
+    job.cancelWaiting = undefined
+  }
+}
+
+async function decodeSource(job: Job): Promise<Decoded> {
+  const saved = encoded.get(job.source)
+  if (saved) {
+    encoded.delete(job.source)
+    encoded.set(job.source, saved)
+  }
+  const blob = saved?.blob ?? (await sourceBlob(job))
+  if (!blob || job.cancelled) throw new Error('Cancelled or unavailable')
+  let result: Result
+  if (!workerDisabled && typeof Worker !== 'undefined') {
+    try {
+      result = await renderWorker(blob, saved)
+    } catch {
+      if (job.cancelled) throw new Error('Cancelled')
+      result = await renderFallback(blob, saved, job)
+    }
+  } else result = await renderFallback(blob, saved, job)
+  if (!saved && !job.cancelled) {
+    encoded.set(job.source, {
+      blob: result.blob,
+      width: result.width,
+      height: result.height,
+      users: 0
+    })
+    encodedBytes += result.blob.size
+  }
+  const { image, width, height } = result
+  return { image, width, height, users: 0, release: () => releaseImage(image) }
 }
 
 async function sourceBlob(job: Job): Promise<Blob | undefined> {
@@ -225,38 +263,15 @@ function pump(): void {
   running = current
   void (async () => {
     try {
-      const saved = encoded.get(current.source)
-      if (saved) {
-        encoded.delete(current.source)
-        encoded.set(current.source, saved)
-      }
-      const blob = saved?.blob ?? (await sourceBlob(current))
-      if (!blob || current.cancelled) throw new Error('Cancelled or unavailable')
-      // Native editor frames are already sized and color-managed; preserve lossless pixels.
-      const preserveSource = /^(x3f-edit:\/\/|http:\/\/x3f-edit\.localhost\/)/.test(current.source)
-      let result: Result
-      if (!workerDisabled && typeof Worker !== 'undefined') {
-        try {
-          result = await renderWorker(blob, saved, preserveSource)
-        } catch {
-          if (current.cancelled) throw new Error('Cancelled')
-          result = await renderFallback(blob, saved, current, preserveSource)
-        }
-      } else result = await renderFallback(blob, saved, current, preserveSource)
+      let entry: Decoded
+      if (isEditedFrame(current.source)) {
+        const frame = await renderedFrame(current)
+        entry = { ...frame, users: 0 }
+      } else entry = await decodeSource(current)
       if (current.cancelled) {
-        releaseImage(result.image)
+        entry.release()
         return
       }
-      if (!saved) {
-        encoded.set(current.source, {
-          blob: result.blob,
-          width: result.width,
-          height: result.height,
-          users: 0
-        })
-        encodedBytes += result.blob.size
-      }
-      const entry = { image: result.image, width: result.width, height: result.height, users: 0 }
       decoded.set(current.source, entry)
       decodedBytes += entry.image.width * entry.image.height * 4
       prepared.add(current.source)
@@ -344,12 +359,14 @@ export function prefetchFitPreviews(sources: string[]): () => void {
   warm = new Set(candidates.slice(0, 4))
   trim()
   for (const source of prepared) if (!current.has(source)) prepared.delete(source)
-  targets = candidates
+  // Rendered frames keep no compact copy; beyond the warm set the decoded cache would drop them.
+  const queue = candidates.filter((source) => warm.has(source) || !isEditedFrame(source))
+  targets = queue
   if (running?.priority === 'background' && !running.consumers.size && !current.has(running.source))
     cancel(running)
   queueMicrotask(pump)
   return () => {
-    if (targets !== candidates) return
+    if (targets !== queue) return
     targets = []
     prefetchSources = new Set()
     warm = new Set()

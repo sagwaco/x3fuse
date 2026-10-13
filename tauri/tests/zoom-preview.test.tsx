@@ -9,8 +9,33 @@ import { ZoomControls } from '../src/renderer/src/components/ZoomControls'
 import { PreviewMinimap } from '../src/renderer/src/components/PreviewMinimap'
 import { usePreviewStore } from '../src/renderer/src/stores/previewStore'
 
-const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }))
+const { invoke, loadFrame } = vi.hoisted(() => ({ invoke: vi.fn(), loadFrame: vi.fn() }))
 vi.mock('../src/renderer/src/lib/ipc', () => ({ ipc: { invoke } }))
+vi.mock('../src/renderer/src/lib/frames', () => ({ loadFrame }))
+type PendingFrame = {
+  url: string
+  signal: AbortSignal
+  frame: { image: ImageBitmap; width: number; height: number; release: () => void }
+  finish: () => void
+  fail: () => void
+}
+function holdFrames(): PendingFrame[] {
+  const pending: PendingFrame[] = []
+  loadFrame.mockImplementation(
+    (url: string, signal: AbortSignal) =>
+      new Promise((resolve, reject) => {
+        const frame = { image: {} as ImageBitmap, width: 800, height: 600, release: vi.fn() }
+        pending.push({
+          url,
+          signal,
+          frame,
+          finish: () => resolve(frame),
+          fail: () => reject(new Error('gone'))
+        })
+      })
+  )
+  return pending
+}
 vi.mock('../src/renderer/src/components/OrientedImage', () => ({
   OrientedImage: ({
     file,
@@ -137,6 +162,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup()
+  vi.useRealTimers()
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
 })
@@ -186,6 +212,16 @@ async function chooseZoom(value: string): Promise<void> {
 }
 
 describe('filmstrip zoom preview', () => {
+  it('reports a paint only after the image draws, not for known dimensions', () => {
+    const onPaint = vi.fn()
+    render(
+      <ZoomablePreview file={file} naturalSize={{ width: 6000, height: 4000 }} onPaint={onPaint} />
+    )
+    expect(onPaint).not.toHaveBeenCalled()
+    loadImage()
+    expect(onPaint).toHaveBeenCalledOnce()
+  })
+
   it('uses the saved edited thumbnail for the Info navigator before and during zoom', () => {
     const edited = {
       ...file,
@@ -725,55 +761,78 @@ describe('filmstrip zoom preview', () => {
 })
 
 describe('editor viewport tiles', () => {
-  it('publishes zoom and pan regions immediately, preserves native geometry, and restores Fit', () => {
+  it('publishes the viewport for a new picture at once and for a moving view when it rests', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     const onViewportChange = vi.fn()
-    const result = render(
+    const onViewportMove = vi.fn()
+    const preview = (
+      url?: string,
+      naturalSize = { width: 6000, height: 4000 }
+    ): React.JSX.Element => (
       <ZoomablePreview
-        file={file}
-        naturalSize={{ width: 6000, height: 4000 }}
+        file={url ? { ...file, displayPreviewUrl: url } : file}
+        naturalSize={naturalSize}
         onViewportChange={onViewportChange}
+        onViewportMove={onViewportMove}
       />
     )
+    const result = render(preview())
     loadImage(512, 341)
     const media = document.querySelector<HTMLElement>('.preview-image')!
     expect(media.style.width).toBe('6000px')
+    expect(onViewportChange).toHaveBeenCalledOnce()
     expect(onViewportChange).toHaveBeenLastCalledWith(null)
+    // An eased zoom goes to the renderer after its animation.
     act(() => usePreviewStore.getState().controls!.zoomTo(1))
-    let area = onViewportChange.mock.lastCall![0]
+    act(() => vi.advanceTimersByTime(259))
+    expect(onViewportChange).toHaveBeenCalledOnce()
+    act(() => vi.advanceTimersByTime(1))
+    const area = onViewportChange.mock.lastCall![0]
     expect(area.width).toBeCloseTo(800 / 6000)
     expect(area.height).toBeCloseTo(600 / 4000)
+    // A gesture sends one region, after the view rests.
     const surface = screen.getByRole('region', { name: 'Image preview' })
-    wheel(surface, { deltaX: 100, deltaY: 0 })
+    onViewportMove.mockClear()
+    for (let step = 0; step < 5; step++) {
+      wheel(surface, { deltaX: 20, deltaY: 0 })
+      act(() => vi.advanceTimersByTime(100))
+    }
+    expect(onViewportMove).toHaveBeenCalledTimes(5)
+    expect(onViewportChange).toHaveBeenCalledTimes(2)
+    act(() => vi.advanceTimersByTime(20))
+    expect(onViewportChange).toHaveBeenCalledTimes(3)
     const moved = onViewportChange.mock.lastCall![0]
     expect(moved.x).toBeGreaterThan(area.x)
     expect(moved.width).toBe(area.width)
-    onViewportChange.mockClear()
-    result.rerender(
-      <ZoomablePreview
-        file={{ ...file, displayPreviewUrl: 'new-geometry-base' }}
-        naturalSize={{ width: 6000, height: 4000 }}
-        onViewportChange={onViewportChange}
-      />
-    )
-    expect(onViewportChange).toHaveBeenCalledWith(moved)
+    // A new picture, as after a geometry change, gets the region before paint
+    // and replaces a region that waits for rest.
+    wheel(surface, { deltaX: -20, deltaY: 0 })
+    result.rerender(preview('new-geometry-base'))
+    expect(onViewportChange).toHaveBeenCalledTimes(4)
+    expect(onViewportChange.mock.lastCall![0].x).toBeCloseTo(moved.x - 20 / 6000)
+    act(() => vi.advanceTimersByTime(500))
+    expect(onViewportChange).toHaveBeenCalledTimes(4)
+    // A rotated picture brings its dimensions in the same render as its URL.
+    result.rerender(preview('rotated-base', { width: 4000, height: 6000 }))
+    expect(onViewportChange).toHaveBeenCalledTimes(5)
+    expect(onViewportChange.mock.lastCall![0].width).toBeCloseTo(800 / 4000)
+    expect(onViewportChange.mock.lastCall![0].height).toBeCloseTo(600 / 6000)
+    act(() => vi.advanceTimersByTime(500))
+    expect(onViewportChange).toHaveBeenCalledTimes(5)
     act(() => usePreviewStore.getState().controls!.zoomTo(null))
+    act(() => vi.advanceTimersByTime(260))
+    expect(onViewportChange).toHaveBeenCalledTimes(6)
     expect(onViewportChange).toHaveBeenLastCalledWith(null)
-    area = usePreviewStore.getState().minimap
-    expect(area).toBeNull()
+    expect(usePreviewStore.getState().minimap).toBeNull()
+    // A view that unmounts before it rests sends nothing.
+    act(() => usePreviewStore.getState().controls!.zoomTo(1))
+    result.unmount()
+    act(() => vi.advanceTimersByTime(500))
+    expect(onViewportChange).toHaveBeenCalledTimes(6)
   })
 
   it('retains decoded native pixels at their image coordinates through pans and replacement decoding', async () => {
-    const pending: Array<{ image: HTMLImageElement; finish: () => void }> = []
-    Object.defineProperty(HTMLImageElement.prototype, 'decode', {
-      configurable: true,
-      value: vi.fn(function (this: HTMLImageElement) {
-        Object.defineProperties(this, {
-          naturalWidth: { value: 800 },
-          naturalHeight: { value: 600 }
-        })
-        return new Promise<void>((finish) => pending.push({ image: this, finish }))
-      })
-    })
+    const pending = holdFrames()
     const draw = vi.fn()
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
       drawImage: draw
@@ -790,13 +849,17 @@ describe('editor viewport tiles', () => {
     await act(async () => pending[0].finish())
     expect(canvas.dataset.previewUrl).toBe('tile-1')
     expect(canvas.style.left).toBe(`${first.region.x * 100}%`)
-    expect(draw).toHaveBeenCalledWith(pending[0].image, 0, 0)
+    expect(draw).toHaveBeenCalledWith(pending[0].frame.image, 0, 0)
+    expect(pending[0].frame.release).toHaveBeenCalledOnce()
     result.rerender(<ZoomablePreview file={file} tile={{ ...first, url: 'tile-2' }} />)
     expect(result.container.querySelector('[data-editor-tile]')).toBe(canvas)
     expect(canvas.dataset.previewUrl).toBe('tile-1')
     result.rerender(<ZoomablePreview file={file} tile={{ ...first, url: 'tile-3' }} />)
+    // A replaced tile cancels its load; late pixels are released, not drawn.
+    expect(pending[1].signal.aborted).toBe(true)
     await act(async () => pending[1].finish())
     expect(canvas.dataset.previewUrl).toBe('tile-1')
+    expect(pending[1].frame.release).toHaveBeenCalledOnce()
     await act(async () => pending[2].finish())
     expect(canvas.dataset.previewUrl).toBe('tile-3')
     const previousPlacement = canvas.style.cssText
@@ -825,5 +888,118 @@ describe('editor viewport tiles', () => {
     expect(canvas.style.cssText).not.toBe(previousPlacement)
     act(() => usePreviewStore.getState().controls!.zoomTo(null))
     expect(result.container.querySelector('[data-editor-tile]')).toBeNull()
+  })
+
+  it('paints cached renders over the tile at native pixels, clears for a new recipe and reports misses', async () => {
+    const pending = holdFrames()
+    const draw = vi.fn()
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+      drawImage: draw
+    } as unknown as CanvasRenderingContext2D)
+    const miss = vi.fn()
+    const size = { width: 1600, height: 1200 }
+    const region = (x: number, y: number) => ({
+      x: x / 1600,
+      y: y / 1200,
+      width: 0.25,
+      height: 0.25
+    })
+    const cache = {
+      key: 'one',
+      ...size,
+      renders: [{ url: 'block-1', region: region(400, 300) }]
+    }
+    const result = render(
+      <ZoomablePreview file={file} naturalSize={size} cache={cache} onCacheMiss={miss} />
+    )
+    loadImage()
+    // Fit shows no cache layer; it needs a zoomed view.
+    expect(result.container.querySelector('[data-editor-cache]')).toBeNull()
+    act(() => usePreviewStore.getState().controls!.zoomTo(1))
+    const layer = result.container.querySelector<HTMLCanvasElement>('[data-editor-cache]')!
+    expect([layer.width, layer.height]).toEqual([1600, 1200])
+    result.rerender(
+      <ZoomablePreview
+        file={file}
+        naturalSize={size}
+        tile={{ url: 'tile', region: region(0, 0), viewport: region(0, 0) }}
+        cache={cache}
+        onCacheMiss={miss}
+      />
+    )
+    // The cache goes over the tile, which can hold an older recipe.
+    const tile = result.container.querySelector('[data-editor-tile]')!
+    expect(tile.compareDocumentPosition(layer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    const block = pending.find(({ url }) => url === 'block-1')!
+    await act(async () => block.finish())
+    expect(draw).toHaveBeenCalledWith(block.frame.image, 400, 300)
+    // A new render of the same recipe adds to the canvas; nothing is painted twice.
+    const more = { ...cache, renders: [...cache.renders, { url: 'block-2', region: region(0, 0) }] }
+    result.rerender(
+      <ZoomablePreview file={file} naturalSize={size} cache={more} onCacheMiss={miss} />
+    )
+    const second = pending.find(({ url }) => url === 'block-2')!
+    await act(async () => second.fail())
+    expect(miss).toHaveBeenCalledWith('block-2')
+    expect(pending.filter(({ url }) => url === 'block-1')).toHaveLength(1)
+    // The store drops the miss; a later render of the same URL loads again.
+    result.rerender(
+      <ZoomablePreview file={file} naturalSize={size} cache={cache} onCacheMiss={miss} />
+    )
+    result.rerender(
+      <ZoomablePreview file={file} naturalSize={size} cache={{ ...more }} onCacheMiss={miss} />
+    )
+    expect(pending.filter(({ url }) => url === 'block-2')).toHaveLength(2)
+    const late = { ...more, renders: [...more.renders, { url: 'block-4', region: region(0, 0) }] }
+    result.rerender(
+      <ZoomablePreview file={file} naturalSize={size} cache={late} onCacheMiss={miss} />
+    )
+    const old = pending.find(({ url }) => url === 'block-4')!
+    // A new recipe clears the canvas and ignores decodes for the old one.
+    const next = { key: 'two', ...size, renders: [{ url: 'block-3', region: region(800, 600) }] }
+    result.rerender(
+      <ZoomablePreview file={file} naturalSize={size} cache={next} onCacheMiss={miss} />
+    )
+    expect(layer.width).toBe(1600)
+    const third = pending.find(({ url }) => url === 'block-3')!
+    draw.mockClear()
+    expect(old.signal.aborted).toBe(true)
+    await act(async () => old.finish())
+    await act(async () => third.finish())
+    expect(draw).toHaveBeenCalledTimes(1)
+    expect(draw).toHaveBeenCalledWith(third.frame.image, 800, 600)
+    expect(old.frame.release).toHaveBeenCalledOnce()
+    expect(third.frame.release).toHaveBeenCalledOnce()
+    act(() => usePreviewStore.getState().controls!.zoomTo(null))
+    expect(result.container.querySelector('[data-editor-cache]')).toBeNull()
+    expect([layer.width, layer.height]).toEqual([0, 0])
+  })
+
+  it('loads at most four cached renders at a time and drops the queue for a new recipe', async () => {
+    const pending = holdFrames()
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+      drawImage: vi.fn()
+    } as unknown as CanvasRenderingContext2D)
+    const size = { width: 1600, height: 1200 }
+    const region = { x: 0, y: 0, width: 0.25, height: 0.25 }
+    const renders = [1, 2, 3, 4, 5, 6].map((i) => ({ url: `block-${i}`, region }))
+    const cache = { key: 'one', ...size, renders }
+    const result = render(<ZoomablePreview file={file} naturalSize={size} cache={cache} />)
+    loadImage()
+    act(() => usePreviewStore.getState().controls!.zoomTo(1))
+    expect(pending.map(({ url }) => url)).toEqual(['block-1', 'block-2', 'block-3', 'block-4'])
+    await act(async () => pending[0].finish())
+    expect(pending.map(({ url }) => url)).toEqual([
+      'block-1',
+      'block-2',
+      'block-3',
+      'block-4',
+      'block-5'
+    ])
+    const next = { key: 'two', ...size, renders: [{ url: 'block-7', region }] }
+    result.rerender(<ZoomablePreview file={file} naturalSize={size} cache={next} />)
+    expect(pending.slice(1, 5).every(({ signal }) => signal.aborted)).toBe(true)
+    await act(async () => pending.slice(1, 5).forEach(({ finish }) => finish()))
+    expect(pending.map(({ url }) => url).slice(5)).toEqual(['block-7'])
   })
 })

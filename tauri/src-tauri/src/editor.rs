@@ -19,6 +19,33 @@ use std::{
 use x3f_core::{prepare_scene_linear, SceneLinearImage, SceneLinearOptions};
 use x3f_render::{Crop, EditRecipe, PreparedImage, RenderOptions, Renderer};
 
+/// Runs RAW preparation. On macOS it runs in a pool at utility QoS. At the
+/// default QoS it takes the cores that WebKit needs to draw frames, and the
+/// developing cloud skips frames. Batch conversion keeps the global pool.
+fn prepare_in_background<R: Send>(work: impl FnOnce() -> R + Send) -> R {
+    #[cfg(target_os = "macos")]
+    {
+        unsafe extern "C" {
+            fn pthread_set_qos_class_self_np(class: u32, priority: i32) -> i32;
+        }
+        const QOS_CLASS_UTILITY: u32 = 0x11;
+        static POOL: std::sync::OnceLock<Option<rayon::ThreadPool>> = std::sync::OnceLock::new();
+        let pool = POOL.get_or_init(|| {
+            rayon::ThreadPoolBuilder::new()
+                .thread_name(|index| format!("raw-prepare-{index}"))
+                .start_handler(|_| unsafe {
+                    pthread_set_qos_class_self_np(QOS_CLASS_UTILITY, 0);
+                })
+                .build()
+                .ok()
+        });
+        if let Some(pool) = pool {
+            return pool.install(work);
+        }
+    }
+    work()
+}
+
 #[derive(Clone)]
 struct Session {
     id: String,
@@ -76,30 +103,42 @@ struct Asset {
 struct Assets {
     recipes: HashMap<String, Asset>,
     recipe_order: VecDeque<String>,
+    /// Encoded PNG previews.
+    pngs: Images,
+    /// Raw RGBA8 frame bodies. A frame is read once after its render, and
+    /// again only to encode a PNG on demand. 128 MiB holds two 4096 px frames
+    /// or eleven 2048 px frames.
+    frames: Images,
+}
+/// Bodies by preview ID, least recently used first out, at most 128 MiB and 128 entries.
+#[derive(Default)]
+struct Images {
     images: HashMap<String, Arc<Vec<u8>>>,
-    image_order: VecDeque<String>,
+    order: VecDeque<String>,
     bytes: usize,
 }
-impl Assets {
+impl Images {
+    const BUDGET: usize = 128 * 1024 * 1024;
     fn get(&mut self, id: &str) -> Option<Arc<Vec<u8>>> {
         let image = self.images.get(id)?.clone();
-        self.image_order.retain(|entry| entry != id);
-        self.image_order.push_back(id.into());
+        self.order.retain(|entry| entry != id);
+        self.order.push_back(id.into());
         Some(image)
     }
-    fn put(&mut self, id: String, bytes: Vec<u8>) {
-        if bytes.len() > 128 * 1024 * 1024 {
+    fn put(&mut self, id: String, bytes: impl Into<Arc<Vec<u8>>>) {
+        let bytes = bytes.into();
+        if bytes.len() > Self::BUDGET {
             return;
         }
         if let Some(old) = self.images.remove(&id) {
             self.bytes -= old.len();
         }
-        self.image_order.retain(|entry| entry != &id);
+        self.order.retain(|entry| entry != &id);
         self.bytes += bytes.len();
-        self.images.insert(id.clone(), Arc::new(bytes));
-        self.image_order.push_back(id);
-        while self.bytes > 128 * 1024 * 1024 || self.images.len() > 128 {
-            let Some(old) = self.image_order.pop_front() else {
+        self.images.insert(id.clone(), bytes);
+        self.order.push_back(id);
+        while self.bytes > Self::BUDGET || self.images.len() > 128 {
+            let Some(old) = self.order.pop_front() else {
                 break;
             };
             if let Some(bytes) = self.images.remove(&old) {
@@ -108,16 +147,19 @@ impl Assets {
         }
     }
 }
-
 pub struct Editor {
     pub edits: Edits,
     session: Mutex<Option<Session>>,
     worker: Mutex<Worker>,
     preview_work: PreviewGate,
     preview_cancel: Mutex<Arc<AtomicBool>>,
+    /// The photo that `warm` prepares or prepared last, and its cancellation.
+    warm: Mutex<Option<(PathBuf, Arc<AtomicBool>)>>,
     opening: AtomicU64,
     render_revision: AtomicU64,
     assets: Mutex<Assets>,
+    /// Frames whose medium and thumbnail PNGs are not yet persisted.
+    pending: Mutex<VecDeque<(String, Arc<Vec<u8>>)>>,
     image_requests: Mutex<HashMap<String, Arc<AtomicBool>>>,
     thumbnails: PathBuf,
     mediums: PathBuf,
@@ -152,7 +194,7 @@ pub struct RenderRequest {
     pub revision: u64,
     pub max_edge: u32,
     pub region: Option<Crop>,
-    /// Reuse the current source, or skip NLM for a first frame. Refinement is exact.
+    /// Reuse the current source, or skip BM3D for a first frame. Refinement is exact.
     #[serde(default)]
     pub interactive: bool,
 }
@@ -161,6 +203,14 @@ pub(crate) struct RenderJob {
     session: Session,
     cancel: Arc<AtomicBool>,
     priority: ForegroundRequest,
+}
+
+/// An `x3f-edit` response: 200 with an edited preview, which never changes
+/// for its URL, or 400 with an error message.
+pub struct Body {
+    pub status: u16,
+    pub bytes: Vec<u8>,
+    pub content_type: &'static str,
 }
 
 #[derive(Serialize)]
@@ -191,9 +241,11 @@ impl Editor {
             worker: Mutex::new(Worker::default()),
             preview_work: Arc::new((Mutex::new(PreviewWork::default()), Condvar::new())),
             preview_cancel: Mutex::new(Arc::new(AtomicBool::new(false))),
+            warm: Mutex::new(None),
             opening: AtomicU64::new(0),
             render_revision: AtomicU64::new(u64::MAX),
             assets: Mutex::new(Assets::default()),
+            pending: Mutex::new(VecDeque::new()),
             image_requests: Mutex::new(HashMap::new()),
             paused: AtomicBool::new(false),
             close_allowed: AtomicBool::new(false),
@@ -204,11 +256,25 @@ impl Editor {
     }
 
     pub fn cancel_preview(&self) {
+        self.cancel_work(None);
+    }
+
+    /// Cancels preview work. A warm-up of `keep` continues, so that the
+    /// editor can use it.
+    fn cancel_work(&self, keep: Option<&Path>) {
         if let Ok(work) = self.preview_work.0.lock() {
             work.background_cancel.store(true, Ordering::SeqCst);
         }
         if let Ok(cancel) = self.preview_cancel.lock() {
             cancel.store(true, Ordering::SeqCst);
+        }
+        if let Ok(warm) = self.warm.lock() {
+            if let Some((_, cancel)) = warm
+                .as_ref()
+                .filter(|(path, _)| Some(path.as_path()) != keep)
+            {
+                cancel.store(true, Ordering::SeqCst);
+            }
         }
     }
 
@@ -232,7 +298,7 @@ impl Editor {
             session.cancelled_revision =
                 Some(session.cancelled_revision.unwrap_or(0).max(revision));
             if self.render_revision.load(Ordering::SeqCst) == revision {
-                self.cancel_preview();
+                self.cancel_work(Some(&session.path));
             }
         }
         Ok(())
@@ -304,10 +370,10 @@ impl Editor {
         self.begin_open()?;
         source_path(&path)?;
         let generation = self.opening.fetch_add(1, Ordering::SeqCst) + 1;
-        self.cancel_preview();
-        self.edits.flush()?;
         let requested_path = path.clone();
         let path = path.canonicalize().map_err(|e| e.to_string())?;
+        self.cancel_work(Some(&path));
+        self.edits.flush()?;
         let saved = self.load(&path)?;
         let source_revision = self.edits.source_revision(&path)?;
         let as_shot_crop = x3f_core::read_as_shot_crop(&path)
@@ -369,6 +435,95 @@ impl Editor {
             storage_path: saved.as_ref().map(|s| s.storage_path.clone()),
             preview_url: saved.and_then(|s| s.preview_url),
         })
+    }
+
+    /// Stops editor work when the main window closes. Warm-ups that start
+    /// later fail. `reopen` allows work again.
+    pub fn close_window(&self) {
+        let _gate = self.close_gate.lock();
+        self.close_allowed.store(true, Ordering::SeqCst);
+        self.cancel_preview();
+    }
+
+    /// Frees the session and the prepared RAW after `close_window`, so that
+    /// they do not stay in memory while the app runs without a window.
+    pub fn release_source(&self) {
+        let Ok(mut worker) = self.worker.lock() else {
+            return;
+        };
+        // `reopen` and `open` use the gate, so a reopened window keeps its work.
+        let _gate = self.close_gate.lock();
+        if self.close_allowed.load(Ordering::SeqCst) {
+            worker.prepared = None;
+            if let Ok(mut session) = self.session.lock() {
+                *session = None;
+            }
+        }
+    }
+
+    /// Prepares a photo and uploads it to the GPU before it opens, so that its
+    /// first preview needs no RAW decode. A newer warm-up, `cancel_preview` or
+    /// opening another photo cancels it. It never replaces the source of
+    /// another open photo.
+    pub fn warm(&self, path: PathBuf) -> Result<(), String> {
+        source_path(&path)?;
+        let path = path.canonicalize().map_err(|e| e.to_string())?;
+        let cancel = Arc::new(AtomicBool::new(false));
+        if let Some((_, previous)) = self
+            .warm
+            .lock()
+            .map_err(|_| "Editor unavailable")?
+            .replace((path.clone(), cancel.clone()))
+        {
+            previous.store(true, Ordering::SeqCst);
+        }
+        if self.close_allowed.load(Ordering::SeqCst) {
+            return Err("The window is closing".into());
+        }
+        let source_revision = self.edits.source_revision(&path)?;
+        let recipe = self
+            .edits
+            .load(&path)?
+            .map_or_else(EditRecipe::default, |saved| saved.recipe);
+        check_cancel(&cancel)?;
+        let mut worker = self
+            .worker
+            .lock()
+            .map_err(|_| "Renderer unavailable; restart the app")?;
+        if self
+            .session
+            .lock()
+            .map_err(|_| "Editor unavailable")?
+            .as_ref()
+            .is_some_and(|session| session.path != path)
+        {
+            return Ok(());
+        }
+        let asset = Asset {
+            path,
+            source_revision,
+            recipe,
+            max_edge: 2048,
+            region: None,
+        };
+        self.ready(&mut worker, &asset, &cancel)?;
+        if let (Some(renderer), Some(prepared)) = (&worker.renderer, &worker.prepared) {
+            renderer
+                .upload_prepared(&prepared.image, &cancel)
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
+    /// The photo whose prepared RAW background renders keep: the open photo,
+    /// else the warmed photo.
+    fn kept_source(&self) -> Result<Option<PathBuf>, String> {
+        let session = self.session.lock().map_err(|_| "Editor unavailable")?;
+        if let Some(session) = session.as_ref() {
+            return Ok(Some(session.path.clone()));
+        }
+        let warm = self.warm.lock().map_err(|_| "Editor unavailable")?;
+        Ok(warm.as_ref().map(|(path, _)| path.clone()))
     }
 
     fn session(&self, id: &str) -> Result<Session, String> {
@@ -536,8 +691,10 @@ impl Editor {
                 highlight_recovery: true,
                 ..Default::default()
             };
-            let image = prepare_scene_linear(&asset.path, &options, cancel, |_| ())
-                .map_err(|e| e.to_string())?;
+            let image = prepare_in_background(|| {
+                prepare_scene_linear(&asset.path, &options, cancel, |_| ())
+            })
+            .map_err(|e| e.to_string())?;
             check_cancel(cancel)?;
             if self.edits.source_revision(&asset.path)? != asset.source_revision {
                 return Err("Source contents changed during RAW preparation".into());
@@ -559,7 +716,9 @@ impl Editor {
     }
 
     pub fn render(&self, request: RenderRequest) -> Result<RenderedPreview, String> {
-        self.render_job(self.begin_render(request)?)
+        let preview = self.render_job(self.begin_render(request)?);
+        self.persist_previews();
+        preview
     }
 
     // Register cancellation before dispatching to the blocking worker, so queued
@@ -592,6 +751,33 @@ impl Editor {
         })
     }
 
+    /// The recipe a request renders: an interactive frame reuses the prepared
+    /// denoise. Before any RAW is prepared, it skips only BM3D, which can take
+    /// seconds; the first preparation applies NLM at once. Returns the recipe
+    /// and whether the frame is a draft.
+    fn effective_recipe(
+        worker: &Worker,
+        request: &RenderRequest,
+        session: &Session,
+    ) -> (EditRecipe, bool) {
+        let mut recipe = request.recipe.clone();
+        if request.interactive {
+            if let Some(prepared) = worker
+                .prepared
+                .as_ref()
+                .filter(|p| p.matches_source(&session.path, &session.source_revision))
+            {
+                recipe.denoise = prepared.denoise;
+                recipe.denoise_options = prepared.denoise_options;
+            } else if recipe.denoise_options.algorithm == x3f_core::DenoiseAlgorithm::Bm3d {
+                recipe.denoise = 0;
+            }
+        }
+        let draft = recipe.denoise != request.recipe.denoise
+            || recipe.denoise_options != request.recipe.denoise_options;
+        (recipe, draft)
+    }
+
     pub(crate) fn render_job(&self, job: RenderJob) -> Result<RenderedPreview, String> {
         let RenderJob {
             request,
@@ -605,21 +791,7 @@ impl Editor {
             .worker
             .lock()
             .map_err(|_| "Renderer unavailable; restart the app")?;
-        let mut recipe = request.recipe.clone();
-        if request.interactive {
-            if let Some(prepared) = worker
-                .prepared
-                .as_ref()
-                .filter(|p| p.matches_source(&session.path, &session.source_revision))
-            {
-                recipe.denoise = prepared.denoise;
-                recipe.denoise_options = prepared.denoise_options;
-            } else {
-                recipe.denoise = 0;
-            }
-        }
-        let draft = recipe.denoise != request.recipe.denoise
-            || recipe.denoise_options != request.recipe.denoise_options;
+        let (recipe, draft) = Self::effective_recipe(&worker, &request, &session);
         let url = self.register(
             &session.path,
             &session.source_revision,
@@ -642,19 +814,7 @@ impl Editor {
             .as_ref()
             .map(|p| x3f_render::as_shot_white_balance(&p.image.image().white_balance));
         drop(worker);
-        let bytes = rendered.png().map_err(|e| e.to_string())?;
-        check_cancel(&cancel)?;
-        self.session(&request.session_id)?;
-        if !draft && request.max_edge == 2048 && request.region.is_none() {
-            self.prime_thumbnail(&id, &rendered);
-            self.store_image(&id, bytes);
-        } else {
-            self.assets
-                .lock()
-                .map_err(|_| "Preview cache unavailable")?
-                .put(id, bytes);
-        }
-        Ok(RenderedPreview {
+        let preview = RenderedPreview {
             session_id: request.session_id,
             revision: request.revision,
             url,
@@ -668,15 +828,53 @@ impl Editor {
             draft,
             as_shot_temperature: as_shot.map(|(k, _)| k),
             as_shot_tint: as_shot.map(|(_, t)| t),
-        })
+        };
+        let frame = Arc::new(frame_body(rendered)?);
+        check_cancel(&cancel)?;
+        self.session(&preview.session_id)?;
+        self.assets
+            .lock()
+            .map_err(|_| "Preview cache unavailable")?
+            .frames
+            .put(id.clone(), frame.clone());
+        // PNGs are encoded on demand. Only a refined medium is persisted, by
+        // `persist_previews` after the frame is returned.
+        if !draft && request.max_edge == 2048 && request.region.is_none() {
+            self.defer_persist(id, frame);
+        }
+        Ok(preview)
     }
 
-    fn render_with_worker(
-        &self,
-        worker: &mut Worker,
-        asset: &Asset,
-        cancel: &AtomicBool,
-    ) -> Result<(x3f_render::RenderedImage, (u32, u32)), String> {
+    /// Queues a frame for `persist_previews`. Only the newest jobs are kept;
+    /// a dropped job is encoded on demand instead.
+    fn defer_persist(&self, id: String, frame: Arc<Vec<u8>>) {
+        if let Ok(mut pending) = self.pending.lock() {
+            pending.retain(|(queued, _)| queued != &id);
+            pending.push_back((id, frame));
+            while pending.len() > 4 {
+                pending.pop_front();
+            }
+        }
+    }
+
+    /// Encodes and persists the queued medium and thumbnail PNGs. Call it off
+    /// the critical path, after the frame went to the webview.
+    pub fn persist_previews(&self) {
+        while let Some((id, frame)) = self.pending.lock().ok().and_then(|mut p| p.pop_front()) {
+            let Ok(rendered) = frame_image(&frame) else {
+                continue;
+            };
+            self.prime_thumbnail(&id, &rendered);
+            if matches!(self.cached_png(&id), Ok(None)) {
+                if let Ok(png) = rendered.png() {
+                    self.store_image(&id, png);
+                }
+            }
+        }
+    }
+
+    /// Checks admission, starts the GPU renderer and prepares the RAW.
+    fn ready(&self, worker: &mut Worker, asset: &Asset, cancel: &AtomicBool) -> Result<(), String> {
         check_cancel(cancel)?;
         if self.paused.load(Ordering::SeqCst) {
             return Err("Preview rendering pauses during export".into());
@@ -685,33 +883,30 @@ impl Editor {
             worker.renderer = Some(Renderer::new().map_err(|e| e.to_string())?);
         }
         self.prepare(worker, asset, cancel)?;
+        Ok(())
+    }
+
+    fn render_with_worker(
+        &self,
+        worker: &mut Worker,
+        asset: &Asset,
+        cancel: &AtomicBool,
+    ) -> Result<(x3f_render::RenderedImage, (u32, u32)), String> {
+        self.ready(worker, asset, cancel)?;
         let Worker { renderer, prepared } = worker;
-        let image = &prepared
-            .as_ref()
-            .ok_or("RAW preparation unavailable")?
-            .image;
+        let prepared = prepared.as_ref().ok_or("RAW preparation unavailable")?;
         let rendered = renderer
             .as_mut()
             .ok_or("GPU renderer unavailable")?
             .render_prepared(
-                image,
+                &prepared.image,
                 &asset.recipe,
-                RenderOptions {
-                    max_dimension: Some(asset.max_edge),
-                    region: asset.region,
-                    color_profile: x3f_render::ColorProfile::Srgb,
-                },
+                preview_options(asset),
                 cancel,
             )
             .map_err(|e| e.to_string())?;
         check_cancel(cancel)?;
-        let image = image.image();
-        let source_size = if (5..=8).contains(&image.orientation) {
-            (image.height, image.width)
-        } else {
-            (image.width, image.height)
-        };
-        Ok((rendered, source_size))
+        Ok((rendered, oriented_size(prepared.image.image())))
     }
 
     fn thumbnail_id(&self, id: &str) -> Result<String, String> {
@@ -766,6 +961,27 @@ impl Editor {
         Ok(())
     }
 
+    /// Serves an `x3f-edit` request: an edited preview as an RGBA8 frame or a PNG.
+    pub fn respond(&self, uri: &str) -> Body {
+        let octets = "application/octet-stream";
+        match self.image_uri(uri) {
+            Ok(bytes) => {
+                let bytes = Arc::unwrap_or_clone(bytes);
+                let png = bytes.starts_with(PNG_SIGNATURE);
+                Body {
+                    status: 200,
+                    content_type: if png { "image/png" } else { octets },
+                    bytes,
+                }
+            }
+            Err(error) => Body {
+                status: 400,
+                bytes: error.into_bytes(),
+                content_type: "text/plain",
+            },
+        }
+    }
+
     pub fn image_uri(&self, uri: &str) -> Result<Arc<Vec<u8>>, String> {
         let id = protocol_id(uri)?;
         let url = url::Url::parse(uri).map_err(|e| e.to_string())?;
@@ -793,11 +1009,17 @@ impl Editor {
             Some(variant) if variant == "thumbnail" => self.thumbnail_id(&id)?,
             _ => return Err("Invalid rendered preview variant".into()),
         };
+        let raw = match url.query_pairs().find(|(key, _)| key == "format") {
+            None => false,
+            Some((_, format)) if format == "rgba8" => true,
+            _ => return Err("Invalid rendered preview format".into()),
+        };
         self.image_request(
             &id,
             request
                 .as_ref()
                 .map(|(id, cancel)| (id.as_str(), cancel.as_ref())),
+            raw,
         )
     }
 
@@ -809,12 +1031,39 @@ impl Editor {
         }
     }
 
-    fn cached_image(&self, id: &str) -> Result<Option<Arc<Vec<u8>>>, String> {
+    /// A finished preview: with `raw`, the RGBA8 frame, or else a PNG that
+    /// exists already (the frame layer decodes either body). Without `raw`, a
+    /// PNG, encoded from a cached frame when needed.
+    fn cached_image(&self, id: &str, raw: bool) -> Result<Option<Arc<Vec<u8>>>, String> {
+        let frame = self
+            .assets
+            .lock()
+            .map_err(|_| "Preview cache unavailable")?
+            .frames
+            .get(id);
+        if raw {
+            return Ok(match frame {
+                Some(frame) => Some(frame),
+                None => self.cached_png(id)?,
+            });
+        }
+        if let Some(png) = self.cached_png(id)? {
+            return Ok(Some(png));
+        }
+        let Some(frame) = frame else {
+            return Ok(None);
+        };
+        let png = frame_image(&frame)?.png().map_err(|e| e.to_string())?;
+        self.store_image(id, png);
+        self.cached_png(id)
+    }
+
+    fn cached_png(&self, id: &str) -> Result<Option<Arc<Vec<u8>>>, String> {
         let mut assets = self
             .assets
             .lock()
             .map_err(|_| "Preview cache unavailable")?;
-        if let Some(image) = assets.get(id) {
+        if let Some(image) = assets.pngs.get(id) {
             return Ok(Some(image));
         }
         let Some((directory, max_size, _)) = assets
@@ -828,11 +1077,9 @@ impl Editor {
         if fs::metadata(&path).is_ok_and(|m| m.len() <= max_size) {
             if let Ok(bytes) = fs::read(path) {
                 // Cache writes are atomic. Reject missing/truncated PNGs and regenerate.
-                if bytes.starts_with(b"\x89PNG\r\n\x1a\n")
-                    && bytes.ends_with(b"\0\0\0\0IEND\xaeB`\x82")
-                {
-                    assets.put(id.into(), bytes);
-                    return Ok(assets.get(id));
+                if bytes.starts_with(PNG_SIGNATURE) && bytes.ends_with(b"\0\0\0\0IEND\xaeB`\x82") {
+                    assets.pngs.put(id.into(), bytes);
+                    return Ok(assets.pngs.get(id));
                 }
             }
         }
@@ -878,13 +1125,17 @@ impl Editor {
             Ok(())
         })();
         if let Ok(mut assets) = self.assets.lock() {
-            assets.put(id.into(), bytes);
+            // An ID names exact pixels. Keep the PNG that a concurrent request
+            // stored first, so that all requests share one copy.
+            if assets.pngs.get(id).is_none() {
+                assets.pngs.put(id.into(), bytes);
+            }
         }
     }
 
     fn prime_thumbnail(&self, id: &str, rendered: &x3f_render::RenderedImage) {
         if let Ok(thumbnail) = self.thumbnail_id(id) {
-            if matches!(self.cached_image(&thumbnail), Ok(None)) {
+            if matches!(self.cached_png(&thumbnail), Ok(None)) {
                 if let Ok(bytes) = rendered.png_preview(640) {
                     self.store_image(&thumbnail, bytes);
                 }
@@ -893,19 +1144,20 @@ impl Editor {
     }
 
     pub fn image(&self, id: &str) -> Result<Arc<Vec<u8>>, String> {
-        self.image_request(id, None)
+        self.image_request(id, None, false)
     }
 
     fn image_request(
         &self,
         id: &str,
         request: Option<(&str, &AtomicBool)>,
+        raw: bool,
     ) -> Result<Arc<Vec<u8>>, String> {
         let uncancellable = AtomicBool::new(false);
         let request_cancel = request.map_or(&uncancellable, |(_, cancel)| cancel);
         loop {
             check_cancel(request_cancel)?;
-            if let Some(image) = self.cached_image(id)? {
+            if let Some(image) = self.cached_image(id, raw)? {
                 check_cancel(request_cancel)?;
                 return Ok(image);
             }
@@ -935,7 +1187,7 @@ impl Editor {
             check_cancel(request_cancel)?;
             // Recheck after waiting: a duplicate request or editor refinement may
             // already have generated this snapshot.
-            if let Some(image) = self.cached_image(id)? {
+            if let Some(image) = self.cached_image(id, raw)? {
                 check_cancel(request_cancel)?;
                 return Ok(image);
             }
@@ -971,12 +1223,7 @@ impl Editor {
                 .ok_or("Preview expired; reopen the photo")?;
             // A background photo must not evict the active editor's prepared RAW;
             // otherwise every preemption would make the next slider change decode again.
-            let active = self
-                .session
-                .lock()
-                .map_err(|_| "Editor unavailable")?
-                .as_ref()
-                .map(|session| session.path.clone());
+            let active = self.kept_source()?;
             let preserve = worker.prepared.as_ref().is_some_and(|prepared| {
                 active.as_ref() == Some(&prepared.path)
                     && (prepared.path != asset.path
@@ -1006,15 +1253,27 @@ impl Editor {
                 }
                 Err(error) => return Err(error),
             };
-            let bytes = rendered.png().map_err(|e| e.to_string())?;
-            check_cancel(request_cancel)?;
+            let frame = Arc::new(frame_body(rendered)?);
+            self.assets
+                .lock()
+                .map_err(|_| "Preview cache unavailable")?
+                .frames
+                .put(id.into(), frame.clone());
+            if raw {
+                if self.image_cache(&asset).is_some() {
+                    self.defer_persist(id.into(), frame.clone());
+                }
+                check_cancel(request_cancel)?;
+                return Ok(frame);
+            }
+            let rendered = frame_image(&frame)?;
             if asset.max_edge == 2048 && asset.region.is_none() {
                 self.prime_thumbnail(id, &rendered);
             }
-            self.store_image(id, bytes);
+            self.store_image(id, rendered.png().map_err(|e| e.to_string())?);
             check_cancel(request_cancel)?;
             return self
-                .cached_image(id)?
+                .cached_png(id)?
                 .ok_or_else(|| "Preview cache unavailable".into());
         }
     }
@@ -1100,6 +1359,7 @@ impl Editor {
                     max_dimension: None,
                     region: None,
                     color_profile,
+                    rgba8: false,
                 },
                 cancel,
             )
@@ -1136,6 +1396,56 @@ fn check_cancel(cancel: &AtomicBool) -> Result<(), String> {
     }
 }
 
+const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
+
+fn preview_options(asset: &Asset) -> RenderOptions {
+    RenderOptions {
+        max_dimension: Some(asset.max_edge),
+        region: asset.region,
+        color_profile: x3f_render::ColorProfile::Srgb,
+        rgba8: true,
+    }
+}
+
+/// Source dimensions after EXIF orientation.
+fn oriented_size(image: &SceneLinearImage) -> (u32, u32) {
+    if (5..=8).contains(&image.orientation) {
+        (image.height, image.width)
+    } else {
+        (image.width, image.height)
+    }
+}
+
+/// The frame body of an RGBA8 render. The renderer already wrote the `X3F8`
+/// header (width, height and 0 as little-endian u32) in front of the rows.
+fn frame_body(rendered: x3f_render::RenderedImage) -> Result<Vec<u8>, String> {
+    match rendered.data {
+        x3f_render::Pixels::Rgba8(frame) => Ok(frame),
+        x3f_render::Pixels::Rgb16(_) => Err("Previews must render RGBA8".into()),
+    }
+}
+
+/// The sRGB image in a frame body, for PNG encoding.
+fn frame_image(frame: &[u8]) -> Result<x3f_render::RenderedImage, String> {
+    let word = |at: usize| u32::from_le_bytes(frame[at..at + 4].try_into().unwrap());
+    if frame.len() < 16 || &frame[..4] != b"X3F8" {
+        return Err("Invalid preview frame".into());
+    }
+    let (width, height) = (word(4), word(8));
+    if frame.len() - 16 != width as usize * height as usize * 4 {
+        return Err("Invalid preview frame".into());
+    }
+    Ok(x3f_render::RenderedImage {
+        width,
+        height,
+        data: x3f_render::Pixels::Rgba8(frame.to_vec()),
+        color_profile: x3f_render::ColorProfile::Srgb,
+        full_width: width,
+        full_height: height,
+        region: None,
+    })
+}
+
 fn asset_url(id: &str) -> String {
     if cfg!(windows) {
         format!("http://x3f-edit.localhost/{id}")
@@ -1161,6 +1471,48 @@ pub fn protocol_id(uri: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn raw_preparation_runs_at_utility_qos() {
+        unsafe extern "C" {
+            fn qos_class_self() -> u32;
+        }
+        const QOS_CLASS_UTILITY: u32 = 0x11;
+        let classes: Vec<u32> = prepare_in_background(|| {
+            use rayon::prelude::*;
+            (0..64)
+                .into_par_iter()
+                .map(|_| unsafe { qos_class_self() })
+                .collect()
+        });
+        assert!(classes.iter().all(|&class| class == QOS_CLASS_UTILITY));
+    }
+
+    /// Gives the worker a 1 px source of `path`.
+    fn set_prepared(editor: &Editor, path: &Path) {
+        editor.worker.lock().unwrap().prepared = Some(Prepared {
+            path: path.into(),
+            source_revision: "a".repeat(64),
+            denoise: 0,
+            denoise_options: Default::default(),
+            image: PreparedImage::new(
+                SceneLinearImage {
+                    width: 1,
+                    height: 1,
+                    orientation: 1,
+                    data: vec![0.18; 3],
+                    white_balance: x3f_core::WhiteBalanceCalibration {
+                        camera_to_rgb: [1., 0., 0., 0., 1., 0., 0., 0., 1.],
+                        xyz_to_camera: [1., 0., 0., 0., 1., 0., 0., 0., 1.],
+                        as_shot_neutral: [1.; 3],
+                    },
+                },
+                &AtomicBool::new(false),
+            )
+            .unwrap(),
+        });
+    }
     #[test]
     fn failed_refinement_keeps_the_previous_source_but_a_new_photo_releases_it() {
         let temporary = tempfile::tempdir().unwrap();
@@ -1238,6 +1590,108 @@ mod tests {
     }
 
     #[test]
+    fn a_first_interactive_frame_skips_only_bm3d() {
+        let session = Session {
+            id: "photo".into(),
+            path: "/photo.X3F".into(),
+            source_revision: "a".repeat(64),
+            cancelled_revision: None,
+        };
+        let request = |algorithm| RenderRequest {
+            session_id: "photo".into(),
+            recipe: EditRecipe {
+                denoise_options: x3f_core::DenoiseOptions {
+                    algorithm,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            revision: 1,
+            max_edge: 1024,
+            region: None,
+            interactive: true,
+        };
+        let worker = Worker::default();
+        let nlm = request(x3f_core::DenoiseAlgorithm::Nlm);
+        assert_eq!(
+            Editor::effective_recipe(&worker, &nlm, &session),
+            (nlm.recipe.clone(), false)
+        );
+        let bm3d = request(x3f_core::DenoiseAlgorithm::Bm3d);
+        let (recipe, draft) = Editor::effective_recipe(&worker, &bm3d, &session);
+        assert_eq!((recipe.denoise, draft), (0, true));
+    }
+
+    #[test]
+    fn warm_up_yields_to_another_photo_and_survives_its_own_open_and_edits() {
+        let temporary = tempfile::tempdir().unwrap();
+        let editor = Editor::new(temporary.path().join("edits"));
+        let path = |name: &str| {
+            let path = temporary.path().join(name);
+            fs::write(&path, b"invalid RAW").unwrap();
+            path.canonicalize().unwrap()
+        };
+        let (photo, other) = (path("photo.X3F"), path("other.X3F"));
+        let warm = || editor.warm.lock().unwrap().clone().unwrap();
+        let open = |path: &PathBuf| {
+            *editor.session.lock().unwrap() = Some(Session {
+                id: "open".into(),
+                path: path.clone(),
+                source_revision: "a".repeat(64),
+                cancelled_revision: None,
+            });
+        };
+        // Another open photo keeps its source; no RAW or GPU work runs.
+        open(&other);
+        editor.warm(photo.clone()).unwrap();
+        assert!(editor.worker.lock().unwrap().prepared.is_none());
+        let (warmed, first) = warm();
+        assert_eq!(warmed, photo);
+        editor.warm(photo.clone()).unwrap();
+        assert!(first.load(Ordering::SeqCst), "A newer warm-up cancels");
+        let (_, cancel) = warm();
+        open(&photo);
+        editor.render_revision.store(5, Ordering::SeqCst);
+        editor.cancel_render("open", 5).unwrap();
+        assert!(editor.preview_cancel.lock().unwrap().load(Ordering::SeqCst));
+        assert!(
+            !cancel.load(Ordering::SeqCst),
+            "Edits keep their photo's warm-up"
+        );
+        assert!(editor.open(photo.clone()).is_err());
+        assert!(!cancel.load(Ordering::SeqCst), "Opening the photo keeps it");
+        assert!(editor.open(other.clone()).is_err());
+        assert!(
+            cancel.load(Ordering::SeqCst),
+            "Opening another photo cancels"
+        );
+        open(&other);
+        editor.warm(photo.clone()).unwrap();
+        let (_, cancel) = warm();
+        editor.cancel_preview();
+        assert!(cancel.load(Ordering::SeqCst));
+        // Background renders keep the open photo's source, else the warmed one.
+        assert_eq!(editor.kept_source().unwrap(), Some(other.clone()));
+        *editor.session.lock().unwrap() = None;
+        assert_eq!(editor.kept_source().unwrap(), Some(photo.clone()));
+        // A closed window frees the session and source, and stops later warm-ups.
+        let prepared = |editor: &Editor| editor.worker.lock().unwrap().prepared.is_some();
+        set_prepared(&editor, &other);
+        open(&other);
+        editor.release_source();
+        assert!(prepared(&editor), "An open window keeps its source");
+        editor.close_window();
+        assert!(editor.warm(photo).is_err());
+        editor.reopen();
+        editor.release_source();
+        assert!(prepared(&editor), "A reopened window keeps its source");
+        editor.close_window();
+        editor.release_source();
+        assert!(!prepared(&editor));
+        assert!(editor.session.lock().unwrap().is_none());
+    }
+
+    #[test]
     fn cancellation_covers_queued_refinement_but_not_a_newer_frame() {
         let temporary = tempfile::tempdir().unwrap();
         let editor = Editor::new(temporary.path().join("edits"));
@@ -1297,7 +1751,7 @@ mod tests {
         assert_eq!(protocol_id(&asset_url(&id)).unwrap(), id);
         assert!(protocol_id("x3f-edit://localhost/../../etc/passwd").is_err());
         assert!(protocol_id(&format!("https://example.com/{id}")).is_err());
-        let mut cache = Assets::default();
+        let mut cache = Images::default();
         for n in 0..140 {
             cache.put(n.to_string(), vec![0; 4]);
         }
@@ -1326,7 +1780,7 @@ mod tests {
         let rendered = x3f_render::RenderedImage {
             width: 900,
             height: 600,
-            data: vec![32768; 900 * 600 * 3],
+            data: x3f_render::Pixels::Rgb16(vec![32768; 900 * 600 * 3]),
             color_profile: x3f_render::ColorProfile::Srgb,
             full_width: 900,
             full_height: 600,
@@ -1419,7 +1873,7 @@ mod tests {
         let rendered = x3f_render::RenderedImage {
             width: 2048,
             height: 1024,
-            data: vec![32768; 2048 * 1024 * 3],
+            data: x3f_render::Pixels::Rgb16(vec![32768; 2048 * 1024 * 3]),
             color_profile: x3f_render::ColorProfile::Srgb,
             full_width: 2048,
             full_height: 1024,
@@ -1435,9 +1889,9 @@ mod tests {
         {
             let mut assets = editor.assets.lock().unwrap();
             for n in 0..128 {
-                assets.put(format!("evict-{n}"), vec![0]);
+                assets.pngs.put(format!("evict-{n}"), vec![0]);
             }
-            assert!(assets.get(&id).is_none());
+            assert!(assets.pngs.get(&id).is_none());
         }
         editor.cancel_preview();
         editor.paused.store(true, Ordering::SeqCst);
@@ -1477,6 +1931,56 @@ mod tests {
                 .contains("pauses during export"));
         }
         assert!(reopened.worker.lock().unwrap().renderer.is_none());
+    }
+
+    #[test]
+    fn frames_serve_raw_then_encode_and_persist_png_on_demand() {
+        let temporary = tempfile::tempdir().unwrap();
+        let path = temporary.path().join("photo.X3F");
+        fs::write(&path, b"No RAW decoding should be needed").unwrap();
+        let directory = temporary.path().join("edits");
+        let editor = Editor::new(directory.clone());
+        let url = editor
+            .register(&path, &"a".repeat(64), &EditRecipe::default(), 2048, None)
+            .unwrap();
+        let id = protocol_id(&url).unwrap();
+        let mut frame = b"X3F8\x03\0\0\0\x02\0\0\0\0\0\0\0".to_vec();
+        frame.extend([10, 20, 30, 255].repeat(6));
+        assert_eq!(frame_image(&frame).unwrap().rgb8(), [10, 20, 30].repeat(6));
+        assert!(frame_image(&frame[..20]).is_err());
+        let frame = Arc::new(frame);
+        editor
+            .assets
+            .lock()
+            .unwrap()
+            .frames
+            .put(id.clone(), frame.clone());
+        editor.defer_persist(id.clone(), frame.clone());
+        // No render may start: every body below comes from the frame or disk.
+        editor.paused.store(true, Ordering::SeqCst);
+        let raw = editor.respond(&format!("{url}?format=rgba8"));
+        assert_eq!(raw.status, 200);
+        assert_eq!(raw.bytes, *frame);
+        assert_eq!(raw.content_type, "application/octet-stream");
+        let png = editor.respond(&url);
+        assert_eq!((png.status, png.content_type), (200, "image/png"));
+        let medium = directory.join("mediums-v1").join(format!("{id}.png"));
+        assert_eq!(fs::read(&medium).unwrap(), png.bytes);
+        editor.persist_previews();
+        assert!(editor.pending.lock().unwrap().is_empty());
+        assert!(directory.join("thumbnails-v1").is_dir());
+
+        // After a restart only the disk PNG exists; a raw request gets it.
+        let reopened = Editor::new(directory);
+        reopened.paused.store(true, Ordering::SeqCst);
+        reopened
+            .register(&path, &"a".repeat(64), &EditRecipe::default(), 2048, None)
+            .unwrap();
+        let fallback = reopened.respond(&format!("{url}?format=rgba8"));
+        assert_eq!(fallback.bytes, png.bytes);
+        assert_eq!(fallback.content_type, "image/png");
+        let invalid = reopened.respond(&format!("{url}?format=jpeg"));
+        assert_eq!((invalid.status, invalid.content_type), (400, "text/plain"));
     }
 
     #[test]
@@ -1544,7 +2048,7 @@ mod tests {
         let image = editor.clone();
         let requested = request.clone();
         let task = std::thread::spawn(move || {
-            send.send(image.image_request(&"a".repeat(64), Some((&requested, &cancel))))
+            send.send(image.image_request(&"a".repeat(64), Some((&requested, &cancel)), false))
                 .unwrap();
         });
         assert!(matches!(
@@ -1597,6 +2101,7 @@ mod tests {
             .assets
             .lock()
             .unwrap()
+            .pngs
             .put(id, b"completed pixels".to_vec());
         drop(foreground);
         assert_eq!(

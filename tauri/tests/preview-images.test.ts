@@ -451,3 +451,38 @@ it('drops cancelled background preparation without releasing the running extract
   ])
   off()
 })
+
+it('draws edited frames from raw RGBA8 without a PNG decode', async () => {
+  vi.stubGlobal(
+    'ImageData',
+    class {
+      constructor(
+        public data: Uint8ClampedArray,
+        public width: number,
+        public height: number
+      ) {}
+    }
+  )
+  const body = new ArrayBuffer(16 + 2 * 1 * 4)
+  new Uint8Array(body).set([...'X3F8'].map((c) => c.charCodeAt(0)))
+  new DataView(body).setUint32(4, 2, true)
+  new DataView(body).setUint32(8, 1, true)
+  vi.mocked(fetch).mockResolvedValueOnce({ ok: true, arrayBuffer: async () => body } as Response)
+  const draw = vi.fn()
+  vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue({
+    setTransform: vi.fn(),
+    drawImage: draw
+  } as unknown as CanvasRenderingContext2D)
+  const url = 'x3f-edit://localhost/raw-frame'
+  await loadSmallPreview(url, 1, undefined, new AbortController().signal)
+  expect(fetch).toHaveBeenCalledOnce()
+  const request = new URL(String(vi.mocked(fetch).mock.calls[0][0]))
+  expect(request.searchParams.get('format')).toBe('rgba8')
+  expect(createImageBitmap).toHaveBeenCalledWith(expect.objectContaining({ width: 2, height: 1 }))
+  const bitmap = await vi.mocked(createImageBitmap).mock.results[0].value
+  expect(draw.mock.calls[0][0]).toBe(bitmap)
+  expect(bitmap.close).toHaveBeenCalledOnce()
+  expect(invoke).toHaveBeenLastCalledWith('editor:endImageRequest', {
+    requestId: request.searchParams.get('requestId')
+  })
+})

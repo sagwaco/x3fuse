@@ -9,6 +9,7 @@ import { useSettingsStore } from '../src/renderer/src/stores/settingsStore'
 import { useNavStore } from '../src/renderer/src/stores/navStore'
 import { useIpcEvents } from '../src/renderer/src/hooks/useIpcEvents'
 import { displayPreviewUrl } from '@shared/preview'
+import { nextPrefetch } from '../src/renderer/src/lib/previewTiles'
 
 const file: X3FFileDTO = { id: 'a', path: '/photos/a.X3F', fileName: 'a.X3F' }
 const invoke = vi.fn()
@@ -169,22 +170,22 @@ it('rejects stale renders and uses a smaller proxy during gestures plus original
   expect(editor.getState().preview?.fullWidth).toBe(6000)
 })
 
-it('renders immediately at interactive resolution and refines only after input settles', async () => {
+it('renders input at interactive resolution and refines only after input settles', async () => {
+  const renders = (): Array<Record<string, unknown>> =>
+    invoke.mock.calls.filter(([command]) => command === 'editor:render').map(([, p]) => p)
   await editor.getState().open(file)
   await vi.advanceTimersByTimeAsync(0)
-  expect(invoke).toHaveBeenCalledWith(
-    'editor:render',
-    expect.objectContaining({ maxEdge: 1024, interactive: true })
-  )
+  // Nothing shows yet, so a fast frame would show only until its refinement.
+  expect(renders()).toEqual([expect.objectContaining({ maxEdge: 2048, interactive: false })])
+  await vi.advanceTimersByTimeAsync(1000)
+  expect(renders()).toHaveLength(1)
+  editor.getState().change({ exposure: 1 })
+  await vi.advanceTimersByTimeAsync(0)
+  expect(renders().at(-1)).toMatchObject({ maxEdge: 1024, interactive: true })
   await vi.advanceTimersByTimeAsync(99)
-  expect(
-    invoke.mock.calls.some(([command, p]) => command === 'editor:render' && p.maxEdge === 2048)
-  ).toBe(false)
+  expect(renders()).toHaveLength(2)
   await vi.advanceTimersByTimeAsync(1)
-  expect(invoke).toHaveBeenCalledWith(
-    'editor:render',
-    expect.objectContaining({ maxEdge: 2048, interactive: false })
-  )
+  expect(renders().at(-1)).toMatchObject({ maxEdge: 2048, interactive: false })
 })
 
 it('refines a draft native viewport without changing the saved denoise setting', async () => {
@@ -194,13 +195,16 @@ it('refines a draft native viewport without changing the saved denoise setting',
     return command === 'editor:render' ? { ...result, draft: payload.interactive } : result
   })
   await editor.getState().open(file)
+  await vi.advanceTimersByTimeAsync(0)
   const region = { x: 0.2, y: 0.3, width: 0.3, height: 0.25 }
   editor.getState().setViewport(region)
   await vi.advanceTimersByTimeAsync(0)
   expect(editor.getState().tile?.draft).toBe(true)
   await vi.advanceTimersByTimeAsync(100)
   expect(editor.getState().tile?.draft).toBe(false)
-  const requests = invoke.mock.calls.filter(([command]) => command === 'editor:render')
+  const requests = invoke.mock.calls.filter(
+    ([command, payload]) => command === 'editor:render' && payload.region
+  )
   expect(requests.map(([, payload]) => [payload.maxEdge, payload.interactive])).toEqual([
     [4096, true],
     [4096, false]
@@ -882,4 +886,270 @@ it('drops tile overlays for before/after and geometry changes, including undo', 
   editor.getState().undo()
   expect(editor.getState().tile).toBeNull()
   expect(editor.getState().viewport).toBeNull()
+})
+
+/** Answer renders like geometry.rs: native when the region fits maxEdge. */
+function nativeRenders(hold: (payload: Record<string, unknown>) => boolean = () => false) {
+  const real = invoke.getMockImplementation()!
+  const pending: Array<{
+    payload: Record<string, unknown>
+    finish: () => void
+    fail: () => void
+  }> = []
+  let serial = 0
+  invoke.mockImplementation((command: string, payload: Record<string, unknown>) => {
+    if (command !== 'editor:render') return real(command, payload)
+    const answer = (): Record<string, unknown> => {
+      const [W, H] = [6000, 4000]
+      const maxEdge = payload.maxEdge as number
+      const url = `x3f-preview://native/${++serial}`
+      const r = payload.region as { x: number; y: number; width: number; height: number }
+      const common = { sessionId: payload.sessionId, revision: payload.revision, url }
+      if (!r)
+        return {
+          ...common,
+          width: maxEdge,
+          height: Math.round((maxEdge * H) / W),
+          fullWidth: W,
+          fullHeight: H
+        }
+      const factor = Math.min(1, maxEdge / Math.max(r.width * W, r.height * H))
+      const [fw, fh] = [Math.round(W * factor), Math.round(H * factor)]
+      const x0 = Math.floor(r.x * fw)
+      const y0 = Math.floor(r.y * fh)
+      const x1 = Math.min(fw, Math.ceil((r.x + r.width) * fw))
+      const y1 = Math.min(fh, Math.ceil((r.y + r.height) * fh))
+      return {
+        ...common,
+        width: x1 - x0,
+        height: y1 - y0,
+        fullWidth: W,
+        fullHeight: H,
+        region: { x: x0 / fw, y: y0 / fh, width: (x1 - x0) / fw, height: (y1 - y0) / fh }
+      }
+    }
+    if (!hold(payload)) return Promise.resolve(answer())
+    return new Promise((resolve, reject) =>
+      pending.push({
+        payload,
+        finish: () => resolve(answer()),
+        fail: () => reject(new Error('Rendering cancelled'))
+      })
+    )
+  })
+  return pending
+}
+const renderRequests = (): Array<Record<string, unknown>> =>
+  invoke.mock.calls.filter(([command]) => command === 'editor:render').map(([, payload]) => payload)
+
+it('prefetches sharp blocks around a zoomed view after an edit, then refreshes the stale base', async () => {
+  await editor.getState().open(file)
+  await vi.advanceTimersByTimeAsync(200)
+  nativeRenders()
+  const viewport = { x: 0.4, y: 0.4, width: 0.1, height: 0.1 }
+  editor.getState().setViewport(viewport)
+  await vi.advanceTimersByTimeAsync(0)
+  expect(editor.getState().cache?.renders).toHaveLength(1)
+  const base = editor.getState().preview
+  invoke.mockClear()
+  editor.getState().change({ exposure: 1 })
+  expect(editor.getState().cache).toBeNull()
+  await vi.advanceTimersByTimeAsync(5000)
+  const requests = renderRequests()
+  // The visible area (interactive, then refined), four ring blocks, then the base.
+  expect(requests.map((request) => [!!request.region, request.maxEdge])).toEqual([
+    [true, 1024],
+    [true, 4096],
+    [true, 4096],
+    [true, 4096],
+    [true, 4096],
+    [true, 4096],
+    [false, 2048]
+  ])
+  expect(requests.slice(2).every((request) => request.interactive === true)).toBe(true)
+  expect(requests.every((request) => (request.recipe as EditRecipe).exposure === 1)).toBe(true)
+  const { cache, preview } = editor.getState()
+  // The interactive and refined renders of the view cover one region: kept once.
+  expect(cache?.renders).toHaveLength(5)
+  expect(nextPrefetch(cache!, viewport, new Set())).toBeNull()
+  expect(preview?.url).not.toBe(base?.url)
+  expect(preview?.region).toBeUndefined()
+  expect(editor.getState().rendering).toBe(false)
+  expect(editor.getState().prefetching).toBe(false)
+  // A pan keeps the cache and still renders the visible area first.
+  invoke.mockClear()
+  const kept = cache!.renders[0]
+  editor.getState().setViewport({ ...viewport, x: 0.43 })
+  await vi.advanceTimersByTimeAsync(0)
+  expect(renderRequests()).toHaveLength(1)
+  expect(renderRequests()[0]).toMatchObject({ region: { ...viewport, x: 0.43 }, maxEdge: 4096 })
+  expect(editor.getState().cache?.renders[0]).toBe(kept)
+})
+
+it('holds prefetch while the view moves and starts it after the view rests', async () => {
+  const now = vi.spyOn(performance, 'now').mockImplementation(() => Date.now())
+  await editor.getState().open(file)
+  await vi.advanceTimersByTimeAsync(200)
+  nativeRenders()
+  editor.getState().setViewport({ x: 0.4, y: 0.4, width: 0.1, height: 0.1 })
+  await vi.advanceTimersByTimeAsync(0)
+  invoke.mockClear()
+  for (let step = 0; step < 10; step++) {
+    editor.getState().holdPrefetch()
+    await vi.advanceTimersByTimeAsync(100)
+  }
+  expect(renderRequests()).toHaveLength(0)
+  await vi.advanceTimersByTimeAsync(299)
+  expect(renderRequests()).toHaveLength(0)
+  await vi.advanceTimersByTimeAsync(1)
+  expect(renderRequests()).toHaveLength(1)
+  expect(renderRequests()[0]).toMatchObject({ interactive: true, maxEdge: 4096 })
+  now.mockRestore()
+})
+
+it('stops a prefetch block in flight when the view moves and renders it after rest', async () => {
+  const now = vi.spyOn(performance, 'now').mockImplementation(() => Date.now())
+  await editor.getState().open(file)
+  await vi.advanceTimersByTimeAsync(200)
+  nativeRenders()
+  editor.getState().setViewport({ x: 0.4, y: 0.4, width: 0.1, height: 0.1 })
+  await vi.advanceTimersByTimeAsync(0)
+  const pending = nativeRenders(() => true)
+  await vi.advanceTimersByTimeAsync(400)
+  expect(pending).toHaveLength(1)
+  const block = pending[0].payload.region
+  invoke.mockClear()
+  editor.getState().holdPrefetch()
+  editor.getState().holdPrefetch()
+  expect(invoke.mock.calls.filter(([command]) => command === 'editor:cancelRender')).toEqual([
+    ['editor:cancelRender', { sessionId: 'session-a', revision: pending[0].payload.revision }]
+  ])
+  // The view rests where it started, so no render follows, and the
+  // cancellation settles after the hold ends.
+  await vi.advanceTimersByTimeAsync(120)
+  editor.getState().setViewport({ x: 0.4, y: 0.4, width: 0.1, height: 0.1 })
+  await vi.advanceTimersByTimeAsync(281)
+  expect(pending).toHaveLength(1)
+  pending[0].fail()
+  await tick()
+  expect(editor.getState().prefetching).toBe(false)
+  await vi.advanceTimersByTimeAsync(399)
+  expect(pending).toHaveLength(1)
+  await vi.advanceTimersByTimeAsync(1)
+  expect(pending).toHaveLength(2)
+  expect(pending[1].payload.region).toEqual(block)
+  expect(pending[1].payload.revision).toBeGreaterThan(pending[0].payload.revision as number)
+  nativeRenders()
+  pending[1].finish()
+  await vi.advanceTimersByTimeAsync(5000)
+  expect(editor.getState().prefetching).toBe(false)
+  now.mockRestore()
+})
+
+it('cancels prefetch for an edit and drops its old-recipe block', async () => {
+  await editor.getState().open(file)
+  await vi.advanceTimersByTimeAsync(200)
+  nativeRenders()
+  editor.getState().setViewport({ x: 0.4, y: 0.4, width: 0.1, height: 0.1 })
+  await vi.advanceTimersByTimeAsync(0)
+  const pending = nativeRenders(() => true)
+  await vi.advanceTimersByTimeAsync(400)
+  expect(pending).toHaveLength(1)
+  expect(editor.getState().prefetching).toBe(true)
+  expect(editor.getState().rendering).toBe(false)
+  // Look thumbnails wait; a thumbnail request would cancel the block.
+  expect(await editor.getState().renderThumbnail(defaultRecipe())).toBeNull()
+  const oldKey = editor.getState().cache!.key
+  const seen: Array<string | undefined> = []
+  const unsubscribe = editor.subscribe((state) => seen.push(state.cache?.key))
+  editor.getState().change({ exposure: 2 }, false)
+  expect(invoke).toHaveBeenCalledWith('editor:cancelRender', {
+    sessionId: 'session-a',
+    revision: pending[0].payload.revision
+  })
+  expect(editor.getState().cache).toBeNull()
+  pending[0].finish()
+  await tick()
+  pending.slice(1).forEach((request) => request.finish())
+  await tick()
+  unsubscribe()
+  expect(seen).not.toContain(oldKey)
+})
+
+it('lets a pan interrupt prefetch and requests the interrupted block again later', async () => {
+  await editor.getState().open(file)
+  await vi.advanceTimersByTimeAsync(200)
+  nativeRenders()
+  const viewport = { x: 0.4, y: 0.4, width: 0.1, height: 0.1 }
+  editor.getState().setViewport(viewport)
+  await vi.advanceTimersByTimeAsync(0)
+  const pending = nativeRenders(() => true)
+  await vi.advanceTimersByTimeAsync(400)
+  const block = pending[0].payload.region
+  invoke.mockClear()
+  const next = { ...viewport, y: 0.401 }
+  editor.getState().setViewport(next)
+  expect(invoke).toHaveBeenCalledWith('editor:cancelRender', {
+    sessionId: 'session-a',
+    revision: pending[0].payload.revision
+  })
+  pending[0].fail()
+  await tick()
+  expect(editor.getState().cache?.renders.length).toBeGreaterThan(0)
+  for (let i = 0; i < 20; ++i) {
+    pending.slice(1).forEach((request) => request.finish())
+    await vi.advanceTimersByTimeAsync(500)
+  }
+  expect(renderRequests()[0]).toMatchObject({ region: next, maxEdge: 4096 })
+  expect(
+    renderRequests().some((request) => JSON.stringify(request.region) === JSON.stringify(block))
+  ).toBe(true)
+  expect(nextPrefetch(editor.getState().cache!, next, new Set())).toBeNull()
+})
+
+it('starts prefetch only after a look thumbnail in flight finishes', async () => {
+  await editor.getState().open(file)
+  await vi.advanceTimersByTimeAsync(200)
+  nativeRenders()
+  const pending = nativeRenders((payload) => payload.maxEdge === 240)
+  editor.getState().setViewport({ x: 0.4, y: 0.4, width: 0.1, height: 0.1 })
+  await vi.advanceTimersByTimeAsync(0)
+  const thumbnail = editor.getState().renderThumbnail(defaultRecipe())
+  invoke.mockClear()
+  await vi.advanceTimersByTimeAsync(1000)
+  expect(renderRequests()).toHaveLength(0)
+  pending[0].finish()
+  expect(await thumbnail).toMatch(/^x3f-preview:/)
+  await vi.advanceTimersByTimeAsync(400)
+  expect(renderRequests().length).toBeGreaterThan(0)
+  expect(renderRequests()[0]).toMatchObject({ interactive: true, maxEdge: 4096 })
+})
+
+it('refreshes a stale base after an edit while zoomed, even when the view is too wide for native blocks', async () => {
+  await editor.getState().open(file)
+  await vi.advanceTimersByTimeAsync(200)
+  nativeRenders()
+  // 4500 px across: wider than the renderer's 4096 px region limit.
+  const region = { x: 0.1, y: 0.1, width: 0.75, height: 0.75 }
+  editor.getState().setViewport(region)
+  await vi.advanceTimersByTimeAsync(0)
+  expect(editor.getState().tile?.width).toBe(4096)
+  const base = editor.getState().preview
+  invoke.mockClear()
+  editor.getState().change({ exposure: 1 })
+  await vi.advanceTimersByTimeAsync(2000)
+  const requests = renderRequests()
+  expect(requests.map((request) => [!!request.region, request.maxEdge])).toEqual([
+    [true, 1024],
+    [true, 4096],
+    [false, 2048]
+  ])
+  expect((requests[2].recipe as EditRecipe).exposure).toBe(1)
+  expect(editor.getState().cache).toBeNull()
+  expect(editor.getState().preview?.url).not.toBe(base?.url)
+  // Fresh now: nothing more until the next change.
+  invoke.mockClear()
+  editor.getState().setViewport({ ...region, x: 0.2 })
+  await vi.advanceTimersByTimeAsync(2000)
+  expect(renderRequests()).toHaveLength(1)
 })

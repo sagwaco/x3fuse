@@ -13,9 +13,26 @@ import {
 import { EditorControls } from '../src/renderer/src/components/EditorControls'
 import { CropControls } from '../src/renderer/src/components/CropControls'
 import { CropPreview } from '../src/renderer/src/components/CropPreview'
+import { DevelopingCloud } from '../src/renderer/src/lib/developingCloud'
 import { useEditorStore as editor } from '../src/renderer/src/stores/editorStore'
 import { useQueueStore as queue } from '../src/renderer/src/stores/queueStore'
 import { t } from '../src/renderer/src/lib/strings'
+import { cropToFrame, frameToCrop } from '../src/renderer/src/lib/cropGeometry'
+import { pictureQuad } from '../src/renderer/src/lib/perspective'
+
+const scope = vi.hoisted(() => ({
+  image: 'loading' as unknown,
+  url: undefined as string | undefined,
+  level: vi.fn(),
+  upright: vi.fn()
+}))
+vi.mock('../src/renderer/src/hooks/useScopeImage', () => ({
+  useScopeImage: (url?: string) => ((scope.url = url), scope.image)
+}))
+vi.mock('../src/renderer/src/lib/upright', () => ({
+  level: (...args: unknown[]) => scope.level(...args),
+  upright: (...args: unknown[]) => scope.upright(...args)
+}))
 
 const originalChange = editor.getState().change
 const originalCommit = editor.getState().commit
@@ -55,6 +72,8 @@ const swatch = (group: string, name: string): HTMLElement =>
   within(screen.getByRole('radiogroup', { name: group })).getByRole('radio', { name })
 
 beforeEach(() => {
+  // jsdom does not decode images.
+  HTMLImageElement.prototype.decode = () => Promise.resolve()
   vi.stubGlobal(
     'ResizeObserver',
     class {
@@ -88,6 +107,7 @@ beforeEach(() => {
       asShotTemperature: 5150,
       asShotTint: 7
     },
+    previewPose: { pitch: 0, yaw: 0 },
     loading: false,
     closing: false,
     rendering: false,
@@ -225,6 +245,42 @@ it('starts white balance from the camera reading so leaving As shot does not jum
   expect(change).toHaveBeenLastCalledWith({ temperature: null, tint: 0 })
 })
 
+it('turns the controls on and shows the camera reading after the developing cloud leaves', () => {
+  const view = render(
+    <DevelopingCloud.Provider value>
+      <Controls />
+    </DevelopingCloud.Provider>
+  )
+  const temperature = (): HTMLElement =>
+    screen.getByRole('slider', { name: t('editor.temperature') })
+  const field = (): HTMLInputElement =>
+    screen.getByRole('spinbutton', { name: t('editor.temperature') })
+  expect(field().disabled).toBe(true)
+  expect(temperature().getAttribute('aria-valuenow')).toBe('6500')
+  view.rerender(
+    <DevelopingCloud.Provider value={false}>
+      <Controls />
+    </DevelopingCloud.Provider>
+  )
+  expect(field().disabled).toBe(false)
+  expect(temperature().getAttribute('aria-valuenow')).toBe('5150')
+})
+
+it('reads the crop-mode picture after the developing cloud leaves', () => {
+  const view = render(
+    <DevelopingCloud.Provider value>
+      <Crop />
+    </DevelopingCloud.Provider>
+  )
+  expect(scope.url).toBeUndefined()
+  view.rerender(
+    <DevelopingCloud.Provider value={false}>
+      <Crop />
+    </DevelopingCloud.Provider>
+  )
+  expect(scope.url).toBe(editor.getState().preview!.url)
+})
+
 it('resets sliders to actual nonzero and nullable defaults and prevents resets while closing', () => {
   render(
     <Controls
@@ -326,14 +382,104 @@ it('uses camera framing for As shot and reset, and offers the aspect presets as 
     expect(screen.getByRole('radio', { name: label })).toBeTruthy()
   fireEvent.click(screen.getByRole('radio', { name: t('editor.asShot') }))
   expect(change).toHaveBeenLastCalledWith({ crop: asShot })
-  fireEvent.click(screen.getByRole('button', { name: t('editor.rotate') }))
-  expect(change).toHaveBeenLastCalledWith({ rotation: 1 })
-  fireEvent.click(screen.getByRole('button', { name: t('editor.rotateLeft') }))
-  expect(change).toHaveBeenLastCalledWith({ rotation: 0 })
   adjust(t('editor.straighten'), -2.5)
   expect(change).toHaveBeenLastCalledWith({ straighten: -2.5 }, true)
-  fireEvent.click(screen.getByRole('button', { name: t('editor.resetCrop') }))
-  expect(change).toHaveBeenLastCalledWith({ crop: asShot, rotation: 0, straighten: 0 })
+  // Rotate, reset, cancel and apply live in the crop-mode toolbar (editor-screen tests).
+  expect(screen.queryByRole('button', { name: t('editor.resetCrop') })).toBeNull()
+})
+
+it('levels and uprights the crop-mode picture and reports when nothing is found', () => {
+  const picture = { data: new Uint8ClampedArray(16), width: 2, height: 2 }
+  scope.image = 'loading'
+  scope.level.mockReset()
+  scope.upright.mockReset()
+  render(<Crop />)
+  const straighten = screen.getByRole('button', { name: t('editor.levelPicture') })
+  const upright = screen.getByRole('button', { name: t('editor.upright') })
+  expect(straighten).toHaveProperty('disabled', true)
+  expect(upright).toHaveProperty('disabled', true)
+  cleanup()
+
+  scope.image = picture
+  render(<Crop />)
+  scope.level.mockReturnValueOnce(1.5).mockReturnValueOnce(null)
+  fireEvent.click(screen.getByRole('button', { name: t('editor.levelPicture') }))
+  expect(scope.level).toHaveBeenCalledWith(picture, { pitch: 0, yaw: 0 }, 6000, 4000)
+  expect(change).toHaveBeenLastCalledWith({ straighten: 1.5 }, true)
+  change.mockClear()
+  fireEvent.click(screen.getByRole('button', { name: t('editor.levelPicture') }))
+  expect(change).not.toHaveBeenCalled()
+  expect(screen.getByRole('status').textContent).toBe(t('editor.noLines'))
+
+  scope.upright.mockReturnValueOnce({ straighten: -2, pitch: 6, yaw: -3 })
+  fireEvent.click(screen.getByRole('button', { name: t('editor.upright') }))
+  expect(scope.upright).toHaveBeenCalledWith(picture, { pitch: 0, yaw: 0 }, 6000, 4000)
+  const [patch, save] = change.mock.lastCall!
+  expect(patch).toMatchObject({ straighten: -2, pitch: 6, yaw: -3 })
+  expect(save).toBe(true)
+  // The new crop keeps the 3:2 frame, centered, and is smaller than the full image.
+  expect(patch.crop.width / patch.crop.height).toBeCloseTo(1)
+  expect(patch.crop.width).toBeLessThan(1)
+  expect(patch.crop.x + patch.crop.width / 2).toBeCloseTo(0.5, 1)
+  scope.image = 'loading'
+})
+
+it('keeps every crop write inside the picture outline after Upright adds pitch', () => {
+  scope.image = { data: new Uint8ClampedArray(16), width: 2, height: 2 }
+  const asShot = { x: 0, y: 0, width: 1, height: 1 }
+  editor.setState({ session: { ...editor.getState().session!, asShotCrop: asShot } })
+  render(<Crop />)
+  scope.upright.mockReturnValueOnce({ straighten: 0, pitch: 12, yaw: 0 })
+  fireEvent.click(screen.getByRole('button', { name: t('editor.upright') }))
+  const valid = (crop: EditRecipe['crop']): boolean =>
+    crop !== null &&
+    frameToCrop(cropToFrame(crop, 0, 6000, 4000), 0, 6000, 4000, pictureQuad(12, 0, 6000, 4000)) !==
+      null
+  fireEvent.click(screen.getByRole('radio', { name: '3:2' }))
+  const ratio = change.mock.lastCall![0].crop
+  expect(ratio.width).toBeLessThan(1)
+  expect(valid(ratio)).toBe(true)
+  fireEvent.click(screen.getByRole('radio', { name: t('editor.asShot') }))
+  const shot = change.mock.lastCall![0].crop
+  expect(shot.width).toBeLessThan(1)
+  expect(valid(shot)).toBe(true)
+  scope.image = 'loading'
+})
+
+it('refits the crop when the straighten slider resets under perspective', () => {
+  const full = { x: 0, y: 0, width: 1, height: 1 }
+  const quad = pictureQuad(25, 0, 6000, 4000)
+  // A strong straighten zooms the full frame far enough to fit the outline.
+  expect(frameToCrop(cropToFrame(full, 40, 6000, 4000), 40, 6000, 4000, quad)).not.toBeNull()
+  expect(frameToCrop(cropToFrame(full, 0, 6000, 4000), 0, 6000, 4000, quad)).toBeNull()
+  render(<Crop initial={{ ...defaultRecipe(), crop: full, straighten: 40, pitch: 25 }} />)
+  reset(t('editor.straighten'))
+  const patch = change.mock.lastCall![0]
+  expect(patch.straighten).toBe(0)
+  expect(patch.crop.width).toBeLessThan(1)
+  expect(frameToCrop(cropToFrame(patch.crop, 0, 6000, 4000), 0, 6000, 4000, quad)).not.toBeNull()
+})
+
+it('does not analyze a preview rendered with other angles, as after a failed render', () => {
+  scope.image = { data: new Uint8ClampedArray(16), width: 2, height: 2 }
+  scope.upright.mockReset().mockReturnValue({ straighten: 0, pitch: 6, yaw: 0 })
+  render(<Crop />)
+  const upright = screen.getByRole('button', { name: t('editor.upright') })
+  fireEvent.click(upright)
+  expect(scope.upright).toHaveBeenCalledOnce()
+  // The render for pitch 6 fails: the store keeps the old pixels and their old pose.
+  expect(editor.getState().previewPose).toEqual({ pitch: 0, yaw: 0 })
+  expect(upright).toHaveProperty('disabled', true)
+  expect(screen.getByRole('button', { name: t('editor.levelPicture') })).toHaveProperty(
+    'disabled',
+    true
+  )
+  fireEvent.click(upright)
+  expect(scope.upright).toHaveBeenCalledOnce()
+  // A render with the new angles makes them usable again.
+  act(() => editor.setState({ previewPose: { pitch: 6, yaw: 0 } }))
+  expect(upright).toHaveProperty('disabled', false)
+  scope.image = 'loading'
 })
 
 it('labels and applies portrait presets after a quarter turn and swaps orientation', () => {
@@ -346,6 +492,26 @@ it('labels and applies portrait presets after a quarter turn and swaps orientati
   const swapped = change.mock.lastCall?.[0].crop
   expect((swapped.height * 4000) / (swapped.width * 6000)).toBeCloseTo(7 / 5)
   expect(screen.getByRole('radio', { name: '7:5' })).toBeTruthy()
+})
+
+it('decodes the crop preview image before it shows, and reports a paint when it loads', async () => {
+  const onPaint = vi.fn()
+  const preview = editor.getState().preview!
+  const view = render(
+    <CropPreview
+      preview={preview}
+      recipe={defaultRecipe()}
+      locked
+      onDone={() => {}}
+      onPaint={onPaint}
+    />
+  )
+  expect(view.container.querySelector('image')).toBeNull()
+  await act(async () => {})
+  expect(view.container.querySelector('image')!.getAttribute('href')).toBe(preview.url)
+  expect(onPaint).not.toHaveBeenCalled()
+  fireEvent.load(view.container.querySelector('image')!)
+  expect(onPaint).toHaveBeenCalledOnce()
 })
 
 it('nudges the crop in screen directions from the keyboard and applies on Return', () => {
@@ -367,4 +533,60 @@ it('nudges the crop in screen directions from the keyboard and applies on Return
   expect(change.mock.lastCall?.[0].crop.y).toBeCloseTo(0.24)
   fireEvent.keyDown(canvas, { key: 'Enter' })
   expect(done).toHaveBeenCalledOnce()
+})
+
+it('maps the perspective sliders to pitch and yaw, fitting the crop, and restores it when dragged back', () => {
+  render(<Crop initial={{ ...defaultRecipe(), crop: null }} />)
+  const fits = (patch: Partial<EditRecipe>): boolean =>
+    frameToCrop(
+      cropToFrame(patch.crop!, 0, 6000, 4000),
+      0,
+      6000,
+      4000,
+      pictureQuad(patch.pitch ?? 0, patch.yaw ?? 0, 6000, 4000)
+    ) !== null
+  adjust(t('editor.perspectiveVertical'), 20)
+  const vertical = change.mock.lastCall![0]
+  expect(vertical.pitch).toBe(20)
+  expect(vertical.crop.width).toBeLessThan(1)
+  expect(fits(vertical)).toBe(true)
+  act(() => setRecipe({ ...defaultRecipe(), crop: null }))
+  adjust(t('editor.perspectiveHorizontal'), -15)
+  const horizontal = change.mock.lastCall![0]
+  expect(horizontal.yaw).toBe(-15)
+  expect(fits(horizontal)).toBe(true)
+
+  // Drag the Vertical slider out and back: the frame returns to the full picture.
+  act(() => setRecipe({ ...defaultRecipe(), crop: null }))
+  vi.stubGlobal('PointerEvent', MouseEvent)
+  const proto = HTMLElement.prototype as unknown as Record<string, unknown>
+  const saved = ['setPointerCapture', 'releasePointerCapture', 'hasPointerCapture'].map((k) => [
+    k,
+    proto[k]
+  ])
+  proto.setPointerCapture = () => {}
+  proto.releasePointerCapture = () => {}
+  proto.hasPointerCapture = () => true
+  const rect = vi
+    .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+    .mockReturnValue(DOMRect.fromRect({ x: 0, y: 0, width: 100, height: 10 }))
+  try {
+    const thumb = screen.getByRole('slider', { name: t('editor.perspectiveVertical') })
+    const root = thumb.closest('[data-orientation]')!.parentElement!.closest('[data-orientation]')
+    const track = root ?? thumb.closest('[data-orientation]')!
+    fireEvent.pointerDown(track, { clientX: 75, pointerId: 1, button: 0 })
+    expect(change.mock.lastCall![0].pitch).toBe(20)
+    expect(change.mock.lastCall![0].crop.width).toBeLessThan(1)
+    fireEvent.pointerMove(track, { clientX: 50, pointerId: 1 })
+    expect(change.mock.lastCall![0]).toEqual({ pitch: 0, crop: null })
+    // Back at its start value, Radix sends no commit at release.
+    fireEvent.pointerUp(track, { clientX: 50, pointerId: 1 })
+    // A crop chosen afterwards must not be replaced by that drag's start crop.
+    fireEvent.click(screen.getByRole('radio', { name: '3:2' }))
+    adjust(t('editor.straighten'), 1)
+    expect(change).toHaveBeenLastCalledWith({ straighten: 1 }, true)
+  } finally {
+    rect.mockRestore()
+    for (const [k, v] of saved) proto[k as string] = v
+  }
 })

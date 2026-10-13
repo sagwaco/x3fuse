@@ -400,6 +400,23 @@ pub async fn editor_open(
         .map_err(|e| e.to_string())?
 }
 
+/// Prepares the selected photo in the background, so that Edit opens it fast.
+#[tauri::command]
+pub async fn editor_warm(
+    window: WebviewWindow,
+    state: State<'_, Arc<AppState>>,
+    payload: PathRequest,
+) -> Result<(), String> {
+    main_window(&window)?;
+    if state.running.load(Ordering::SeqCst) {
+        return Err("Preview rendering pauses during export".into());
+    }
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.editor.warm(payload.path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 pub async fn editor_render(
     window: WebviewWindow,
@@ -409,9 +426,13 @@ pub async fn editor_render(
     main_window(&window)?;
     let state = state.inner().clone();
     let job = state.editor.begin_render(payload)?;
-    tauri::async_runtime::spawn_blocking(move || state.editor.render_job(job))
+    let persist = state.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || state.editor.render_job(job))
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+    // Persist medium PNGs after the frame is returned, not before.
+    tauri::async_runtime::spawn_blocking(move || persist.editor.persist_previews());
+    result
 }
 
 #[derive(Deserialize)]

@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { memo, useContext, useRef, useState } from 'react'
 import { DenoiseControls } from './DenoiseControls'
 import { ChevronDown, RotateCcw, Pipette, Plus, Trash2 } from 'lucide-react'
 import {
@@ -13,6 +13,7 @@ import {
 } from '@shared/editor'
 import stocks from '@shared/film-stocks.json'
 import { useEditorStore } from '../stores/editorStore'
+import { DevelopingCloud } from '../lib/developingCloud'
 import { useQueueStore } from '../stores/queueStore'
 import { t } from '../lib/strings'
 import { Button } from './ui/button'
@@ -74,8 +75,11 @@ export function Adjustment({
   commit: () => void
 }): React.JSX.Element {
   const busy = useQueueStore((state) => state.isProcessing || state.isPreparing)
+  // The controls turn on after the developing cloud leaves. Turning them all
+  // on at once takes a few milliseconds, and the cloud would skip a frame.
+  const cloud = useContext(DevelopingCloud)
   const inactive = useEditorStore(
-    (state) => state.before || state.loading || state.closing || !state.preview
+    (state) => cloud || state.before || state.loading || state.closing || !state.preview
   )
   return (
     <div className="space-y-1.5 py-2">
@@ -185,7 +189,9 @@ function Swatches<T extends string>({
   )
 }
 
-export function EditorControls({
+// The editor screen renders again for each preview. The controls do not
+// change then, and rendering them again would delay animation frames.
+export const EditorControls = memo(function EditorControls({
   recipe,
   picking,
   setPicking
@@ -196,8 +202,11 @@ export function EditorControls({
 }): React.JSX.Element {
   const change = useEditorStore((state) => state.change)
   const commit = useEditorStore((state) => state.commit)
-  const asShotTemperature = useEditorStore((state) => state.preview?.asShotTemperature)
-  const asShotTint = useEditorStore((state) => state.preview?.asShotTint)
+  const cloud = useContext(DevelopingCloud)
+  const asShotTemperature = useEditorStore((state) =>
+    cloud ? undefined : state.preview?.asShotTemperature
+  )
+  const asShotTint = useEditorStore((state) => (cloud ? undefined : state.preview?.asShotTint))
   const [band, setBand] = useState(0)
   const hue = BANDS[band][1]
   const control = (
@@ -364,7 +373,7 @@ export function EditorControls({
       </Section>
     </>
   )
-}
+})
 
 const CHANNELS = {
   master: 'conic-gradient(#f87171, #4ade80, #60a5fa, #f87171)',

@@ -70,7 +70,7 @@ The ignored `spektrafilm_parity` test re-checks the same chain against the real
 
 ## SHA-256
 
-- `src/render.wgsl`: 2bee97ebe5c4e2591a94c62ff0d6fc0223336164b1b8b475502c3c7ab232dd0f
+- `src/render.wgsl`: a0b10a9bf4a0d00fdcd068e074597d378df4f85d6107919b11fc3ca9529c0d6e
 - `licenses/SPEKTRAFILM_LICENSE.txt`: 76d629501783ae52e8d63aee1e054c1e1a9713b9fe7d36fb306e25b1d14b24e9
 - `assets/irradiance_xy_tc.npy`: 52f90c724811f5fab80769f8548bf24d08a521eb09e65ab6e016893258d2a783
 - `assets/neutral_print_filters.json`: 8c96ba7089629aa38914492dc65c526551a1decbbb8769c2383d40e4e9632b38

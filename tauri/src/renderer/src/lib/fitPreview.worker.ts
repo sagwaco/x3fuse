@@ -2,11 +2,10 @@ export type FitPreviewRequest = {
   id: number
   blob: Blob
   original?: { width: number; height: number }
-  preserveSource?: boolean
 }
 
 self.onmessage = async (event: MessageEvent<FitPreviewRequest>): Promise<void> => {
-  const { id, blob, original, preserveSource } = event.data
+  const { id, blob, original } = event.data
   let decoded: ImageBitmap | undefined
   let image: ImageBitmap | undefined
   try {
@@ -15,7 +14,7 @@ self.onmessage = async (event: MessageEvent<FitPreviewRequest>): Promise<void> =
     const width = original?.width ?? decoded.width
     const height = original?.height ?? decoded.height
     let medium = blob
-    if (original || preserveSource) {
+    if (original) {
       image = decoded
       decoded = undefined
     } else {

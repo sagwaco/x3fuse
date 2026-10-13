@@ -11,6 +11,7 @@ import { FileFilmstrip } from '../src/renderer/src/components/FileFilmstrip'
 import { FileQueue } from '../src/renderer/src/components/FileQueue'
 import { FileGrid } from '../src/renderer/src/components/FileGrid'
 import { ipc } from '../src/renderer/src/lib/ipc'
+import { DevelopingCloud } from '../src/renderer/src/lib/developingCloud'
 
 vi.mock('../src/renderer/src/lib/ipc', () => ({ ipc: { invoke: vi.fn(async () => null) } }))
 
@@ -106,9 +107,20 @@ it('reuses the active editor frame for its thumbnail while preserving saved URLs
       disconnect(): void {}
     }
   )
-  const view = render(<FileFilmstrip preview={<div />} />)
+  // The strip loads the editor's pixels after the developing cloud leaves.
+  const view = render(
+    <DevelopingCloud.Provider value>
+      <FileFilmstrip preview={<div />} />
+    </DevelopingCloud.Provider>
+  )
   const url = (id: string): string | null | undefined =>
     view.container.querySelector(`[data-cell="${id}"]`)?.getAttribute('data-url')
+  await waitFor(() => expect(url('a')).toBe('saved-a-2048'))
+  view.rerender(
+    <DevelopingCloud.Provider value={false}>
+      <FileFilmstrip preview={<div />} />
+    </DevelopingCloud.Provider>
+  )
   await waitFor(() => expect(url('a')).toBe('interactive-a-512'))
   expect(url('b')).toBe('saved-b-2048')
   act(() =>

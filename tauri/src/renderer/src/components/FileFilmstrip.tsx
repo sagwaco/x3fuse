@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, type ReactNode } from 'react'
+import { memo, useContext, useEffect, useMemo, useRef, type ReactNode } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useScrollToActive } from '../hooks/useScrollToActive'
 import type { X3FFileDTO } from '@shared/types'
@@ -14,6 +14,7 @@ import { Thumbnail } from './Thumbnail'
 import { EditedBadge } from './EditedBadge'
 import { ZoomablePreview } from './ZoomablePreview'
 import { QueueContextMenu } from './QueueContextMenu'
+import { DevelopingCloud } from '../lib/developingCloud'
 
 /** Filmstrip view: a large preview of the active file above a scrollable strip. */
 export function FileFilmstrip({
@@ -44,8 +45,12 @@ export function FileFilmstrip({
     sorted.findIndex((f) => f.id === activeId)
   )
   const active = sorted[activeIndex]
+  // The strip loads the editor's pixels after the developing cloud leaves.
+  const cloud = useContext(DevelopingCloud)
   const editorPreviewUrl = useEditorStore((state) =>
-    preview !== undefined && state.session?.path === active?.path ? state.preview?.url : undefined
+    !cloud && preview !== undefined && state.session?.path === active?.path
+      ? state.preview?.url
+      : undefined
   )
   // Reuse completed editor pixels; autosaves must not start a separate 2K render.
   const activeThumbnail = useMemo(

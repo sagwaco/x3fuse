@@ -36,7 +36,9 @@ const rendered = new Map<string, string>()
 /** Render each look's thumbnail in turn while the editor is idle. */
 function useThumbnails(looks: Look[]): [Record<string, string | undefined>, (id: string) => void] {
   const sessionId = useEditorStore((state) => state.session?.sessionId)
-  const idle = useEditorStore((state) => !state.rendering && !!state.preview && !state.cropping)
+  const idle = useEditorStore(
+    (state) => !state.rendering && !state.prefetching && !!state.preview && !state.cropping
+  )
   const renderThumbnail = useEditorStore((state) => state.renderThumbnail)
   const [latest, setLatest] = useState<Record<string, string>>({})
   const [attempt, setAttempt] = useState(0)

@@ -53,7 +53,7 @@ pub fn run() {
         tauri::plugin::Builder::<tauri::Wry>::new("system-appearance")
             .on_webview_ready(|webview| {
                 if let Err(error) = webview.with_webview(|platform| unsafe {
-                    use objc2::{msg_send, runtime::AnyObject, sel};
+                    use objc2::{class, msg_send, runtime::AnyObject, sel};
                     unsafe extern "C" {
                         fn x3fuse_install_smooth_zoom(window: *mut std::ffi::c_void) -> bool;
                     }
@@ -68,6 +68,31 @@ pub fn run() {
                         msg_send![view, respondsToSelector: sel!(_setUseSystemAppearance:)];
                     if supported {
                         let _: () = msg_send![view, _setUseSystemAppearance: true];
+                    }
+                    // WebKit keeps animation frames near 60 per second unless this
+                    // private feature is off. Then they follow the display refresh rate.
+                    let configuration: *mut AnyObject = msg_send![view, configuration];
+                    let preferences: *mut AnyObject = msg_send![configuration, preferences];
+                    let listed: bool =
+                        msg_send![class!(WKPreferences), respondsToSelector: sel!(_features)];
+                    let settable: bool = msg_send![
+                        preferences,
+                        respondsToSelector: sel!(_setEnabled:forFeature:)
+                    ];
+                    if listed && settable {
+                        let features: *mut AnyObject = msg_send![class!(WKPreferences), _features];
+                        let count: usize = msg_send![features, count];
+                        for index in 0..count {
+                            let feature: *mut AnyObject = msg_send![features, objectAtIndex: index];
+                            let key: *mut AnyObject = msg_send![feature, key];
+                            let key: *const std::ffi::c_char = msg_send![key, UTF8String];
+                            if std::ffi::CStr::from_ptr(key)
+                                == c"PreferPageRenderingUpdatesNear60FPSEnabled"
+                            {
+                                let _: () =
+                                    msg_send![preferences, _setEnabled: false, forFeature: feature];
+                            }
+                        }
                     }
                 }) {
                     eprintln!("Could not configure macOS webview: {error}");
@@ -184,16 +209,13 @@ pub fn run() {
             let app = context.app_handle().clone();
             tauri::async_runtime::spawn_blocking(move || {
                 let state = app.state::<Arc<AppState>>();
-                let result = state.editor.image_uri(&request.uri().to_string());
-                let (status, bytes) = match result {
-                    Ok(bytes) => (200, bytes.as_ref().clone()),
-                    Err(error) => {
-                        state
-                            .logs
-                            .write("debug", format!("Edited preview: {error}"));
-                        (400, error.into_bytes())
-                    }
-                };
+                let body = state.editor.respond(&request.uri().to_string());
+                if body.status != 200 {
+                    state.logs.write(
+                        "debug",
+                        format!("Edited preview: {}", String::from_utf8_lossy(&body.bytes)),
+                    );
+                }
                 let origin = request
                     .headers()
                     .get("origin")
@@ -209,31 +231,27 @@ pub fn run() {
                     })
                     .unwrap_or("tauri://localhost");
                 let response = tauri::http::Response::builder()
-                    .status(status)
-                    .header(
-                        "Content-Type",
-                        if status == 200 {
-                            "image/png"
-                        } else {
-                            "text/plain"
-                        },
-                    )
+                    .status(body.status)
+                    .header("Content-Type", body.content_type)
                     .header(
                         "Cache-Control",
-                        if status == 200 {
+                        if body.status == 200 {
                             "private, max-age=86400, immutable"
                         } else {
                             "no-store"
                         },
                     )
                     .header("Access-Control-Allow-Origin", origin)
-                    .body(bytes)
+                    .body(body.bytes)
                     .unwrap();
                 responder.respond(response);
+                // A background render may leave a medium PNG to persist.
+                state.editor.persist_previews();
             });
         })
         .invoke_handler(tauri::generate_handler![
             commands::editor_open,
+            commands::editor_warm,
             commands::editor_render,
             commands::editor_save,
             commands::editor_load,
@@ -272,7 +290,10 @@ pub fn run() {
                         let _ = window.emit("editor:closing", serde_json::json!({"quit":false}));
                         return;
                     }
-                    state.editor.cancel_preview();
+                    state.editor.close_window();
+                    // The app can stay open without a window on macOS.
+                    let app_state = state.inner().clone();
+                    std::thread::spawn(move || app_state.editor.release_source());
                     if state.running.load(Ordering::SeqCst) {
                         api.prevent_close();
                         state.shutdown.fetch_max(1, Ordering::SeqCst);

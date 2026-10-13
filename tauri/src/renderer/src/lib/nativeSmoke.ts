@@ -1,4 +1,7 @@
-import { previewUrl } from '@shared/preview'
+import { createElement } from 'react'
+import { createRoot } from 'react-dom/client'
+import type { PreviewRegion } from '@shared/editor'
+import { displayPreviewUrl, previewUrl } from '@shared/preview'
 import { SCOPE_MODES, type X3FFileDTO } from '@shared/types'
 import { useQueueStore } from '../stores/queueStore'
 import { useSettingsStore } from '../stores/settingsStore'
@@ -7,6 +10,8 @@ import { ipc } from './ipc'
 import { useEditorStore } from '../stores/editorStore'
 import { useNavStore } from '../stores/navStore'
 import { t } from './strings'
+import { cachedFitPreview } from './fitPreviews'
+import { DevelopingPreview } from '../components/DevelopingPreview'
 
 declare global {
   interface Window {
@@ -668,12 +673,75 @@ async function runEditor(input: string): Promise<Record<string, unknown>> {
     check(file && !file.pending, 'Editor import did not complete')
     q().setSelection(new Set([file.id]), file.id)
     await painted()
+    // The cloud compiles and draws in this webview, unless motion or WebGL 2 is off.
+    const developingCloud =
+      typeof WebGL2RenderingContext !== 'undefined' &&
+      !window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    let cloudFrameRate: number | undefined
+    if (developingCloud) {
+      const host = document.body.appendChild(document.createElement('div'))
+      host.style.cssText = 'position:fixed;inset:0'
+      const root = createRoot(host)
+      root.render(
+        createElement(DevelopingPreview, {
+          file: { ...file, edit: undefined },
+          matching: false,
+          developing: true,
+          ready: false,
+          onDone: () => {}
+        })
+      )
+      try {
+        await until(
+          () =>
+            (host.querySelector<HTMLCanvasElement>('canvas[data-developing-preview]')?.width ?? 0) >
+            300,
+          'The developing cloud did not draw',
+          5000
+        )
+        // A window-sized cloud draws its particles at the display refresh rate.
+        const drawArrays = WebGL2RenderingContext.prototype.drawArrays
+        let draws = 0
+        WebGL2RenderingContext.prototype.drawArrays = function (mode, first, count) {
+          if (mode === this.POINTS) draws++
+          drawArrays.call(this, mode, first, count)
+        }
+        const start = performance.now()
+        try {
+          await wait(1000)
+        } finally {
+          WebGL2RenderingContext.prototype.drawArrays = drawArrays
+        }
+        cloudFrameRate = Math.round((draws * 1000) / (performance.now() - start))
+      } finally {
+        root.unmount()
+        host.remove()
+      }
+    }
+    const highResolution = !!cachedFitPreview(displayPreviewUrl(file, 'full'))
     const opened = performance.now()
     button(t('editor.edit')).click()
-    await until(previewReady, 'Initial RAW preview did not complete', 60000)
+    // A cold open shows the decoded high-resolution preview when it has one,
+    // else the developing cloud. Both leave after the preview paints.
+    const cloud = (): HTMLCanvasElement | null =>
+      document.querySelector('canvas[data-developing-preview]')
+    let sawCloud = false
+    await until(
+      () => {
+        sawCloud ||= !!cloud()
+        return previewReady()
+      },
+      'Initial RAW preview did not complete',
+      60000
+    )
+    const firstPreviewMs = performance.now() - opened
+    await until(() => !cloud(), 'The developing cloud did not leave', 5000)
+    check(
+      sawCloud === (developingCloud && !highResolution),
+      `Placeholder: high resolution ${highResolution}, cloud ${sawCloud}`
+    )
     check(useNavStore.getState().screen === 'editor', 'Edit did not open in the main window')
     check(!e().error, e().error ?? 'Editor failed')
-    const firstPreviewMs = performance.now() - opened
     const initial = e().preview!
     check(e().session!.recipe.film !== null, 'Film rendering is not enabled by default')
     check(
@@ -844,7 +912,8 @@ async function runEditor(input: string): Promise<Record<string, unknown>> {
         'Panning downgraded the tile resolution'
       )
     }
-    check(e().viewport!.x > panStart, 'Native pan gesture did not move the viewport')
+    // The viewport goes to the renderer when the view rests.
+    await until(() => e().viewport!.x > panStart, 'Native pan gesture did not move the viewport')
     await until(
       () =>
         tilePainted() &&
@@ -852,6 +921,34 @@ async function runEditor(input: string): Promise<Record<string, unknown>> {
         JSON.stringify(e().tile?.viewport) === JSON.stringify(e().viewport),
       'Panned detail did not catch up with the viewport'
     )
+    // Idle prefetch paints sharp renders around the viewport into the cache canvas.
+    // The view stays still now, so a render not cached yet comes from prefetch;
+    // sample a pixel that only it covers.
+    const panned = new Set(e().cache?.renders.map((render) => render.url))
+    const cachePainted = (): boolean => {
+      const canvas = document.querySelector<HTMLCanvasElement>('canvas[data-editor-cache]')
+      const renders = e().cache?.renders ?? []
+      const block = renders.find((render) => !panned.has(render.url))?.region
+      if (!canvas?.width || !block || e().prefetching) return false
+      const inside = (r: PreviewRegion, x: number, y: number): boolean =>
+        x >= r.x && x <= r.x + r.width && y >= r.y && y <= r.y + r.height
+      const point = [0.1, 0.5, 0.9]
+        .flatMap((u) => [0.1, 0.5, 0.9].map((v) => [u, v]))
+        .map(([u, v]) => [block.x + u * block.width, block.y + v * block.height])
+        .find(([x, y]) =>
+          renders.every((render) => !panned.has(render.url) || !inside(render.region, x, y))
+        )
+      if (!point) return false
+      const [x, y] = [Math.round(point[0] * canvas.width), Math.round(point[1] * canvas.height)]
+      return canvas.getContext('2d')!.getImageData(x, y, 1, 1).data[3] === 255
+    }
+    await until(cachePainted, 'Idle prefetch did not paint sharp pixels near the viewport', 30000)
+    const cacheCanvas = document.querySelector<HTMLCanvasElement>('canvas[data-editor-cache]')!
+    check(
+      cacheCanvas.width === initial.fullWidth && cacheCanvas.height === initial.fullHeight,
+      'The prefetch cache is not at native size'
+    )
+    const prefetchRenders = e().cache!.renders.length
     const basePreview = e().preview!.url
     const viewportInputToPaint: number[] = []
     for (let index = 0; index < 6; index++) {
@@ -903,6 +1000,18 @@ async function runEditor(input: string): Promise<Record<string, unknown>> {
     check(await e().close(), 'Back to Main failed to save the editor')
     check(useNavStore.getState().screen === 'queue', 'Back to Main did not restore browsing')
     check(q().files[0].edit?.recipe.film?.evFilm === 1, 'Main view lost saved edits')
+    // The selection rests in the browser, so the app prepares its RAW before Edit.
+    await wait(2500)
+    const reopened = performance.now()
+    button(t('editor.edit')).click()
+    await until(previewReady, 'Warmed RAW preview did not complete', 60000)
+    const warmedPreviewMs = performance.now() - reopened
+    check(!e().preview!.draft, 'The first frame after a warm-up was a draft')
+    check(
+      warmedPreviewMs < firstPreviewMs / 2,
+      `The warmed first frame took ${Math.round(warmedPreviewMs)} ms`
+    )
+    check(await e().close(), 'Back to Main failed after the warmed open')
     q().openExport(new Set([file.id]))
     await until(
       () => useNavStore.getState().screen === 'export' && !q().isPreparing,
@@ -918,11 +1027,16 @@ async function runEditor(input: string): Promise<Record<string, unknown>> {
       ok: true,
       editor: {
         firstPreviewMs,
+        warmedPreviewMs,
+        developingCloud,
+        cloudFrameRate,
+        coldPlaceholder: highResolution ? 'high resolution' : 'cloud',
         adjustmentMs,
         inputToPaint: timings(inputToPaint),
         viewportInputToPaint: timings(viewportInputToPaint),
         viewportOnlyAdjustments: true,
         panningKeepsDetail: true,
+        prefetchRenders,
         monochromeFilters: true,
         interactiveMaxEdge: 512,
         idleRefinement: true,

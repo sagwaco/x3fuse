@@ -25,6 +25,10 @@ pub struct EditRecipe {
     pub crop: Option<Crop>,
     pub rotation: u32,
     pub straighten: f32,
+    /// Perspective correction as a virtual camera turn, in degrees (-40..40).
+    /// Applied to the oriented image before crop, rotation and straighten.
+    pub pitch: f32,
+    pub yaw: f32,
     pub monochrome: Option<MonochromeSettings>,
     pub film: Option<FilmSettings>,
     pub seed: u32,
@@ -51,6 +55,8 @@ impl Default for EditRecipe {
             crop: None,
             rotation: 0,
             straighten: 0.,
+            pitch: 0.,
+            yaw: 0.,
             monochrome: None,
             film: Some(FilmSettings::default()),
             seed: 0,
@@ -227,6 +233,8 @@ impl EditRecipe {
         }
         range("sharpen", self.sharpen, 0., 100.)?;
         range("straighten", self.straighten, -45., 45.)?;
+        range("pitch", self.pitch, -40., 40.)?;
+        range("yaw", self.yaw, -40., 40.)?;
         if self.rotation > 3 || self.denoise > 10 {
             return Err("Rotation must be 0..3 and denoise 0..10".into());
         }

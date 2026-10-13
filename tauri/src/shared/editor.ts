@@ -61,6 +61,9 @@ export interface EditRecipe {
   crop: { x: number; y: number; width: number; height: number } | null
   rotation: number
   straighten: number
+  /** Perspective as a virtual camera turn in degrees; see lib/perspective.ts. */
+  pitch: number
+  yaw: number
   film: FilmSettings | null
   monochrome: { filter: MonochromeFilter } | null
   seed: number
@@ -111,6 +114,8 @@ export function defaultRecipe(): EditRecipe {
     crop: null,
     rotation: 0,
     straighten: 0,
+    pitch: 0,
+    yaw: 0,
     film: { ...DEFAULT_FILM },
     monochrome: null,
     seed: 0
@@ -158,6 +163,8 @@ export function pasteRecipe(source: EditRecipe, target: EditRecipe): EditRecipe 
     crop: target.crop,
     rotation: target.rotation,
     straighten: target.straighten,
+    pitch: target.pitch,
+    yaw: target.yaw,
     seed: target.seed
   }
 }

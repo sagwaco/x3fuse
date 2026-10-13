@@ -10,6 +10,7 @@ import {
 } from '@shared/editor'
 import type { X3FFileDTO } from '@shared/types'
 import { ipc } from '../lib/ipc'
+import { isNative, nextPrefetch, MAX_RENDERS, type PreviewCache } from '../lib/previewTiles'
 import { useQueueStore } from './queueStore'
 import { useNavStore } from './navStore'
 
@@ -28,11 +29,21 @@ interface EditorState {
   rendering: boolean
   error: string | null
   preview: RenderedPreview | null
+  /** The pitch and yaw `preview` was rendered with; analysis must not use it with other angles. */
+  previewPose: { pitch: number; yaw: number } | null
   before: boolean
   cropping: boolean
   viewport: PreviewRegion | null
   tile: (RenderedPreview & { region: PreviewRegion; viewport: PreviewRegion }) | null
+  /** Sharp renders of the current recipe around the viewport; see lib/previewTiles. */
+  cache: PreviewCache | null
+  /** Idle prefetch is rendering; look thumbnails wait for it. */
+  prefetching: boolean
+  /** Forget a cached render whose pixels could not be shown. */
+  uncache: (url: string) => void
   setViewport: (region: PreviewRegion | null) => void
+  /** Call while the view moves. Prefetch waits until the view rests. */
+  holdPrefetch: () => void
   setCropping: (cropping: boolean) => void
   clipboard: EditRecipe | null
   open: (file: X3FFileDTO) => Promise<void>
@@ -54,8 +65,8 @@ interface EditorState {
 
 const same = (a: EditRecipe, b: EditRecipe): boolean => JSON.stringify(a) === JSON.stringify(b)
 const sameGeometry = (a: EditRecipe, b: EditRecipe): boolean =>
-  JSON.stringify([a.crop, a.rotation, a.straighten]) ===
-  JSON.stringify([b.crop, b.rotation, b.straighten])
+  JSON.stringify([a.crop, a.rotation, a.straighten, a.pitch, a.yaw]) ===
+  JSON.stringify([b.crop, b.rotation, b.straighten, b.pitch, b.yaw])
 const sameRegion = (a: PreviewRegion | null, b: PreviewRegion | null): boolean =>
   JSON.stringify(a) === JSON.stringify(b)
 const saves = new Set<Promise<void>>()
@@ -70,8 +81,17 @@ let refinementPending = false
 let refinementTimer: ReturnType<typeof setTimeout> | undefined
 let cancellationSent = false
 let runningRevision = 0
+let prefetchTimer: ReturnType<typeof setTimeout> | undefined
+let prefetchRunning = false
+let prefetchMisses = { key: '', regions: new Set<string>() }
+let thumbnailsRunning = 0
+let movedAt = -Infinity
+/** The render key of `preview`; while zoomed, prefetch refreshes it when it is stale. */
+let previewKey: string | null = null
 const INTERACTIVE_EDGE = 1024
 const REFINE_DELAY = 100
+// Longer than LookPicker's 250 ms wait, so look thumbnails render first.
+const PREFETCH_DELAY = 400
 
 function updateQueue(path: string, edit: EditRecord): void {
   useQueueStore.setState((state) => ({
@@ -79,6 +99,34 @@ function updateQueue(path: string, edit: EditRecord): void {
       file.path === path ? { ...file, edit, editError: undefined } : file
     )
   }))
+}
+
+const renderKey = (sessionId: string, recipe: EditRecipe): string =>
+  `${sessionId}:${JSON.stringify(recipe)}`
+
+/** The recipe a render of the current view uses. */
+function renderRecipe(state: EditorState, doc: Document): EditRecipe {
+  let recipe = state.before
+    ? {
+        ...defaultRecipe(),
+        crop: doc.recipe.crop,
+        rotation: doc.recipe.rotation,
+        straighten: doc.recipe.straighten,
+        pitch: doc.recipe.pitch,
+        yaw: doc.recipe.yaw,
+        seed: doc.recipe.seed
+      }
+    : doc.recipe
+  if (state.cropping) recipe = { ...recipe, crop: null, rotation: 0, straighten: 0 }
+  // Sensor denoising requires fresh RAW preparation. Coalesce slider moves and do it
+  // once on commit; other controls keep using the already prepared source.
+  if (doc.gesture)
+    recipe = {
+      ...recipe,
+      denoise: doc.gesture.denoise,
+      denoiseOptions: doc.gesture.denoiseOptions
+    }
+  return recipe
 }
 
 export const useEditorStore = create<EditorState>((set, get) => {
@@ -143,6 +191,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
         documents: { ...state.documents, [path]: doc },
         error: null,
         before: false,
+        cache: null,
         ...(geometryChanged ? { viewport: null, tile: null } : state.before ? { tile: null } : {})
       }
     })
@@ -155,7 +204,9 @@ export const useEditorStore = create<EditorState>((set, get) => {
     if (!state.session || state.loading || useQueueStore.getState().isProcessing) return
     const doc = state.documents[state.session.path]
     if (!doc) return
-    const detail = !renderPending
+    // Without a preview on screen, as on open or a crop mode change, a fast
+    // frame shows only until its refinement replaces it. Refine at once.
+    const detail = !renderPending || (!state.preview && !doc.gesture)
     const navigation = navigationPending
     renderPending = false
     navigationPending = false
@@ -167,26 +218,10 @@ export const useEditorStore = create<EditorState>((set, get) => {
     const revision = renderRevision
     runningRevision = revision
     const sessionId = state.session.sessionId
-    let recipe = state.before
-      ? {
-          ...defaultRecipe(),
-          crop: doc.recipe.crop,
-          rotation: doc.recipe.rotation,
-          straighten: doc.recipe.straighten,
-          seed: doc.recipe.seed
-        }
-      : doc.recipe
-    if (state.cropping) recipe = { ...recipe, crop: null, rotation: 0, straighten: 0 }
-    // Sensor denoising requires fresh RAW preparation. Coalesce slider moves and do it
-    // once on commit; other controls keep using the already prepared source.
-    if (doc.gesture)
-      recipe = {
-        ...recipe,
-        denoise: doc.gesture.denoise,
-        denoiseOptions: doc.gesture.denoiseOptions
-      }
+    const recipe = renderRecipe(state, doc)
+    const key = renderKey(sessionId, recipe)
     const region = !state.cropping ? state.viewport : null
-    set({ rendering: true })
+    set({ rendering: true, ...(state.cache && state.cache.key !== key ? { cache: null } : {}) })
     try {
       const preview = await ipc.invoke('editor:render', {
         sessionId,
@@ -221,8 +256,16 @@ export const useEditorStore = create<EditorState>((set, get) => {
       ) {
         if (region)
           set({ tile: { ...preview, region: preview.region ?? region, viewport: region } })
-        else set({ preview })
+        else {
+          set({ preview, previewPose: { pitch: recipe.pitch, yaw: recipe.yaw } })
+          previewKey = preview.draft ? null : key
+        }
         set({ error: Object.values(get().documents).find((doc) => doc.error)?.error ?? null })
+      }
+      if (region && !preview.draft && preview.sessionId === sessionId) {
+        // Keep sharp pixels even when the view moved on during the render.
+        if (isNative(preview)) cacheRender(key, preview)
+        if ((detail || navigation) && renderRevision === revision) schedulePrefetch()
       }
       if (
         !detail &&
@@ -252,6 +295,112 @@ export const useEditorStore = create<EditorState>((set, get) => {
       else void runRender()
     }
   }
+  function currentKey(): string | null {
+    const state = get()
+    const doc = state.session && state.documents[state.session.path]
+    return doc ? renderKey(state.session!.sessionId, renderRecipe(state, doc)) : null
+  }
+  function cacheRender(key: string, preview: RenderedPreview): void {
+    if (key !== currentKey() || get().cropping || !preview.region) return
+    const region = preview.region
+    set(({ cache }) => {
+      const current =
+        cache?.key === key
+          ? cache
+          : { key, width: preview.fullWidth!, height: preview.fullHeight!, renders: [] }
+      return {
+        cache: {
+          ...current,
+          // One recipe and region give the same pixels: keep the newest render of each.
+          renders: [
+            ...current.renders.filter(
+              (render) => render.url !== preview.url && !sameRegion(render.region, region)
+            ),
+            { url: preview.url, region }
+          ].slice(-MAX_RENDERS)
+        }
+      }
+    })
+  }
+  function schedulePrefetch(delay = PREFETCH_DELAY): void {
+    clearTimeout(prefetchTimer)
+    prefetchTimer = setTimeout(() => void prefetch(), delay)
+  }
+  /**
+   * While zoomed and idle, render the sharp cells around the viewport one block
+   * at a time, then refresh a stale whole-image base. Any new render cancels it.
+   *
+   * ponytail: blocks only follow a native viewport render. A view wider than the
+   * renderer's 4096 px region limit shows most of the photo, and native blocks
+   * for it would render most of the photo again after each edit.
+   */
+  async function prefetch(): Promise<void> {
+    // Renders during a moving view take GPU time from the compositor.
+    const rest = movedAt + PREFETCH_DELAY - performance.now()
+    if (rest > 0) return schedulePrefetch(rest)
+    const state = get()
+    const doc = state.session && state.documents[state.session.path]
+    if (
+      renderRunning ||
+      renderPending ||
+      refinementPending ||
+      thumbnailsRunning ||
+      state.closing ||
+      state.loading ||
+      state.cropping ||
+      !state.viewport ||
+      !doc ||
+      doc.gesture ||
+      useQueueStore.getState().isProcessing
+    )
+      return
+    const sessionId = state.session!.sessionId
+    const recipe = renderRecipe(state, doc)
+    const key = renderKey(sessionId, recipe)
+    if (prefetchMisses.key !== key) prefetchMisses = { key, regions: new Set() }
+    const misses = prefetchMisses.regions
+    const region =
+      state.cache?.key === key ? nextPrefetch(state.cache, state.viewport, misses) : null
+    if (!region && (previewKey === key || misses.has('base'))) return
+    const miss = region ? JSON.stringify(region) : 'base'
+    const revision = renderRevision
+    renderRunning = true
+    refining = true
+    prefetchRunning = true
+    cancellationSent = false
+    runningRevision = revision
+    set({ prefetching: true })
+    try {
+      // Interactive: never prepare RAW again; a draft result is not kept.
+      const preview = await ipc.invoke('editor:render', {
+        sessionId,
+        recipe,
+        revision,
+        interactive: true,
+        maxEdge: region ? 4096 : 2048,
+        ...(region ? { region } : {})
+      })
+      if (preview.sessionId !== sessionId || preview.draft) misses.add(miss)
+      else if (region) {
+        if (isNative(preview)) cacheRender(key, preview)
+        else misses.add(miss)
+      } else if (key === currentKey() && get().session?.sessionId === sessionId) {
+        set({ preview, previewPose: { pitch: recipe.pitch, yaw: recipe.yaw } })
+        previewKey = key
+      }
+    } catch {
+      // A newer render cancelled this one; try again later unless it failed on its own.
+      if (renderRevision === revision) misses.add(miss)
+    } finally {
+      renderRunning = false
+      refining = false
+      prefetchRunning = false
+      set({ prefetching: false })
+      if (renderPending || refinementPending) void runRender()
+      // A block that a moving view stopped tries again later.
+      else schedulePrefetch(renderRevision === revision ? 0 : PREFETCH_DELAY)
+    }
+  }
   return {
     session: null,
     documents: {},
@@ -260,11 +409,21 @@ export const useEditorStore = create<EditorState>((set, get) => {
     rendering: false,
     error: null,
     preview: null,
+    previewPose: null,
     before: false,
     clipboard: null,
     cropping: false,
     viewport: null,
     tile: null,
+    cache: null,
+    prefetching: false,
+    uncache(url) {
+      set(({ cache }) =>
+        cache?.renders.some((render) => render.url === url)
+          ? { cache: { ...cache, renders: cache.renders.filter((render) => render.url !== url) } }
+          : {}
+      )
+    },
     setViewport(region) {
       if (get().closing || get().loading) return
       if (region) {
@@ -282,10 +441,23 @@ export const useEditorStore = create<EditorState>((set, get) => {
       set({ viewport: region, ...(region ? {} : { tile: null }) })
       get().render(region !== null)
     },
+    holdPrefetch() {
+      movedAt = performance.now()
+      // A block in flight would finish during the gesture. Stop it, as an edit
+      // does. It is not a miss, so it renders again when the view rests.
+      const sessionId = get().session?.sessionId
+      if (!prefetchRunning || cancellationSent || !sessionId) return
+      ++renderRevision
+      cancellationSent = true
+      void ipc
+        .invoke('editor:cancelRender', { sessionId, revision: runningRevision })
+        .catch(() => {})
+    },
     setCropping(cropping) {
       if (get().closing || get().loading) return
       get().commit()
-      set({ cropping, viewport: null, tile: null, preview: null })
+      set({ cropping, viewport: null, tile: null, cache: null, preview: null })
+      previewKey = null
       get().render()
     },
     async open(file) {
@@ -304,6 +476,8 @@ export const useEditorStore = create<EditorState>((set, get) => {
       }
       set({ loading: true, error: null })
       useNavStore.getState().goToEditor()
+      prefetchMisses = { key: '', regions: new Set() }
+      movedAt = -Infinity
       const previous = get().session
       try {
         if (previous) await ipc.invoke('editor:close', { sessionId: previous.sessionId })
@@ -333,8 +507,10 @@ export const useEditorStore = create<EditorState>((set, get) => {
           before: false,
           cropping: false,
           viewport: null,
-          tile: null
+          tile: null,
+          cache: null
         }))
+        previewKey = null
         get().render()
       } catch (error) {
         if (token === opening)
@@ -356,6 +532,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
       if (same(recipe, doc.recipe)) return
       set((state) => ({
         before: false,
+        cache: null,
         ...(!sameGeometry(doc.recipe, recipe) ? { viewport: null, tile: null } : {}),
         documents: {
           ...state.documents,
@@ -428,9 +605,10 @@ export const useEditorStore = create<EditorState>((set, get) => {
       })
     },
     compare(before) {
-      if (get().closing || get().loading) return
+      // Crop mode edits geometry; comparing would block its changes and its Cancel.
+      if (get().closing || get().loading || get().cropping) return
       if (get().before === before) return
-      set({ before, tile: null })
+      set({ before, tile: null, cache: null })
       get().render()
     },
     copy() {
@@ -442,7 +620,8 @@ export const useEditorStore = create<EditorState>((set, get) => {
       if (recipe) set({ clipboard: structuredClone(recipe) })
     },
     async paste(files) {
-      if (get().closing || get().loading) return
+      // Crop mode's Cancel restores geometry only, so it could not undo a paste.
+      if (get().closing || get().loading || get().cropping) return
       const source = get().clipboard
       if (!source || useQueueStore.getState().isProcessing) return
       const queue = useQueueStore.getState()
@@ -476,7 +655,9 @@ export const useEditorStore = create<EditorState>((set, get) => {
         set({ error: String(error) })
         return
       }
-      if (get().closing || get().loading || useQueueStore.getState().isProcessing) return
+      // Crop mode may have opened while the photos loaded.
+      if (get().closing || get().loading || get().cropping || useQueueStore.getState().isProcessing)
+        return
       for (const file of targets.filter((item) => !item.pending)) {
         const doc = document(file)
         const recipe = pasteRecipe(source, doc.recipe)
@@ -525,6 +706,8 @@ export const useEditorStore = create<EditorState>((set, get) => {
       refinementPending = false
       clearTimeout(renderTimer)
       clearTimeout(refinementTimer)
+      clearTimeout(prefetchTimer)
+      previewKey = null
       const session = get().session
       try {
         if (session) await ipc.invoke('editor:close', { sessionId: session.sessionId })
@@ -537,6 +720,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
           cropping: false,
           viewport: null,
           tile: null,
+          cache: null,
           error: null
         })
         useNavStore.getState().goToQueue()
@@ -554,8 +738,15 @@ export const useEditorStore = create<EditorState>((set, get) => {
       refinementPending = false
       clearTimeout(renderTimer)
       clearTimeout(refinementTimer)
+      clearTimeout(prefetchTimer)
       const sessionId = get().session?.sessionId
-      if (!navigation && renderRunning && refining && !cancellationSent && sessionId) {
+      // A pan waits for refinement but not for prefetch; an edit cancels both.
+      if (
+        renderRunning &&
+        (prefetchRunning || (!navigation && refining)) &&
+        !cancellationSent &&
+        sessionId
+      ) {
         cancellationSent = true
         void ipc
           .invoke('editor:cancelRender', { sessionId, revision: runningRevision })
@@ -584,14 +775,20 @@ export const useEditorStore = create<EditorState>((set, get) => {
     async renderThumbnail(recipe) {
       const { session, closing, loading } = get()
       if (!session || closing || loading || renderRunning || renderPending) return null
-      const preview = await ipc.invoke('editor:render', {
-        sessionId: session.sessionId,
-        recipe,
-        revision: renderRevision,
-        interactive: true,
-        maxEdge: 240
-      })
-      return preview.sessionId === get().session?.sessionId ? preview.url : null
+      // A new render request cancels the one in flight, so prefetch waits for this one.
+      ++thumbnailsRunning
+      try {
+        const preview = await ipc.invoke('editor:render', {
+          sessionId: session.sessionId,
+          recipe,
+          revision: renderRevision,
+          interactive: true,
+          maxEdge: 240
+        })
+        return preview.sessionId === get().session?.sessionId ? preview.url : null
+      } finally {
+        if (--thumbnailsRunning === 0) schedulePrefetch()
+      }
     }
   }
 })

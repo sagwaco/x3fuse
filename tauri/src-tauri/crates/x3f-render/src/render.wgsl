@@ -4,7 +4,7 @@
 // assets/PROVENANCE.md; source attribution: NOTICE.
 struct Pixels { v: array<vec4<f32>> }
 struct Table { v: array<f32> }
-struct Uniforms { v: array<vec4<f32>, 40> }
+struct Uniforms { v: array<vec4<f32>, 41> }
 @group(0) @binding(0) var<storage, read> source: Pixels;
 @group(0) @binding(1) var<storage, read> auxiliary: Pixels;
 @group(0) @binding(2) var<storage, read_write> destination: Pixels;
@@ -13,6 +13,7 @@ struct Uniforms { v: array<vec4<f32>, 40> }
 @group(0) @binding(5) var<storage, read> tc_lut: Table;
 @group(0) @binding(6) var<storage, read> curves: Pixels;
 @group(1) @binding(0) var raw_source: texture_2d<f32>;
+@group(1) @binding(1) var<storage, read_write> frame: array<u32>;
 
 // Offsets into `spectral`, mirroring film::offset.
 const K: u32 = 256u;
@@ -240,7 +241,8 @@ fn sample(@builtin(global_invocation_id) id:vec3<u32>) {
     let pos=id.xy;if !in_bounds(pos) { return; }
     let global=vec3<f32>(vec2<f32>(pos)+p.v[0].zw+0.5,1.0);
     let bounds=vec2<i32>(textureDimensions(raw_source))-1;
-    let at=clamp(vec2<f32>(dot(p.v[24].xyz,global),dot(p.v[25].xyz,global)),vec2<f32>(0),vec2<f32>(bounds));
+    let h=vec3<f32>(dot(p.v[24].xyz,global),dot(p.v[25].xyz,global),dot(p.v[40].xyz,global));
+    let at=clamp(h.xy/h.z,vec2<f32>(0),vec2<f32>(bounds));
     let lo=vec2<i32>(floor(at));let hi=min(lo+1,bounds);let f=at-vec2<f32>(lo);
     let top=textureLoad(raw_source,lo,0).rgb*(1.0-f.x)+textureLoad(raw_source,vec2<i32>(hi.x,lo.y),0).rgb*f.x;
     let bottom=textureLoad(raw_source,vec2<i32>(lo.x,hi.y),0).rgb*(1.0-f.x)+textureLoad(raw_source,hi,0).rgb*f.x;
@@ -320,4 +322,18 @@ fn output(@builtin(global_invocation_id) id:vec3<u32>) {
         c=pow(max(c,vec3<f32>(0)),vec3<f32>(256.0/563.0));
     } else { c=encode_srgb(c); }
     destination.v[i]=vec4<f32>(clamp(c,vec3<f32>(0),vec3<f32>(1)),1);
+}
+// Write the tile interior into the RGBA8 frame (p.v[21] = margin, frame width,
+// tile x, tile y). Quantize to 16 bits and then to 8 bits as the CPU does for
+// export, so both paths give the same 8-bit values. Alpha 0 flags a
+// non-finite pixel; the reader rejects the frame.
+@compute @workgroup_size(16,8)
+fn pack(@builtin(global_invocation_id) id:vec3<u32>) {
+    let margin=u32(p.v[21].x);let size=vec2<u32>(p.v[0].xy)-2u*margin;
+    let pos=id.xy;if any(pos>=size) {return;}
+    let c=source.v[index(pos+margin)].rgb;
+    let finite=all((bitcast<vec3<u32>>(c)&vec3<u32>(0x7f800000u))!=vec3<u32>(0x7f800000u));
+    let wide=vec3<u32>(floor(clamp(c,vec3<f32>(0),vec3<f32>(1))*65535.0+0.5));
+    let v=(wide+128u)/257u;
+    frame[(u32(p.v[21].w)+pos.y)*u32(p.v[21].y)+u32(p.v[21].z)+pos.x]=v.r|(v.g<<8u)|(v.b<<16u)|(select(0u,255u,finite)<<24u);
 }

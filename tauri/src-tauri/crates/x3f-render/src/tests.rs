@@ -1,4 +1,14 @@
 use super::*;
+/// Most GPU checks read 16-bit samples; this keeps them short.
+impl std::ops::Deref for Pixels {
+    type Target = [u16];
+    fn deref(&self) -> &[u16] {
+        match self {
+            Pixels::Rgb16(data) => data,
+            Pixels::Rgba8(_) => panic!("expected a 16-bit render"),
+        }
+    }
+}
 fn image(width: u32, height: u32) -> SceneLinearImage {
     SceneLinearImage {
         width,
@@ -31,6 +41,14 @@ fn recipes_validate_and_round_trip() {
             None,
             "Old and explicitly color recipes must remain color"
         );
+    }
+    let tilted: EditRecipe = serde_json::from_str(r#"{"pitch":40,"yaw":-40}"#).unwrap();
+    tilted.validate().unwrap();
+    for json in [r#"{"pitch":40.5}"#, r#"{"yaw":-41}"#] {
+        assert!(serde_json::from_str::<EditRecipe>(json)
+            .unwrap()
+            .validate()
+            .is_err());
     }
     for filter in ["neutral", "red", "orange", "yellow", "green", "blue"] {
         let json = format!(r#"{{"monochrome":{{"filter":"{filter}"}}}}"#);
@@ -474,7 +492,7 @@ fn spektrafilm_license_ships_unmodified() {
     );
     let shader = sha256(include_bytes!("render.wgsl"));
     assert_eq!(
-        shader, "2bee97ebe5c4e2591a94c62ff0d6fc0223336164b1b8b475502c3c7ab232dd0f",
+        shader, "a0b10a9bf4a0d00fdcd068e074597d378df4f85d6107919b11fc3ca9529c0d6e",
         "render.wgsl changed; update assets/PROVENANCE.md and this hash, and          bump RENDER_VERSION if rendered pixels moved"
     );
 }
@@ -511,6 +529,8 @@ fn gpu_geometry_matches_cpu_sampling(renderer: &Renderer) {
                     crop: None,
                     rotation: 0,
                     straighten: 0.,
+                    pitch: 0.,
+                    yaw: 0.,
                     ..recipe.clone()
                 },
                 RenderOptions::default(),
@@ -525,16 +545,18 @@ fn gpu_geometry_matches_cpu_sampling(renderer: &Renderer) {
         let delta = actual
             .data
             .iter()
-            .zip(&expected.data)
+            .zip(expected.data.iter())
             .map(|(a, b)| a.abs_diff(*b))
             .max()
             .unwrap();
         assert!(
             delta <= 4,
-            "GPU geometry: orientation {}, rotation {}, straighten {}, max u16 delta {delta}",
+            "GPU geometry: orientation {}, rotation {}, straighten {}, pitch {}, yaw {}, max u16 delta {delta}",
             source.orientation,
             recipe.rotation,
             recipe.straighten,
+            recipe.pitch,
+            recipe.yaw,
         );
     };
     let digital = EditRecipe {
@@ -573,6 +595,25 @@ fn gpu_geometry_matches_cpu_sampling(renderer: &Renderer) {
                 },
             );
         }
+        compare(
+            &prepared,
+            &EditRecipe {
+                straighten: 9.,
+                pitch: -14.,
+                yaw: 11.,
+                crop: Some(Crop {
+                    x: 0.1,
+                    y: 0.12,
+                    width: 0.8,
+                    height: 0.7,
+                }),
+                ..digital.clone()
+            },
+            RenderOptions {
+                max_dimension: Some(23),
+                ..Default::default()
+            },
+        );
         if orientation == 1 {
             // Subpixel crops sample beyond pixel centers at both sensor corners.
             for corner in [0., 0.999] {
@@ -673,7 +714,7 @@ fn gpu_preview_matches_tiled(renderer: &Renderer) {
         .unwrap();
     let cached_size = renderer.workspace.lock().unwrap().as_ref().unwrap().size;
     let tiled = renderer
-        .render_tiled(prepared.image(), &recipe, options, &cancel, 128)
+        .render_tiled(prepared.image(), &recipe, options, &cancel, (128, 0))
         .unwrap();
     assert_eq!((whole.width, whole.height), (513, 259));
     assert_eq!(whole.data.len(), tiled.data.len());
@@ -685,7 +726,7 @@ fn gpu_preview_matches_tiled(renderer: &Renderer) {
     let delta = whole
         .data
         .iter()
-        .zip(&tiled.data)
+        .zip(tiled.data.iter())
         .map(|(a, b)| a.abs_diff(*b))
         .max()
         .unwrap();
@@ -693,6 +734,217 @@ fn gpu_preview_matches_tiled(renderer: &Renderer) {
         delta <= 3,
         "whole preview versus tiles: max u16 delta {delta}"
     );
+}
+
+#[test]
+fn small_overshoot_extends_the_last_tile() {
+    assert_eq!(spans(1025, 1024, 128), [(0, 1025)]);
+    assert_eq!(spans(1152, 1024, 128), [(0, 1152)]);
+    assert_eq!(spans(1153, 1024, 128), [(0, 1024), (1024, 129)]);
+    assert_eq!(spans(1025, 1024, 0), [(0, 1024), (1024, 1)]);
+    assert_eq!(
+        spans(2600, 1024, 128),
+        [(0, 1024), (1024, 1024), (2048, 552)]
+    );
+    assert_eq!(spans(300, 1024, 128), [(0, 300)]);
+}
+
+#[test]
+fn tiling_prefers_extended_tiles_and_falls_back_under_the_buffer_limit() {
+    let candidates = tiling_candidates(1025, 1024, Some(4096));
+    assert_eq!(candidates, [(1024, 128), (1024, 0), (512, 0)]);
+    assert_eq!(tiling_candidates(1365, 2048, Some(2048))[0], (2048, 0));
+    let margin = 10;
+    let padded = |w: u64, h: u64| (w + 2 * margin as u64) * (h + 2 * margin as u64) * 16;
+    let columns = |limit| {
+        choose_tiling(1025, 1024, margin, limit, &candidates).map(|(columns, _, _)| columns)
+    };
+    assert_eq!(columns(u64::MAX), Some(vec![(0, 1025)]));
+    // One byte short of the extended tile: two plain 1024 columns.
+    let extended = padded(1025, 1024);
+    assert_eq!(columns(extended - 1), Some(vec![(0, 1024), (1024, 1)]));
+    // Below a 1024 tile: 512 tiles.
+    assert_eq!(
+        columns(padded(1024, 1024) - 1),
+        Some(vec![(0, 512), (512, 512), (1024, 1)])
+    );
+    assert_eq!(columns(padded(512, 512) - 1), None);
+    // The working buffer covers every tile of every layout.
+    for (width, height) in [(1025, 1024), (2600, 1701), (4096, 4096), (300, 7)] {
+        for limit in [u64::MAX, padded(1100, 1100), padded(1024, 1024)] {
+            let candidates = tiling_candidates(width, height, Some(4096));
+            let Some((columns, rows, bytes)) =
+                choose_tiling(width, height, margin, limit, &candidates)
+            else {
+                continue;
+            };
+            assert!(bytes <= limit);
+            assert_eq!(columns.iter().map(|c| c.1).sum::<u32>(), width);
+            assert_eq!(rows.iter().map(|r| r.1).sum::<u32>(), height);
+            for &(_, w) in &columns {
+                for &(_, h) in &rows {
+                    assert!(padded(w as u64, h as u64) <= bytes);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn frames_carry_a_header_and_reject_flagged_pixels() {
+    let frame = checked_frame(2, 1, &[1, 2, 3, 255, 4, 5, 6, 255]).unwrap();
+    assert_eq!(&frame[..FRAME_HEADER], b"X3F8\x02\0\0\0\x01\0\0\0\0\0\0\0");
+    let image = RenderedImage {
+        width: 2,
+        height: 1,
+        data: Pixels::Rgba8(frame),
+        color_profile: ColorProfile::Srgb,
+        full_width: 2,
+        full_height: 1,
+        region: None,
+    };
+    assert_eq!(image.rgba8().unwrap(), [1, 2, 3, 255, 4, 5, 6, 255]);
+    assert_eq!(image.rgb8(), [1, 2, 3, 4, 5, 6]);
+    assert!(matches!(
+        checked_frame(2, 1, &[1, 2, 3, 255, 4, 5, 6, 0]),
+        Err(RenderError::Gpu(_))
+    ));
+}
+
+/// `pack` flags NaN and infinity with alpha 0 and quantizes like the CPU.
+fn gpu_pack_flags_non_finite(renderer: &Renderer) {
+    let cancel = AtomicBool::new(false);
+    let source = renderer.upload(&image(1, 1), &cancel).unwrap();
+    let tile = Tile {
+        x: 0,
+        y: 0,
+        width: 4,
+        height: 1,
+        origin: [0, 0],
+    };
+    let plan = Plan {
+        width: 4,
+        height: 1,
+        full_width: 4,
+        full_height: 1,
+        region: None,
+        margin: 0,
+        tiles: vec![tile],
+        passes: Vec::new(),
+        output: 0,
+        buffer_bytes: 64,
+        tables: None,
+        curves: Vec::new(),
+    };
+    let pixels: [[f32; 4]; 4] = [
+        [0.5, 0.25, 1., 1.],
+        [f32::NAN, 0., 0., 1.],
+        [0., f32::INFINITY, 0., 1.],
+        [2., -1., 0.0001, 1.],
+    ];
+    let mut cached = renderer.workspace.lock().unwrap();
+    *cached = Some(renderer.new_workspace(64));
+    let workspace = cached.as_mut().unwrap();
+    // Working buffers take no queue writes; fill this one at creation.
+    workspace.buffers[0] = renderer.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("Non-finite pixels"),
+        size: 64,
+        usage: wgpu::BufferUsages::STORAGE,
+        mapped_at_creation: true,
+    });
+    workspace.buffers[0]
+        .slice(..)
+        .get_mapped_range_mut()
+        .copy_from_slice(bytemuck::cast_slice(&pixels));
+    workspace.buffers[0].unmap();
+    renderer.frame_buffer(workspace, 16);
+    let mut encoder = renderer.encode(&source, workspace, &plan, &tile, true);
+    let (_, frame, readback, _) = workspace.frame.as_ref().unwrap();
+    encoder.copy_buffer_to_buffer(frame, 0, readback, 0, 16);
+    renderer.queue.submit(Some(encoder.finish()));
+    let bytes = renderer
+        .read(readback, 16, &cancel, |bytes| Ok(bytes.to_vec()))
+        .unwrap();
+    *cached = None;
+    let expected = |v: f32| quantize8(quantize16(v));
+    assert_eq!(
+        bytes[..4],
+        [expected(0.5), expected(0.25), expected(1.), 255]
+    );
+    assert_eq!(
+        (bytes[7], bytes[11]),
+        (0, 0),
+        "non-finite pixels: {bytes:?}"
+    );
+    assert_eq!(bytes[12..], [255, 0, expected(0.0001), 255]);
+    assert!(checked_frame(4, 1, &bytes).is_err());
+}
+
+/// Previews packed to RGBA8 on the GPU equal the 16-bit export path reduced
+/// to 8 bits, and an extended last tile changes no pixel.
+fn gpu_rgba8_and_tiling(renderer: &Renderer) {
+    let cancel = AtomicBool::new(false);
+    let img = image(513, 259);
+    let recipe = EditRecipe {
+        film: Some(FilmSettings {
+            halation: true,
+            grain: true,
+            ..Default::default()
+        }),
+        sharpen: 35.,
+        seed: 17,
+        ..Default::default()
+    };
+    let rgba8 = RenderOptions {
+        rgba8: true,
+        ..Default::default()
+    };
+    // 513 = 4 x 128 + 1: plain tiling adds a column of 1-pixel tiles.
+    let plain = renderer
+        .render_tiled(&img, &recipe, RenderOptions::default(), &cancel, (128, 0))
+        .unwrap();
+    let extended = renderer
+        .render_tiled(&img, &recipe, RenderOptions::default(), &cancel, (128, 16))
+        .unwrap();
+    assert!(
+        plain.data == extended.data,
+        "extended tiles must not move pixels"
+    );
+    for tiling in [(128, 0), (128, 16), (1024, 0)] {
+        let packed = renderer
+            .render_tiled(&img, &recipe, rgba8, &cancel, tiling)
+            .unwrap();
+        let bytes = packed.rgba8().unwrap();
+        assert_eq!(bytes.len(), 513 * 259 * 4);
+        assert!(bytes.as_chunks::<4>().0.iter().all(|p| p[3] == 255));
+        assert!(
+            packed.rgb8() == plain.rgb8(),
+            "RGBA8 packing must match the 16-bit path, tiling {tiling:?}"
+        );
+        assert_eq!(packed.png().unwrap(), plain.png().unwrap());
+    }
+    let plan = renderer.plan_source(&img, &recipe, rgba8, None).unwrap();
+    assert_eq!(plan.tiles.len(), 1);
+    assert_eq!(plan.passes.last().unwrap().entry, "output");
+    assert!(plan.passes.iter().all(|pass| pass.params[0] == [0.; 4]));
+    assert_eq!(
+        plan.slot0(&plan.tiles[0])[..2],
+        [
+            (513 + 2 * plan.margin) as f32,
+            (259 + 2 * plan.margin) as f32
+        ]
+    );
+    let tables = plan.tables.clone().unwrap();
+    let again = renderer.plan_source(&img, &recipe, rgba8, None).unwrap();
+    assert!(
+        Arc::ptr_eq(&tables, again.tables.as_ref().unwrap()),
+        "an unchanged film must keep its tables"
+    );
+    let prepared = PreparedImage::new(img, &cancel).unwrap();
+    renderer
+        .render_prepared(&prepared, &recipe, rgba8, &cancel)
+        .unwrap();
+    assert!(prepared.gpu.lock().unwrap().is_some());
 }
 
 fn gpu_bw_film(renderer: &Renderer) {
@@ -910,12 +1162,12 @@ fn gpu_monochrome(renderer: &Renderer) {
         .render(&img, &recipe, RenderOptions::default(), &cancel)
         .unwrap();
     let tiled = renderer
-        .render_tiled(&img, &recipe, RenderOptions::default(), &cancel, 24)
+        .render_tiled(&img, &recipe, RenderOptions::default(), &cancel, (24, 0))
         .unwrap();
     assert!(full
         .data
         .iter()
-        .zip(&tiled.data)
+        .zip(tiled.data.iter())
         .all(|(a, b)| a.abs_diff(*b) <= 3));
     let region = renderer
         .render(
@@ -1080,6 +1332,8 @@ fn gpu_pipeline() {
     gpu_film_exposure_moves_print_brightness(&renderer);
     gpu_monochrome(&renderer);
     gpu_bw_film(&renderer);
+    gpu_rgba8_and_tiling(&renderer);
+    gpu_pack_flags_non_finite(&renderer);
     let img = image(96, 64);
     let cancel = AtomicBool::new(false);
     let recipe = EditRecipe {
@@ -1184,15 +1438,15 @@ fn gpu_pipeline() {
             ..Default::default()
         };
         let full = renderer
-            .render_tiled(&img, &recipe, RenderOptions::default(), &cancel, 512)
+            .render_tiled(&img, &recipe, RenderOptions::default(), &cancel, (512, 0))
             .unwrap();
         let tiles = renderer
-            .render_tiled(&img, &recipe, RenderOptions::default(), &cancel, 24)
+            .render_tiled(&img, &recipe, RenderOptions::default(), &cancel, (24, 0))
             .unwrap();
         let delta = full
             .data
             .iter()
-            .zip(&tiles.data)
+            .zip(tiles.data.iter())
             .map(|(a, b)| a.abs_diff(*b))
             .max()
             .unwrap();
@@ -1211,10 +1465,10 @@ fn gpu_pipeline() {
         ..Default::default()
     };
     let full = renderer
-        .render_tiled(&img, &recipe, RenderOptions::default(), &cancel, 512)
+        .render_tiled(&img, &recipe, RenderOptions::default(), &cancel, (512, 0))
         .unwrap();
     let tiles = renderer
-        .render_tiled(&img, &recipe, RenderOptions::default(), &cancel, 24)
+        .render_tiled(&img, &recipe, RenderOptions::default(), &cancel, (24, 0))
         .unwrap();
     assert_eq!(
         full.data, tiles.data,

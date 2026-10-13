@@ -6009,6 +6009,7 @@ dependencies = [
  "chrono",
  "objc2",
  "percent-encoding",
+ "rayon",
  "serde",
  "serde_json",
  "sha2",

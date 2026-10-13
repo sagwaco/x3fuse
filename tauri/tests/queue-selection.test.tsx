@@ -11,9 +11,21 @@ const files = ['a', 'b', 'c', 'd', 'e', 'f'].map((id) => ({
   fileName: `${id}.X3F`
 }))
 
-function Surface({ ordered = files, nav }: { ordered?: typeof files; nav: ArrowNav }) {
+function Surface({
+  ordered = files,
+  nav,
+  children
+}: {
+  ordered?: typeof files
+  nav: ArrowNav
+  children?: React.ReactNode
+}) {
   const selection = useQueueSelection(ordered, nav)
-  return <div tabIndex={0} onKeyDown={selection.handleKeyDown} data-testid="surface" />
+  return (
+    <div tabIndex={0} onKeyDown={selection.handleKeyDown} data-testid="surface">
+      {children}
+    </div>
+  )
 }
 
 beforeEach(() => {
@@ -125,4 +137,16 @@ it('ignores handled keys, background deletion, unsupported arrows, and an empty 
   view.rerender(<Surface ordered={[]} nav={{ mode: 'vertical' }} />)
   expect(fireEvent.keyDown(document.body, { key: 'ArrowDown' })).toBe(true)
   expect(useQueueStore.getState().activeId).toBe('a')
+})
+
+it('leaves arrow keys to a child that used them, such as the crop canvas', () => {
+  const view = render(
+    <Surface nav={{ mode: 'horizontal' }}>
+      <svg tabIndex={0} data-testid="canvas" onKeyDown={(event) => event.preventDefault()} />
+    </Surface>
+  )
+  fireEvent.keyDown(view.getByTestId('canvas'), { key: 'ArrowRight' })
+  expect(useQueueStore.getState().activeId).toBe('a')
+  fireEvent.keyDown(view.getByTestId('surface'), { key: 'ArrowRight' })
+  expect(useQueueStore.getState().activeId).toBe('b')
 })

@@ -25,7 +25,7 @@ use std::{
     path::Path,
     sync::{
         atomic::{AtomicBool, Ordering},
-        mpsc, Arc, Mutex,
+        mpsc, Arc, Mutex, MutexGuard,
     },
 };
 use x3f_core::SceneLinearImage;
@@ -76,11 +76,39 @@ pub struct RenderOptions {
     pub max_dimension: Option<u32>,
     pub region: Option<Crop>,
     pub color_profile: ColorProfile,
+    /// Read back 8-bit RGBA packed on the GPU (previews) instead of 16-bit RGB (export).
+    pub rgba8: bool,
+}
+/// Rendered pixels, rows top-down without padding.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Pixels {
+    /// 16-bit RGB for export.
+    Rgb16(Vec<u16>),
+    /// An 8-bit preview frame packed on the GPU: a `FRAME_HEADER`-byte header
+    /// (`X3F8`, width, height and 0 as little-endian u32), then RGBA rows with
+    /// alpha 255. The header lets a caller send the frame without a copy.
+    Rgba8(Vec<u8>),
+}
+/// Size of the header in front of the pixels of `Pixels::Rgba8`.
+pub const FRAME_HEADER: usize = 16;
+/// Builds an RGBA8 frame from packed pixels. Rejects a pixel that `pack`
+/// flagged as non-finite with alpha 0.
+fn checked_frame(width: u32, height: u32, rgba: &[u8]) -> Result<Vec<u8>, RenderError> {
+    if rgba.as_chunks::<4>().0.iter().any(|pixel| pixel[3] != 255) {
+        return Err(RenderError::Gpu("GPU produced non-finite pixels".into()));
+    }
+    let mut frame = Vec::with_capacity(FRAME_HEADER + rgba.len());
+    frame.extend_from_slice(b"X3F8");
+    for value in [width, height, 0] {
+        frame.extend_from_slice(&value.to_le_bytes());
+    }
+    frame.extend_from_slice(rgba);
+    Ok(frame)
 }
 pub struct RenderedImage {
     pub width: u32,
     pub height: u32,
-    pub data: Vec<u16>,
+    pub data: Pixels,
     pub color_profile: ColorProfile,
     /// Native edited output dimensions, independent of proxy/region resolution.
     pub full_width: u32,
@@ -89,11 +117,32 @@ pub struct RenderedImage {
     pub region: Option<Crop>,
 }
 impl RenderedImage {
+    /// The 16-bit samples, or `None` for an 8-bit preview.
+    pub fn rgb16(&self) -> Option<&[u16]> {
+        match &self.data {
+            Pixels::Rgb16(data) => Some(data),
+            Pixels::Rgba8(_) => None,
+        }
+    }
+    /// The RGBA rows of an 8-bit preview, without the frame header.
+    pub fn rgba8(&self) -> Option<&[u8]> {
+        match &self.data {
+            Pixels::Rgb16(_) => None,
+            Pixels::Rgba8(frame) => frame.get(FRAME_HEADER..),
+        }
+    }
     pub fn rgb8(&self) -> Vec<u8> {
-        self.data
-            .iter()
-            .map(|&v| ((v as u32 + 128) / 257) as u8)
-            .collect()
+        match &self.data {
+            Pixels::Rgb16(data) => data.iter().map(|&v| quantize8(v)).collect(),
+            Pixels::Rgba8(_) => self
+                .rgba8()
+                .unwrap_or_default()
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .flat_map(|&[r, g, b, _]| [r, g, b])
+                .collect(),
+        }
     }
     pub fn png(&self) -> Result<Vec<u8>, RenderError> {
         self.png_preview(self.width.max(self.height))
@@ -151,7 +200,9 @@ impl RenderedImage {
         cancel: &AtomicBool,
     ) -> Result<(), RenderError> {
         x3f_core::output::tiff::write_rgb16(
-            &self.data,
+            self.rgb16().ok_or_else(|| {
+                RenderError::Invalid("16-bit output needs a 16-bit render".into())
+            })?,
             self.width,
             self.height,
             path,
@@ -161,6 +212,13 @@ impl RenderedImage {
         )?;
         Ok(())
     }
+}
+/// 16-bit to 8-bit, rounding to nearest. The `pack` shader entry does the same.
+fn quantize8(v: u16) -> u8 {
+    ((v as u32 + 128) / 257) as u8
+}
+fn quantize16(v: f32) -> u16 {
+    (v.clamp(0., 1.) * 65535.).round() as u16
 }
 fn cancelled(cancel: &AtomicBool) -> Result<(), RenderError> {
     if cancel.load(Ordering::Relaxed) {
@@ -194,7 +252,7 @@ struct GpuSource {
     bind: wgpu::BindGroup,
 }
 
-type Parameters = [[f32; 4]; 40];
+type Parameters = [[f32; 4]; 41];
 const PARAMETER_BYTES: u64 = std::mem::size_of::<Parameters>() as u64;
 const MAX_DISPATCHES: u64 = 36;
 /// Blurs below this radius are indistinguishable from a copy; skipping them
@@ -207,7 +265,10 @@ const BUFFERS: usize = 6;
 struct Workspace {
     size: u64,
     buffers: Vec<wgpu::Buffer>,
-    readback: wgpu::Buffer,
+    /// 16-bit renders read each tile back through this; RGBA8 renders never use it.
+    readback: Option<wgpu::Buffer>,
+    /// RGBA8 frame written by `pack` and its readback copy, grown on demand.
+    frame: Option<(u64, wgpu::Buffer, wgpu::Buffer, wgpu::BindGroup)>,
     uniform: wgpu::Buffer,
     uniform_stride: u32,
     spectral: wgpu::Buffer,
@@ -354,15 +415,198 @@ impl Chain {
     }
 }
 
+/// One tile of a frame. `x`, `y`, `width` and `height` are frame pixels;
+/// `origin` is the top left of the padded area in output pixels.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Tile {
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+    origin: [i32; 2],
+}
+/// One compute dispatch: a `render.wgsl` entry point, its (source, auxiliary,
+/// destination) working buffers and its 41 parameter vectors.
+#[derive(Clone, Debug, PartialEq)]
+struct Pass {
+    entry: &'static str,
+    buffers: [usize; 3],
+    params: [[f32; 4]; 41],
+}
+/// Film spectral tables (binding 4) and the spectral upsampling LUT (binding 5).
+#[derive(Debug, PartialEq)]
+struct FilmTables {
+    spectral: Vec<f32>,
+    tc_lut: Vec<f32>,
+}
+/// All GPU work of one frame. The native renderer runs it.
+#[derive(Debug)]
+struct Plan {
+    width: u32,
+    height: u32,
+    full_width: u32,
+    full_height: u32,
+    region: Option<Crop>,
+    /// Halo on each side of every tile.
+    margin: u32,
+    tiles: Vec<Tile>,
+    /// The pass list of every tile. Slot 0 of the parameters is zero; each tile
+    /// sets it to its padded `[width, height, origin x, origin y]`.
+    passes: Vec<Pass>,
+    /// The working buffer that holds the `output` pass result.
+    output: usize,
+    /// Size of each working buffer, enough for the largest tile.
+    buffer_bytes: u64,
+    /// `None` without film. The same `Arc` is returned until the film changes.
+    tables: Option<Arc<FilmTables>>,
+    /// The curve table (binding 6): 1024 RGBA rows.
+    curves: Vec<[f32; 4]>,
+}
+impl Plan {
+    /// Padded `[width, height, origin x, origin y]` of a tile, as parameter slot 0.
+    fn slot0(&self, tile: &Tile) -> [f32; 4] {
+        [
+            (tile.width + 2 * self.margin) as f32,
+            (tile.height + 2 * self.margin) as f32,
+            tile.origin[0] as f32,
+            tile.origin[1] as f32,
+        ]
+    }
+}
+
+/// Splits `length` pixels into spans of `tile` pixels. The last span also
+/// takes a remainder of at most `slack` pixels, so a 1025-pixel frame costs one
+/// 1024-pixel tile and not two.
+fn spans(length: u32, tile: u32, slack: u32) -> Vec<(u32, u32)> {
+    let mut count = length.div_ceil(tile).max(1);
+    if count > 1 && length - (count - 1) * tile <= slack {
+        count -= 1;
+    }
+    (0..count)
+        .map(|i| {
+            let start = i * tile;
+            (start, if i + 1 == count { length - start } else { tile })
+        })
+        .collect()
+}
+
+/// The (tile size, slack) layouts to try, best first. A whole preview needs
+/// no halo overdraw. Larger tiles amortize the per-tile overhead and the halo
+/// overdraw, which the 81-wavelength spectral loops make expensive at native
+/// resolution. The slack lets the last tile grow by 1/8 instead of adding a
+/// row or column of thin tiles.
+fn tiling_candidates(width: u32, height: u32, max_dimension: Option<u32>) -> Vec<(u32, u32)> {
+    let mut candidates = vec![(1024, 128), (1024, 0), (512, 0)];
+    if max_dimension.is_some_and(|edge| edge <= 2048) {
+        candidates.insert(0, (width.max(height), 0));
+    }
+    candidates
+}
+
+/// Takes the first candidate whose largest padded tile fits in `limit` bytes.
+/// A large diffusion radius can push large tiles past the limit; smaller
+/// tiles then still render. Returns the column spans, the row spans and the
+/// working buffer size.
+#[allow(clippy::type_complexity)]
+fn choose_tiling(
+    width: u32,
+    height: u32,
+    margin: u32,
+    limit: u64,
+    candidates: &[(u32, u32)],
+) -> Option<(Vec<(u32, u32)>, Vec<(u32, u32)>, u64)> {
+    candidates.iter().find_map(|&(tile, slack)| {
+        let (columns, rows) = (spans(width, tile, slack), spans(height, tile, slack));
+        let widest = columns.iter().map(|&(_, w)| w).max().unwrap_or(0) as u64;
+        let tallest = rows.iter().map(|&(_, h)| h).max().unwrap_or(0) as u64;
+        let bytes = (widest + 2 * margin as u64) * (tallest + 2 * margin as u64) * 16;
+        (bytes <= limit).then_some((columns, rows, bytes))
+    })
+}
+
+/// Builds the pass list of one tile. Slot 0 of `base` must be set per tile.
+/// Returns the passes and the buffer that holds the output.
+fn build_passes(
+    base: Parameters,
+    film: Option<(&FilmSettings, &film::Spatial)>,
+    sharpen: f32,
+) -> (Vec<Pass>, usize) {
+    let mut chain = Chain::new(base);
+    let mut current = chain.start();
+    if let Some((settings, spatial)) = film {
+        let raw = chain.one("expose", current);
+        chain.release(current);
+        current = if settings.halation {
+            chain.halation(raw, spatial)
+        } else {
+            raw
+        };
+        let density = chain.one("develop", current);
+        current = if settings.couplers > 0. {
+            let inhibitor = chain.one("dir_matmul", density);
+            chain.release(density);
+            let diffused = chain.blur(inhibitor, spatial.coupler);
+            if diffused != inhibitor {
+                chain.release(inhibitor);
+            }
+            let corrected = chain.two("dir_develop", current, diffused);
+            chain.release(diffused);
+            chain.release(current);
+            corrected
+        } else {
+            chain.release(current);
+            density
+        };
+        if settings.grain {
+            let grained = chain.one("grain", current);
+            chain.release(current);
+            current = chain.blur(grained, film::GRAIN_BLUR_PX);
+            if current != grained {
+                chain.release(grained);
+            }
+        }
+        if !settings.negative {
+            let exposed = chain.one("print_spectral", current);
+            chain.release(current);
+            current = chain.one("print_develop", exposed);
+            chain.release(exposed);
+        }
+        let scanned = chain.one("scan", current);
+        chain.release(current);
+        current = scanned;
+    }
+    let finished = chain.one("finish", current);
+    chain.release(current);
+    let sharp = if sharpen > 0. {
+        chain.blur(finished, sharpen)
+    } else {
+        finished
+    };
+    let output = chain.two("output", finished, sharp);
+    let passes = chain
+        .passes
+        .into_iter()
+        .map(|(entry, buffers, params)| Pass {
+            entry,
+            buffers,
+            params,
+        })
+        .collect();
+    (passes, output)
+}
+
+type FilmCache = (film::FilmLut, film::FilmPair, Arc<FilmTables>);
+
 pub struct Renderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
     layout: wgpu::BindGroupLayout,
     source_layout: wgpu::BindGroupLayout,
+    frame_layout: wgpu::BindGroupLayout,
     pipelines: HashMap<&'static str, wgpu::ComputePipeline>,
     /// ponytail: one-entry film/paper cache; make it a small LRU only if
     /// switching stocks in the UI measurably stalls.
-    film: Mutex<Option<(film::FilmLut, film::FilmPair)>>,
+    film: Mutex<Option<FilmCache>>,
     pub adapter_name: String,
     gpu_error: Arc<Mutex<Option<String>>>,
     workspace: Mutex<Option<Workspace>>,
@@ -440,6 +684,24 @@ impl Renderer {
             bind_group_layouts: &[&layout, &source_layout],
             push_constant_ranges: &[],
         });
+        let frame_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("RGBA8 frame"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+        let pack_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("RGBA8 packing"),
+            bind_group_layouts: &[&layout, &frame_layout],
+            push_constant_ranges: &[],
+        });
         let pipelines = [
             "sample",
             "adjust",
@@ -457,6 +719,7 @@ impl Renderer {
             "blur",
             "finish",
             "output",
+            "pack",
         ]
         .into_iter()
         .map(|name| {
@@ -464,10 +727,10 @@ impl Renderer {
                 name,
                 device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                     label: Some(name),
-                    layout: Some(if name == "sample" {
-                        &sample_layout
-                    } else {
-                        &pipeline_layout
+                    layout: Some(match name {
+                        "sample" => &sample_layout,
+                        "pack" => &pack_layout,
+                        _ => &pipeline_layout,
                     }),
                     module: &shader,
                     entry_point: Some(name),
@@ -498,6 +761,7 @@ impl Renderer {
             queue,
             layout,
             source_layout,
+            frame_layout,
             pipelines,
             film: Mutex::new(None),
             adapter_name: info.name,
@@ -526,6 +790,29 @@ impl Renderer {
     ) -> Result<RenderedImage, RenderError> {
         cancelled(cancel)?;
         recipe.validate().map_err(RenderError::Invalid)?;
+        let gpu = self.source(image, cancel)?;
+        self.render_source(
+            image.image(),
+            gpu.as_ref().unwrap(),
+            recipe,
+            options,
+            cancel,
+            None,
+        )
+    }
+    /// Uploads the source to this renderer's GPU before its first render.
+    pub fn upload_prepared(
+        &self,
+        image: &PreparedImage,
+        cancel: &AtomicBool,
+    ) -> Result<(), RenderError> {
+        self.source(image, cancel).map(drop)
+    }
+    fn source<'a>(
+        &self,
+        image: &'a PreparedImage,
+        cancel: &AtomicBool,
+    ) -> Result<MutexGuard<'a, Option<GpuSource>>, RenderError> {
         let mut gpu = image
             .gpu
             .lock()
@@ -536,14 +823,7 @@ impl Renderer {
         {
             *gpu = Some(self.upload(image.image(), cancel)?);
         }
-        self.render_source(
-            image.image(),
-            gpu.as_ref().unwrap(),
-            recipe,
-            options,
-            cancel,
-            None,
-        )
+        Ok(gpu)
     }
     #[cfg(test)]
     fn render_tiled(
@@ -552,10 +832,10 @@ impl Renderer {
         recipe: &EditRecipe,
         options: RenderOptions,
         cancel: &AtomicBool,
-        tile_size: u32,
+        tiling: (u32, u32),
     ) -> Result<RenderedImage, RenderError> {
         let source = self.upload(image, cancel)?;
-        self.render_source(image, &source, recipe, options, cancel, Some(tile_size))
+        self.render_source(image, &source, recipe, options, cancel, Some(tiling))
     }
     fn upload(
         &self,
@@ -591,12 +871,7 @@ impl Renderer {
                 self.queue.submit([]);
                 return Err(error);
             }
-            let rgba: Vec<[f32; 4]> = rows
-                .as_chunks::<3>()
-                .0
-                .iter()
-                .map(|p| [p[0], p[1], p[2], 1.])
-                .collect();
+            let rgba: Vec<[f32; 4]> = rows.as_chunks::<3>().0.iter().map(texel).collect();
             self.queue.write_texture(
                 wgpu::TexelCopyTextureInfo {
                     texture: &texture,
@@ -636,22 +911,19 @@ impl Renderer {
             bind,
         })
     }
-    #[allow(clippy::too_many_arguments)]
-    fn render_source(
+    /// Plans one frame: geometry, film tables, tiles and the shared pass list.
+    /// `tiling` forces a (tile size, slack) pair for tests.
+    fn plan_source(
         &self,
         image: &SceneLinearImage,
-        source: &GpuSource,
         recipe: &EditRecipe,
         options: RenderOptions,
-        cancel: &AtomicBool,
-        tile_size: Option<u32>,
-    ) -> Result<RenderedImage, RenderError> {
-        cancelled(cancel)?;
+        tiling: Option<(u32, u32)>,
+    ) -> Result<Plan, RenderError> {
         recipe.validate().map_err(RenderError::Invalid)?;
         let geom = geometry::Geometry::new(image, recipe, options)?;
         let (full_width, full_height) = output_dimensions(image, recipe)?;
         let (width, height) = (geom.width, geom.height);
-        let mut data = vec![0u16; width as usize * height as usize * 3];
         // spektrafilm's spatial parameters are physical, so they are derived
         // from the full output frame; a tile or region must never change them.
         let spatial = recipe
@@ -682,63 +954,123 @@ impl Renderer {
             + (3. * halation_sigma).ceil()
             + (3. * grain_sigma).ceil()
             + (3. * sharpen_sigma).ceil()) as u32;
-        // Preparing the pair is the expensive CPU step; hold its cache for the
-        // whole render so tiles reuse it. Always locked before the workspace.
+        // Preparing the pair is the expensive CPU step. The plan keeps its
+        // tables through an Arc, so the lock is held only while planning.
         let mut film_cache = self
             .film
             .lock()
             .map_err(|_| RenderError::Gpu("Renderer unavailable".into()))?;
         if let Some(settings) = &recipe.film {
             let filter = recipe.monochrome.map(|m| m.filter);
-            let stale = film_cache.as_ref().is_none_or(|(lut, pair)| {
+            let stale = film_cache.as_ref().is_none_or(|(lut, pair, _)| {
                 !lut.matches(settings, filter) || !pair.matches(settings)
             });
             if stale {
                 // Rebuild the LUT only when the film or its taking filter
                 // changed; paper, trim and exposure changes reuse it.
                 let lut = match film_cache.take() {
-                    Some((lut, _)) if lut.matches(settings, filter) => lut,
+                    Some((lut, _, _)) if lut.matches(settings, filter) => lut,
                     _ => film::FilmLut::build(settings.film, filter)?,
                 };
                 let pair = film::FilmPair::build(settings, &lut)?;
-                *film_cache = Some((lut, pair));
+                let tables = Arc::new(FilmTables {
+                    spectral: pair.spectral.clone(),
+                    tc_lut: lut.uploadable.clone(),
+                });
+                *film_cache = Some((lut, pair, tables));
             }
         }
         let prepared = recipe.film.as_ref().and(film_cache.as_ref());
-        let pair = prepared.map(|(_, pair)| pair);
-        let mut params = self.parameters(image, recipe, options, &geom, pair, spatial.as_ref())?;
-        let curves = color::curve_table(&recipe.curves);
-        let limit = (self.device.limits().max_storage_buffer_binding_size as u64)
+        let mut base = self.parameters(
+            image,
+            recipe,
+            options,
+            &geom,
+            prepared.map(|(_, pair, _)| pair),
+            spatial.as_ref(),
+        )?;
+        let tables = prepared.map(|(_, _, tables)| tables.clone());
+        drop(film_cache);
+        base[0] = [0.; 4];
+        let (passes, output) = build_passes(
+            base,
+            recipe.film.as_ref().zip(spatial.as_ref()),
+            sharpen_sigma,
+        );
+        let candidates = match tiling {
+            Some(tiling) => vec![tiling],
+            None => tiling_candidates(width, height, options.max_dimension),
+        };
+        let (columns, rows, buffer_bytes) =
+            choose_tiling(width, height, margin, self.buffer_limit(), &candidates).ok_or_else(
+                || {
+                    RenderError::Gpu(
+                    "Effect radius exceeds this GPU's tile memory limit. Reduce diffusion radius."
+                        .into(),
+                )
+                },
+            )?;
+        let tiles = rows
+            .iter()
+            .flat_map(|&(y, th)| {
+                columns.iter().map(move |&(x, tw)| Tile {
+                    x,
+                    y,
+                    width: tw,
+                    height: th,
+                    // Expand through crop edges into the original frame; only the
+                    // actual sensor boundary clamps. Crop/zoom must not change diffusion.
+                    origin: [
+                        (geom.region_x + x) as i32 - margin as i32,
+                        (geom.region_y + y) as i32 - margin as i32,
+                    ],
+                })
+            })
+            .collect();
+        Ok(Plan {
+            width,
+            height,
+            full_width,
+            full_height,
+            region: options.region.map(|_| Crop {
+                x: geom.region_x as f32 / geom.full_width as f32,
+                y: geom.region_y as f32 / geom.full_height as f32,
+                width: width as f32 / geom.full_width as f32,
+                height: height as f32 / geom.full_height as f32,
+            }),
+            margin,
+            tiles,
+            passes,
+            output,
+            buffer_bytes,
+            tables,
+            curves: color::curve_table(&recipe.curves),
+        })
+    }
+    fn buffer_limit(&self) -> u64 {
+        (self.device.limits().max_storage_buffer_binding_size as u64)
             .min(self.device.limits().max_buffer_size)
             // ponytail: cap each working buffer at 128 MiB; use a device memory
             // budget if previews larger than 2048 px become necessary.
-            .min(128 * 1024 * 1024);
-        let frame_size =
-            (width as u64 + 2 * margin as u64) * (height as u64 + 2 * margin as u64) * 16;
-        let working_set = |tile: u32| {
-            (width.min(tile) as u64 + 2 * margin as u64)
-                * (height.min(tile) as u64 + 2 * margin as u64)
-                * 16
-        };
-        let tile_size = tile_size.unwrap_or_else(|| {
-            if options.max_dimension.is_some_and(|edge| edge <= 2048) && frame_size <= limit {
-                width.max(height)
-            } else if working_set(1024) <= limit {
-                // Larger tiles amortize the per-tile readback round trip and the
-                // halo overdraw, which the 81-wavelength spectral loops make
-                // expensive at native resolution. A large diffusion radius can
-                // still push them past the buffer limit; fall back rather than
-                // refuse the render.
-                1024
-            } else {
-                512
-            }
-        });
-        let size = working_set(tile_size);
-        if size > limit {
+            .min(128 * 1024 * 1024)
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn render_source(
+        &self,
+        image: &SceneLinearImage,
+        source: &GpuSource,
+        recipe: &EditRecipe,
+        options: RenderOptions,
+        cancel: &AtomicBool,
+        tiling: Option<(u32, u32)>,
+    ) -> Result<RenderedImage, RenderError> {
+        cancelled(cancel)?;
+        let plan = self.plan_source(image, recipe, options, tiling)?;
+        let (width, height) = (plan.width, plan.height);
+        let frame_bytes = width as u64 * height as u64 * 4;
+        if options.rgba8 && frame_bytes > self.buffer_limit() {
             return Err(RenderError::Gpu(
-                "Effect radius exceeds this GPU's tile memory limit. Reduce diffusion radius."
-                    .into(),
+                "Preview exceeds this GPU's buffer limit".into(),
             ));
         }
         // All cached queue writes and submissions share this lock, including export.
@@ -748,54 +1080,67 @@ impl Renderer {
             .map_err(|_| RenderError::Gpu("Renderer unavailable".into()))?;
         if cached
             .as_ref()
-            .is_none_or(|workspace| workspace.size < size)
+            .is_none_or(|workspace| workspace.size < plan.buffer_bytes)
         {
             *cached = None;
-            *cached = Some(self.new_workspace(size));
+            *cached = Some(self.new_workspace(plan.buffer_bytes));
         }
         let workspace = cached.as_mut().unwrap();
-        if let Some((lut, pair)) = prepared {
+        if let Some(tables) = &plan.tables {
+            self.queue.write_buffer(
+                &workspace.spectral,
+                0,
+                bytemuck::cast_slice(&tables.spectral),
+            );
             self.queue
-                .write_buffer(&workspace.spectral, 0, bytemuck::cast_slice(&pair.spectral));
-            self.queue
-                .write_buffer(&workspace.tc_lut, 0, bytemuck::cast_slice(&lut.uploadable));
+                .write_buffer(&workspace.tc_lut, 0, bytemuck::cast_slice(&tables.tc_lut));
         }
         self.queue
-            .write_buffer(&workspace.curves, 0, bytemuck::cast_slice(&curves));
-        for y in (0..height).step_by(tile_size as usize) {
-            for x in (0..width).step_by(tile_size as usize) {
-                cancelled(cancel)?;
-                let tw = tile_size.min(width - x);
-                let th = tile_size.min(height - y);
-                let gx = geom.region_x + x;
-                let gy = geom.region_y + y;
-                // Expand through crop edges into the original frame; only the actual
-                // sensor boundary clamps. Crop/zoom must not change diffusion.
-                let sx = gx as i32 - margin as i32;
-                let sy = gy as i32 - margin as i32;
-                let bw = tw + 2 * margin;
-                let bh = th + 2 * margin;
-                params[0] = [bw as f32, bh as f32, sx as f32, sy as f32];
-                let result = self.tile(
-                    source,
-                    workspace,
-                    params,
-                    recipe.film.as_ref().zip(spatial.as_ref()),
-                    sharpen_sigma,
-                    cancel,
-                );
-                let result = match result {
-                    Ok(result) => result,
-                    Err(error) => {
-                        // A cancelled/failed mapping must never enter the reusable cache.
-                        *cached = None;
-                        return Err(error);
-                    }
-                };
-                for row in 0..th {
-                    for col in 0..tw {
-                        let src = ((margin + row) * bw + margin + col) as usize;
-                        let dst = ((y + row) * width + x + col) as usize * 3;
+            .write_buffer(&workspace.curves, 0, bytemuck::cast_slice(&plan.curves));
+        if options.rgba8 {
+            self.frame_buffer(workspace, frame_bytes);
+        } else if workspace.readback.is_none() {
+            workspace.readback = Some(self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Preview readback"),
+                size: workspace.size,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            }));
+        }
+        let mut data = if options.rgba8 {
+            Pixels::Rgba8(Vec::new())
+        } else {
+            Pixels::Rgb16(vec![0u16; width as usize * height as usize * 3])
+        };
+        for (index, tile) in plan.tiles.iter().enumerate() {
+            cancelled(cancel)?;
+            let mut encoder = self.encode(source, workspace, &plan, tile, options.rgba8);
+            let Pixels::Rgb16(data) = &mut data else {
+                // RGBA8 tiles go to the frame buffer; one readback follows.
+                // Queue writes for the next tile apply after this submit.
+                self.queue.submit(Some(encoder.finish()));
+                // Wait after every second tile, so a cancel stops a large
+                // region within about two tiles of GPU work.
+                if index % 2 == 1 && index + 1 < plan.tiles.len() {
+                    let (tx, rx) = mpsc::channel();
+                    self.queue.on_submitted_work_done(move || {
+                        let _ = tx.send(Ok(()));
+                    });
+                    self.wait(rx, cancel)?;
+                }
+                continue;
+            };
+            let bw = tile.width + 2 * plan.margin;
+            let size = bw as u64 * (tile.height + 2 * plan.margin) as u64 * 16;
+            let readback = workspace.readback.as_ref().unwrap();
+            encoder.copy_buffer_to_buffer(&workspace.buffers[plan.output], 0, readback, 0, size);
+            self.queue.submit(Some(encoder.finish()));
+            let result = self.read(readback, size, cancel, |bytes| {
+                let result: &[[f32; 4]] = bytemuck::cast_slice(bytes);
+                for row in 0..tile.height {
+                    for col in 0..tile.width {
+                        let src = ((plan.margin + row) * bw + plan.margin + col) as usize;
+                        let dst = ((tile.y + row) * width + tile.x + col) as usize * 3;
                         for c in 0..3 {
                             let v = result[src][c];
                             if !v.is_finite() {
@@ -803,10 +1148,34 @@ impl Renderer {
                                     "GPU produced non-finite pixels".into(),
                                 ));
                             }
-                            data[dst + c] = (v.clamp(0., 1.) * 65535.).round() as u16;
+                            data[dst + c] = quantize16(v);
                         }
                     }
                 }
+                Ok(())
+            });
+            if let Err(error) = result {
+                // A cancelled/failed mapping must never enter the reusable cache.
+                *cached = None;
+                return Err(error);
+            }
+        }
+        if let Pixels::Rgba8(data) = &mut data {
+            let (_, frame, readback, _) = workspace.frame.as_ref().unwrap();
+            let mut encoder = self
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("RGBA8 frame readback"),
+                });
+            encoder.copy_buffer_to_buffer(frame, 0, readback, 0, frame_bytes);
+            self.queue.submit(Some(encoder.finish()));
+            let result = self.read(readback, frame_bytes, cancel, |bytes| {
+                *data = checked_frame(width, height, bytes)?;
+                Ok(())
+            });
+            if let Err(error) = result {
+                *cached = None;
+                return Err(error);
             }
         }
         cancelled(cancel)?;
@@ -815,14 +1184,9 @@ impl Renderer {
             height,
             data,
             color_profile: options.color_profile,
-            full_width,
-            full_height,
-            region: options.region.map(|_| Crop {
-                x: geom.region_x as f32 / geom.full_width as f32,
-                y: geom.region_y as f32 / geom.full_height as f32,
-                width: width as f32 / geom.full_width as f32,
-                height: height as f32 / geom.full_height as f32,
-            }),
+            full_width: plan.full_width,
+            full_height: plan.full_height,
+            region: plan.region,
         })
     }
     #[allow(clippy::too_many_arguments)]
@@ -835,7 +1199,7 @@ impl Renderer {
         pair: Option<&film::FilmPair>,
         spatial: Option<&film::Spatial>,
     ) -> Result<Parameters, RenderError> {
-        let mut p: Parameters = [[0.; 4]; 40];
+        let mut p: Parameters = [[0.; 4]; 41];
         // A B&W film already makes a neutral image; the sensor-layer mix is
         // only for colour film or no film. Both neutralize the output.
         let silver = r.film.is_some() && pair.is_some_and(|pair| pair.monochrome);
@@ -927,6 +1291,7 @@ impl Renderer {
         let source = g.source_transform(image);
         p[24] = source[0];
         p[25] = source[1];
+        p[40] = source[2];
         Ok(p)
     }
     fn new_workspace(&self, size: u64) -> Workspace {
@@ -943,6 +1308,7 @@ impl Renderer {
             * self.device.limits().min_uniform_buffer_offset_alignment as u64;
         Workspace {
             size,
+            frame: None,
             buffers: (0..BUFFERS)
                 .map(|_| {
                     buffer(
@@ -952,11 +1318,7 @@ impl Renderer {
                     )
                 })
                 .collect(),
-            readback: buffer(
-                "Preview readback",
-                size,
-                wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            ),
+            readback: None,
             uniform: buffer(
                 "Dispatch parameters",
                 uniform_stride * MAX_DISPATCHES,
@@ -981,77 +1343,70 @@ impl Renderer {
             bindings: HashMap::new(),
         }
     }
-    #[allow(clippy::too_many_arguments)]
-    fn tile(
+    /// Grows the RGBA8 frame buffer and its readback copy to `bytes`.
+    fn frame_buffer(&self, workspace: &mut Workspace, bytes: u64) {
+        if workspace.frame.as_ref().is_some_and(|f| f.0 >= bytes) {
+            return;
+        }
+        workspace.frame = None;
+        let frame = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("RGBA8 frame"),
+            size: bytes,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let readback = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("RGBA8 frame readback"),
+            size: bytes,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("RGBA8 frame"),
+            layout: &self.frame_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 1,
+                resource: frame.as_entire_binding(),
+            }],
+        });
+        workspace.frame = Some((bytes, frame, readback, bind));
+    }
+    /// Records the passes of one tile. With `pack`, the tile interior also goes
+    /// to the RGBA8 frame buffer.
+    fn encode(
         &self,
         source: &GpuSource,
         workspace: &mut Workspace,
-        p: Parameters,
-        film: Option<(&FilmSettings, &film::Spatial)>,
-        sharpen: f32,
-        cancel: &AtomicBool,
-    ) -> Result<Vec<[f32; 4]>, RenderError> {
-        let size = p[0][0] as u64 * p[0][1] as u64 * 16;
-        let mut chain = Chain::new(p);
-        let mut current = chain.start();
-        if let Some((settings, spatial)) = film {
-            let raw = chain.one("expose", current);
-            chain.release(current);
-            current = if settings.halation {
-                chain.halation(raw, spatial)
-            } else {
-                raw
-            };
-            let density = chain.one("develop", current);
-            current = if settings.couplers > 0. {
-                let inhibitor = chain.one("dir_matmul", density);
-                chain.release(density);
-                let diffused = chain.blur(inhibitor, spatial.coupler);
-                if diffused != inhibitor {
-                    chain.release(inhibitor);
-                }
-                let corrected = chain.two("dir_develop", current, diffused);
-                chain.release(diffused);
-                chain.release(current);
-                corrected
-            } else {
-                chain.release(current);
-                density
-            };
-            if settings.grain {
-                let grained = chain.one("grain", current);
-                chain.release(current);
-                current = chain.blur(grained, film::GRAIN_BLUR_PX);
-                if current != grained {
-                    chain.release(grained);
-                }
+        plan: &Plan,
+        tile: &Tile,
+        pack: bool,
+    ) -> wgpu::CommandEncoder {
+        let slot0 = plan.slot0(tile);
+        let pack = pack.then(|| {
+            let mut params = [[0.; 4]; 41];
+            params[21] = [
+                plan.margin as f32,
+                plan.width as f32,
+                tile.x as f32,
+                tile.y as f32,
+            ];
+            // `pack` only reads; its destination binding must not alias the source.
+            Pass {
+                entry: "pack",
+                buffers: [plan.output, plan.output, (plan.output + 1) % BUFFERS],
+                params,
             }
-            if !settings.negative {
-                let exposed = chain.one("print_spectral", current);
-                chain.release(current);
-                current = chain.one("print_develop", exposed);
-                chain.release(exposed);
-            }
-            let scanned = chain.one("scan", current);
-            chain.release(current);
-            current = scanned;
-        }
-        let finished = chain.one("finish", current);
-        chain.release(current);
-        let sharp = if sharpen > 0. {
-            chain.blur(finished, sharpen)
-        } else {
-            finished
-        };
-        let readback = chain.two("output", finished, sharp);
-        let passes = chain.passes;
-        assert!(passes.len() <= MAX_DISPATCHES as usize);
+        });
+        assert!(plan.passes.len() + usize::from(pack.is_some()) <= MAX_DISPATCHES as usize);
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("RAW edit frame/tile"),
             });
-        for (slot, (name, indices, params)) in passes.into_iter().enumerate() {
+        for (slot, pass) in plan.passes.iter().chain(&pack).enumerate() {
+            let mut params = pass.params;
+            params[0] = slot0;
+            let indices = pass.buffers;
             // Each dispatch has its own aligned uniform slot. Rewriting a single
             // slot before submit would make every dispatch see the last parameters.
             let offset = slot as u32 * workspace.uniform_stride;
@@ -1092,34 +1447,55 @@ impl Renderer {
                     entries: &entries,
                 })
             });
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some(name),
+            let mut compute = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some(pass.entry),
                 timestamp_writes: None,
             });
-            pass.set_pipeline(&self.pipelines[name]);
-            pass.set_bind_group(0, &*bind, &[offset]);
-            if name == "sample" {
-                pass.set_bind_group(1, &source.bind, &[]);
-            }
-            pass.dispatch_workgroups(
-                (params[0][0] as u32).div_ceil(16),
-                (params[0][1] as u32).div_ceil(8),
-                1,
-            );
+            compute.set_pipeline(&self.pipelines[pass.entry]);
+            compute.set_bind_group(0, &*bind, &[offset]);
+            let (width, height) = match pass.entry {
+                "sample" => {
+                    compute.set_bind_group(1, &source.bind, &[]);
+                    (slot0[0] as u32, slot0[1] as u32)
+                }
+                "pack" => {
+                    let (_, _, _, frame) = workspace.frame.as_ref().unwrap();
+                    compute.set_bind_group(1, frame, &[]);
+                    (tile.width, tile.height)
+                }
+                _ => (slot0[0] as u32, slot0[1] as u32),
+            };
+            compute.dispatch_workgroups(width.div_ceil(16), height.div_ceil(8), 1);
         }
-        encoder.copy_buffer_to_buffer(
-            &workspace.buffers[readback],
-            0,
-            &workspace.readback,
-            0,
-            size,
-        );
-        self.queue.submit(Some(encoder.finish()));
-        let slice = workspace.readback.slice(..size);
+        encoder
+    }
+    /// Maps the first `size` bytes of a submitted readback buffer and passes them
+    /// to `use_bytes`. On error the caller must drop the workspace.
+    fn read<T>(
+        &self,
+        readback: &wgpu::Buffer,
+        size: u64,
+        cancel: &AtomicBool,
+        use_bytes: impl FnOnce(&[u8]) -> Result<T, RenderError>,
+    ) -> Result<T, RenderError> {
+        let slice = readback.slice(..size);
         let (tx, rx) = mpsc::channel();
         slice.map_async(wgpu::MapMode::Read, move |r| {
-            let _ = tx.send(r);
+            let _ = tx.send(r.map_err(|e| e.to_string()));
         });
+        self.wait(rx, cancel)?;
+        let view = slice.get_mapped_range();
+        let result = use_bytes(&view);
+        drop(view);
+        readback.unmap();
+        result
+    }
+    /// Polls the device until `done` reports, the GPU fails or `cancel` is set.
+    fn wait(
+        &self,
+        done: mpsc::Receiver<Result<(), String>>,
+        cancel: &AtomicBool,
+    ) -> Result<(), RenderError> {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
         loop {
             self.device.poll(wgpu::Maintain::Poll);
@@ -1136,9 +1512,9 @@ impl Renderer {
             }
             // Mapping callbacks are driven by poll(), not by the channel wait.
             // A long timeout here adds that delay to every otherwise-fast tile.
-            match rx.recv_timeout(std::time::Duration::from_micros(200)) {
+            match done.recv_timeout(std::time::Duration::from_micros(200)) {
                 Ok(result) => {
-                    result.map_err(|e| RenderError::Gpu(e.to_string()))?;
+                    result.map_err(RenderError::Gpu)?;
                     break;
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
@@ -1147,13 +1523,13 @@ impl Renderer {
             // Dropping a cancelled request discards its buffers/results; a submitted
             // dispatch itself remains owned by wgpu until the GPU has finished it.
         }
-        cancelled(cancel)?;
-        let view = slice.get_mapped_range();
-        let result = bytemuck::cast_slice(&view).to_vec();
-        drop(view);
-        workspace.readback.unmap();
-        Ok(result)
+        cancelled(cancel)
     }
+}
+
+/// One source texture texel: scene-linear RGB with alpha 1.
+fn texel(rgb: &[f32; 3]) -> [f32; 4] {
+    [rgb[0], rgb[1], rgb[2], 1.]
 }
 
 pub fn output_dimensions(

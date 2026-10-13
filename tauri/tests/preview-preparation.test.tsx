@@ -10,8 +10,9 @@ import { useEditorStore as editor } from '../src/renderer/src/stores/editorStore
 import { useSettingsStore } from '../src/renderer/src/stores/settingsStore'
 import { useNavStore as nav } from '../src/renderer/src/stores/navStore'
 
-const { prefetch } = vi.hoisted(() => ({ prefetch: vi.fn() }))
+const { prefetch, invoke } = vi.hoisted(() => ({ prefetch: vi.fn(), invoke: vi.fn() }))
 vi.mock('../src/renderer/src/lib/fitPreviews', () => ({ prefetchFitPreviews: prefetch }))
+vi.mock('../src/renderer/src/lib/ipc', () => ({ ipc: { invoke, on: () => () => {} } }))
 
 const files: X3FFileDTO[] = ['a', 'b', 'c', 'd', 'e', 'f', 'g'].map((id) => ({
   id,
@@ -35,6 +36,7 @@ let stops: Array<ReturnType<typeof vi.fn>>
 beforeEach(() => {
   vi.useFakeTimers()
   stops = []
+  invoke.mockReset().mockResolvedValue(undefined)
   prefetch.mockReset().mockImplementation(() => {
     const stop = vi.fn()
     stops.push(stop)
@@ -115,4 +117,45 @@ it('pauses during export work and foreground editor rendering, then resumes idle
   expect(stops[2]).toHaveBeenCalledOnce()
   await act(() => vi.advanceTimersByTimeAsync(500))
   expect(prefetch).toHaveBeenCalledTimes(3)
+})
+
+it('prepares the selected RAW for Edit only after the selection rests in the browser', async () => {
+  const warmed = (): unknown[] =>
+    invoke.mock.calls.filter(([channel]) => channel === 'editor:warm').map(([, payload]) => payload)
+  render(<PreviewPreparation />)
+  await act(() => vi.advanceTimersByTimeAsync(299))
+  expect(warmed()).toEqual([])
+  await act(() => vi.advanceTimersByTimeAsync(1))
+  expect(warmed()).toEqual([{ path: '/photos/c.X3F' }])
+  act(() => queue.setState({ activeId: 'g' }))
+  await act(() => vi.advanceTimersByTimeAsync(200))
+  act(() => queue.setState({ activeId: 'b' }))
+  await act(() => vi.advanceTimersByTimeAsync(300))
+  expect(warmed()).toEqual([{ path: '/photos/c.X3F' }, { path: '/photos/b.X3F' }])
+  act(() => queue.setState({ activeId: 'e' }))
+  await act(() => vi.advanceTimersByTimeAsync(500))
+  expect(warmed()).toHaveLength(2)
+  for (const pause of [
+    () => nav.setState({ screen: 'editor' }),
+    () => nav.setState({ screen: 'export' }),
+    () => queue.setState({ isProcessing: true }),
+    () => queue.setState({ isPreparing: true }),
+    () => editor.setState({ closing: true })
+  ]) {
+    act(() => {
+      nav.setState({ screen: 'queue' })
+      queue.setState({ activeId: 'a', isProcessing: false, isPreparing: false })
+      editor.setState({ closing: false })
+      pause()
+    })
+    await act(() => vi.advanceTimersByTimeAsync(500))
+    expect(warmed()).toHaveLength(2)
+  }
+  act(() => editor.setState({ closing: false }))
+  await act(() => vi.advanceTimersByTimeAsync(300))
+  expect(warmed()).toEqual([
+    { path: '/photos/c.X3F' },
+    { path: '/photos/b.X3F' },
+    { path: '/photos/a.X3F' }
+  ])
 })

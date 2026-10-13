@@ -3,7 +3,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     sync::Arc,
-    time::Instant,
+    time::{Duration, Instant},
 };
 use x3fuse_app::editor::{Editor, RenderRequest};
 
@@ -93,7 +93,7 @@ fn saved_thumbnails_reuse_pixels_across_requests_and_restarts() {
 
 #[test]
 #[ignore = "Requires X3FUSE_TEST_EDITED_A/B RAWs with saved denoise edits and a hardware GPU"]
-fn first_raw_frame_is_progressive_and_refinement_restores_saved_denoise() {
+fn first_raw_frame_applies_nlm_and_a_bm3d_first_frame_is_progressive() {
     let temporary = tempfile::tempdir().unwrap();
     for (index, variable) in ["X3FUSE_TEST_EDITED_A", "X3FUSE_TEST_EDITED_B"]
         .iter()
@@ -129,32 +129,16 @@ fn first_raw_frame_is_progressive_and_refinement_restores_saved_denoise() {
             );
             serde_json::to_value(result).unwrap()
         };
-        let first = render(1, true, 1024);
-        assert_eq!(first["draft"], true);
-        let draft_pixels = editor.image_uri(first["url"].as_str().unwrap()).unwrap();
-        // An exact render of an explicitly undenoised recipe must match draft pixels.
-        let mut undenoised = session.recipe.clone();
-        undenoised.denoise = 0;
-        let reference = editor
-            .render(RenderRequest {
-                session_id: session.session_id.clone(),
-                recipe: undenoised,
-                revision: 2,
-                max_edge: 1024,
-                region: None,
-                interactive: false,
-            })
-            .unwrap();
-        let reference = serde_json::to_value(reference).unwrap();
-        assert_eq!(reference["draft"], false);
-        assert_eq!(first["url"], reference["url"]);
         assert_eq!(
-            *draft_pixels,
-            *editor
-                .image_uri(reference["url"].as_str().unwrap())
-                .unwrap()
+            session.recipe.denoise_options.algorithm,
+            x3f_core::DenoiseAlgorithm::Nlm
         );
-
+        let first = render(1, true, 1024);
+        assert_eq!(
+            first["draft"], false,
+            "The first frame must apply NLM in its only RAW preparation"
+        );
+        let first_pixels = editor.image_uri(first["url"].as_str().unwrap()).unwrap();
         let refined = render(3, false, 2048);
         assert_eq!(refined["draft"], false);
         let warm = render(4, true, 1024);
@@ -162,10 +146,7 @@ fn first_raw_frame_is_progressive_and_refinement_restores_saved_denoise() {
             warm["draft"], false,
             "Interactive frames must reuse completed denoising"
         );
-        assert_ne!(
-            first["url"], warm["url"],
-            "Draft pixels must never occupy an exact asset URL"
-        );
+        assert_eq!(first["url"], warm["url"]);
         let saved = editor.load(&input).unwrap().unwrap();
         assert_eq!(saved.recipe, session.recipe);
         assert_eq!(saved.preview_url.as_deref(), refined["url"].as_str());
@@ -190,15 +171,80 @@ fn first_raw_frame_is_progressive_and_refinement_restores_saved_denoise() {
             *medium, *cached,
             "Exact medium pixels must survive restart without RAW work"
         );
-        // Only the exact refinement should have persisted the saved thumbnail.
+        // The exact refinement persisted the saved thumbnail.
         editor
             .paused
             .store(true, std::sync::atomic::Ordering::SeqCst);
         assert!(editor
             .image_uri(&format!("{}?v=thumbnail", saved.preview_url.unwrap()))
             .is_ok());
-        assert!(editor
-            .image_uri(&format!("{}?v=thumbnail", first["url"].as_str().unwrap()))
-            .is_err());
+
+        // A warm-up prepares the saved denoise, so the first frame needs no RAW work.
+        let warmed = Editor::new(temporary.path().join(format!("warm-{index}")));
+        warmed.warm(input.clone()).unwrap();
+        let session = warmed.open(input.clone()).unwrap();
+        let start = Instant::now();
+        let frame = warmed
+            .render(RenderRequest {
+                session_id: session.session_id.clone(),
+                recipe: session.recipe.clone(),
+                revision: 1,
+                max_edge: 1024,
+                region: None,
+                interactive: true,
+            })
+            .unwrap();
+        let elapsed = start.elapsed();
+        let frame = serde_json::to_value(frame).unwrap();
+        assert_eq!(frame["draft"], false);
+        assert_eq!(frame["url"], first["url"]);
+        assert_eq!(
+            *warmed.image_uri(frame["url"].as_str().unwrap()).unwrap(),
+            *first_pixels
+        );
+        assert!(
+            elapsed < Duration::from_millis(500),
+            "The first frame after a warm-up took {elapsed:?}"
+        );
+
+        // BM3D can take seconds, so its first frame is a draft without denoising.
+        let progressive = Editor::new(temporary.path().join(format!("bm3d-{index}")));
+        let session = progressive.open(input.clone()).unwrap();
+        let mut bm3d = session.recipe.clone();
+        bm3d.denoise_options.algorithm = x3f_core::DenoiseAlgorithm::Bm3d;
+        let request = |recipe, revision, interactive| RenderRequest {
+            session_id: session.session_id.clone(),
+            recipe,
+            revision,
+            max_edge: 1024,
+            region: None,
+            interactive,
+        };
+        let draft = progressive.render(request(bm3d.clone(), 1, true)).unwrap();
+        let draft = serde_json::to_value(draft).unwrap();
+        assert_eq!(draft["draft"], true);
+        let pixels = |preview: &serde_json::Value| {
+            progressive
+                .image_uri(preview["url"].as_str().unwrap())
+                .unwrap()
+        };
+        let draft_pixels = pixels(&draft);
+        // An exact render of an explicitly undenoised recipe must match draft pixels.
+        let mut undenoised = bm3d;
+        undenoised.denoise = 0;
+        let reference = progressive.render(request(undenoised, 2, false)).unwrap();
+        let reference = serde_json::to_value(reference).unwrap();
+        assert_eq!(reference["draft"], false);
+        assert_eq!(draft["url"], reference["url"]);
+        assert_eq!(*draft_pixels, *pixels(&reference));
+        progressive
+            .paused
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        assert!(
+            progressive
+                .image_uri(&format!("{}?v=thumbnail", draft["url"].as_str().unwrap()))
+                .is_err(),
+            "Draft pixels must never persist a thumbnail"
+        );
     }
 }

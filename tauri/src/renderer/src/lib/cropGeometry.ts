@@ -1,4 +1,5 @@
 import type { EditRecipe } from '@shared/editor'
+import { insideQuad, pictureQuad, type Point } from './perspective'
 
 /** Normalized recipe crop in the EXIF-oriented image, before rotation/straighten. */
 export type Rect = NonNullable<EditRecipe['crop']>
@@ -43,8 +44,18 @@ export function cropToFrame(crop: Rect, degrees: number, w: number, h: number): 
   return { x: x - cw / z / 2, y: y - ch / z / 2, width: cw / z, height: ch / z }
 }
 
-/** Inverse of cropToFrame; null when the crop would leave the image. */
-export function frameToCrop(frame: Frame, degrees: number, w: number, h: number): Rect | null {
+/**
+ * Inverse of cropToFrame; null when the crop would leave the image. A `quad`
+ * (the picture outline of a perspective correction, in the same pixels as the
+ * unrotated picture) also has to contain the frame.
+ */
+export function frameToCrop(
+  frame: Frame,
+  degrees: number,
+  w: number,
+  h: number,
+  quad?: Point[]
+): Rect | null {
   const z = zoom(frame.width / frame.height, degrees)
   const cos = Math.cos(radians(degrees))
   const sin = Math.sin(radians(degrees))
@@ -57,6 +68,21 @@ export function frameToCrop(frame: Frame, degrees: number, w: number, h: number)
   const e = 1e-6
   if (!(width > 0 && height > 0) || x < -e || y < -e || x + width > 1 + e || y + height > 1 + e)
     return null
+  if (quad) {
+    // The picture is turned by `degrees` in the view; turn the corners back.
+    const inside = [
+      [frame.x, frame.y],
+      [frame.x + frame.width, frame.y],
+      [frame.x + frame.width, frame.y + frame.height],
+      [frame.x, frame.y + frame.height]
+    ].every(([px, py]) =>
+      insideQuad(quad, {
+        x: w / 2 + cos * (px - w / 2) + sin * (py - h / 2),
+        y: h / 2 - sin * (px - w / 2) + cos * (py - h / 2)
+      })
+    )
+    if (!inside) return null
+  }
   const left = Math.max(0, x)
   const top = Math.max(0, y)
   return { x: left, y: top, width: Math.min(width, 1 - left), height: Math.min(height, 1 - top) }
@@ -147,4 +173,101 @@ export function matchAspect(
   const long = Math.max(ratio, 1 / ratio)
   const preset = PRESETS.find(([a, b]) => Math.abs(long / (a / b) - 1) < 0.001)
   return preset ? preset.join(':') : 'free'
+}
+
+/** Snap step of the rotate drag with Shift held, in degrees. */
+export const SNAP = 15
+
+/**
+ * Straighten angle for a rotate drag: the angle the pointer swept around
+ * `center`, added to `start`. Shift snaps to `SNAP` steps. Clamped to the slider range.
+ */
+export function sweptAngle(
+  start: number,
+  from: Point,
+  to: Point,
+  center: Point,
+  snap: boolean
+): number {
+  const at = (p: Point): number => Math.atan2(p.y - center.y, p.x - center.x)
+  const swept = ((((at(to) - at(from)) * 180) / Math.PI + 540) % 360) - 180
+  const value = snap ? Math.round((start + swept) / SNAP) * SNAP : start + swept
+  return Math.max(-45, Math.min(45, value))
+}
+
+/** The picture outline of a perspective correction; undefined when there is none. */
+const outline = (pitch: number, yaw: number, w: number, h: number): Point[] | undefined =>
+  pitch || yaw ? pictureQuad(pitch, yaw, w, h) : undefined
+
+/**
+ * The largest frame of `aspect` (width / height) centered on a point, up to
+ * `max` wide, that `valid` accepts. Validity must shrink toward the center.
+ */
+function largestAbout(
+  cx: number,
+  cy: number,
+  aspect: number,
+  max: number,
+  valid: (frame: Frame) => boolean
+): Frame | null {
+  const at = (width: number): Frame => ({
+    x: cx - width / 2,
+    y: cy - width / aspect / 2,
+    width,
+    height: width / aspect
+  })
+  if (valid(at(max))) return at(max)
+  let lo = max * 1e-3
+  if (!valid(at(lo))) return null
+  let hi = max
+  for (let i = 0; i < 30; i++) {
+    const mid = (lo + hi) / 2
+    if (valid(at(mid))) lo = mid
+    else hi = mid
+  }
+  return at(lo)
+}
+
+/**
+ * The crop itself when its frame fits the picture outline at this angle and
+ * perspective; otherwise the crop shrunk about its center until it fits.
+ */
+export function fitCrop(
+  crop: Rect,
+  degrees: number,
+  pitch: number,
+  yaw: number,
+  w: number,
+  h: number
+): Rect {
+  const quad = outline(pitch, yaw, w, h)
+  const frame = cropToFrame(crop, degrees, w, h)
+  const to = (f: Frame): Rect | null => frameToCrop(f, degrees, w, h, quad)
+  if (to(frame)) return crop
+  const aspect = frame.width / frame.height
+  const valid = (f: Frame): boolean => to(f) !== null
+  const fit =
+    largestAbout(
+      frame.x + frame.width / 2,
+      frame.y + frame.height / 2,
+      aspect,
+      frame.width,
+      valid
+    ) ?? largestAbout(w / 2, h / 2, aspect, frame.width, valid)
+  return (fit && to(fit)) ?? crop
+}
+
+/** The largest crop of frame `aspect` (width / height), centered on the picture. */
+export function centeredCrop(
+  aspect: number,
+  degrees: number,
+  pitch: number,
+  yaw: number,
+  w: number,
+  h: number
+): Rect | null {
+  const quad = outline(pitch, yaw, w, h)
+  const to = (f: Frame): Rect | null => frameToCrop(f, degrees, w, h, quad)
+  const fit = largestAbout(w / 2, h / 2, aspect, Math.max(w, h * aspect), (f) => to(f) !== null)
+  return fit && to(fit)
 }
