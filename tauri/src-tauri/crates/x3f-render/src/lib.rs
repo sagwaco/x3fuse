@@ -625,7 +625,7 @@ impl Renderer {
     pub fn new() -> Result<Self, RenderError> {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
         let adapter=pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions{power_preference:wgpu::PowerPreference::HighPerformance,force_fallback_adapter:false,compatible_surface:None}))
-            .ok_or_else(||RenderError::Gpu("No compatible GPU adapter. Update your graphics driver or use original conversion.".into()))?;
+            .map_err(|_|RenderError::Gpu("No compatible GPU adapter. Update your graphics driver or use original conversion.".into()))?;
         let info = adapter.get_info();
         if info.device_type == wgpu::DeviceType::Cpu {
             return Err(RenderError::Gpu(
@@ -633,15 +633,14 @@ impl Renderer {
             ));
         }
         let limits = adapter.limits();
-        let (device, queue) = pollster::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("X3Fuse editor"),
-                required_features: wgpu::Features::empty(),
-                required_limits: limits,
-                memory_hints: wgpu::MemoryHints::MemoryUsage,
-            },
-            None,
-        ))
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: Some("X3Fuse editor"),
+            required_features: wgpu::Features::empty(),
+            required_limits: limits,
+            experimental_features: wgpu::ExperimentalFeatures::disabled(),
+            memory_hints: wgpu::MemoryHints::MemoryUsage,
+            trace: wgpu::Trace::Off,
+        }))
         .map_err(|e| RenderError::Gpu(e.to_string()))?;
         device.push_error_scope(wgpu::ErrorFilter::Validation);
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -755,7 +754,7 @@ impl Renderer {
         }
         let gpu_error: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
         let errors = gpu_error.clone();
-        device.on_uncaptured_error(Box::new(move |e| {
+        device.on_uncaptured_error(Arc::new(move |e: wgpu::Error| {
             if let Ok(mut error) = errors.lock() {
                 *error = Some(format!("{e}"));
             }
@@ -1536,7 +1535,8 @@ impl Renderer {
     ) -> Result<(), RenderError> {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
         loop {
-            self.device.poll(wgpu::Maintain::Poll);
+            // A poll error is not fatal here. The loop checks the GPU error and the deadline.
+            let _ = self.device.poll(wgpu::PollType::Poll);
             cancelled(cancel)?;
             if let Ok(error) = self.gpu_error.lock() {
                 if let Some(error) = error.as_ref() {
