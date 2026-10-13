@@ -42,7 +42,7 @@ class ExifService {
     func extractExifData(from file: X3FFile) async throws {
         logger.logDebug("Extracting EXIF data from \(file.fileName)")
         
-        guard let exifToolPath = exifToolPath else {
+        guard exifToolPath != nil else {
             throw ExifServiceError.exifToolNotFound
         }
         
@@ -60,8 +60,7 @@ class ExifService {
             try parseExifData(output, for: file)
         } catch {
             logger.logError("Failed to extract EXIF data: \(error)", file: file.fileName)
-            // Fall back to simulation for development
-            await simulateExifExtraction(for: file)
+            // Leave unavailable metadata unset; the core reads calibration from the X3F.
         }
     }
     
@@ -105,43 +104,6 @@ class ExifService {
         ]
         
         logger.logExifExtraction(file.fileName, metadata: logMetadata)
-    }
-    
-    private func simulateExifExtraction(for file: X3FFile) async {
-        // Fallback simulation for development when ExifTool is not available
-        logger.logDebug("Using simulated EXIF extraction for \(file.fileName)")
-        
-        let fileName = file.fileName.lowercased()
-        
-        // Simulate camera model detection
-        if fileName.contains("dp1") {
-            file.cameraModel = "SIGMA DP1 Merrill"
-        } else if fileName.contains("dp2") {
-            file.cameraModel = "SIGMA DP2 Merrill"
-        } else if fileName.contains("dp3") {
-            file.cameraModel = "SIGMA DP3 Merrill"
-        } else if fileName.contains("sd1") {
-            file.cameraModel = "SIGMA SD1 Merrill"
-        } else {
-            file.cameraModel = "SIGMA DP2 Merrill" // Default for testing
-        }
-        
-        // Simulate aperture values
-        file.aperture = "2.8" // Default for testing
-        
-        // Simulate lens ID
-        if file.cameraModel?.contains("SD1") == true {
-            file.lensId = "Unknown_(32776)_30mm"
-        }
-        
-        // Log the extracted data
-        let metadata: [String: Any] = [
-            "Model": file.cameraModel ?? "Unknown",
-            "Aperture": file.aperture ?? "Unknown",
-            "LensID": file.lensId ?? "N/A"
-        ]
-        
-        logger.logExifExtraction(file.fileName, metadata: metadata)
     }
     
     // MARK: - EXIF Tool Integration
@@ -246,7 +208,7 @@ class ExifService {
         }
         
         // For SD1M/SD1, lens ID is required for opcode selection
-        if file.cameraModel?.contains("SD1") == true && file.lensId == nil {
+        if file.cameraModel?.split(separator: " ").contains("SD1") == true && file.lensId == nil {
             issues.append("Missing lens ID (required for SD1 cameras)")
         }
         
