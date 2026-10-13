@@ -12,10 +12,12 @@ class X3FConverter {
 
   private let logger = LoggingService.shared
   private let binaryManager = BinaryManager.shared
-  private let settings = ConversionSettings.shared
+  private let settings: ConversionSettings
   private var currentProcess: Process?
 
-  private init() {}
+  init(settings: ConversionSettings = .shared) {
+    self.settings = settings
+  }
 
   // MARK: - X3F Conversion
 
@@ -130,7 +132,7 @@ class X3FConverter {
 
   // MARK: - Argument Building
 
-  private func buildX3FArguments(for file: X3FFile) -> [String] {
+  func buildX3FArguments(for file: X3FFile) -> [String] {
     var args: [String] = []
 
     // Use file-specific settings if available, otherwise use global settings
@@ -148,11 +150,7 @@ class X3FConverter {
 
     args.append("-v")
 
-    // Denoise intensity (default is 10/full strength, so only pass when it differs)
-    if denoiseIntensity != 10 {
-      args.append("-denoise")
-      args.append(String(denoiseIntensity))
-    }
+    args += settings.buildDenoiseArguments(intensity: denoiseIntensity)
 
     // Compression (only for DNG and TIFF)
     if compress && (outputFormat == .dng || outputFormat == .tiff) {
