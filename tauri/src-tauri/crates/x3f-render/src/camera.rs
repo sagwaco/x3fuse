@@ -207,7 +207,16 @@ pub fn read_camera_profiles(
     path: &Path,
     cancel: &AtomicBool,
 ) -> Result<CameraProfiles, RenderError> {
-    let metadata = Metadata::open(path, cancel)?;
+    // A photo with unreadable camera metadata still opens. It offers Standard,
+    // which then renders with the legacy color transform.
+    let metadata = match Metadata::open(path, cancel) {
+        Ok(metadata) => metadata,
+        Err(error @ RenderError::Invalid(_)) => {
+            eprintln!("Using Standard for {}: {error}", path.display());
+            return profiles_from_calibration("", |_| Ok(None));
+        }
+        Err(error) => return Err(error),
+    };
     let mut base = [0.; 9];
     let mut xyz_to_rgb = [0.; 9];
     // SAFETY: this reader owns the header, white balance and output matrices.
@@ -475,18 +484,30 @@ mod tests {
         ));
     }
     #[test]
-    fn profile_reader_cancels_before_opening_a_file() {
+    fn profile_reader_cancels_and_falls_back_to_standard_for_unreadable_metadata() {
         assert!(matches!(
             read_camera_profiles(Path::new("missing.X3F"), &AtomicBool::new(true)),
             Err(RenderError::Cancelled)
         ));
-        assert!(matches!(
-            read_camera_profiles(
-                &Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml"),
-                &AtomicBool::new(false),
-            ),
-            Err(RenderError::Invalid(_))
-        ));
+        let profiles = read_camera_profiles(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml"),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_eq!(profiles.as_shot, "Standard");
+        assert_eq!(
+            profiles
+                .available
+                .iter()
+                .map(|p| p.id.as_str())
+                .collect::<Vec<_>>(),
+            ["Standard", "Monochrome"]
+        );
+        let standard = EditRecipe {
+            camera_profile: Some("Standard".into()),
+            ..Default::default()
+        };
+        assert!(profiles.selected(&standard).unwrap().is_none());
     }
     #[test]
     #[ignore = "set X3F_CAMERA_PROFILE_INPUT to a real camera file"]
