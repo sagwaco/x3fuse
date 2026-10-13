@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import * as SwitchPrimitive from '@radix-ui/react-switch'
 import { cn } from '../../lib/cn'
 
@@ -16,15 +17,29 @@ export function Switch({
   id,
   'aria-label': label
 }: SwitchProps): React.JSX.Element {
+  // The knob shows as glass while the pointer presses it, and a moment after.
+  const [pressed, setPressed] = useState(false)
   return (
     <SwitchPrimitive.Root
       id={id}
+      data-pressed={pressed || undefined}
+      onPointerDown={(event) => {
+        if (event.button !== 0) return
+        setPressed(true)
+        const release = (): void => {
+          window.removeEventListener('pointerup', release)
+          window.removeEventListener('pointercancel', release)
+          setTimeout(() => setPressed(false), 200)
+        }
+        window.addEventListener('pointerup', release)
+        window.addEventListener('pointercancel', release)
+      }}
       aria-label={label}
       checked={checked}
       onCheckedChange={onCheckedChange}
       disabled={disabled}
       className={cn(
-        'peer inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full',
+        'switch peer inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full',
         'border transition-colors',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50',
         'disabled:cursor-not-allowed disabled:opacity-40',
@@ -34,7 +49,7 @@ export function Switch({
     >
       <SwitchPrimitive.Thumb
         className={cn(
-          'pointer-events-none block h-3.5 w-3.5 rounded-full transition-transform',
+          'switch-knob pointer-events-none block h-3.5 w-3.5 rounded-full',
           'data-[state=checked]:translate-x-[18px] data-[state=checked]:bg-black',
           'data-[state=unchecked]:translate-x-[2px] data-[state=unchecked]:bg-neutral-400'
         )}
