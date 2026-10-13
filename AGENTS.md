@@ -12,6 +12,12 @@ X3Fuse is a macOS SwiftUI application for converting Sigma Merrill and Quattro X
 
 ### Building the App
 
+Initialize dependencies in each clone or worktree before building:
+
+```bash
+git submodule update --init --recursive
+```
+
 ```bash
 # Open in Xcode
 open X3Fuse.xcodeproj
@@ -115,7 +121,9 @@ When cancellation is requested:
   the original Kalpanika C/C++ converter). Rebuild and update it with
   `./scripts/build_x3f_extract.sh`, which compiles both arch targets and `lipo`-combines them
   into `X3Fuse/x3f_extract`; commit the resulting binary.
-- **exiftool**: Perl script bundled in Resources
+- **exiftool**: Pinned upstream Git submodule at `Vendor/ExifTool` (13.33).
+  Xcode copies its `exiftool` script and complete `lib` directory into Resources.
+  See the source build instructions in `README.md` for setup and updates.
 - Binary paths resolved via `Bundle.main.path(forResource:ofType:)` (Services/BinaryManager.swift:24)
 - Executable permissions (0o755) set on app launch (Services/BinaryManager.swift:36)
 - The Xcode build embeds and code-signs the checked-in `X3Fuse/x3f_extract`; the binary is

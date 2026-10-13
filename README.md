@@ -68,11 +68,28 @@ Upgrade later with `brew upgrade --cask x3fuse` (the app also self-updates in-ap
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/sagwaco/x3fuse.git
+   git clone --recurse-submodules https://github.com/sagwaco/x3fuse.git
    cd x3fuse
    ```
 2. Open `X3Fuse.xcodeproj` in Xcode
 3. Build and run the project (⌘+R)
+
+ExifTool **13.33** is pinned to an upstream commit in the `Vendor/ExifTool` Git
+submodule. Xcode copies its `exiftool` script and `lib` directory into the app.
+Users do not need to install ExifTool separately. Its license is included in
+`X3Fuse/Acknowledgements.txt`.
+
+For an existing clone or a new worktree, run this command before building:
+
+```bash
+git submodule update --init --recursive
+```
+
+This downloads the pinned dependency once. Later builds use the local copy.
+Run the same command after pulling a change to the submodule pin. To update
+ExifTool, check out the required release tag in `Vendor/ExifTool`, then commit
+the submodule pointer. Update the version in `README.md`, `AGENTS.md`, and
+`X3FuseTests/ExifToolBundleTests.swift` in the same commit.
 
 The app bundles x3fuse-core **0.2.0** for Intel and Apple Silicon, with GPU denoising enabled.
 To rebuild the converter, check out the core's `v0.2.0` tag and run
