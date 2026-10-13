@@ -38,8 +38,8 @@ BINS=()
 for target in "${TARGETS[@]}"; do
     echo "→ rustup target add $target"
     rustup target add "$target" >/dev/null
-    echo "→ cargo build --release --target $target"
-    ( cd "$CORE_DIR" && cargo build --release --target "$target" )
+    echo "→ cargo build --release -p x3f-cli --features gpu --target $target"
+    ( cd "$CORE_DIR" && cargo build --release -p x3f-cli --features gpu --target "$target" )
     BINS+=("$CORE_DIR/target/$target/release/x3f_extract")
 done
 

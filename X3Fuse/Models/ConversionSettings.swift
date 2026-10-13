@@ -7,14 +7,35 @@
 
 import Foundation
 
+enum DenoiseAlgorithm: String, CaseIterable {
+  case nlm
+  case bm3d
+}
+
+enum DenoiseBackend: String, CaseIterable {
+  case auto
+  case cpu
+  case gpu
+}
+
 @Observable
 class ConversionSettings {
   static let shared = ConversionSettings()
+  private let defaults: UserDefaults
 
   // Settings that match the requirements
   var outputFormat: OutputFormat = .dng
   var compress: Bool = false
-  var denoiseIntensity: Int = 10  // OpenCV NLM denoise intensity, 0 = off ... 10 = full strength
+  var denoiseIntensity: Int = 10  // 0 disables denoise; 10 uses full strength.
+  var denoiseAlgorithm: DenoiseAlgorithm = .nlm
+  var denoiseBackend: DenoiseBackend = .auto
+  var denoiseLuminance: Bool = false
+  var denoiseChroma: Bool = true
+  var denoiseStrength: Double = 1.0
+  var nlmLumaPatch: Int = 3
+  var nlmChromaPatch: Int = 3
+  var nlmLumaSearch: Int = 11
+  var nlmChromaSearch: Int = 11
   var colorProfile: ColorProfile = .sRGB
   var dngHighlightRecovery: Bool = false  // Merrill-generation DNG highlight recovery (-dng-highlight-recovery)
   var cineon: Bool = false  // Cineon-style flat tone curve for TIFF (-cineon)
@@ -26,61 +47,46 @@ class ConversionSettings {
   var sortField: String = "File Name"  // Store as string for persistence
   var sortAscending: Bool = true
 
-  private init() {
+  init(defaults: UserDefaults = .standard) {
+    self.defaults = defaults
     loadSettings()
   }
 
-  // Build x3f_extract arguments based on current settings
-  func buildX3FArguments() -> [String] {
-    var args: [String] = []
+  func buildDenoiseArguments(intensity: Int? = nil) -> [String] {
+    let intensity = min(max(intensity ?? denoiseIntensity, 0), 10)
+    guard intensity > 0 else { return ["-denoise", "0"] }
 
-    // Denoise intensity (default is 10/full strength, so only pass when it differs)
-    if denoiseIntensity != 10 {
-      args.append("-denoise")
-      args.append(String(denoiseIntensity))
+    var args = intensity == 10 ? [] : ["-denoise", String(intensity)]
+    if denoiseAlgorithm != .nlm {
+      args += ["-denoiser", denoiseAlgorithm.rawValue]
     }
-
-    args.append("-sgain")
-
-    // Compression (only for DNG and TIFF)
-    if compress && (outputFormat == .dng || outputFormat == .tiff) {
-      args.append("-compress")
+    if denoiseBackend != .auto {
+      args += ["-denoise-backend", denoiseBackend.rawValue]
     }
-
-    // Output format
-    switch outputFormat {
-    case .dng:
-      // Default, no additional argument needed
-      break
-    case .embeddedJpg:
-      args.append("-jpg")
-    case .tiff:
-      args.append("-tiff")
+    if denoiseLuminance {
+      args.append("-denoise-luma")
     }
-
-    // Merrill-generation DNG highlight recovery (DNG only)
-    if dngHighlightRecovery && outputFormat == .dng {
-      args.append("-dng-highlight-recovery")
+    if !denoiseChroma {
+      args.append("-no-denoise-chroma")
     }
-
-    // Cineon-style flat tone curve (TIFF only)
-    if cineon && outputFormat == .tiff {
-      args.append("-cineon")
+    if denoiseStrength != 1.0 {
+      args += ["-denoise-strength", String(denoiseStrength)]
     }
-
-    // Color profile
-    if let colorArg = colorProfile.x3fArgument {
-      args.append("-color")
-      args.append(colorArg)
+    if denoiseAlgorithm == .nlm {
+      for (flag, value, defaultValue) in [
+        ("-nlm-luma-patch", nlmLumaPatch, 3),
+        ("-nlm-chroma-patch", nlmChromaPatch, 3),
+        ("-nlm-luma-search", nlmLumaSearch, 11),
+        ("-nlm-chroma-search", nlmChromaSearch, 11),
+      ] where value != defaultValue {
+        args += [flag, String(value)]
+      }
     }
-
     return args
   }
 
   // Persistence
   private func loadSettings() {
-    let defaults = UserDefaults.standard
-
     outputFormat = OutputFormat(rawValue: defaults.integer(forKey: "outputFormat")) ?? .dng
     compress = defaults.object(forKey: "compress") as? Bool ?? false
     if defaults.object(forKey: "denoiseIntensity") != nil {
@@ -92,6 +98,18 @@ class ConversionSettings {
       denoiseIntensity = 10
     }
     denoiseIntensity = min(max(denoiseIntensity, 0), 10)
+    denoiseAlgorithm =
+      DenoiseAlgorithm(rawValue: defaults.string(forKey: "denoiseAlgorithm") ?? "") ?? .nlm
+    denoiseBackend =
+      DenoiseBackend(rawValue: defaults.string(forKey: "denoiseBackend") ?? "") ?? .auto
+    denoiseLuminance = defaults.bool(forKey: "denoiseLuminance")
+    denoiseChroma = defaults.object(forKey: "denoiseChroma") as? Bool ?? true
+    let strength = defaults.object(forKey: "denoiseStrength") as? Double ?? 1.0
+    denoiseStrength = strength.isFinite ? min(max(strength, 0.1), 3.0) : 1.0
+    nlmLumaPatch = loadNlmWindow("nlmLumaPatch", defaultValue: 3, maximum: 9)
+    nlmChromaPatch = loadNlmWindow("nlmChromaPatch", defaultValue: 3, maximum: 9)
+    nlmLumaSearch = loadNlmWindow("nlmLumaSearch", defaultValue: 11, maximum: 31)
+    nlmChromaSearch = loadNlmWindow("nlmChromaSearch", defaultValue: 11, maximum: 31)
     colorProfile = ColorProfile(rawValue: defaults.integer(forKey: "colorProfile")) ?? .sRGB
     dngHighlightRecovery = defaults.bool(forKey: "dngHighlightRecovery")
     cineon = defaults.bool(forKey: "cineon")
@@ -102,12 +120,24 @@ class ConversionSettings {
     sortAscending = defaults.object(forKey: "sortAscending") as? Bool ?? true
   }
 
-  func saveSettings() {
-    let defaults = UserDefaults.standard
+  private func loadNlmWindow(_ key: String, defaultValue: Int, maximum: Int) -> Int {
+    let value = defaults.integer(forKey: key)
+    return (1...maximum).contains(value) && value % 2 == 1 ? value : defaultValue
+  }
 
+  func saveSettings() {
     defaults.set(outputFormat.rawValue, forKey: "outputFormat")
     defaults.set(compress, forKey: "compress")
     defaults.set(denoiseIntensity, forKey: "denoiseIntensity")
+    defaults.set(denoiseAlgorithm.rawValue, forKey: "denoiseAlgorithm")
+    defaults.set(denoiseBackend.rawValue, forKey: "denoiseBackend")
+    defaults.set(denoiseLuminance, forKey: "denoiseLuminance")
+    defaults.set(denoiseChroma, forKey: "denoiseChroma")
+    defaults.set(denoiseStrength, forKey: "denoiseStrength")
+    defaults.set(nlmLumaPatch, forKey: "nlmLumaPatch")
+    defaults.set(nlmChromaPatch, forKey: "nlmChromaPatch")
+    defaults.set(nlmLumaSearch, forKey: "nlmLumaSearch")
+    defaults.set(nlmChromaSearch, forKey: "nlmChromaSearch")
     defaults.set(colorProfile.rawValue, forKey: "colorProfile")
     defaults.set(dngHighlightRecovery, forKey: "dngHighlightRecovery")
     defaults.set(cineon, forKey: "cineon")

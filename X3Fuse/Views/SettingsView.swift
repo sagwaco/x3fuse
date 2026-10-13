@@ -173,60 +173,8 @@ struct SettingsView: View {
             }
             .pickerStyle(MenuPickerStyle())
           }
-          VStack(alignment: .leading, spacing: 10) {
-            Toggle(
-              LocalizationService.settingsDenoise,
-              isOn: Binding(
-                get: { settings.denoiseIntensity > 0 },
-                set: { enabled in
-                  if enabled {
-                    settings.denoiseIntensity = lastDenoiseIntensity
-                  } else {
-                    lastDenoiseIntensity = settings.denoiseIntensity
-                    settings.denoiseIntensity = 0
-                  }
-                }
-              )
-            )
-            .help(LocalizationService.settingsDenoiseHelp)
-
-            if settings.denoiseIntensity > 0 {
-              LabeledContent(LocalizationService.settingsDenoiseIntensity) {
-                VStack(spacing: 2) {
-                  Slider(
-                    value: Binding(
-                      get: { Double(settings.denoiseIntensity) },
-                      set: {
-                        let value = Int($0.rounded())
-                        settings.denoiseIntensity = value
-                        lastDenoiseIntensity = value
-                      }
-                    ),
-                    in: 1...10,
-                    step: 1
-                  )
-                  HStack {
-                    Text(LocalizationService.settingsDenoiseIntensityLess)
-                      .font(.caption)
-                      .foregroundColor(.secondary)
-                      .bold()
-                    Spacer()
-                    Text(LocalizationService.settingsDenoiseIntensityMore)
-                      .font(.caption)
-                      .foregroundColor(.secondary)
-                      .bold()
-                  }
-                }
-                .alignmentGuide(VerticalAlignment.center) { d in
-                  d[.top] + 11
-                }
-              }
-            }
-          }
-          .onAppear {
-            if settings.denoiseIntensity > 0 {
-              lastDenoiseIntensity = settings.denoiseIntensity
-            }
+          if settings.outputFormat != .embeddedJpg {
+            denoiseControls
           }
         }
 
@@ -370,6 +318,152 @@ struct SettingsView: View {
       // Auto-save settings when the window closes
       settings.saveSettings()
     }
+    .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) {
+      _ in
+      settings.saveSettings()
+    }
+  }
+
+  private var denoiseControls: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      Toggle(
+        LocalizationService.settingsDenoise,
+        isOn: Binding(
+          get: { settings.denoiseIntensity > 0 },
+          set: { enabled in
+            if enabled {
+              settings.denoiseIntensity = lastDenoiseIntensity
+            } else {
+              lastDenoiseIntensity = settings.denoiseIntensity
+              settings.denoiseIntensity = 0
+            }
+          }
+        )
+      )
+      .help(LocalizationService.settingsDenoiseHelp)
+
+      if settings.denoiseIntensity > 0 {
+        Picker(LocalizationService.settingsDenoiseAlgorithm, selection: $settings.denoiseAlgorithm)
+        {
+          ForEach(DenoiseAlgorithm.allCases, id: \.self) { algorithm in
+            Text(algorithm.rawValue.uppercased()).tag(algorithm)
+          }
+        }
+
+        Toggle(LocalizationService.settingsDenoiseLuminance, isOn: $settings.denoiseLuminance)
+        Toggle(LocalizationService.settingsDenoiseChroma, isOn: $settings.denoiseChroma)
+        if !settings.denoiseLuminance && !settings.denoiseChroma {
+          Text(LocalizationService.settingsDenoiseDisabledChannels)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        LabeledContent(LocalizationService.settingsDenoiseIntensity) {
+          VStack(spacing: 2) {
+            Slider(
+              value: Binding(
+                get: { Double(settings.denoiseIntensity) },
+                set: {
+                  let value = Int($0.rounded())
+                  settings.denoiseIntensity = value
+                  lastDenoiseIntensity = value
+                }
+              ),
+              in: 1...10,
+              step: 1
+            )
+            .accessibilityLabel(LocalizationService.settingsDenoiseIntensity)
+            HStack {
+              Text(LocalizationService.settingsDenoiseIntensityLess)
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .bold()
+              Spacer()
+              Text(LocalizationService.settingsDenoiseIntensityMore)
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .bold()
+            }
+          }
+          .alignmentGuide(VerticalAlignment.center) { d in
+            d[.top] + 11
+          }
+        }
+        .disabled(!settings.denoiseLuminance && !settings.denoiseChroma)
+
+        DisclosureGroup(LocalizationService.settingsDenoiseAdvanced) {
+          advancedDenoiseControls
+        }
+      }
+    }
+    .onAppear {
+      if settings.denoiseIntensity > 0 {
+        lastDenoiseIntensity = settings.denoiseIntensity
+      }
+    }
+  }
+
+  private var advancedDenoiseControls: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      LabeledContent(LocalizationService.settingsDenoiseStrength) {
+        Slider(
+          value: Binding(
+            get: { settings.denoiseStrength },
+            set: { settings.denoiseStrength = ($0 * 10).rounded() / 10 }
+          ),
+          in: 0.1...3.0,
+          step: 0.1
+        )
+        .accessibilityLabel(LocalizationService.settingsDenoiseStrength)
+        Text(settings.denoiseStrength, format: .number.precision(.fractionLength(1)))
+          .monospacedDigit()
+      }
+      .help(LocalizationService.settingsDenoiseStrengthHelp)
+
+      Picker(LocalizationService.settingsDenoiseBackend, selection: $settings.denoiseBackend) {
+        ForEach(DenoiseBackend.allCases, id: \.self) { backend in
+          Text(
+            backend == .auto
+              ? LocalizationService.settingsDenoiseBackendAutomatic
+              : backend.rawValue.uppercased()
+          ).tag(backend)
+        }
+      }
+      Text(LocalizationService.settingsDenoiseBackendHelp)
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+
+      if settings.denoiseAlgorithm == .nlm {
+        Stepper(value: $settings.nlmLumaPatch, in: 1...9, step: 2) {
+          LabeledContent(LocalizationService.settingsDenoiseNlmLumaPatch) {
+            Text(settings.nlmLumaPatch, format: .number)
+          }
+        }
+        .disabled(!settings.denoiseLuminance)
+        Stepper(value: $settings.nlmLumaSearch, in: 1...31, step: 2) {
+          LabeledContent(LocalizationService.settingsDenoiseNlmLumaSearch) {
+            Text(settings.nlmLumaSearch, format: .number)
+          }
+        }
+        .disabled(!settings.denoiseLuminance)
+        Stepper(value: $settings.nlmChromaPatch, in: 1...9, step: 2) {
+          LabeledContent(LocalizationService.settingsDenoiseNlmChromaPatch) {
+            Text(settings.nlmChromaPatch, format: .number)
+          }
+        }
+        .disabled(!settings.denoiseChroma)
+        Stepper(value: $settings.nlmChromaSearch, in: 1...31, step: 2) {
+          LabeledContent(LocalizationService.settingsDenoiseNlmChromaSearch) {
+            Text(settings.nlmChromaSearch, format: .number)
+          }
+        }
+        .disabled(!settings.denoiseChroma)
+        Text(LocalizationService.settingsDenoiseNlmWindowsHelp)
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
+    }
+    .disabled(!settings.denoiseLuminance && !settings.denoiseChroma)
   }
 
   private func selectOutputDirectory() {

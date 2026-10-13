@@ -120,6 +120,13 @@ When cancellation is requested:
 - Executable permissions (0o755) set on app launch (Services/BinaryManager.swift:36)
 - The Xcode build embeds and code-signs the checked-in `X3Fuse/x3f_extract`; the binary is
   not rebuilt during the app build.
+- The bundled core is **v0.2.0** (commit `fc2403054ea56d1549a9fd43f7bb5018943f22f4`).
+  Build from that tag to reproduce this version. The build script enables the `gpu` feature
+  for both architectures. Automatic denoising uses Metal when available and falls back to CPU.
+- Denoise settings include NLM/BM3D, luminance and chroma, intensity, strength, NLM window
+  sizes, and execution backend. `ConversionSettings.buildDenoiseArguments` builds these flags
+  for `X3FConverter`. NLM windows must be odd: patch sizes 1 to 9 and search sizes 1 to 31.
+  Strength must be 0.1 to 3.0. Forced GPU mode fails if acceleration is unavailable.
 
 #### CLI compatibility notes (x3fuse-core)
 

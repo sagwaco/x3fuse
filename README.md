@@ -74,6 +74,10 @@ Upgrade later with `brew upgrade --cask x3fuse` (the app also self-updates in-ap
 2. Open `X3Fuse.xcodeproj` in Xcode
 3. Build and run the project (⌘+R)
 
+The app bundles x3fuse-core **0.2.0** for Intel and Apple Silicon, with GPU denoising enabled.
+To rebuild the converter, check out the core's `v0.2.0` tag and run
+`X3FUSE_CORE=/path/to/x3fuse-core ./scripts/build_x3f_extract.sh`.
+
 ## Scripts
 
 ### verify_universal_build.sh
@@ -101,6 +105,18 @@ This script verifies that the app and its components are properly built as unive
    - Click the Convert button to start processing
    - Monitor progress in the queue view
    - Converted files will be saved to your specified location
+
+For DNG and TIFF, Settings provides NLM and BM3D denoising, separate luminance and color
+noise controls, and the existing intensity slider. Advanced denoise settings provide a
+strength multiplier, NLM patch and search sizes in pixels, and Automatic, CPU, or GPU
+processing. Automatic uses the GPU when available and falls back to the CPU. Forced GPU
+processing stops conversion if acceleration is unavailable. BM3D ignores NLM window sizes
+and can take longer than NLM.
+
+Existing intensity preferences are retained. New settings use the core defaults: NLM,
+color noise reduction on, luminance noise reduction off, strength 1.0, patch size 3,
+search size 11, and Automatic processing. Core 0.2.0 changes the default NLM luminance
+handling, so denoised output can differ from previous versions.
 
 ## DNG Compatibility
 
