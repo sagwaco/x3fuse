@@ -104,10 +104,40 @@ pub async fn queue_add(
             }
         }
         state.editor.edits.flush_fingerprints();
+        for dto in &mut dtos {
+            dto.cull = state.culling.get(&dto.path);
+        }
         dtos
     })
     .await
     .map_err(|e| e.to_string())
+}
+
+#[derive(Deserialize)]
+pub struct CullRequest {
+    paths: Vec<PathBuf>,
+    flag: Option<crate::culling::Flag>,
+    rating: Option<u8>,
+}
+
+#[tauri::command]
+pub async fn culling_set(
+    window: WebviewWindow,
+    state: State<'_, Arc<AppState>>,
+    payload: CullRequest,
+) -> Result<(), String> {
+    main_window(&window)?;
+    let state = state.inner().clone();
+    // The renderer queues later saves until this one returns, so the backend cannot see
+    // them. From now on, a close asks the renderer to finish its queue first.
+    state.culling.used.store(true, Ordering::SeqCst);
+    tauri::async_runtime::spawn_blocking(move || {
+        state
+            .culling
+            .set(&payload.paths, payload.flag, payload.rating)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]

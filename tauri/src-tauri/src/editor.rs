@@ -344,6 +344,10 @@ impl Editor {
         }
     }
 
+    pub fn close_allowed(&self) -> bool {
+        self.close_allowed.load(Ordering::SeqCst)
+    }
+
     pub fn needs_close_flush(&self) -> bool {
         !self.close_allowed.load(Ordering::SeqCst)
             && (self.has_edit_activity.load(Ordering::SeqCst)

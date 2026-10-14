@@ -372,6 +372,7 @@ pub fn basic_metadata(path: PathBuf) -> Result<FileDto, String> {
         exif: None,
         edit: None,
         edit_error: None,
+        cull: Default::default(),
     })
 }
 

@@ -1,16 +1,16 @@
-import { memo, useEffect, useMemo, useRef } from 'react'
+import { memo, useEffect, useRef } from 'react'
 import type { X3FFileDTO } from '@shared/types'
 import { useQueueStore, type ExportDraft } from '../stores/queueStore'
 import { outputFileName } from '../lib/outputName'
-import { useSettingsStore } from '../stores/settingsStore'
 import { useFileDrop } from '../hooks/useFileDrop'
 import { useQueueSelection, type QueueSelection } from '../hooks/useQueueSelection'
 import { useScrollToActive } from '../hooks/useScrollToActive'
 import { useVirtualGrid } from '../hooks/useVirtualGrid'
-import { sortFiles } from '../lib/sortFiles'
+import { useShownFiles } from '../hooks/useCulling'
 import { cn } from '../lib/cn'
 import { Thumbnail } from './Thumbnail'
 import { EditedBadge } from './EditedBadge'
+import { CullBadge } from './CullBadge'
 import { QueueContextMenu } from './QueueContextMenu'
 
 const PADDING = 12
@@ -22,16 +22,9 @@ const ROW_HEIGHT = THUMB_H + LABEL_H + GAP
 
 /** Thumbnail grid view: virtualized rows of embedded-preview cells. */
 export function FileGrid({ draft }: { draft?: ExportDraft }): React.JSX.Element {
-  const files = useQueueStore((s) => draft?.files ?? s.files)
   const selectedIds = useQueueStore((s) => s.selectedIds)
   const activeId = useQueueStore((s) => s.activeId)
-  const sortField = useSettingsStore((s) => s.settings.sortField)
-  const sortAscending = useSettingsStore((s) => s.settings.sortAscending)
-
-  const sorted = useMemo(
-    () => sortFiles(files, sortField, sortAscending),
-    [files, sortField, sortAscending]
-  )
+  const sorted = useShownFiles(draft)
 
   const parentRef = useRef<HTMLDivElement>(null)
   const { isDragOver, dropHandlers } = useFileDrop()
@@ -136,7 +129,11 @@ const GridCell = memo(function GridCell({
         )}
         style={{ height: THUMB_H }}
       >
-        <Thumbnail file={file} className="h-full w-full rounded-md" />
+        <Thumbnail
+          file={file}
+          className={cn('h-full w-full rounded-md', file.flag === 'reject' && 'opacity-40')}
+        />
+        <CullBadge file={file} overlay />
         <EditedBadge edit={file.edit} overlay />
       </div>
       <span

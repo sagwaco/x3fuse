@@ -4,6 +4,7 @@ import {
   DEFAULT_SETTINGS,
   type BatchConversionSettings,
   type ConversionStatus,
+  type Flag,
   type OutputFormat,
   type X3FFileDTO
 } from '@shared/types'
@@ -12,6 +13,7 @@ import { ipc } from '../lib/ipc'
 import { basename } from '../lib/path'
 import { outputFileName } from '../lib/outputName'
 import { sortFiles } from '../lib/sortFiles'
+import { isFiltering, NO_FILTER, successor, visibleFiles, type CullFilter } from '../lib/culling'
 import { useSettingsStore } from './settingsStore'
 import { useNavStore } from './navStore'
 import { useEditorStore } from './editorStore'
@@ -50,6 +52,14 @@ interface QueueState {
   pendingReconversion: OutputConflict[] | null
   batch: ConversionBatch | null
   error: string | null
+  filter: CullFilter
+  filterOpen: boolean
+  /** The last failed flag or rating save. A later save clears it. */
+  cullError: string | null
+  setFilter: (patch: Partial<CullFilter>) => void
+  toggleFilterBar: () => void
+  /** Flags and/or rates photos. `advance` then moves to the next shown photo. */
+  setCull: (ids: Set<string>, patch: { flag?: Flag; rating?: number }, advance?: boolean) => void
   setSelection: (ids: Set<string>, active?: string | null) => void
   selectAll: () => void
   deselectAll: () => void
@@ -87,6 +97,22 @@ function pickActive(
   if (current && ids.has(current)) return current
   return ids.size > 0 ? (ids.values().next().value as string) : null
 }
+
+/** The shown photos in on-screen order. */
+export function shownFiles(state: Pick<QueueState, 'files' | 'filter'>): X3FFileDTO[] {
+  const { sortField, sortAscending } = useSettingsStore.getState().settings
+  return visibleFiles(state.files, state.filter, sortField, sortAscending)
+}
+
+// Culling saves run in order, so that a slow early save cannot replace a later one.
+let cullSaves = Promise.resolve()
+/** Resolves when the flags and ratings set so far are saved or rolled back. */
+export const cullingSaved = (): Promise<void> => cullSaves
+/** The flag and rating that the backend has saved for each path. */
+const savedCulls = new Map<string, Pick<X3FFileDTO, 'flag' | 'rating'>>()
+/** The newest request for each path and field. Only it can restore a failed value. */
+const latestCulls = new Map<string, number>()
+let cullRequests = 0
 
 export const useQueueStore = create<QueueState>((set, get) => {
   function capture(
@@ -242,6 +268,67 @@ export const useQueueStore = create<QueueState>((set, get) => {
     pendingReconversion: null,
     batch: null,
     error: null,
+    filter: NO_FILTER,
+    filterOpen: false,
+    cullError: null,
+
+    setFilter: (patch) => set((s) => ({ filter: { ...s.filter, ...patch } })),
+    toggleFilterBar: () => set((s) => ({ filterOpen: !s.filterOpen })),
+
+    setCull(ids, patch, advance = false) {
+      if (useEditorStore.getState().closing) return
+      const state = get()
+      // Placeholders get their saved values when the import resolves.
+      const paths = new Set(
+        state.files.filter((file) => ids.has(file.id) && !file.pending).map((file) => file.path)
+      )
+      if (!paths.size) return
+      const files = state.files.map((file) => (paths.has(file.path) ? { ...file, ...patch } : file))
+      const order = shownFiles({ files, filter: NO_FILTER }).map((file) => file.id)
+      const shown = new Set(shownFiles({ files, filter: state.filter }).map((file) => file.id))
+      let { selectedIds, activeId } = state
+      // A survey moves within its photos. Other views and the editor move the selection.
+      const survey =
+        useNavStore.getState().screen === 'queue' &&
+        useSettingsStore.getState().settings.queueViewMode === 'survey'
+      if (activeId && (advance || !shown.has(activeId))) {
+        const pool = survey ? order.filter((id) => selectedIds.has(id)) : order
+        const next = successor(pool, activeId, shown)
+        if (survey) selectedIds = new Set([...selectedIds].filter((id) => shown.has(id)))
+        else if (next !== activeId) selectedIds = new Set(next ? [next] : [])
+        activeId = next
+      }
+      set({ files, selectedIds, activeId })
+      const request = { paths: [...paths], ...patch }
+      const fields = (['flag', 'rating'] as const).filter((field) => patch[field] !== undefined)
+      const id = ++cullRequests
+      for (const path of paths) for (const field of fields) latestCulls.set(`${field}:${path}`, id)
+      cullSaves = cullSaves.then(() =>
+        ipc.invoke('culling:set', request).then(
+          () => {
+            request.paths.forEach((path) =>
+              savedCulls.set(path, { ...savedCulls.get(path), ...patch })
+            )
+            set({ cullError: null })
+          },
+          (error: unknown) => {
+            console.error('Could not save flag or rating', error)
+            // Show the saved values again, unless a later request owns the field.
+            set((s) => ({
+              cullError: String(error),
+              files: s.files.map((file) => {
+                const owned = fields.filter(
+                  (field) => latestCulls.get(`${field}:${file.path}`) === id
+                )
+                if (!paths.has(file.path) || !owned.length) return file
+                const saved = savedCulls.get(file.path) ?? {}
+                return { ...file, ...Object.fromEntries(owned.map((f) => [f, saved[f]])) }
+              })
+            }))
+          }
+        )
+      )
+    },
 
     setSelection: (ids, active) => {
       if (useEditorStore.getState().closing) return
@@ -250,7 +337,7 @@ export const useQueueStore = create<QueueState>((set, get) => {
     selectAll: () => {
       if (useEditorStore.getState().closing) return
       set((s) => {
-        const ids = new Set(s.files.map((f) => f.id))
+        const ids = new Set(shownFiles(s).map((f) => f.id))
         return { selectedIds: ids, activeId: pickActive(ids, undefined, s.activeId) }
       })
     },
@@ -309,8 +396,10 @@ export const useQueueStore = create<QueueState>((set, get) => {
         // Fold each chunk into surviving placeholders, keeping selection IDs stable.
         const metaById = new Map<string, X3FFileDTO>()
         added.forEach((dto, i) => {
-          const id = chunk[i]?.id
-          if (id) metaById.set(id, dto)
+          const file = chunk[i]
+          if (!file) return
+          metaById.set(file.id, dto)
+          savedCulls.set(file.path, { flag: dto.flag, rating: dto.rating })
         })
         // Failed or missing results only roll back this chunk's optimistic rows.
         const unresolved = new Set(
@@ -334,6 +423,8 @@ export const useQueueStore = create<QueueState>((set, get) => {
                 exif: dto.exif,
                 edit: dto.edit,
                 editError: dto.editError,
+                flag: dto.flag,
+                rating: dto.rating,
                 pending: false
               }
             ]
@@ -640,4 +731,30 @@ export const useQueueStore = create<QueueState>((set, get) => {
       if (useNavStore.getState().screen === 'queue') set({ draft: null })
     }
   }
+})
+
+// Hidden photos leave the selection, so that actions apply only to photos on screen.
+// When none stays selected, the nearest shown photo becomes the cursor.
+useQueueStore.subscribe((state, previous) => {
+  if (
+    (state.files === previous.files && state.filter === previous.filter) ||
+    !isFiltering(state.filter)
+  )
+    return
+  const shown = new Set(shownFiles(state).map((file) => file.id))
+  let selectedIds = new Set([...state.selectedIds].filter((id) => shown.has(id)))
+  if (selectedIds.size === state.selectedIds.size) return
+  // A survey keeps only its own photos; it does not take another photo.
+  const survey =
+    useNavStore.getState().screen === 'queue' &&
+    useSettingsStore.getState().settings.queueViewMode === 'survey'
+  if (!selectedIds.size && state.activeId && !survey) {
+    const order = shownFiles({ files: state.files, filter: NO_FILTER }).map((file) => file.id)
+    const next = successor(order, state.activeId, shown)
+    if (next) selectedIds = new Set([next])
+  }
+  useQueueStore.setState({
+    selectedIds,
+    activeId: pickActive(selectedIds, undefined, state.activeId)
+  })
 })

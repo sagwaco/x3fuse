@@ -128,6 +128,23 @@ pub fn install(app: &tauri::AppHandle) -> tauri::Result<()> {
             None,
         )?)
         .build()?;
+    // The renderer handles the single-key culling shortcuts. Native key equivalents
+    // without a modifier could also take keys typed in text fields.
+    let mut photo = SubmenuBuilder::new(app, translate("menu.photo.title"))
+        .item(&item("pick", "cull.pick", None)?)
+        .item(&item("reject", "cull.reject", None)?)
+        .item(&item("unflag", "cull.unflagged", None)?)
+        .separator()
+        .item(&item("rate0", "cull.no_rating", None)?);
+    for stars in 1..=5 {
+        photo = photo.item(&MenuItem::with_id(
+            app,
+            format!("rate{stars}"),
+            "★".repeat(stars),
+            true,
+            None::<&str>,
+        )?);
+    }
     let conversion = SubmenuBuilder::new(app, translate("menu.conversion.title"))
         .item(&item(
             "convertAll",
@@ -162,6 +179,7 @@ pub fn install(app: &tauri::AppHandle) -> tauri::Result<()> {
     app.set_menu(
         menu.item(&file.build()?)
             .item(&edit)
+            .item(&photo.build()?)
             .item(&conversion)
             .item(&window)
             .item(&help)
@@ -192,7 +210,8 @@ pub fn install(app: &tauri::AppHandle) -> tauri::Result<()> {
             }
             name @ ("addFiles" | "selectAll" | "deselectAll" | "removeSelected" | "convertAll"
             | "stop" | "clearQueue" | "undoEdit" | "redoEdit" | "copyEdits"
-            | "pasteEdits") => app
+            | "pasteEdits" | "pick" | "reject" | "unflag" | "rate0" | "rate1" | "rate2"
+            | "rate3" | "rate4" | "rate5") => app
                 .emit_to("main", "menu:command", json!({"name":name}))
                 .map_err(|e| e.to_string()),
             _ => Ok(()),

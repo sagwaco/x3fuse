@@ -2,11 +2,12 @@ import { useEffect, useMemo, useRef } from 'react'
 import { displayPreviewUrl } from '@shared/preview'
 import { prefetchFitPreviews } from '../lib/fitPreviews'
 import { ipc } from '../lib/ipc'
-import { sortFiles } from '../lib/sortFiles'
 import { useQueueStore } from '../stores/queueStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useNavStore } from '../stores/navStore'
 import { useIpcEvents } from '../hooks/useIpcEvents'
+import { useCullingKeys, useShownFiles } from '../hooks/useCulling'
+import { FilterBar } from './FilterBar'
 import { Toolbar } from './Toolbar'
 import { DropZone } from './DropZone'
 import { Inspector } from './Inspector'
@@ -24,9 +25,11 @@ export function MainWindow(): React.JSX.Element {
   const inspectorOpen = useSettingsStore((s) => s.settings.inspectorOpen)
   const onExportScreen = useNavStore((s) => s.screen === 'export')
   const onEditorScreen = useNavStore((s) => s.screen === 'editor')
+  const filterOpen = useQueueStore((s) => s.filterOpen)
 
   // main->renderer events + native menu command bus
   useIpcEvents()
+  useCullingKeys()
 
   // Refresh app preferences on focus. Export drafts keep their own snapshot.
   useEffect(() => {
@@ -77,6 +80,7 @@ export function MainWindow(): React.JSX.Element {
       ) : (
         <>
           <Toolbar />
+          {hasFiles && filterOpen && <FilterBar />}
           <div className="flex min-h-0 flex-1">
             {/* min-w-0 lets this flex child shrink below its content's intrinsic
                 width, so the filmstrip's wide preview/strip scroll instead of
@@ -99,7 +103,6 @@ const WARM_DELAY = 300
 
 /** Prepare Fit images while browsing any view; keep background work out of exports. */
 export function PreviewPreparation(): null {
-  const files = useQueueStore((state) => state.files)
   const activeId = useQueueStore((state) => state.activeId)
   const activePath = useQueueStore(
     (state) => state.files.find((file) => file.id === state.activeId && !file.pending)?.path
@@ -116,12 +119,8 @@ export function PreviewPreparation(): null {
           !!(state.session && state.documents[state.session.path]?.gesture)))
   )
   const stop = useRef<(() => void) | undefined>()
-  const sortField = useSettingsStore((state) => state.settings.sortField)
-  const sortAscending = useSettingsStore((state) => state.settings.sortAscending)
-  const sorted = useMemo(
-    () => sortFiles(files, sortField, sortAscending),
-    [files, sortField, sortAscending]
-  )
+  // Warm the photos that the filter shows, nearest first.
+  const sorted = useShownFiles()
   // Warm nearby images first, then the remaining queue, one background job at a time.
   const previewSources = useMemo(
     () =>

@@ -14,6 +14,7 @@ import { useSettingsStore } from '../stores/settingsStore'
 import { PreviewMinimap } from './PreviewMinimap'
 import { OrientedImage } from './OrientedImage'
 import { PanelSection as Section } from './ui/panelSection'
+import { CullControls } from './CullControls'
 
 /** Selection previews, scopes for a single image, and shared EXIF metadata. */
 export function Inspector(): React.JSX.Element {
@@ -48,6 +49,7 @@ export function Inspector(): React.JSX.Element {
               <PreviewMinimap key={active.id} file={active} />
             )}
           </div>
+          <CullControls />
 
           <Section title={t('inspector.scopes')} action={!multiple && <ScopeMenu />}>
             {multiple ? (

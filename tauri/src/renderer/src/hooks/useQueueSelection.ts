@@ -48,7 +48,11 @@ export function useQueueSelection(ordered: X3FFileDTO[], nav?: ArrowNav): QueueS
       else next.add(id)
       store.setSelection(next, id)
       anchorRef.current = id
-    } else if (e.shiftKey && anchorRef.current) {
+    } else if (
+      e.shiftKey &&
+      anchorRef.current &&
+      orderedRef.current.indices.has(anchorRef.current)
+    ) {
       const ids = orderedRef.current.ids
       const a = orderedRef.current.indices.get(anchorRef.current) ?? -1
       const b = index
@@ -77,6 +81,9 @@ export function useQueueSelection(ordered: X3FFileDTO[], nav?: ArrowNav): QueueS
     if (!store.selectedIds.has(id)) {
       store.setSelection(new Set([id]), id)
       anchorRef.current = id
+    } else {
+      // The clicked photo becomes the cursor, so active-photo actions apply to it.
+      store.setSelection(store.selectedIds, id)
     }
   }, [])
 

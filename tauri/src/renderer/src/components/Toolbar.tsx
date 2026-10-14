@@ -1,4 +1,4 @@
-import { ChevronDown, PanelRight, SwatchBook } from 'lucide-react'
+import { ChevronDown, ListFilter, PanelRight, SwatchBook, TriangleAlert } from 'lucide-react'
 import { useQueueStore } from '../stores/queueStore'
 import { t } from '../lib/strings'
 import { BatchProgress } from './BatchProgress'
@@ -6,13 +6,18 @@ import { Button } from './ui/button'
 import { ViewControls } from './ViewControls'
 import { ZoomControls } from './ZoomControls'
 import { useSettingsStore } from '../stores/settingsStore'
+import { cn } from '../lib/cn'
 import { NativeMenuButton } from './ui/nativeMenuButton'
 import { useEditorStore } from '../stores/editorStore'
 import { useToolbarSwap } from '../hooks/useToolbarSwap'
+import { isFiltering, shownCount } from '../lib/culling'
+import { withShortcut } from '../lib/shortcut'
 
 /** Browsing controls, export status, and the split Export button. */
 export function Toolbar(): React.JSX.Element {
   const fileCount = useQueueStore((s) => s.files.length)
+  const shown = useQueueStore((s) => shownCount(s.files, s.filter))
+  const filtering = useQueueStore((s) => isFiltering(s.filter))
   const isProcessing = useQueueStore((s) => s.isProcessing)
   const files = useQueueStore((s) => s.files)
   const selectedIds = useQueueStore((s) => s.selectedIds)
@@ -43,10 +48,13 @@ export function Toolbar(): React.JSX.Element {
       <div data-swap className="flex items-center gap-2">
         {fileCount > 0 && (
           <span className="font-mono text-xs uppercase tabular-nums tracking-[0.12em] text-neutral-500">
-            {`${fileCount} ${fileCount === 1 ? 'file' : 'files'}`}
+            {`${filtering ? `${shown} / ` : ''}${fileCount} ${fileCount === 1 ? 'file' : 'files'}`}
           </span>
         )}
         <ViewControls disabled={fileCount === 0} />
+        <div role="separator" aria-orientation="vertical" className="h-5 w-px bg-white/15" />
+        <FilterButton disabled={fileCount === 0} shortcut />
+        <CullError />
         {/* Only the filmstrip shows a photo to zoom. */}
         {filmstrip && (
           <>
@@ -85,6 +93,47 @@ export function Toolbar(): React.JSX.Element {
         </Button>
       </div>
     </div>
+  )
+}
+
+/** Shows that a flag or rating was not saved. The next saved change hides it. */
+export function CullError(): React.JSX.Element | null {
+  const error = useQueueStore((s) => s.cullError)
+  if (!error) return null
+  return (
+    <span role="alert" title={error} className="flex items-center gap-1 text-xs text-red-300">
+      <TriangleAlert className="h-3.5 w-3.5" aria-hidden="true" />
+      {t('cull.save_failed')}
+    </span>
+  )
+}
+
+/** Shows the filter bar. It stays highlighted while a filter hides photos. */
+export function FilterButton({
+  disabled = false,
+  shortcut = false
+}: {
+  disabled?: boolean
+  /** The editor uses the backslash key for Compare, so only the queue toolbar shows the key. */
+  shortcut?: boolean
+}): React.JSX.Element {
+  const filtering = useQueueStore((s) => isFiltering(s.filter))
+  const filterOpen = useQueueStore((s) => s.filterOpen)
+  const label = t('filter.toggle')
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      disabled={disabled}
+      title={shortcut ? withShortcut(label, '\\') : label}
+      aria-label={label}
+      aria-keyshortcuts={shortcut ? '\\' : undefined}
+      aria-pressed={filterOpen}
+      className={cn((filterOpen || filtering) && 'bg-white/15 text-neutral-100')}
+      onClick={useQueueStore.getState().toggleFilterBar}
+    >
+      <ListFilter className="h-4 w-4" aria-hidden="true" />
+    </Button>
   )
 }
 

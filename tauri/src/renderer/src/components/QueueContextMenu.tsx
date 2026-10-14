@@ -3,7 +3,9 @@ import type { NativeMenuItem } from '@shared/ipc'
 import { ipc } from '../lib/ipc'
 import { invalidateNativeMenu, showNativeMenu } from '../lib/nativeMenu'
 import { t } from '../lib/strings'
-import { useQueueStore } from '../stores/queueStore'
+import { shownFiles, useQueueStore } from '../stores/queueStore'
+import { useSettingsStore } from '../stores/settingsStore'
+import { cull, cullTargets } from '../hooks/useCulling'
 
 /** Shares native context actions across list, grid, and filmstrip surfaces. */
 export function QueueContextMenu({
@@ -21,14 +23,16 @@ export function QueueContextMenu({
     const { files, selectedIds, isProcessing, isPreparing, isCancelling, draft } = store()
     if (disabled || draft) return
     const selected = files.filter((file) => selectedIds.has(file.id))
-    const targets = selected.length ? selected : files
+    // Without a selection, actions apply to the photos the filter shows.
+    const targets = selected.length ? selected : shownFiles(store())
     const ids = new Set(targets.map((file) => file.id))
     const busy = isProcessing || isPreparing
-    const actions: (NativeMenuItem & { run: () => void })[] = [
+    type Action = NativeMenuItem & { run: () => void; items?: Action[] }
+    const actions: Action[] = [
       {
         value: 'convert',
         label: selected.length ? t('context.convert_selected') : t('context.convert_all'),
-        disabled: busy || !files.length || targets.some((file) => file.pending),
+        disabled: busy || !targets.length || targets.some((file) => file.pending),
         run: () => (selected.length ? store().openExport(ids) : store().convertAllMenu())
       }
     ]
@@ -42,14 +46,48 @@ export function QueueContextMenu({
     actions.push({
       value: 'remove',
       label: selected.length ? t('context.remove_selected') : t('context.remove_all'),
-      disabled: busy || !files.length,
+      disabled: busy || !targets.length,
       separatorBefore: true,
       run: () => store().removeFiles(ids)
     })
+    // Flags and ratings apply to the same photos as the culling keys.
+    const culled = cullTargets(store(), useSettingsStore.getState().settings.queueViewMode, 'queue')
+    // The photos are fixed now; the selection can change before the menu returns.
+    const culledIds = new Set(culled.map((file) => file.id))
+    if (selected.length && culled.length) {
+      const flags = new Set(culled.map((file) => file.flag ?? 'unflagged'))
+      const ratings = new Set(culled.map((file) => file.rating ?? 0))
+      actions.push(
+        {
+          value: 'flag',
+          label: t('filter.flag'),
+          separatorBefore: true,
+          run: () => {},
+          items: (['pick', 'reject', 'unflagged'] as const).map((flag) => ({
+            value: `flag:${flag}`,
+            label: t(`cull.${flag}`),
+            checked: flags.size === 1 && flags.has(flag),
+            run: () => cull({ flag }, { ids: culledIds })
+          }))
+        },
+        {
+          value: 'rating',
+          label: t('filter.rating'),
+          run: () => {},
+          items: [0, 1, 2, 3, 4, 5].map((rating) => ({
+            value: `rating:${rating}`,
+            label: rating ? '★'.repeat(rating) : t('cull.no_rating'),
+            checked: ratings.size === 1 && ratings.has(rating),
+            run: () => cull({ rating }, { ids: culledIds })
+          }))
+        }
+      )
+    }
     if (selected.length) {
       actions.push(
         {
           value: 'reveal',
+          separatorBefore: true,
           label: t('context.show_in_finder'),
           run: () =>
             selected.forEach((file) => {
@@ -61,13 +99,16 @@ export function QueueContextMenu({
         { value: 'deselect', label: t('context.deselect_all'), run: () => store().deselectAll() }
       )
     }
-    void showNativeMenu(
-      { id, x, y, items: actions.map(({ run: _run, ...item }) => item) },
-      (value) => {
-        const action = actions.find((item) => item.value === value)
-        if (action && !action.disabled && !store().draft) action.run()
-      }
-    ).catch((error: unknown) => console.error('Could not open native context menu', error))
+    const items = (list: Action[]): NativeMenuItem[] =>
+      list.map(({ run: _run, items: children, ...item }) =>
+        children ? { ...item, items: items(children) } : item
+      )
+    void showNativeMenu({ id, x, y, items: items(actions) }, (value) => {
+      const action = actions
+        .flatMap((item) => item.items ?? [item])
+        .find((item) => item.value === value)
+      if (action && !action.disabled && !store().draft) action.run()
+    }).catch((error: unknown) => console.error('Could not open native context menu', error))
   }
 
   if (disabled) return children

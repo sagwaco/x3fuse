@@ -1,5 +1,6 @@
 mod commands;
 pub mod conversion;
+mod culling;
 pub mod editor;
 mod edits;
 mod menu;
@@ -25,11 +26,19 @@ pub struct AppState {
     pub exif: Arc<metadata::ExifTool>,
     pub previews: preview::Previews,
     pub editor: editor::Editor,
+    pub culling: culling::Culling,
     pub resources: PathBuf,
     pub running: AtomicBool,
     pub cancel: Arc<AtomicBool>,
     // 0: running normally, 1: close main window after draining, 2: quit after draining.
     pub shutdown: AtomicU8,
+}
+
+impl AppState {
+    /// Unsaved edits or queued flags and ratings need the window's close handshake.
+    pub fn needs_close_flush(&self) -> bool {
+        self.editor.needs_close_flush() || (self.culling.used() && !self.editor.close_allowed())
+    }
 }
 
 static CORE_LOGS: OnceLock<Arc<storage::Logs>> = OnceLock::new();
@@ -146,6 +155,7 @@ pub fn run() {
                 logs,
                 previews: preview::Previews::new(exif.clone()),
                 editor: editor::Editor::new(app.path().app_data_dir()?.join("edits")),
+                culling: culling::Culling::load(app.path().app_data_dir()?.join("culling.json")),
                 exif,
                 resources,
                 running: AtomicBool::new(false),
@@ -266,6 +276,7 @@ pub fn run() {
             commands::settings_set,
             commands::queue_add,
             commands::queue_existing_outputs,
+            commands::culling_set,
             commands::convert_start,
             commands::convert_stop,
             commands::exif_full,
@@ -285,7 +296,7 @@ pub fn run() {
             if window.label() == "main" {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     let state = window.state::<Arc<AppState>>();
-                    if state.editor.needs_close_flush() {
+                    if state.needs_close_flush() {
                         api.prevent_close();
                         let _ = window.emit("editor:closing", serde_json::json!({"quit":false}));
                         return;
@@ -312,7 +323,7 @@ pub fn run() {
         tauri::RunEvent::ExitRequested { api, code, .. } => {
             let state = app.state::<Arc<AppState>>();
             // Closing the last macOS window is not an application Quit.
-            if state.editor.needs_close_flush() && (code.is_some() || !cfg!(target_os = "macos")) {
+            if state.needs_close_flush() && (code.is_some() || !cfg!(target_os = "macos")) {
                 api.prevent_exit();
                 let _ = app.emit_to("main", "editor:closing", serde_json::json!({"quit":true}));
                 return;

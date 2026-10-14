@@ -17,8 +17,11 @@ export interface ListColumnWidths {
   size: number
 }
 
-/** How the queue is presented (list, grid, or filmstrip). */
-export type QueueViewMode = 'list' | 'grid' | 'filmstrip'
+/** How the queue is presented (list, grid, filmstrip, or a survey of the selection). */
+export type QueueViewMode = 'list' | 'grid' | 'filmstrip' | 'survey'
+
+/** Pick/reject decision. It is independent of the star rating. */
+export type Flag = 'unflagged' | 'pick' | 'reject'
 
 export const SCOPE_MODES = ['histogram', 'rgbParade', 'waveform', 'vectorscope'] as const
 export type ScopeMode = (typeof SCOPE_MODES)[number]
@@ -153,6 +156,10 @@ export interface X3FFileDTO {
    * use the preview as-is.
    */
   aspectRatio?: number
+  /** Culling state from the backend. Absent on placeholders (unflagged, unrated). */
+  flag?: Flag
+  /** Star rating: 0 = unrated ... 5. */
+  rating?: number
 }
 
 // Format-dependent option visibility.

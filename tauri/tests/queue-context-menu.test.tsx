@@ -5,6 +5,8 @@ import type { NativeMenuRequest } from '@shared/ipc'
 import { QueueContextMenu } from '../src/renderer/src/components/QueueContextMenu'
 import { useQueueSelection } from '../src/renderer/src/hooks/useQueueSelection'
 import { useQueueStore } from '../src/renderer/src/stores/queueStore'
+import { useSettingsStore } from '../src/renderer/src/stores/settingsStore'
+import { DEFAULT_SETTINGS } from '@shared/types'
 
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }))
 vi.mock('../src/renderer/src/lib/ipc', () => ({ ipc: { invoke } }))
@@ -65,7 +67,9 @@ it('opens at the pointer after row selection and removes the clicked file', asyn
     items: [
       { value: 'convert', disabled: false },
       { value: 'remove', disabled: false, separatorBefore: true },
-      { value: 'reveal' },
+      { value: 'flag', separatorBefore: true },
+      { value: 'rating' },
+      { value: 'reveal', separatorBefore: true },
       { value: 'deselect' }
     ]
   })
@@ -73,6 +77,37 @@ it('opens at the pointer after row selection and removes the clicked file', asyn
   expect(screen.queryByRole('menu')).toBeNull()
   await act(async () => choose('remove'))
   expect(useQueueStore.getState().files).toEqual([files[0]])
+})
+
+it('flags and rates the selection from submenus that show its current values', async () => {
+  useQueueStore.setState({
+    files: files.map((file) => ({ ...file, flag: 'reject' as const, rating: 2 })),
+    selectedIds: new Set(['a', 'b'])
+  })
+  render(<Surface />)
+  fireEvent.contextMenu(screen.getByText('b'))
+  const [flag, rating] = ['flag', 'rating'].map(
+    (value) => request().items.find((item) => item.value === value)!.items!
+  )
+  expect(flag.filter((item) => item.checked).map((item) => item.value)).toEqual(['flag:reject'])
+  expect(rating.map((item) => item.checked)).toEqual([false, false, true, false, false, false])
+  await act(async () => choose('flag:pick'))
+  expect(useQueueStore.getState().files.map((file) => file.flag)).toEqual(['pick', 'pick'])
+  fireEvent.contextMenu(screen.getByText('a'))
+  await act(async () => choose('rating:5'))
+  expect(useQueueStore.getState().files.map((file) => file.rating)).toEqual([5, 5])
+})
+
+it('flags the right-clicked photo in the filmstrip, even when another one was active', async () => {
+  useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, queueViewMode: 'filmstrip' } })
+  useQueueStore.setState({ selectedIds: new Set(['a', 'b']), activeId: 'a' })
+  render(<Surface />)
+  fireEvent.contextMenu(screen.getByText('b'))
+  // A later selection change does not move the menu's target.
+  act(() => useQueueStore.getState().setSelection(new Set(['a']), 'a'))
+  await act(async () => choose('flag:reject'))
+  expect(useQueueStore.getState().files.map((file) => file.flag)).toEqual([undefined, 'reject'])
+  useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS } })
 })
 
 it('preserves multi-selection, reveals its files, and offers all-file actions on empty space', async () => {

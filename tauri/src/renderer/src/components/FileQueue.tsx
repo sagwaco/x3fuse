@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { memo, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { ChevronDown, ChevronUp } from 'lucide-react'
 import type { ListColumnWidths, SortField, X3FFileDTO } from '@shared/types'
@@ -9,13 +9,14 @@ import { useFileDrop } from '../hooks/useFileDrop'
 import { useQueueSelection, type QueueSelection } from '../hooks/useQueueSelection'
 import { useScrollToActive } from '../hooks/useScrollToActive'
 import { useElementWidth } from '../hooks/useElementWidth'
-import { sortFiles } from '../lib/sortFiles'
+import { useShownFiles } from '../hooks/useCulling'
 import { formatBytes, formatDateWithOrdinal } from '../lib/format'
 import { t } from '../lib/strings'
 import { cn } from '../lib/cn'
 import { QueueContextMenu } from './QueueContextMenu'
 import { Thumbnail } from './Thumbnail'
 import { EditedBadge } from './EditedBadge'
+import { CullBadge } from './CullBadge'
 import { ResizeHandle } from './ui/resizeHandle'
 
 const ROW_HEIGHT = 30
@@ -29,7 +30,6 @@ const COLUMNS = [
 
 /** Virtualized queue table: shared column geometry, selection, sort, drag-drop. */
 export function FileQueue({ draft }: { draft?: ExportDraft }): React.JSX.Element {
-  const files = useQueueStore((s) => draft?.files ?? s.files)
   const selectedIds = useQueueStore((s) => s.selectedIds)
   const activeId = useQueueStore((s) => s.activeId)
   const sortField = useSettingsStore((s) => s.settings.sortField)
@@ -37,10 +37,7 @@ export function FileQueue({ draft }: { draft?: ExportDraft }): React.JSX.Element
   const savedWidths = useSettingsStore((s) => s.settings.listColumnWidths)
   const updateSettings = useSettingsStore((s) => s.update)
   const [resizing, setResizing] = useState<ListColumnWidths>()
-  const sorted = useMemo(
-    () => sortFiles(files, sortField, sortAscending),
-    [files, sortField, sortAscending]
-  )
+  const sorted = useShownFiles(draft)
   const parentRef = useRef<HTMLDivElement>(null)
   const available = useElementWidth(parentRef)
   const requested = resizing ?? savedWidths
@@ -87,11 +84,13 @@ export function FileQueue({ draft }: { draft?: ExportDraft }): React.JSX.Element
     }
     let width =
       measure(t(`queue.column.${column.key}`), 12, 500) + 24 + (column.key === 'name' ? 0 : 8)
-    for (const file of files) {
+    for (const file of sorted) {
       let content: number
       if (column.key === 'name') {
         content = 36 + measure(file.fileName)
         if (file.edit && file.edit.revision > 0) content += 20
+        if ((file.flag ?? 'unflagged') !== 'unflagged' || file.rating)
+          content += 24 + measure('★'.repeat(file.rating ?? 0), 11)
         if (draft) content += 8 + measure(`→ ${outputFileName(file, draft.settings)}`, 12)
       } else if (column.key === 'date') {
         content = measure(
@@ -246,6 +245,7 @@ const Row = memo(function Row({
           {file.fileName}
           {outputName && <span className="ml-2 text-xs text-neutral-400">→ {outputName}</span>}
         </span>
+        <CullBadge file={file} />
         <EditedBadge edit={file.edit} />
       </div>
       <span className="truncate pl-2 text-neutral-400">

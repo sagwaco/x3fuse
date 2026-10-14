@@ -208,7 +208,7 @@ impl Settings {
             return Err("Invalid layout width".into());
         }
         if !["File Name", "Date", "Size"].contains(&self.sort_field.as_str())
-            || !["list", "grid", "filmstrip"].contains(&self.queue_view_mode.as_str())
+            || !["list", "grid", "filmstrip", "survey"].contains(&self.queue_view_mode.as_str())
             || !["histogram", "rgbParade", "waveform", "vectorscope"]
                 .contains(&self.inspector_scope_mode.as_str())
             || self
@@ -296,6 +296,8 @@ pub struct FileDto {
     pub edit: Option<crate::editor::EditRecord>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub edit_error: Option<String>,
+    #[serde(flatten)]
+    pub cull: crate::culling::Cull,
 }
 
 #[derive(Clone, Debug, Serialize)]

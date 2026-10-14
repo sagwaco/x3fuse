@@ -1,10 +1,11 @@
 import { useEffect } from 'react'
 import type { MenuCommand } from '@shared/ipc'
 import { ipc } from '../lib/ipc'
-import { useQueueStore } from '../stores/queueStore'
+import { cullingSaved, useQueueStore } from '../stores/queueStore'
 import { addFilesViaDialog } from '../lib/addFilesViaDialog'
 import { useEditorStore, isTextEditing } from '../stores/editorStore'
 import { useNavStore } from '../stores/navStore'
+import { cull } from './useCulling'
 
 /**
  * Subscribes the main window to main->renderer events and the native-menu
@@ -22,8 +23,10 @@ export function useIpcEvents(): void {
           .getState()
           .flush()
           .then(async (saved) => {
-            if (saved) await ipc.invoke('editor:finishClose', { quit })
-            else useEditorStore.setState({ closing: false })
+            if (!saved) return useEditorStore.setState({ closing: false })
+            // Close only after queued flags and ratings reach the backend.
+            await cullingSaved()
+            await ipc.invoke('editor:finishClose', { quit })
           })
           .catch((error: unknown) =>
             useEditorStore.setState({ closing: false, error: String(error) })
@@ -44,6 +47,15 @@ function handleMenuCommand(name: MenuCommand): void {
   const q = useQueueStore.getState()
   const editor = useEditorStore.getState()
   if (editor.closing) return
+  if (name === 'pick' || name === 'reject' || name === 'unflag') {
+    cull({ flag: name === 'unflag' ? 'unflagged' : name })
+    return
+  }
+  const rating = /^rate([0-5])$/.exec(name)
+  if (rating) {
+    cull({ rating: Number(rating[1]) })
+    return
+  }
   if (['undoEdit', 'redoEdit', 'copyEdits', 'pasteEdits'].includes(name)) {
     if (isTextEditing(document.activeElement) || q.isProcessing) return
     if (name === 'copyEdits') editor.copy()

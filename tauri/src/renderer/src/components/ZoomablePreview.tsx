@@ -29,7 +29,8 @@ export function ZoomablePreview({
   onCacheMiss,
   onViewportChange,
   onViewportMove,
-  onPaint
+  onPaint,
+  digitZoom = true
 }: {
   file: X3FFileDTO
   onImagePoint?: (x: number, y: number) => void
@@ -47,6 +48,8 @@ export function ZoomablePreview({
   onViewportMove?: () => void
   /** Called after the image paints its pixels. */
   onPaint?: () => void
+  /** False leaves 0 and 1 for other shortcuts, such as star ratings. */
+  digitZoom?: boolean
 }): React.JSX.Element {
   const viewportRef = useRef<HTMLDivElement>(null)
   const mediaRef = useRef<HTMLDivElement>(null)
@@ -352,7 +355,7 @@ export function ZoomablePreview({
           moved.current = false
         }}
         onKeyDown={(event) => {
-          if (!['+', '=', '-', '0', '1'].includes(event.key)) return
+          if (!['+', '=', '-', ...(digitZoom ? ['0', '1'] : [])].includes(event.key)) return
           event.preventDefault()
           event.stopPropagation()
           if (event.key === '0') zoomTo(null)

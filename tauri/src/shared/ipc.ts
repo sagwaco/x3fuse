@@ -5,6 +5,7 @@ import type {
   ConversionStatus,
   ExifPair,
   BatchConversionSettings,
+  Flag,
   X3FFileDTO
 } from './types'
 import type { EditRecipe, EditRecord, EditorSession, RenderedPreview } from './editor'
@@ -45,6 +46,15 @@ export type MenuCommand =
   | 'redoEdit'
   | 'copyEdits'
   | 'pasteEdits'
+  | 'pick'
+  | 'reject'
+  | 'unflag'
+  | 'rate0'
+  | 'rate1'
+  | 'rate2'
+  | 'rate3'
+  | 'rate4'
+  | 'rate5'
   | 'addFiles'
   | 'selectAll'
   | 'deselectAll'
@@ -61,6 +71,8 @@ export interface NativeMenuItem {
   disabled?: boolean
   checked?: boolean
   separatorBefore?: boolean
+  /** Items of a submenu. A submenu item is not selected itself. */
+  items?: NativeMenuItem[]
 }
 
 export interface NativeMenuRequest {
@@ -120,6 +132,8 @@ export interface IpcRequestMap {
   'settings:set': { payload: Partial<ConversionSettings>; result: ConversionSettings }
 
   'queue:add': { payload: { paths: string[] }; result: X3FFileDTO[] }
+  /** Save a flag and/or rating for photos. Originals are never changed. */
+  'culling:set': { payload: { paths: string[]; flag?: Flag; rating?: number }; result: void }
   /** Returns the subset of ids whose computed output file already exists on disk. */
   'queue:existingOutputs': {
     payload: { files: ConvertFile[]; settings: BatchConversionSettings }
@@ -207,6 +221,7 @@ export const IPC_REQUEST_CHANNELS: IpcRequestChannel[] = [
   'settings:get',
   'settings:set',
   'queue:add',
+  'culling:set',
   'queue:existingOutputs',
   'convert:start',
   'convert:stop',

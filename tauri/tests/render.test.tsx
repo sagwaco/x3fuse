@@ -202,6 +202,9 @@ describe('renderer smoke', () => {
       'List view',
       'Grid view',
       'Filmstrip view',
+      'Survey view',
+      'separator',
+      'Filter photos',
       'Edit',
       'Export',
       'Export options',
@@ -251,9 +254,7 @@ describe('renderer smoke', () => {
       })
     )
     expect(
-      screen
-        .getByRole('button', { name: 'Filmstrip view' })
-        .parentElement!.nextElementSibling?.getAttribute('role')
+      screen.getByRole('button', { name: 'Filter photos' }).nextElementSibling?.getAttribute('role')
     ).toBe('separator')
     expect((screen.getByRole('button', { name: 'Zoom level' }) as HTMLButtonElement).disabled).toBe(
       true

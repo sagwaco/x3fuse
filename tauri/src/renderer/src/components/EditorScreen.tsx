@@ -34,8 +34,10 @@ import { CropPreview } from './CropPreview'
 import { FULL, matchAspect } from '../lib/cropGeometry'
 import { DevelopingPreview } from './DevelopingPreview'
 import { DevelopingCloud } from '../lib/developingCloud'
-import { ExportButton } from './Toolbar'
+import { CullError, ExportButton, FilterButton } from './Toolbar'
+import { FilterBar } from './FilterBar'
 import { cn } from '../lib/cn'
+import { withShortcut } from '../lib/shortcut'
 
 type SidebarPage = 'edit' | 'film' | 'paper'
 
@@ -46,6 +48,7 @@ export function EditorScreen(): React.JSX.Element {
   const busy = useQueueStore((state) => state.isProcessing || state.isPreparing)
   const scope = useSettingsStore((state) => state.settings.inspectorScopeMode)
   const panelOpen = useSettingsStore((state) => state.settings.editorPanelOpen)
+  const filterOpen = useQueueStore((state) => state.filterOpen)
   const [picking, setPicking] = useState(false)
   const [sidebarPage, setSidebarPage] = useState<SidebarPage>('edit')
   const sidebarBody = useRef<HTMLDivElement>(null)
@@ -318,7 +321,7 @@ export function EditorScreen(): React.JSX.Element {
         variant="ghost"
         size="icon"
         aria-label={t('editor.undo')}
-        title={t('editor.undo')}
+        title={withShortcut(t('editor.undo'), 'Mod+Z')}
         disabled={unavailable || !doc?.past.length}
         onClick={editor.undo}
       >
@@ -328,7 +331,7 @@ export function EditorScreen(): React.JSX.Element {
         variant="ghost"
         size="icon"
         aria-label={t('editor.redo')}
-        title={t('editor.redo')}
+        title={withShortcut(t('editor.redo'), 'Mod+Shift+Z')}
         disabled={unavailable || !doc?.future.length}
         onClick={editor.redo}
       >
@@ -352,6 +355,10 @@ export function EditorScreen(): React.JSX.Element {
           </span>
           {!swap.shown && (
             <div data-swap className="contents" {...inert}>
+              <div role="separator" aria-orientation="vertical" className="h-5 w-px bg-white/15" />
+              <FilterButton />
+              <CullError />
+              <div role="separator" aria-orientation="vertical" className="h-5 w-px bg-white/15" />
               <ZoomControls />
             </div>
           )}
@@ -410,7 +417,7 @@ export function EditorScreen(): React.JSX.Element {
                 variant="ghost"
                 size="icon"
                 aria-label={t('editor.copy')}
-                title={t('editor.copy')}
+                title={withShortcut(t('editor.copy'), 'Mod+C')}
                 disabled={unavailable}
                 onClick={editor.copy}
               >
@@ -420,7 +427,7 @@ export function EditorScreen(): React.JSX.Element {
                 variant="ghost"
                 size="icon"
                 aria-label={t('editor.paste')}
-                title={t('editor.paste')}
+                title={withShortcut(t('editor.paste'), 'Mod+V')}
                 disabled={unavailable || !editor.clipboard}
                 onClick={() => void editor.paste()}
               >
@@ -447,7 +454,7 @@ export function EditorScreen(): React.JSX.Element {
                 variant="ghost"
                 size="icon"
                 aria-label={t('editor.compare')}
-                title={t('editor.compare')}
+                title={withShortcut(t('editor.compare'), '\\')}
                 aria-pressed={editor.before}
                 disabled={unavailable}
                 onClick={() => editor.compare(!editor.before)}
@@ -515,6 +522,7 @@ export function EditorScreen(): React.JSX.Element {
           </Button>
         </div>
       )}
+      {filterOpen && <FilterBar />}
       <div className="flex min-h-0 flex-1">
         <FileFilmstrip
           preview={
@@ -541,6 +549,8 @@ export function EditorScreen(): React.JSX.Element {
                     onViewportChange={editor.setViewport}
                     onViewportMove={editor.holdPrefetch}
                     onPaint={() => setPainted(true)}
+                    // Digits rate the photo, as in Lightroom. Click and +/- still zoom.
+                    digitZoom={false}
                     onImagePoint={
                       picking && !unavailable
                         ? (x, y) => {
