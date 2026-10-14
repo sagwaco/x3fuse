@@ -20,6 +20,14 @@ const SETTLE = 0.15
 const FADE_IN = 0.25
 /** Seconds to fade into the preview. */
 const REVEAL = 0.8
+/**
+ * The canvas shows outside a soft hole at its center. The soft edge is 40% of
+ * the distance to a corner. As `--cover` goes from 1 to 0, the hole grows past
+ * the corners. Thus the preview shows from its center out, and its sharp edges
+ * show last.
+ */
+const MASK =
+  'radial-gradient(transparent calc(100% - 140% * var(--cover)), black calc(140% - 140% * var(--cover)))'
 /** Glow strength. */
 const GLOW = 0.7
 
@@ -422,10 +430,10 @@ export function DevelopingPreview({
     let last = start
     let spread = 1
     let alpha = 0
-    // The opacity of the canvas. Its background hides the preview below it.
-    let cover = Number(canvas.style.opacity)
-    // The compositor runs the fade into the preview, so the fade keeps the
-    // display refresh rate while the main thread is busy.
+    // How much of the preview the canvas covers. Its background hides the
+    // preview below it.
+    let cover = Number(canvas.style.getPropertyValue('--cover'))
+    // A Web Animation of the cover runs the fade into the preview.
     let fade: Animation | undefined
     let frame = 0
     const step = (now: number): void => {
@@ -436,7 +444,7 @@ export function DevelopingPreview({
       if (ready && !fade) {
         // A cloud that did not show yet leaves at once.
         if (alpha === 0) return onDone()
-        const current = canvas.animate([{ opacity: cover }, { opacity: 0 }], {
+        const current = canvas.animate([{ '--cover': cover }, { '--cover': 0 }], {
           duration: REVEAL * 1000,
           easing: 'ease-in-out',
           fill: 'forwards'
@@ -452,8 +460,8 @@ export function DevelopingPreview({
         }
         fade = current
       } else if (!ready && fade) {
-        // Continue from the opacity that shows now.
-        cover = Number(getComputedStyle(canvas).opacity)
+        // Continue from the cover that shows now.
+        cover = Number(getComputedStyle(canvas).getPropertyValue('--cover'))
         fade.cancel()
         fade = undefined
       }
@@ -462,8 +470,10 @@ export function DevelopingPreview({
         spread = approach(spread, developing ? 1 : 0, dt, RISE, SETTLE)
         alpha = approach(alpha, shown ? 1 : 0, dt, FADE_IN, FADE_IN)
         cover = approach(cover, 1, dt, FADE_IN, FADE_IN)
-        canvas.style.opacity = String(cover)
+        canvas.style.setProperty('--cover', String(cover))
       }
+      // A mask adds a compositing pass, so a full cover has no mask.
+      canvas.style.maskImage = fade || cover < 0.999 ? MASK : ''
       const pixel = window.devicePixelRatio || 1
       const width = Math.round(canvas.clientWidth * pixel)
       const height = Math.round(canvas.clientHeight * pixel)
@@ -535,7 +545,7 @@ export function DevelopingPreview({
       aria-label={file.fileName}
       data-developing-preview=""
       className="pointer-events-none absolute inset-0 h-full w-full bg-neutral-950"
-      style={{ opacity: covered ? 1 : 0 }}
+      style={{ '--cover': covered ? 1 : 0, maskImage: MASK } as React.CSSProperties}
     />
   )
 }

@@ -131,14 +131,17 @@ const advance = (ms: number): void =>
   })
 const loaded = (): Promise<void> => act(async () => {})
 const last = (name: string): number => uniforms[name].at(-1)!
-const opacity = (): number => Number(document.querySelector('canvas')!.style.opacity)
+const cover = (): number =>
+  Number(document.querySelector('canvas')!.style.getPropertyValue('--cover'))
+const mask = (): string =>
+  (document.querySelector('canvas')!.style as { maskImage?: string }).maskImage ?? ''
 const finish = (): void => act(() => fades.at(-1)!.onfinish!())
 const computedStyle = window.getComputedStyle.bind(window)
-/** Shows `value` as the opacity of a running fade. Like the compositor, it leaves the inline style. */
+/** Shows `value` as the cover of a running fade. Like a Web Animation, it leaves the inline style. */
 const compositor = (value: number): void => {
   vi.spyOn(window, 'getComputedStyle').mockImplementation((element, pseudo) =>
     element instanceof HTMLCanvasElement
-      ? ({ opacity: String(value) } as CSSStyleDeclaration)
+      ? ({ getPropertyValue: () => String(value) } as unknown as CSSStyleDeclaration)
       : computedStyle(element, pseudo)
   )
 }
@@ -154,7 +157,7 @@ it('shows only particles: blank at first, then a cloud that fades into the previ
   expect(view.container.querySelectorAll('canvas, img, [data-high-res]')).toHaveLength(1)
   expect(view.getByRole('img', { name: 'a.X3F' })).toBeTruthy()
   // The canvas covers the empty stage from the start; the particles fade in later.
-  expect(view.container.querySelector('canvas')!.style.opacity).toBe('1')
+  expect(cover()).toBe(1)
   advance(140)
   expect(last('u_alpha')).toBe(0)
   expect(last('u_spread')).toBe(1)
@@ -191,14 +194,17 @@ it('shows only particles: blank at first, then a cloud that fades into the previ
   advance(1500)
   expect(last('u_alpha')).toBeGreaterThan(0.99)
   expect(last('u_spread')).toBe(1)
-  // The opaque canvas hides the preview below it until the cloud fades.
+  // The opaque canvas hides the preview below it until the cloud fades. A
+  // full cover needs no mask.
   const canvas = view.container.querySelector('canvas')!
   expect(canvas.className).toContain('bg-neutral-950')
+  expect(mask()).toBe('')
   view.rerender(<DevelopingPreview file={file} matching developing ready onDone={done} />)
-  // The compositor fades the canvas into the preview while the cloud moves on.
+  // A radial mask opens the cover from the center while the cloud moves on.
   advance(16)
   expect(fades).toHaveLength(1)
-  expect(fades[0].keyframes).toEqual([{ opacity: 1 }, { opacity: 0 }])
+  expect(fades[0].keyframes).toEqual([{ '--cover': 1 }, { '--cover': 0 }])
+  expect(mask()).toMatch(/^radial-gradient\(.*var\(--cover\)/)
   expect(fades[0].options).toEqual({ duration: 800, easing: 'ease-in-out', fill: 'forwards' })
   const drawn = called('drawArrays').length
   advance(400)
@@ -225,7 +231,7 @@ it('settles the particles into the image and stops drawing when the editor stops
   advance(2000)
   expect(last('u_spread')).toBeLessThan(0.001)
   expect(last('u_alpha')).toBeGreaterThan(0.999)
-  expect(opacity()).toBe(1)
+  expect(cover()).toBe(1)
   expect(frames.size).toBe(0)
   view.rerender(
     <DevelopingPreview file={file} matching developing ready={false} onDone={() => {}} />
@@ -313,7 +319,8 @@ it('skips the cloud when the preview is ready before the cloud shows', async () 
   render(<DevelopingPreview file={file} matching developing ready onDone={done} />)
   expect(done).toHaveBeenCalledOnce()
   // A cloud that mounts over a ready preview does not hide it.
-  expect(document.querySelector('canvas')!.style.opacity).toBe('0')
+  expect(cover()).toBe(0)
+  expect(mask()).toContain('radial-gradient')
   cleanup()
   // The canvas is still blank, so nothing fades.
   const late = vi.fn()
@@ -341,7 +348,7 @@ it('fades a cloud that barely showed from its opaque background', async () => {
   view.rerender(<DevelopingPreview file={file} matching developing ready onDone={done} />)
   // The background of the canvas, not the faint particles, sets where the fade starts.
   advance(16)
-  expect(fades[0].keyframes[0]).toEqual({ opacity: 1 })
+  expect(fades[0].keyframes[0]).toEqual({ '--cover': 1 })
   expect(last('u_alpha')).toBeLessThan(0.1)
   finish()
   expect(done).toHaveBeenCalledOnce()
@@ -360,13 +367,13 @@ it('fades back in when the preview goes away during the reveal', async () => {
   view.rerender(<DevelopingPreview file={file} matching developing ready={false} onDone={done} />)
   advance(16)
   expect(fades[0].cancel).toHaveBeenCalledOnce()
-  expect(opacity()).toBeGreaterThan(0.4)
-  expect(opacity()).toBeLessThan(0.5)
+  expect(cover()).toBeGreaterThan(0.4)
+  expect(cover()).toBeLessThan(0.5)
   // A finish of the cancelled fade does not end the cloud.
   act(() => fades[0].onfinish!())
   expect(done).not.toHaveBeenCalled()
   advance(1500)
-  expect(opacity()).toBeGreaterThan(0.99)
+  expect(cover()).toBeGreaterThan(0.99)
   expect(last('u_spread')).toBeGreaterThan(0.95)
   view.rerender(<DevelopingPreview file={file} matching developing ready onDone={done} />)
   advance(16)
@@ -394,8 +401,8 @@ it('closes the cover smoothly when the preview comes back at once during the rev
   advance(16)
   // The new fade starts where the canvas is, not at full cover.
   expect(fades).toHaveLength(2)
-  expect(fades[1].keyframes[0].opacity).toBeGreaterThan(0.4)
-  expect(fades[1].keyframes[0].opacity).toBeLessThan(0.5)
+  expect(fades[1].keyframes[0]['--cover']).toBeGreaterThan(0.4)
+  expect(fades[1].keyframes[0]['--cover']).toBeLessThan(0.5)
   // A finish of the cancelled fade does not end the new one.
   act(() => fades[0].onfinish!())
   expect(done).not.toHaveBeenCalled()
@@ -419,10 +426,10 @@ it('keeps the cloud when the preview goes away in the last frame of the fade', a
   expect(done).not.toHaveBeenCalled()
   advance(16)
   expect(fades[0].cancel).toHaveBeenCalledOnce()
-  expect(opacity()).toBeGreaterThan(0)
-  expect(opacity()).toBeLessThan(0.1)
+  expect(cover()).toBeGreaterThan(0)
+  expect(cover()).toBeLessThan(0.1)
   advance(1500)
-  expect(opacity()).toBeGreaterThan(0.99)
+  expect(cover()).toBeGreaterThan(0.99)
 })
 
 it('stops the fade when the cloud unmounts', async () => {

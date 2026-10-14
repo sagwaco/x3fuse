@@ -713,6 +713,14 @@ async function runEditor(input: string): Promise<Record<string, unknown>> {
           WebGL2RenderingContext.prototype.drawArrays = drawArrays
         }
         cloudFrameRate = Math.round((draws * 1000) / (performance.now() - start))
+        // The reveal animates the registered --cover. An unregistered one jumps at half time.
+        const canvas = host.querySelector('canvas')!
+        const reveal = canvas.animate([{ '--cover': 1 }, { '--cover': 0 }], 1000)
+        reveal.pause()
+        reveal.currentTime = 250
+        const cover = Number(getComputedStyle(canvas).getPropertyValue('--cover'))
+        reveal.cancel()
+        check(cover > 0.5 && cover < 1, `The developing cloud cover did not interpolate: ${cover}`)
       } finally {
         root.unmount()
         host.remove()

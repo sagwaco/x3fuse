@@ -15,6 +15,13 @@
   background-color: #0a0a0a;
 }
 
+/* The developing cloud animates its radial cover. A registered number interpolates. */
+@property --cover {
+  syntax: '<number>';
+  inherits: false;
+  initial-value: 1;
+}
+
 html,
 body,
 #root {
