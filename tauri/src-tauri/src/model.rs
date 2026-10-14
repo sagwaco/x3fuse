@@ -68,6 +68,10 @@ pub struct BatchSettings {
     pub color_profile: ColorProfile,
     pub dng_highlight_recovery: bool,
     pub cineon: bool,
+    /// Sigma Color Mode name, such as "as-shot" or "Vivid", for DNG and TIFF.
+    /// None keeps the output without a Color Mode.
+    #[serde(default)]
+    pub color_mode: Option<String>,
     pub output_directory: Option<PathBuf>,
     pub concurrency: u8,
 }
@@ -84,6 +88,7 @@ impl Default for BatchSettings {
             color_profile: ColorProfile::Srgb,
             dng_highlight_recovery: false,
             cineon: false,
+            color_mode: None,
             output_directory: None,
             concurrency: 0,
         }
@@ -100,6 +105,10 @@ impl BatchSettings {
         if self.denoise_intensity > 10
             || self.concurrency > 8
             || !(1..=100).contains(&self.jpeg_quality)
+            || self
+                .color_mode
+                .as_deref()
+                .is_some_and(|mode| mode.parse::<x3f_core::ColorMode>().is_err())
         {
             return Err("Invalid export setting".into());
         }

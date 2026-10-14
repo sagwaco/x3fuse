@@ -1,10 +1,13 @@
 import { useEffect, useRef } from 'react'
 import {
+  COLOR_MODES,
   shouldShowCineonOption,
+  shouldShowColorModeOption,
   shouldShowColorProfileOption,
   shouldShowCompressionOption,
   shouldShowDngHighlightRecoveryOption,
   type BatchConversionSettings,
+  type ColorMode,
   type ColorProfile,
   type OutputFormat
 } from '@shared/types'
@@ -202,6 +205,24 @@ export function ConversionSettingsForm({
                     : COLOR_OPTIONS
                 }
                 onValueChange={(v) => update({ colorProfile: v })}
+              />
+            </Row>
+          )}
+
+          {!rendered && shouldShowColorModeOption(settings) && (
+            <Row label={t('settings.color_mode')} help={t('settings.color_mode.help')}>
+              <Select<ColorMode | 'off'>
+                aria-label={t('settings.color_mode')}
+                value={settings.colorMode ?? 'off'}
+                options={[
+                  { value: 'off', label: t('settings.color_mode.off') },
+                  { value: 'as-shot', label: t('editor.asShot') },
+                  ...COLOR_MODES.map(([value, label]) => ({
+                    value,
+                    label: value === 'Standard' ? t('editor.standard') : label
+                  }))
+                ]}
+                onValueChange={(v) => update({ colorMode: v === 'off' ? null : v })}
               />
             </Row>
           )}

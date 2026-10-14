@@ -167,10 +167,56 @@ pub fn process_options(settings: &BatchSettings, opcodes: PathBuf) -> x3f_core::
         dng_highlight_recovery: settings.output_format == OutputFormat::Dng
             && settings.dng_highlight_recovery,
         cineon: settings.output_format == OutputFormat::Tiff && settings.cineon,
+        // TIFF Color Modes need rendered color without Cineon. Other formats ignore the mode.
+        color_mode: settings
+            .color_mode
+            .as_deref()
+            .filter(|_| match settings.output_format {
+                OutputFormat::Dng => true,
+                OutputFormat::Tiff => {
+                    !settings.cineon && settings.color_profile != ColorProfile::None
+                }
+                _ => false,
+            })
+            .and_then(|mode| mode.parse().ok()),
         opcodes_dir: (settings.output_format == OutputFormat::Dng
             && !settings.dng_highlight_recovery)
             .then_some(opcodes),
         ..Default::default()
+    }
+}
+
+/// Converts with the selected Color Mode. If core cannot use the mode for this
+/// file, such as an unsupported camera or a Monochrome as-shot mode, it converts
+/// again without the mode and returns a warning.
+fn convert(
+    input: &Path,
+    output: &Path,
+    format: x3f_core::OutputFormat,
+    options: &x3f_core::ProcessOptions,
+    cancel: &std::sync::atomic::AtomicBool,
+    mut on_stage: impl FnMut(x3f_core::ConversionStage),
+) -> Result<Vec<String>, String> {
+    match x3f_core::convert_file(input, output, format, options, cancel, &mut on_stage) {
+        Err(error) if !matches!(error, x3f_core::Error::Cancelled) => {
+            let Some(mode) = options.color_mode else {
+                return Err(error.to_string());
+            };
+            let options = x3f_core::ProcessOptions {
+                color_mode: None,
+                ..options.clone()
+            };
+            let report = x3f_core::convert_file(input, output, format, &options, cancel, on_stage)
+                .map_err(|e| e.to_string())?;
+            Ok(
+                std::iter::once(format!("Exported without the {mode} color mode: {error}"))
+                    .chain(report.warnings)
+                    .collect(),
+            )
+        }
+        result => result
+            .map(|report| report.warnings)
+            .map_err(|e| e.to_string()),
     }
 }
 
@@ -249,7 +295,7 @@ async fn process_file(
                 return Err("Rendered JPEG requires the editor pipeline".into())
             }
         };
-        x3f_core::convert_file(&input, &core_path, format, &options, &cancel, |stage| {
+        convert(&input, &core_path, format, &options, &cancel, |stage| {
             let value = match stage {
                 x3f_core::ConversionStage::Read => 0.2,
                 x3f_core::ConversionStage::Decode => 0.3,
@@ -258,8 +304,6 @@ async fn process_file(
             };
             progress(&handle, &batch_id, &source, value);
         })
-        .map(|report| report.warnings)
-        .map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| e.to_string())??;
@@ -621,5 +665,62 @@ mod tests {
         let options = process_options(&settings, "opcodes".into());
         assert!(!options.dng_highlight_recovery);
         assert!(options.cineon);
+    }
+
+    #[test]
+    fn color_mode_applies_only_where_core_accepts_it() {
+        let mut settings = BatchSettings {
+            color_mode: Some("FCBlue".into()),
+            ..Default::default()
+        };
+        let mode =
+            |settings: &BatchSettings| process_options(settings, "opcodes".into()).color_mode;
+        assert_eq!(mode(&settings), Some(x3f_core::ColorMode::FCBlue));
+        settings.output_format = OutputFormat::Tiff;
+        assert_eq!(mode(&settings), Some(x3f_core::ColorMode::FCBlue));
+        settings.cineon = true;
+        assert_eq!(mode(&settings), None);
+        settings.cineon = false;
+        settings.color_profile = ColorProfile::None;
+        assert_eq!(mode(&settings), None);
+        settings.output_format = OutputFormat::Jpeg;
+        settings.color_profile = ColorProfile::Srgb;
+        assert_eq!(mode(&settings), None);
+        settings.color_mode = Some("as-shot".into());
+        assert!(settings.validate().is_ok());
+        settings.color_mode = Some("Sepia".into());
+        assert!(settings.validate().is_err());
+
+        // A failure that is not about the mode stays a failure.
+        let dir = tempfile::tempdir().unwrap();
+        let mut options = process_options(&BatchSettings::default(), "opcodes".into());
+        options.color_mode = Some(x3f_core::ColorMode::Vivid);
+        let cancel = std::sync::atomic::AtomicBool::new(false);
+        let tiff = x3f_core::OutputFormat::Tiff;
+        let missing = dir.path().join("missing.X3F");
+        assert!(convert(
+            &missing,
+            &dir.path().join("a.tif"),
+            tiff,
+            &options,
+            &cancel,
+            |_| {}
+        )
+        .is_err());
+        // Merrill supports six modes. X3FUSE_TEST_MERRILL names a real Merrill X3F.
+        if let Some(merrill) = std::env::var_os("X3FUSE_TEST_MERRILL") {
+            options.color_mode = Some(x3f_core::ColorMode::SunsetRed);
+            let output = dir.path().join("b.tif");
+            let warnings = convert(
+                Path::new(&merrill),
+                &output,
+                tiff,
+                &options,
+                &cancel,
+                |_| {},
+            );
+            assert!(warnings.unwrap()[0].contains("Sunset Red"));
+            assert!(output.is_file());
+        }
     }
 }

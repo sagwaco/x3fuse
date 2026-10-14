@@ -8,6 +8,22 @@ export type OutputFormat = 'dng' | 'embeddedJpg' | 'tiff' | 'jpeg'
 
 export type ColorProfile = 'sRGB' | 'adobeRGB' | 'proPhotoRGB' | 'none'
 
+/** Sigma Color Modes with x3fuse-core's keys and in-camera names. Merrill supports the first six. */
+export const COLOR_MODES = [
+  ['Standard', 'Standard'],
+  ['Vivid', 'Vivid'],
+  ['Neutral', 'Neutral'],
+  ['Portrait', 'Portrait'],
+  ['Landscape', 'Landscape'],
+  ['FCBlue', 'FOV Classic Blue'],
+  ['SunsetRed', 'Sunset Red'],
+  ['ForestGreen', 'Forest Green'],
+  ['FCYellow', 'FOV Classic Yellow'],
+  ['Cinema', 'Cinema'],
+  ['TealAndOrange', 'Teal and Orange']
+] as const
+export type ColorMode = 'as-shot' | (typeof COLOR_MODES)[number][0]
+
 export type SortField = 'File Name' | 'Date' | 'Size'
 
 export interface ListColumnWidths {
@@ -57,6 +73,8 @@ export interface ConversionSettings {
   dngHighlightRecovery: boolean
   /** Cineon-style flat tone curve for TIFF. */
   cineon: boolean
+  /** Sigma Color Mode for DNG and TIFF; null exports without one. */
+  colorMode: ColorMode | null
   /** null = write next to each input file; string = custom output directory. */
   outputDirectory: string | null
   debugLoggingEnabled: boolean
@@ -93,6 +111,7 @@ export const DEFAULT_SETTINGS: ConversionSettings = {
   colorProfile: 'sRGB',
   dngHighlightRecovery: false,
   cineon: false,
+  colorMode: null,
   outputDirectory: null,
   debugLoggingEnabled: false,
   hasPreviousConversion: false,
@@ -173,6 +192,12 @@ export const shouldShowDngHighlightRecoveryOption = (f: OutputFormat): boolean =
 
 export const shouldShowCineonOption = (f: OutputFormat): boolean => f === 'tiff'
 
+/** x3fuse-core applies a Color Mode to DNG, and to TIFF with a color profile and without Cineon. */
+export const shouldShowColorModeOption = (
+  s: Pick<ConversionSettings, 'outputFormat' | 'cineon' | 'colorProfile'>
+): boolean =>
+  s.outputFormat === 'dng' || (s.outputFormat === 'tiff' && !s.cineon && s.colorProfile !== 'none')
+
 /** Options captured once for a conversion batch. */
 export type BatchConversionSettings = Pick<
   ConversionSettings,
@@ -185,6 +210,7 @@ export type BatchConversionSettings = Pick<
   | 'colorProfile'
   | 'dngHighlightRecovery'
   | 'cineon'
+  | 'colorMode'
   | 'outputDirectory'
   | 'concurrency'
 >
@@ -200,6 +226,7 @@ export function batchSettings(settings: BatchConversionSettings): BatchConversio
     colorProfile,
     dngHighlightRecovery,
     cineon,
+    colorMode,
     outputDirectory,
     concurrency
   } = settings
@@ -213,6 +240,7 @@ export function batchSettings(settings: BatchConversionSettings): BatchConversio
     colorProfile,
     dngHighlightRecovery,
     cineon,
+    colorMode: colorMode ?? null,
     outputDirectory,
     concurrency
   }

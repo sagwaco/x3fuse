@@ -172,3 +172,23 @@ it('updates export settings through native menus and leaves them unchanged on di
   await waitFor(() => expect(concurrency.getAttribute('aria-expanded')).toBe('false'))
   expect(useQueueStore.getState().draft!.settings.concurrency).toBe(2)
 })
+
+it('offers Sigma color modes for DNG and color TIFF exports only', async () => {
+  render(<ExportScreen />)
+  const mode = (): HTMLElement | undefined =>
+    screen
+      .queryAllByRole('button', { name: t('settings.color_mode'), exact: true })
+      .find((button) => button.getAttribute('aria-haspopup') === 'menu')
+  invoke.mockResolvedValueOnce('FCBlue')
+  fireEvent.keyDown(mode()!, { key: 'ArrowDown' })
+  await waitFor(() => expect(useQueueStore.getState().draft!.settings.colorMode).toBe('FCBlue'))
+  expect(screen.getByText('FOV Classic Blue')).toBeTruthy()
+  act(() => useQueueStore.getState().updateDraft({ outputFormat: 'tiff', cineon: true }))
+  expect(mode()).toBeUndefined()
+  act(() => useQueueStore.getState().updateDraft({ cineon: false, colorProfile: 'none' }))
+  expect(mode()).toBeUndefined()
+  act(() => useQueueStore.getState().updateDraft({ colorProfile: 'sRGB' }))
+  invoke.mockResolvedValueOnce('off')
+  fireEvent.keyDown(mode()!, { key: 'ArrowDown' })
+  await waitFor(() => expect(useQueueStore.getState().draft!.settings.colorMode).toBeNull())
+})
