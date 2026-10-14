@@ -19,7 +19,7 @@ pub use stocks::STOCKS_JSON;
 /// next to freshly rendered exports. `2` is the spektrafilm model; `1` was the
 /// implementation it replaced.
 /// Version 3 adds CAMF camera picture modes.
-pub const RENDER_VERSION: u32 = 3;
+pub const RENDER_VERSION: u32 = 4;
 
 use image::ImageEncoder;
 use serde::{Deserialize, Serialize};
@@ -425,6 +425,53 @@ impl Chain {
     }
 }
 
+/// What the camera contributes to one render.
+#[derive(Clone, Copy)]
+struct Look<'a> {
+    /// The selected camera profile.
+    calibration: Option<&'a camera::Calibration>,
+    /// Its native Sigma Color Mode, with the scene's sensor calibration.
+    native: Option<(&'a camera::Native, &'a x3f_sys::ColorModeCalibration)>,
+    /// The scene value the camera renders as 18% gray. Film exposes it as
+    /// its mid-gray, in place of spektrafilm's auto exposure.
+    metered_gray: f64,
+    /// spektrafilm's scanner white and black correction on film looks.
+    scanner: bool,
+}
+impl Look<'_> {
+    fn plain() -> Self {
+        Self {
+            calibration: None,
+            native: None,
+            metered_gray: camera::fallback_metered_gray(),
+            scanner: true,
+        }
+    }
+    /// spektrafilm's own defaults, for parity checks against its reference.
+    #[cfg(test)]
+    fn spektrafilm() -> Self {
+        Self {
+            metered_gray: 0.184,
+            scanner: false,
+            ..Self::plain()
+        }
+    }
+}
+
+/// The fraction of white-noise variance left after [`Chain::blur`] with
+/// `sigma`, from the same kernel the `blur` pass samples. One when the blur
+/// is skipped.
+fn blur_variance(sigma: f32) -> f32 {
+    if sigma < MIN_SIGMA || sigma.is_nan() {
+        return 1.;
+    }
+    let radius = (3. * sigma).ceil() as i64;
+    let (sum, squares) = (-radius..=radius)
+        .map(|k| (-0.5 * (k as f64 / sigma as f64).powi(2)).exp())
+        .fold((0., 0.), |(sum, squares), w| (sum + w, squares + w * w));
+    (squares / (sum * sum)).powi(2) as f32
+}
+
 /// One tile of a frame. `x`, `y`, `width` and `height` are frame pixels;
 /// `origin` is the top left of the padded area in output pixels.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -570,7 +617,7 @@ fn build_passes(
         if settings.grain {
             let grained = chain.one("grain", current);
             chain.release(current);
-            current = chain.blur(grained, film::GRAIN_BLUR_PX);
+            current = chain.blur(grained, spatial.grain);
             if current != grained {
                 chain.release(grained);
             }
@@ -789,9 +836,12 @@ impl Renderer {
         recipe.validate().map_err(RenderError::Invalid)?;
         let recipe = camera::effective_recipe(recipe);
         let profiles = CameraProfiles::default();
-        let calibration = profiles.selected(&recipe)?;
+        let look = Look {
+            calibration: profiles.selected(&recipe)?,
+            ..Look::plain()
+        };
         let source = self.upload(image, cancel)?;
-        self.render_source(image, &source, &recipe, options, cancel, None, calibration)
+        self.render_source(image, &source, &recipe, options, cancel, None, look)
     }
     pub fn render_prepared(
         &self,
@@ -803,7 +853,17 @@ impl Renderer {
         cancelled(cancel)?;
         recipe.validate().map_err(RenderError::Invalid)?;
         let recipe = camera::effective_recipe(recipe);
-        let calibration = image.camera_profiles.selected(&recipe)?;
+        // Sigma's native Color Mode needs the sensor calibration measured
+        // while preparing the scene.
+        let sensor = image.image.color_mode_calibration.as_ref();
+        let look = Look {
+            calibration: image.camera_profiles.selected(&recipe)?,
+            native: image.camera_profiles.native(&recipe)?.zip(sensor),
+            metered_gray: image
+                .camera_profiles
+                .metered_gray(sensor, image.image.white_balance.camera_to_rgb),
+            scanner: true,
+        };
         let gpu = self.source(image, cancel)?;
         self.render_source(
             image.image(),
@@ -812,7 +872,7 @@ impl Renderer {
             options,
             cancel,
             None,
-            calibration,
+            look,
         )
     }
     /// Uploads the source to this renderer's GPU before its first render.
@@ -840,6 +900,26 @@ impl Renderer {
         }
         Ok(gpu)
     }
+    /// Renders with spektrafilm's own defaults, for parity checks.
+    #[cfg(test)]
+    fn render_spektrafilm(
+        &self,
+        image: &SceneLinearImage,
+        recipe: &EditRecipe,
+        cancel: &AtomicBool,
+    ) -> Result<RenderedImage, RenderError> {
+        let source = self.upload(image, cancel)?;
+        let options = RenderOptions::default();
+        self.render_source(
+            image,
+            &source,
+            recipe,
+            options,
+            cancel,
+            None,
+            Look::spektrafilm(),
+        )
+    }
     #[cfg(test)]
     fn render_tiled(
         &self,
@@ -850,7 +930,15 @@ impl Renderer {
         tiling: (u32, u32),
     ) -> Result<RenderedImage, RenderError> {
         let source = self.upload(image, cancel)?;
-        self.render_source(image, &source, recipe, options, cancel, Some(tiling), None)
+        self.render_source(
+            image,
+            &source,
+            recipe,
+            options,
+            cancel,
+            Some(tiling),
+            Look::plain(),
+        )
     }
     fn upload(
         &self,
@@ -934,8 +1022,13 @@ impl Renderer {
         recipe: &EditRecipe,
         options: RenderOptions,
         tiling: Option<(u32, u32)>,
-        calibration: Option<&camera::Calibration>,
+        look: Look<'_>,
     ) -> Result<Plan, RenderError> {
+        let Look {
+            calibration,
+            native,
+            ..
+        } = look;
         recipe.validate().map_err(RenderError::Invalid)?;
         let geom = geometry::Geometry::new(image, recipe, options)?;
         let (full_width, full_height) = output_dimensions(image, recipe)?;
@@ -960,7 +1053,7 @@ impl Renderer {
                 0.
             }
         });
-        let grain_sigma = stage_sigma(|_, f| if f.grain { film::GRAIN_BLUR_PX } else { 0. });
+        let grain_sigma = stage_sigma(|s, f| if f.grain { s.grain } else { 0. });
         let sharpen_sigma = if recipe.sharpen > 0. {
             1.0 / geom.scale
         } else {
@@ -1004,10 +1097,33 @@ impl Renderer {
             &geom,
             prepared.map(|(_, pair, _)| pair),
             spatial.as_ref(),
+            look,
         )?;
         let tables = prepared.map(|(_, _, tables)| tables.clone());
         drop(film_cache);
-        if let Some(calibration) = calibration {
+        let native_tone = native.map(|(native, _)| native.tone()).transpose()?;
+        if let Some((native, sensor)) = native {
+            // Sigma's native Color Mode: scene-linear sRGB back to the camera
+            // BMT, then to native counts. `finish` applies its tone curve and
+            // output matrix; the profile's own matrix and look stay off.
+            let (counts, offset) = sensor.render_matrix(&native.params);
+            let to_counts =
+                color::multiply(counts, color::inverse(image.white_balance.camera_to_rgb)?);
+            let output = camera::q12(sensor.output_to_srgb);
+            for i in 0..9 {
+                base[42 + i / 3][i % 3] = to_counts[i] as f32;
+                base[45 + i / 3][i % 3] = output[i] as f32;
+            }
+            for (c, offset) in offset.into_iter().enumerate() {
+                base[42 + c][3] = offset as f32;
+            }
+            base[41][1] = 1.;
+            base[41][2] = native.rows_per_count();
+            // Merrill ColorDQ cores small chroma differences in native counts.
+            if let Some(dq) = &sensor.color_dq {
+                base[41][3] = (dq.tables()[0].len() - 1) as f32;
+            }
+        } else if let Some(calibration) = calibration {
             let wb = std::array::from_fn(|i| base[5 + i / 3][i % 3] as f64);
             let matrix = color::multiply(calibration.matrix, wb);
             for i in 0..9 {
@@ -1079,7 +1195,11 @@ impl Renderer {
             tables,
             curves: color::curve_table(&recipe.curves)
                 .into_iter()
-                .chain(camera::look_table(calibration))
+                .chain(camera::look_table(
+                    calibration,
+                    native_tone,
+                    native.and_then(|(_, sensor)| sensor.color_dq.as_ref()),
+                ))
                 .collect(),
         })
     }
@@ -1099,10 +1219,10 @@ impl Renderer {
         options: RenderOptions,
         cancel: &AtomicBool,
         tiling: Option<(u32, u32)>,
-        calibration: Option<&camera::Calibration>,
+        look: Look<'_>,
     ) -> Result<RenderedImage, RenderError> {
         cancelled(cancel)?;
-        let plan = self.plan_source(image, recipe, options, tiling, calibration)?;
+        let plan = self.plan_source(image, recipe, options, tiling, look)?;
         let (width, height) = (plan.width, plan.height);
         let frame_bytes = width as u64 * height as u64 * 4;
         if options.rgba8 && frame_bytes > self.buffer_limit() {
@@ -1235,6 +1355,7 @@ impl Renderer {
         g: &geometry::Geometry,
         pair: Option<&film::FilmPair>,
         spatial: Option<&film::Spatial>,
+        look: Look<'_>,
     ) -> Result<Parameters, RenderError> {
         let mut p: Parameters = [[0.; 4]; 48];
         // A B&W film already makes a neutral image; the sensor-layer mix is
@@ -1281,23 +1402,47 @@ impl Renderer {
                 centers[i],
             ];
         }
-        if let (Some(f), Some(pair), Some(_)) = (&r.film, pair, spatial) {
+        if let (Some(f), Some(pair), Some(s)) = (&r.film, pair, spatial) {
             let (grain_min, grain_uniformity, sub_layers) = film::grain_constants();
             let channels = |values| film::channels(values, pair.monochrome);
             let (grain_min, grain_uniformity) = (channels(grain_min), channels(grain_uniformity));
-            let particles = channels(film::grain_particles(f, g.long_edge()));
+            // Grain correlated over `s.grain` pixels keeps 1 / (1 + 4 pi
+            // sigma^2) of its variance in each pixel. The discrete blur keeps
+            // a different fraction, and none is lost when a sub-pixel blur
+            // rounds away at preview size. Scale the particle count for the
+            // difference, so a preview shows the grain strength of the export
+            // at the same size and `grain_size` moves it smoothly.
+            let compensation = if f.grain {
+                blur_variance(s.grain) * (1. + 4. * std::f32::consts::PI * s.grain * s.grain)
+            } else {
+                1.
+            };
+            let particles =
+                channels(film::grain_particles(f, g.long_edge())).map(|n| n * compensation);
             let scatter_tail_weight = channels(film::scatter_tail_weight());
             // The recipe's halation strength scales spektrafilm's per-channel
             // baseline, which its own default reproduces exactly.
             let strength = f.halation_strength / recipe::FilmSettings::default().halation_strength;
+            // The camera's metered gray exposes the film as its mid-gray. The
+            // scanner correction keeps it there after the white and black
+            // remap.
+            let (print_correction, film_correction) = if look.scanner {
+                (
+                    pair.print_exposure_correction,
+                    pair.film_exposure_correction,
+                )
+            } else {
+                (1., 1.)
+            };
+            let metering = (0.184 / look.metered_gray) as f32;
             p[16] = [
-                2f32.powf(f.ev_film),
+                2f32.powf(f.ev_film) * metering * film_correction,
                 1. / f.gamma_film,
                 1. / f.gamma_paper,
                 f32::from(f.negative),
             ];
             p[17] = [
-                pair.print_normalization,
+                pair.print_normalization * print_correction,
                 pair.scan_normalization,
                 f.grain_amount,
                 f.grain_saturation,
@@ -1315,11 +1460,18 @@ impl Renderer {
                 p[38][i] = pair.halation_a_tot[i] * strength;
                 p[39][i] = 1. / (1. + p[38][i]);
             }
+            if let Some([m, q]) = pair.scan_remap.filter(|_| look.scanner) {
+                p[26][3] = m;
+                p[27][3] = q;
+                p[28][3] = 1.;
+            }
             p[32][3] = f32::from(pair.dir_positive);
             // One silver layer: every channel draws the same grain.
             p[37][3] = f32::from(pair.monochrome);
             p[33][3] = sub_layers as f32;
             p[34][3] = f32::from_bits(r.seed);
+            p[35][3] = f.grain_roughness;
+            p[36][3] = film::grain_clump_cell(f, g.native_width.max(g.native_height) as f32);
             p[38][3] = f.halation_midtones;
         }
         let grain = g.grain_transform();

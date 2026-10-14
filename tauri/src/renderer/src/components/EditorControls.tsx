@@ -756,6 +756,13 @@ export function FilmControls({
           to: (v) => 0.25 * 16 ** (v / 100),
           from: (size) => (Math.log(size / 0.25) / Math.log(16)) * 100
         })}
+      {film.grain &&
+        slider('grainRoughness', {
+          min: 0,
+          max: 100,
+          to: (v) => v / 100,
+          from: (roughness) => roughness * 100
+        })}
       <Adjustment
         label={t('editor.halation')}
         help={t('editor.halationHelp')}

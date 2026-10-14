@@ -22,6 +22,7 @@ export interface FilmSettings {
   grain: boolean
   grainSize: number
   grainAmount: number
+  grainRoughness: number
   grainSaturation: number
   halation: boolean
   halationStrength: number
@@ -86,6 +87,7 @@ export const DEFAULT_FILM: FilmSettings = {
   grain: true,
   grainSize: 1,
   grainAmount: 1,
+  grainRoughness: 0,
   grainSaturation: 1,
   halation: false,
   halationStrength: 0.35,

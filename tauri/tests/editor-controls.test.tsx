@@ -458,9 +458,14 @@ it('maps grain, halation and darkroom sliders so dragging right does what the la
   expect(film()?.grainSize).toBeCloseTo(4)
   adjust(t('editor.grainSize'), 50)
   expect(film()?.grainSize).toBeCloseTo(1)
+  adjust(t('editor.grainRoughness'), 40)
+  expect(film()?.grainRoughness).toBeCloseTo(0.4)
+  reset(t('editor.grainRoughness'))
+  expect(film()?.grainRoughness).toBe(0)
   adjust(t('editor.grain'), 0)
   expect(film()).toMatchObject({ grain: false, grainAmount: 0 })
   expect(screen.queryByRole('slider', { name: t('editor.grainSize') })).toBeNull()
+  expect(screen.queryByRole('slider', { name: t('editor.grainRoughness') })).toBeNull()
   adjust(t('editor.halation'), 100)
   expect(film()).toMatchObject({
     halation: true,

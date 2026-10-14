@@ -72,7 +72,7 @@ The ignored `spektrafilm_parity` test re-checks the same chain against the real
 
 - `assets/camera-tone-deltas.json`: 2ee2bea81844b572b08d4b5eb1e21f0905798ac571aef66038eaa33482d19144
 
-- `src/render.wgsl`: e8c6ba0ee311d409860e539d10bcf25235506a92c9a3b6876baf0ef875ba4fd1
+- `src/render.wgsl`: 560f25c666b6ec2e40200cb345af8d94cedd320fde8bc2727ed5b333b641a4ac
 - `licenses/SPEKTRAFILM_LICENSE.txt`: 76d629501783ae52e8d63aee1e054c1e1a9713b9fe7d36fb306e25b1d14b24e9
 - `assets/irradiance_xy_tc.npy`: 52f90c724811f5fab80769f8548bf24d08a521eb09e65ab6e016893258d2a783
 - `assets/neutral_print_filters.json`: 8c96ba7089629aa38914492dc65c526551a1decbbb8769c2383d40e4e9632b38

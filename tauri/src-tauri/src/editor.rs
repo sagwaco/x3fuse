@@ -1728,6 +1728,7 @@ mod tests {
                         xyz_to_camera: [1., 0., 0., 0., 1., 0., 0., 0., 1.],
                         as_shot_neutral: [1.; 3],
                     },
+                    color_mode_calibration: None,
                 },
                 &AtomicBool::new(false),
             )
@@ -1760,6 +1761,7 @@ mod tests {
                             xyz_to_camera: [1., 0., 0., 0., 1., 0., 0., 0., 1.],
                             as_shot_neutral: [1.; 3],
                         },
+                        color_mode_calibration: None,
                     },
                     &cancel,
                 )
@@ -2055,6 +2057,7 @@ mod tests {
                         xyz_to_camera: [1., 0., 0., 0., 1., 0., 0., 0., 1.],
                         as_shot_neutral: [1.; 3],
                     },
+                    color_mode_calibration: None,
                 },
                 &AtomicBool::new(false),
             )

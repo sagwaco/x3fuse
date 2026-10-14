@@ -70,6 +70,13 @@ X3Fuse modifications to the code (not to the data)
     pixel index, so tiles, regions and whole previews agree.
   - An added grain chroma control mixes the per-channel noise toward its
     achromatic mean.
+  - The grain blur is physical (5 um at grain size 1) instead of a fixed
+    0.65 px, and scales with the grain size, so larger grain also softens the
+    image. The particle count compensates for the discrete blur, so previews
+    show the grain strength of the export.
+  - An added grain roughness control clumps the particles: a smooth random
+    field anchored to native pixels varies the particle count and inversely
+    the particle density, keeping the mean density.
   - `halation_midtones` gates the added halation by the blurred signal level;
     spektrafilm's separate highlight-boost stage is not ported.
   - The enlarger is normalised against an uncompensated mid-gray card
@@ -78,14 +85,19 @@ X3Fuse modifications to the code (not to the data)
     exposure, which cancels a film exposure change back out and leaves only a
     shift in where the scene sits on the H&D curve; X3Fuse's film exposure
     control has to expose the film and let the print follow it.
+  - The scanner white and black correction (`color_reference`) is always on
+    for prints and slides. Its references come from this crate's own tables
+    (normalized film curves, modelled paper curves), so they match its print.
+  - Auto exposure is replaced by camera metering: the film exposes the scene
+    value the camera's own tone curve renders as 18% gray as its mid-gray.
   - Blurs whose radius would round away are skipped.
   - f32 preview precision throughout, against spektrafilm's f64 export path.
   - Stages not ported: glare, output gamut compression, highlight boost,
     unsharp (this crate has its own sharpening), the DIR coupler diffusion
     tail, camera/enlarger diffusion filters, camera and scanner lens blur, the
     mallett2019 and arctic2026alpha02 front passes, development-time choice
-    (B&W stocks use spektrafilm's default middle time), auto-exposure, the
-    PCHIP 3D LUT export path, and the s023 print curve morph.
+    (B&W stocks use spektrafilm's default middle time), the PCHIP 3D LUT
+    export path, and the s023 print curve morph.
   - B&W stocks run through the three-channel pipeline as three identical
     channels. Each carries a third of the silver density, all channels share
     one grain draw, DIR couplers inhibit only the same layer, and per-channel

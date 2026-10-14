@@ -20,7 +20,12 @@ const GRAIN_PARTICLE_AREA_UM2: f64 = 0.2;
 const GRAIN_PARTICLE_SCALE: [f64; 3] = [1.6, 1.6, 3.2];
 const GRAIN_DENSITY_MIN: [f64; 3] = [0.03, 0.03, 0.03];
 const GRAIN_UNIFORMITY: [f64; 3] = [0.97, 0.99, 0.97];
-pub const GRAIN_BLUR_PX: f32 = 0.65;
+/// Grain blur sigma at grain size 1, in µm: spektrafilm's `GrainParams::blur`
+/// of 0.65 px at a 4700 px export. Physical, so previews match exports and
+/// `grain_size` makes the grain, and the image, softer.
+const GRAIN_BLUR_UM: f64 = 5.0;
+/// Roughness clump cell at grain size 1, in µm (X3Fuse extension).
+const GRAIN_CLUMP_UM: f64 = 40.0;
 const GRAIN_SUB_LAYERS: u32 = 1;
 /// spektrafilm `HalationParams` defaults.
 const SCATTER_CORE_UM: [f64; 3] = [2.2, 2.0, 1.6];
@@ -50,6 +55,9 @@ const DIR_GAMMA_BW_POSITIVE: f64 = 0.2291;
 const HALATION_RADIUS_DEFAULT: f64 = 0.0015;
 /// `tune_m`/`tune_y` span ±20 dichroic CC units.
 const TUNE_RANGE_CC: f64 = 20.0;
+/// spektrafilm `ScannerParams` white and black levels, sRGB-encoded.
+const SCAN_WHITE_LEVEL: f64 = 0.98;
+const SCAN_BLACK_LEVEL: f64 = 0.01;
 
 /// Curve samples (`log_exposure` length) and wavelength count are fixed by the
 /// bundled profiles; the shader indexes the packed table with these.
@@ -178,6 +186,13 @@ pub struct FilmPair {
     pub scan_xyz_to_rgb: [[f32; 3]; 3],
     pub scan_normalization: f32,
     pub print_normalization: f32,
+    /// Scanner white and black correction `(m, q)` on scan luminance; None
+    /// for a negative scanned directly.
+    pub scan_remap: Option<[f32; 2]>,
+    /// Print and slide film exposures that keep mid-gray at 0.184 after the
+    /// remap. `print_normalization` stays spektrafilm's own.
+    pub print_exposure_correction: f32,
+    pub film_exposure_correction: f32,
 }
 
 /// Identifies a prepared pair. Floats are compared by bits so a cached pair is
@@ -230,6 +245,9 @@ impl FilmPair {
         out.extend(self.scan_xyz_to_rgb.iter().flatten());
         out.push(self.scan_normalization);
         out.push(self.print_normalization);
+        out.extend(self.scan_remap.into_iter().flatten());
+        out.push(self.print_exposure_correction);
+        out.push(self.film_exposure_correction);
         out
     }
 
@@ -349,6 +367,85 @@ impl FilmPair {
         );
         let paper_curves = paper.model_curves()?;
 
+        // ── Scanner white and black correction (spektrafilm `color_reference`)
+        // A scan maps the whitest and blackest densities the print (or slide)
+        // can hold to the scanner's levels, then corrects the exposure so
+        // mid-gray still lands on 0.184. References come from the same tables
+        // the shader uses, so they match this renderer's print exactly.
+        let light = |p: &profile::Profile, cmy: [f64; 3], wl: usize| -> f64 {
+            let dye = p
+                .data
+                .channel_density
+                .get(wl)
+                .copied()
+                .unwrap_or([f64::NAN; 3]);
+            let base = p.data.base_density.get(wl).copied().unwrap_or(f64::NAN);
+            let d = cmy[0] * dye[0] + cmy[1] * dye[1] + cmy[2] * dye[2] + base;
+            if d.is_finite() {
+                10f64.powf(-d)
+            } else {
+                0.
+            }
+        };
+        let scan_y = |cmy: [f64; 3]| -> f64 {
+            (0..N_WL)
+                .map(|wl| light(scan, cmy, wl) * viewing[wl] * data::CMF_Y_F64[wl])
+                .sum::<f64>()
+                / scan_normalization
+        };
+        let remap = |y_white: f64, y_black: f64| {
+            let (white, black) = (srgb_decode(SCAN_WHITE_LEVEL), srgb_decode(SCAN_BLACK_LEVEL));
+            let m = (white - black) / (y_white - y_black + 1e-10);
+            let q = black - m * y_black;
+            (m, q, (0.184 - q) / m)
+        };
+        // Log exposure that develops a neutral of total density `density`.
+        let exposure = |p: &profile::Profile, curves: &[[f64; 3]], density: f64, rising: bool| {
+            let average: Vec<f64> = curves.iter().map(|row| finite_mean(row)).collect();
+            let above_base = density - finite_mean(&p.data.base_density);
+            if rising {
+                interp(above_base, &average, &p.data.log_exposure)
+            } else {
+                let falling: Vec<f64> = average.iter().map(|d| -d).collect();
+                interp(-above_base, &falling, &p.data.log_exposure)
+            }
+        };
+        let midgray = -(0.184f64.log10());
+        let (scan_remap, print_exposure_correction, film_exposure_correction) =
+            if !settings.negative {
+                // Print: the film's clearest and densest references through the
+                // enlarger, developed on the paper at its own contrast.
+                let develop = |cmy_film: [f64; 3]| -> [f64; 3] {
+                    std::array::from_fn(|c| {
+                        let raw: f64 = (0..N_WL)
+                            .map(|wl| {
+                                light(&film, cmy_film, wl)
+                                    * print_illuminant[wl]
+                                    * paper_sensitivity.get(wl).map_or(0., |s| s[c])
+                            })
+                            .sum();
+                        let log_raw = ((raw * print_normalization).max(0.) + 1e-10).log10();
+                        let column: Vec<f64> = paper_curves.iter().map(|row| row[c]).collect();
+                        interp(log_raw, &paper.data.log_exposure, &column)
+                    })
+                };
+                let y_black = scan_y(develop(GRAIN_DENSITY_MIN.map(|v| -v)));
+                let y_white = scan_y(develop(density_max));
+                let (m, q, corrected) = remap(y_white, y_black);
+                let shift = exposure(&paper, &paper_curves, -corrected.log10(), true)
+                    - exposure(&paper, &paper_curves, midgray, true);
+                (Some([m as f32, q as f32]), 10f64.powf(shift) as f32, 1.)
+            } else if film.is_positive() {
+                // Slide scanned directly: clear film is white, densest is black.
+                let (m, q, corrected) = remap(scan_y([0.; 3]), scan_y(density_max));
+                let shift = exposure(&film, &film_curves, -corrected.log10(), false)
+                    - exposure(&film, &film_curves, midgray, false);
+                (Some([m as f32, q as f32]), 1., 10f64.powf(shift) as f32)
+            } else {
+                // spektrafilm does not correct a negative scanned directly.
+                (None, 1., 1.)
+            };
+
         // ── Pack the spectral tables the shader samples ────────────────────
         let mut spectral = vec![0.0f32; SPECTRAL_FLOATS];
         let put = |dst: &mut [f32], at: usize, src: &[f64]| {
@@ -417,8 +514,42 @@ impl FilmPair {
             scan_xyz_to_rgb: mat_f32(&scan_xyz_to_rgb),
             scan_normalization: scan_normalization as f32,
             print_normalization: print_normalization as f32,
+            scan_remap,
+            print_exposure_correction,
+            film_exposure_correction,
         })
     }
+}
+
+fn srgb_decode(v: f64) -> f64 {
+    if v <= 0.04045 {
+        v / 12.92
+    } else {
+        ((v + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+fn finite_mean(values: &[f64]) -> f64 {
+    let finite: Vec<f64> = values.iter().copied().filter(|v| v.is_finite()).collect();
+    finite.iter().sum::<f64>() / finite.len().max(1) as f64
+}
+
+/// Numpy `np.interp`: `xp` ascending, clamped to the end values.
+fn interp(x: f64, xp: &[f64], fp: &[f64]) -> f64 {
+    let n = xp.len().min(fp.len());
+    if n == 0 {
+        return f64::NAN;
+    }
+    if x <= xp[0] {
+        return fp[0];
+    }
+    if x >= xp[n - 1] {
+        return fp[n - 1];
+    }
+    let hi = xp[..n].partition_point(|&v| v <= x).clamp(1, n - 1);
+    let dx = xp[hi] - xp[hi - 1];
+    let f = if dx > 0. { (x - xp[hi - 1]) / dx } else { 0. };
+    fp[hi - 1] + f * (fp[hi] - fp[hi - 1])
 }
 
 /// Write a profile's dye/base densities plus one or more spectral weight
@@ -529,6 +660,8 @@ pub struct Spatial {
     pub scatter_tail: f32,
     pub halation: [f32; HALATION_BOUNCES],
     pub coupler: f32,
+    /// Blur after grain; it softens the image too, as in spektrafilm.
+    pub grain: f32,
 }
 impl Spatial {
     pub fn new(settings: &FilmSettings, long_edge: f32) -> Self {
@@ -543,6 +676,7 @@ impl Spatial {
             // `couplers_radius` is a fraction of the frame, so its µm size
             // divided by the µm pixel pitch collapses to the long edge.
             coupler: px(settings.couplers_radius as f64 * FILM_FORMAT_MM * 1000.),
+            grain: px(GRAIN_BLUR_UM * settings.grain_size as f64),
         }
     }
 }
@@ -571,6 +705,11 @@ pub fn grain_particles(settings: &FilmSettings, long_edge: f32) -> [f32; 3] {
         let area = GRAIN_PARTICLE_AREA_UM2 * GRAIN_PARTICLE_SCALE[c] * size;
         (pixel_um * pixel_um / area / GRAIN_SUB_LAYERS as f64) as f32
     })
+}
+/// Roughness clump cell in native pixels. The grain RNG is anchored to native
+/// pixels, so the clumps are too.
+pub fn grain_clump_cell(settings: &FilmSettings, native_long_edge: f32) -> f32 {
+    (GRAIN_CLUMP_UM * settings.grain_size as f64 / pixel_size_um(native_long_edge)).max(1.) as f32
 }
 pub fn grain_constants() -> ([f32; 3], [f32; 3], u32) {
     (

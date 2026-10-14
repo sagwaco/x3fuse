@@ -117,6 +117,17 @@ fn standard_normal(state: ptr<function,u32>) -> f32 {
     *state = s;
     return sqrt(-2.0*log(max(u1,1e-7)))*cos(6.28318530717958647*u2);
 }
+// X3Fuse extension: grain roughness. A smooth random field in [-1, 1] over
+// cells of `size` native pixels, anchored like the grain RNG.
+fn cell_noise(cell: vec2<u32>, seed: u32) -> f32 {
+    return f32(splitmix32(splitmix32(cell.x+seed*0x9e3779b9u)^cell.y))*(2.0/4294967295.0)-1.0;
+}
+fn clump_field(native: vec2<f32>, size: f32, seed: u32) -> f32 {
+    let q=native/size;let c=vec2<u32>(q);let f=fract(q);let s=f*f*(3.0-2.0*f);
+    let top=mix(cell_noise(c,seed),cell_noise(c+vec2<u32>(1u,0u),seed),s.x);
+    let bottom=mix(cell_noise(c+vec2<u32>(0u,1u),seed),cell_noise(c+vec2<u32>(1u,1u),seed),s.x);
+    return mix(top,bottom,s.y);
+}
 
 @compute @workgroup_size(16,8)
 fn expose(@builtin(global_invocation_id) id:vec3<u32>) {
@@ -183,9 +194,13 @@ fn grain(@builtin(global_invocation_id) id:vec3<u32>) {
     let seed=bitcast<u32>(p.v[34].w);
     // B&W film has one silver layer: all channels draw the same grains.
     let silver=p.v[37].w>0.5;
+    // Roughness clumps the particles: a clump holds m times as many particles,
+    // each 1/m as dense, so the mean density stays and only the grain varies.
+    let roughness=p.v[35].w;
+    let m=select(1.0,exp2(3.0*roughness*clump_field(native,p.v[36].w,seed^0x5bd1e995u)),roughness>0.0);
     var developed_density=vec3<f32>(0);
     for (var c=0u; c<3u; c++) {
-        let dmin=p.v[33][c];let dmax=p.v[34][c];let npp=p.v[35][c];
+        let dmin=p.v[33][c];let dmax=p.v[34][c];let npp=p.v[35][c]*m;
         let od=dmax/npp;
         let ratio=clamp((density[c]+dmin)/dmax,1e-6,1.0-1e-6);
         let saturation=1.0-ratio*p.v[36][c]*(1.0-1e-6);
@@ -234,7 +249,12 @@ fn scan(@builtin(global_invocation_id) id:vec3<u32>) {
              +cmy.z*spectral.v[SP_SCAN_DYE+dye+2u]+spectral.v[SP_SCAN_BASE+wl];
         xyz+=pow(10.0,-d)*vec3<f32>(spectral.v[SP_SCAN_ILLUM_CMF+dye],spectral.v[SP_SCAN_ILLUM_CMF+dye+1u],spectral.v[SP_SCAN_ILLUM_CMF+dye+2u]);
     }
-    destination.v[i]=vec4<f32>(matrix_at(26u,xyz/p.v[17].y),1);
+    xyz/=p.v[17].y;
+    // Scanner white and black correction (spektrafilm scan_spectral): remap
+    // luminance so paper white and the deepest black reach the scanner's
+    // levels, keeping chromaticity.
+    if p.v[28].w>0.5 {xyz*=clamp(p.v[26].w*xyz.y+p.v[27].w,0.0,1.0)/(xyz.y+1e-10);}
+    destination.v[i]=vec4<f32>(matrix_at(26u,xyz),1);
 }
 @compute @workgroup_size(16,8)
 fn sample(@builtin(global_invocation_id) id:vec3<u32>) {
@@ -259,8 +279,7 @@ fn adjust(@builtin(global_invocation_id) id:vec3<u32>) {
     if p.v[1].w>0.5 && p.v[37].w<0.5 { rgb=vec3<f32>(dot(p.v[4].yzw,rgb)); }
     let y=max(0.0,dot(rgb,vec3<f32>(0.2126,0.7152,0.0722)));
     let shadow=1.0-smoothstep(0.01,0.4,y);let high=smoothstep(0.18,1.0,y);
-    let stops=p.v[2].w*shadow*2.0+p.v[2].z*high*2.0+p.v[3].x*smoothstep(0.5,2.0,y)+p.v[3].y*(1.0-smoothstep(0.0,0.08,y));
-    rgb*=exp2(stops);
+    rgb*=exp2(p.v[2].w*shadow*2.0+p.v[2].z*high*2.0);
     destination.v[i]=vec4<f32>(rgb,1);
 }
 @compute @workgroup_size(16,8)
@@ -297,6 +316,24 @@ fn camera_look(rgb:vec3<f32>)->vec3<f32> {
     let encoded=encode_srgb(corrected);
     return decode_srgb(vec3<f32>(camera_tone(encoded.x),camera_tone(encoded.y),camera_tone(encoded.z)));
 }
+// Sigma's native tone curve, from counts to linear output: flat past
+// saturation like the camera, mirrored below zero to keep extended colour.
+const NATIVE_TONE: u32 = 1301u;
+const NATIVE_ROWS: u32 = 4096u;
+fn native_tone(count:f32)->f32 {
+    let at=min(abs(count)*p.v[41].z,f32(NATIVE_ROWS-1u));let lo=u32(at);
+    return sign(count)*mix(curves.v[NATIVE_TONE+lo].x,curves.v[NATIVE_TONE+min(lo+1u,NATIVE_ROWS-1u)].x,fract(at));
+}
+// Merrill ColorDQ (Sigma ApplyMatrixAndColorDQ): two signed table lookups
+// that core small chroma differences, on native counts rounded half up.
+const COLOR_DQ: u32 = NATIVE_TONE+NATIVE_ROWS;
+fn color_dq(q:vec3<f32>)->vec3<f32> {
+    let mask=u32(p.v[41].w);let i=vec3<i32>(floor(q+0.5));var residual=vec3<i32>(0);
+    for (var c=0u;c<3u;c++) {residual[c]=i[c]-i32(curves.v[COLOR_DQ+(bitcast<u32>(i[c])&mask)][c]);}
+    let mean=(residual.x+2*residual.y+residual.z)>>2u;var out=q;
+    for (var c=0u;c<3u;c++) {out[c]=q[c]-curves.v[COLOR_DQ+(bitcast<u32>(residual[c]-mean)&mask)][c];}
+    return out;
+}
 fn sample_curve(x:f32,ch:u32)->f32 {
     if x<0.0 {return curves.v[0][ch]+x*1023.0*(curves.v[1][ch]-curves.v[0][ch]);}
     if x>1.0 {return curves.v[1023][ch]+(x-1.0)*1023.0*(curves.v[1023][ch]-curves.v[1022][ch]);}
@@ -305,11 +342,22 @@ fn sample_curve(x:f32,ch:u32)->f32 {
 @compute @workgroup_size(16,8)
 fn finish(@builtin(global_invocation_id) id:vec3<u32>) {
     let pos=id.xy;if !in_bounds(pos) {return;}let i=index(pos);var rgb=source.v[i].rgb;
-    if p.v[1].z<0.5 {
-        // Exposure-preserving shoulder: identity through middle gray, smooth to white.
-        let y=max(dot(rgb,vec3<f32>(0.2126,0.7152,0.0722)),0.0);
-        let mapped=select(y,0.18+0.82*(1.0-exp(-(y-0.18)/0.82)),y>0.18);
-        rgb*=select(1.0,mapped/max(y,1e-8),y>1e-8);
+    if p.v[41].y>0.5 {
+        // Sigma's native Color Mode (Merrill, dp Quattro): native counts, its
+        // tone curve per channel, then its output matrix to linear sRGB.
+        var counts=matrix_at(42u,rgb)+vec3<f32>(p.v[42].w,p.v[43].w,p.v[44].w);
+        if p.v[41].w>0.5 {counts=color_dq(counts);}
+        rgb=matrix_at(45u,vec3<f32>(native_tone(counts.x),native_tone(counts.y),native_tone(counts.z)));
+    } else if p.v[1].z<0.5 {
+        // Other cameras. A Naka-Rushton S-curve per channel, fitted to
+        // Sigma's in-camera JPEGs (sd Quattro, dp0 Quattro, SD1 Merrill). It
+        // puts middle gray at 0.40, adds a toe and rolls highlights off toward
+        // white. It runs on linear Rec.2020 primaries, where Adobe RGB and
+        // most ProPhoto colours are not negative, so a wide-gamut export keeps
+        // them. Colours outside Rec.2020 use the mirrored curve.
+        let wide=mat3x3<f32>(vec3<f32>(0.6274040,0.0690970,0.0163916),vec3<f32>(0.3292820,0.9195400,0.0880132),vec3<f32>(0.0433136,0.0113612,0.8955950))*rgb;
+        let x=pow(abs(wide),vec3<f32>(1.63));
+        rgb=mat3x3<f32>(vec3<f32>(1.6604910,-0.1245505,-0.0181508),vec3<f32>(-0.5876411,1.1328999,-0.1005789),vec3<f32>(-0.0728499,-0.0083494,1.1187297))*(sign(wide)*x/(x+0.093));
     }
     var percept=encode_srgb(rgb);
     let contrast=exp2(p.v[2].y);percept=(percept-0.5)*contrast+0.5;
@@ -328,6 +376,16 @@ fn finish(@builtin(global_invocation_id) id:vec3<u32>) {
 fn output(@builtin(global_invocation_id) id:vec3<u32>) {
     let pos=id.xy;if !in_bounds(pos) {return;}let i=index(pos);var c=source.v[i].rgb;
     if p.v[4].x>0.0 {let y=dot(c,vec3<f32>(0.2126,0.7152,0.0722));let by=dot(auxiliary.v[i].rgb,vec3<f32>(0.2126,0.7152,0.0722));c+=vec3<f32>((y-by)*p.v[4].x*2.0);}
+    // Whites and blacks move the white and black points, as levels do, after
+    // every other control so none can undo the ceiling or the floor. A raised
+    // floor or lowered ceiling also catches what contrast or sharpening
+    // clipped. Only luminance is clamped, which keeps wide-gamut colours.
+    let y=dot(c,vec3<f32>(0.2126,0.7152,0.0722));var clamped=y;
+    if p.v[3].y>0.0 {clamped=max(clamped,0.0);}
+    if p.v[3].x<0.0 {clamped=min(clamped,1.0);}
+    let lo_in=-0.15*min(p.v[3].y,0.0);let lo_out=0.15*max(p.v[3].y,0.0);
+    let hi_in=1.0-0.25*max(p.v[3].x,0.0);let hi_out=1.0+0.25*min(p.v[3].x,0.0);
+    c=decode_srgb(lo_out+(encode_srgb(c+(clamped-y))-lo_in)*((hi_out-lo_out)/(hi_in-lo_in)));
     // Film dyes, colored grain and channel curves can add tint. Neutralize after
     // them; a neutral ray is identical in every supported output RGB space.
     let monochrome=p.v[1].w>0.5;

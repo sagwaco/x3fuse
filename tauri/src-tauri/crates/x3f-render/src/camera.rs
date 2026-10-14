@@ -1,7 +1,12 @@
 //! Picture modes from the file's CAMF calibration. No invented color presets.
 use crate::{color, EditRecipe, MonochromeSettings, RenderError};
 use serde::Serialize;
-use std::{ffi::CString, path::Path, ptr::NonNull, sync::atomic::AtomicBool};
+use std::{
+    ffi::CString,
+    path::Path,
+    ptr::NonNull,
+    sync::{atomic::AtomicBool, OnceLock},
+};
 use x3f_sys::{self as sys, sysabi as libc};
 
 pub(crate) const MODES: &[(&str, &str)] = &[
@@ -18,7 +23,11 @@ pub(crate) const MODES: &[(&str, &str)] = &[
     ("Monochrome", "Monochrome"),
 ];
 const IDENTITY: [f64; 9] = [1., 0., 0., 0., 1., 0., 0., 0., 1.];
-pub(crate) const LOOK_ROWS: usize = 256 + 21;
+/// Rows of Sigma's native tone curve, one per count at a 12-bit saturation.
+pub(crate) const NATIVE_TONE_ROWS: usize = 4096;
+/// Rows of Merrill ColorDQ tables, the largest size Sigma builds.
+pub(crate) const COLOR_DQ_ROWS: usize = 8192;
+pub(crate) const LOOK_ROWS: usize = 256 + 21 + NATIVE_TONE_ROWS + COLOR_DQ_ROWS;
 
 #[derive(Clone, Debug, Serialize)]
 pub struct CameraProfile {
@@ -30,6 +39,10 @@ pub(crate) struct Calibration {
     pub matrix: [f64; 9],
     pub tone: [f32; 256],
     pub hue_sat: [[f32; 4]; 21],
+    /// Sigma's native Color Mode (Merrill and dp Quattro). With the scene's
+    /// `color_mode_calibration`, its matrices and tone curve replace the three
+    /// fields above.
+    pub native: Option<Native>,
 }
 impl Default for Calibration {
     fn default() -> Self {
@@ -37,7 +50,72 @@ impl Default for Calibration {
             matrix: IDENTITY,
             tone: std::array::from_fn(|i| i as f32 / 255.),
             hue_sat: [[0., 1., 0., 0.]; 21],
+            native: None,
         }
+    }
+}
+#[derive(Clone, Debug)]
+pub(crate) struct Native {
+    pub params: sys::ColorModeParameters,
+    tone: OnceLock<Vec<f32>>,
+}
+impl Native {
+    pub(crate) fn new(params: sys::ColorModeParameters) -> Self {
+        Self {
+            params,
+            tone: OnceLock::new(),
+        }
+    }
+    /// The linear tone curve over counts 0 to saturation, in
+    /// `NATIVE_TONE_ROWS` steps. It is built on first use: building every
+    /// mode when a photo opens would take a noticeable fraction of a second.
+    pub(crate) fn tone(&self) -> Result<&[f32], RenderError> {
+        if let Some(tone) = self.tone.get() {
+            return Ok(tone);
+        }
+        let lut = sys::color_mode_linear_tone_lut(&self.params, 0., sys::Control::none())
+            .map_err(raw_error)?;
+        let last = lut.len() - 1;
+        let step = self.params.pixel_saturation / (NATIVE_TONE_ROWS - 1) as f64;
+        let tone = (0..NATIVE_TONE_ROWS)
+            .map(|row| {
+                let count = row as f64 * step;
+                let (index, fraction) = (count as usize, count.fract());
+                let at = |i: usize| lut[i.min(last)];
+                (at(index) * (1. - fraction) + at(index + 1) * fraction) as f32
+            })
+            .collect();
+        Ok(self.tone.get_or_init(|| tone))
+    }
+    /// Linear luminance this mode renders for a neutral scene value.
+    fn neutral_luminance(
+        &self,
+        sensor: &sys::ColorModeCalibration,
+        to_counts: &[f64; 9],
+        offset: [f64; 3],
+        value: f64,
+    ) -> Result<f64, RenderError> {
+        let tone = self.tone()?;
+        let rows = self.rows_per_count() as f64;
+        let last = (NATIVE_TONE_ROWS - 1) as f64;
+        let toned: [f64; 3] = std::array::from_fn(|c| {
+            let count = (0..3).map(|j| to_counts[c * 3 + j] * value).sum::<f64>() + offset[c];
+            let at = (count.max(0.) * rows).min(last);
+            let (row, fraction) = (at as usize, at.fract());
+            let next = (row + 1).min(NATIVE_TONE_ROWS - 1);
+            f64::from(tone[row]) * (1. - fraction) + f64::from(tone[next]) * fraction
+        });
+        let output = q12(sensor.output_to_srgb);
+        Ok((0..3)
+            .map(|r| {
+                [0.2126, 0.7152, 0.0722][r]
+                    * (0..3).map(|c| output[r * 3 + c] * toned[c]).sum::<f64>()
+            })
+            .sum())
+    }
+    /// Shader scale from native counts to tone rows.
+    pub(crate) fn rows_per_count(&self) -> f32 {
+        ((NATIVE_TONE_ROWS - 1) as f64 / self.params.pixel_saturation) as f32
     }
 }
 #[derive(Clone, Debug, Default)]
@@ -46,7 +124,66 @@ pub struct CameraProfiles {
     pub as_shot: String,
     calibrations: Vec<(String, Calibration)>,
 }
+/// Sigma's 12-bit fixed-point output matrix, rounded as x3f-core
+/// `quantized_output` does.
+pub(crate) fn q12(matrix: [f64; 9]) -> [f64; 9] {
+    matrix.map(|v| f64::from(v.mul_add(4096., 0.5) as i32) / 4096.)
+}
+/// The scene value the fitted digital curve renders as 18% gray.
+pub(crate) fn fallback_metered_gray() -> f64 {
+    (0.093 * 0.184 / (1. - 0.184f64)).powf(1. / 1.63)
+}
 impl CameraProfiles {
+    /// The scene value this camera renders as 18% gray: Sigma's Standard
+    /// Color Mode with the scene's sensor calibration, else the fitted curve.
+    /// It places the camera's metering in the scene, which film needs to
+    /// expose a metered mid-gray as its own.
+    /// A calibration that cannot meter falls back to the fitted curve.
+    pub(crate) fn metered_gray(
+        &self,
+        sensor: Option<&sys::ColorModeCalibration>,
+        camera_to_rgb: [f64; 9],
+    ) -> f64 {
+        let standard = self
+            .calibrations
+            .iter()
+            .find(|(mode, _)| mode == "Standard")
+            .and_then(|(_, calibration)| calibration.native.as_ref());
+        let metered = || -> Result<f64, RenderError> {
+            let (Some(native), Some(sensor)) = (standard, sensor) else {
+                return Err(RenderError::Invalid("No native Color Mode".into()));
+            };
+            let (counts, offset) = sensor.render_matrix(&native.params);
+            let to_counts = color::multiply(counts, color::inverse(camera_to_rgb)?);
+            // Bisect in log space; the curve rises monotonically.
+            let (mut lo, mut hi) = (1e-4f64.ln(), 4f64.ln());
+            for _ in 0..48 {
+                let mid = 0.5 * (lo + hi);
+                if native.neutral_luminance(sensor, &to_counts, offset, mid.exp())? < 0.184 {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            Ok((0.5 * (lo + hi)).exp())
+        };
+        // Reject a gray pinned to the search bounds (or NaN): film exposure
+        // would jump by orders of magnitude.
+        metered()
+            .ok()
+            .filter(|gray| (1e-3..=2.).contains(gray))
+            .unwrap_or_else(fallback_metered_gray)
+    }
+    /// The selected profile's native Color Mode. Film stocks have their own
+    /// colour response.
+    pub(crate) fn native(&self, recipe: &EditRecipe) -> Result<Option<&Native>, RenderError> {
+        if recipe.film.is_some() {
+            return Ok(None);
+        }
+        Ok(self
+            .selected(recipe)?
+            .and_then(|calibration| calibration.native.as_ref()))
+    }
     pub(crate) fn selected(
         &self,
         recipe: &EditRecipe,
@@ -266,6 +403,15 @@ pub fn read_camera_profiles(
             calibration.hue_sat =
                 std::array::from_fn(|i| [table[i] as f32, table[105 + i] as f32, 0., 0.]);
         }
+        // Sigma's own rendering of this mode. Other sensors have none.
+        if let Ok(mode) = id.parse::<sys::ColorMode>() {
+            // SAFETY: the metadata owns its loaded CAMF and PROP sections.
+            match unsafe { sys::resolve_color_mode(metadata.raw.as_ptr(), mode) } {
+                Ok(params) => calibration.native = Some(Native::new(params)),
+                Err(sys::Error::Cancelled) => return Err(RenderError::Cancelled),
+                Err(_) => {}
+            }
+        }
         if calibration
             .matrix
             .iter()
@@ -337,14 +483,30 @@ fn tone_curve(contrast: f64) -> [f32; 256] {
     std::array::from_fn(|i| (i as f32 / 255. + scale * reference[i]).clamp(0., 1.))
 }
 
-pub(crate) fn look_table(calibration: Option<&Calibration>) -> Vec<[f32; 4]> {
+pub(crate) fn look_table(
+    calibration: Option<&Calibration>,
+    native_tone: Option<&[f32]>,
+    color_dq: Option<&sys::ColorModeColorDq>,
+) -> Vec<[f32; 4]> {
     let identity = Calibration::default();
     let calibration = calibration.unwrap_or(&identity);
+    let native = native_tone.map_or(vec![0.; NATIVE_TONE_ROWS], <[f32]>::to_vec);
+    let tables = color_dq.map(|dq| dq.tables());
+    let dq = (0..COLOR_DQ_ROWS).map(|row| {
+        let at = |c: usize| {
+            tables.map_or(0., |t: [&[i16]; 3]| {
+                t[c].get(row).map_or(0., |&v| f32::from(v))
+            })
+        };
+        [at(0), at(1), at(2), 0.]
+    });
     calibration
         .tone
         .iter()
         .map(|&value| [value, 0., 0., 0.])
         .chain(calibration.hue_sat)
+        .chain(native.into_iter().map(|value| [value, 0., 0., 0.]))
+        .chain(dq)
         .collect()
 }
 
@@ -387,7 +549,7 @@ mod tests {
         assert!((neutral[128] - identity[128] + 0.0414407).abs() < 1e-7);
         assert!((tone_curve(0.15)[128] - (vivid[128] + identity[128]) * 0.5).abs() < 1e-6);
         assert_eq!(tone_curve(1.), vivid);
-        assert_eq!(look_table(None).len(), LOOK_ROWS);
+        assert_eq!(look_table(None, None, None).len(), LOOK_ROWS);
     }
     #[test]
     fn legacy_recipes_remain_color_and_known_unavailable_modes_use_standard() {
@@ -583,6 +745,206 @@ mod tests {
         }
     }
     #[test]
+    #[ignore = "requires a GPU and X3F_CAMERA_PROFILE_INPUT with a Merrill or Quattro file"]
+    fn real_native_color_mode_matches_core_reference() {
+        let path = std::path::PathBuf::from(
+            std::env::var_os("X3F_CAMERA_PROFILE_INPUT").expect("Set X3F_CAMERA_PROFILE_INPUT"),
+        );
+        let cancel = AtomicBool::new(false);
+        let options = x3f_core::SceneLinearOptions {
+            denoise_intensity: 0,
+            ..Default::default()
+        };
+        let scene = x3f_core::prepare_scene_linear(&path, &options, &cancel, |_| {}).unwrap();
+        let sensor = scene
+            .color_mode_calibration
+            .clone()
+            .expect("a sensor with native Color Modes");
+        let profiles = read_camera_profiles(&path, &cancel).unwrap();
+        let recipe = EditRecipe {
+            film: None,
+            camera_profile: Some("Standard".into()),
+            ..Default::default()
+        };
+        let params = profiles
+            .native(&recipe)
+            .unwrap()
+            .expect("native Standard")
+            .params;
+        // Black to past saturation, with small chroma steps that ColorDQ cores.
+        let patches: Vec<[f32; 3]> = (0..64)
+            .map(|i| {
+                let v = 0.002 * 1.12f32.powi(i);
+                [
+                    v,
+                    v * (1. + 0.01 * (i % 5) as f32),
+                    v * (1. - 0.008 * (i % 3) as f32),
+                ]
+            })
+            .collect();
+        let image = x3f_core::SceneLinearImage {
+            data: patches.iter().flatten().copied().collect(),
+            width: 64,
+            height: 1,
+            orientation: 1,
+            white_balance: scene.white_balance,
+            color_mode_calibration: Some(sensor.clone()),
+        };
+        let prepared = crate::PreparedImage::new(image, &cancel)
+            .unwrap()
+            .with_camera_profiles(profiles);
+        let rendered = crate::Renderer::new()
+            .unwrap()
+            .render_prepared(&prepared, &recipe, crate::RenderOptions::default(), &cancel)
+            .unwrap();
+        // The same native path from x3f-sys pieces, in f64.
+        let (matrix, offset) = sensor.render_matrix(&params);
+        let to_counts = color::multiply(
+            matrix,
+            color::inverse(scene.white_balance.camera_to_rgb).unwrap(),
+        );
+        let lut = sys::color_mode_linear_tone_lut(&params, 0., sys::Control::none()).unwrap();
+        let tone = |count: f64| {
+            let at = count.abs().min(65534.);
+            let (index, fraction) = (at as usize, at.fract());
+            count.signum() * (lut[index] * (1. - fraction) + lut[index + 1] * fraction)
+        };
+        let output = q12(sensor.output_to_srgb);
+        let mul = |m: &[f64; 9], v: [f64; 3]| -> [f64; 3] {
+            std::array::from_fn(|r| (0..3).map(|c| m[r * 3 + c] * v[c]).sum())
+        };
+        for (i, patch) in patches.iter().enumerate() {
+            let mut counts = mul(&to_counts, patch.map(f64::from));
+            for c in 0..3 {
+                counts[c] += offset[c];
+            }
+            if let Some(dq) = &sensor.color_dq {
+                counts = dq.apply(counts).map(f64::from);
+            }
+            let linear = mul(&output, counts.map(tone));
+            for (c, linear) in linear.into_iter().enumerate() {
+                let x = linear.clamp(0., 1.);
+                let encoded = if x <= 0.0031308 {
+                    12.92 * x
+                } else {
+                    1.055 * x.powf(1. / 2.4) - 0.055
+                };
+                let value = rendered.data[i * 3 + c] as f64 / 65535.;
+                assert!(
+                    (value - encoded).abs() < 0.004,
+                    "patch {i} channel {c}: {value} instead of {encoded} (counts {counts:?})"
+                );
+            }
+        }
+    }
+    #[test]
+    #[ignore = "requires a hardware GPU; run with --ignored"]
+    fn native_color_modes_render_sigma_tone() {
+        let renderer = crate::Renderer::new().unwrap();
+        let cancel = AtomicBool::new(false);
+        // Sigma's default Merrill tone and a sensor where one scene unit is
+        // the 12-bit saturation count.
+        let params = sys::ColorModeParameters {
+            mode: sys::ColorMode::Standard,
+            sensor: sys::ColorModeSensor::Merrill,
+            as_shot_fallback: false,
+            creative_matrix: None,
+            contrast: 0.,
+            tone: sys::ColorModeToneParameters {
+                start: -1.17,
+                end: 1.55,
+                steepness: 3.,
+                steepness2: 1.85,
+                breakpoint: 0.1,
+                scale: 1.,
+            },
+            inverse_gamma: 1. / 2.2,
+            pixel_saturation: 4095.,
+        };
+        let sensor = sys::ColorModeCalibration {
+            sensor_to_srgb: IDENTITY,
+            wb_gain: [1.; 3],
+            normalized_to_counts: [4095.; 3],
+            count_offset: [0.; 3],
+            iso_gain: 1.,
+            output_to_srgb: IDENTITY,
+            color_dq: None,
+        };
+        let profiles = || {
+            profiles_from_calibration("Standard", |id| {
+                Ok((id == "Standard").then(|| Calibration {
+                    native: Some(Native::new(params)),
+                    ..Default::default()
+                }))
+            })
+            .unwrap()
+        };
+        let levels = [0.02f32, 0.1, 0.25, 0.6, 1., 2.];
+        let image = |color_mode_calibration| x3f_core::SceneLinearImage {
+            data: levels.iter().flat_map(|&v| [v; 3]).collect(),
+            width: 6,
+            height: 1,
+            orientation: 1,
+            white_balance: x3f_core::WhiteBalanceCalibration {
+                camera_to_rgb: IDENTITY,
+                xyz_to_camera: IDENTITY,
+                as_shot_neutral: [1.; 3],
+            },
+            color_mode_calibration,
+        };
+        let render = |sensor, film| {
+            let prepared = crate::PreparedImage::new(image(sensor), &cancel)
+                .unwrap()
+                .with_camera_profiles(profiles());
+            let recipe = EditRecipe {
+                film,
+                camera_profile: Some("Standard".into()),
+                ..Default::default()
+            };
+            renderer
+                .render_prepared(&prepared, &recipe, crate::RenderOptions::default(), &cancel)
+                .unwrap()
+        };
+        let native = render(Some(sensor.clone()), None);
+        let lut = sys::color_mode_linear_tone_lut(&params, 0., sys::Control::none()).unwrap();
+        for (i, &level) in levels.iter().enumerate() {
+            let count = (level as f64 * 4095.).min(65534.);
+            let (index, fraction) = (count as usize, count.fract());
+            let linear = lut[index] * (1. - fraction) + lut[index + 1] * fraction;
+            let encoded = if linear <= 0.0031308 {
+                12.92 * linear
+            } else {
+                1.055 * linear.powf(1. / 2.4) - 0.055
+            };
+            let pixel = &native.data[i * 3..][..3];
+            let value = pixel[0] as f64 / 65535.;
+            assert!(
+                (value - encoded).abs() < 0.003,
+                "scene {level}: {value} instead of Sigma's {encoded}"
+            );
+            assert!(pixel[1].abs_diff(pixel[0]) <= 1 && pixel[2].abs_diff(pixel[0]) <= 1);
+        }
+        // Without the sensor calibration, and under film, the native mode is
+        // off. (The calibration still meters film exposure.)
+        assert_ne!(render(None, None).data, native.data);
+        let film = EditRecipe {
+            film: Some(crate::FilmSettings::default()),
+            camera_profile: Some("Standard".into()),
+            ..Default::default()
+        };
+        assert!(profiles().native(&film).unwrap().is_none());
+        let gray = profiles().metered_gray(Some(&sensor), IDENTITY);
+        let lut_at = |count: f64| {
+            let (index, fraction) = (count as usize, count.fract());
+            lut[index] * (1. - fraction) + lut[index + 1] * fraction
+        };
+        assert!(
+            (lut_at(gray * 4095.) - 0.184).abs() < 1e-3,
+            "metered gray {gray} renders {}",
+            lut_at(gray * 4095.)
+        );
+    }
+    #[test]
     #[ignore = "requires a hardware GPU; run with --ignored"]
     fn calibrated_profiles_change_pixels_and_preview_matches_export() {
         let renderer = crate::Renderer::new().unwrap();
@@ -592,6 +954,7 @@ mod tests {
                 matrix: [0.9, 0.1, 0., 0., 0.95, 0.05, 0.1, 0., 0.9],
                 tone: tone_curve(0.15),
                 hue_sat: [[8., 0.8, 0., 0.]; 21],
+                native: None,
             };
             Ok(match id {
                 "Standard" => Some(Calibration {
@@ -613,6 +976,7 @@ mod tests {
                 xyz_to_camera: IDENTITY,
                 as_shot_neutral: [1.; 3],
             },
+            color_mode_calibration: None,
         };
         let prepared = crate::PreparedImage::new(image, &cancel)
             .unwrap()

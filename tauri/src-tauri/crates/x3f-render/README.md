@@ -30,10 +30,21 @@ the prepared float image. Camera-calibrated temperature/tint applies relative
 sensor-channel gains, normalized to green to preserve exposure.
 
 Processing is geometric sampling → white balance/exposure → optional sensor-layer
-monochrome → global tonal controls → optional spectral film → contrast/saturation/vibrance/HSL/curves → luminance
-sharpening → output primaries/transfer curve. With film disabled, a luminance
-shoulder is identity through 18% gray and smoothly approaches display white.
-With film enabled, the measured paper/film response supplies the tone transform.
+monochrome → highlights/shadows → optional spectral film → contrast/saturation/vibrance/HSL/curves
+→ luminance sharpening → whites/blacks → output primaries/transfer curve. With film
+disabled, a Merrill or dp Quattro camera profile renders through Sigma's native
+Color Mode from x3f-sys: the scene goes back to camera BMT and on to native
+counts, then takes Merrill ColorDQ, the mode's tone curve per channel and its
+output matrix. It needs the `color_mode_calibration` that `prepare_scene_linear`
+measures, and the file's profiles from `read_camera_profiles` attached with
+`PreparedImage::with_camera_profiles`. Other cameras, and images without that
+calibration, use a tone curve fitted to Sigma's in-camera JPEGs: it maps 18%
+gray to 0.40, adds a toe and rolls highlights off toward display white, per
+channel on linear Rec.2020 primaries so Adobe RGB and ProPhoto exports keep their
+wide-gamut colours. With film enabled, the measured paper/film response supplies
+the tone transform. Whites and blacks set the white and black points
+(levels) in the perceptual representation, after every other control. A raised
+floor or lowered ceiling clamps luminance only, so wide-gamut colours survive.
 `EditRecipe::default()` enables film; an explicit `film: None` selects digital rendering.
 Curves operate in a perceptual sRGB representation with linear interpolation and
 endpoint extrapolation to retain out-of-gamut color until final output conversion.
@@ -73,6 +84,14 @@ neutral, developed on the paper's fitted curves, and scanned back to linear
 sRGB across the same 81 wavelengths. Optional halation adds spectral scatter
 and a three-bounce reflection off the film base. These are physical-model
 stages, not a baked RGB look LUT.
+
+The scan applies spektrafilm's scanner white and black correction: the print's
+paper white and deepest black, or a slide's clear and densest film, map to sRGB
+0.98 and 0.01, and the print (or film) exposure is corrected so mid-gray stays at
+0.184. A negative scanned directly is not corrected. In place of spektrafilm's
+auto exposure, the film exposes the camera's metered gray as its mid-gray: the
+scene value the camera's own tone curve renders as 18% gray (Sigma's Standard
+Color Mode for a prepared image, else the fitted digital curve).
 
 Halation, grain and DIR couplers are optional; `negative: true` scans the
 developed film and skips the paper entirely. Stages spektrafilm has that this

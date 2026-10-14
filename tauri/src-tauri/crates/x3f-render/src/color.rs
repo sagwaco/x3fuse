@@ -242,6 +242,7 @@ mod tests {
             height: 5,
             orientation: 1,
             white_balance: calibration,
+            color_mode_calibration: None,
         };
         let (k, t) = pick_white_balance(&image, &EditRecipe::default(), 0.5, 0.5).unwrap();
         assert!(

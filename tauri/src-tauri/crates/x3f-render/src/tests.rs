@@ -28,6 +28,7 @@ fn image(width: u32, height: u32) -> SceneLinearImage {
             ],
             as_shot_neutral: [1., 1., 1.],
         },
+        color_mode_calibration: None,
     }
 }
 #[test]
@@ -41,6 +42,16 @@ fn recipes_validate_and_round_trip() {
             None,
             "Old and explicitly color recipes must remain color"
         );
+    }
+    // Recipes saved before grain roughness keep spektrafilm's even grain.
+    let film: FilmSettings = serde_json::from_str(r#"{"grainSize":2}"#).unwrap();
+    assert_eq!(film.grain_roughness, 0.);
+    for roughness in [-0.1, 1.1] {
+        let rough = FilmSettings {
+            grain_roughness: roughness,
+            ..Default::default()
+        };
+        assert!(rough.validate().is_err());
     }
     let tilted: EditRecipe = serde_json::from_str(r#"{"pitch":40,"yaw":-40}"#).unwrap();
     tilted.validate().unwrap();
@@ -428,7 +439,7 @@ fn prepared_pairs_are_keyed_on_every_setting_they_read() {
         f(&mut s);
         s
     };
-    let cases: [(&str, FilmSettings); 19] = [
+    let cases: [(&str, FilmSettings); 20] = [
         ("film", variant(|s| s.film = 7)),
         ("paper", variant(|s| s.paper = 5)),
         ("negative", variant(|s| s.negative = true)),
@@ -439,6 +450,7 @@ fn prepared_pairs_are_keyed_on_every_setting_they_read() {
         ("grain", variant(|s| s.grain = false)),
         ("grain_size", variant(|s| s.grain_size = 2.)),
         ("grain_amount", variant(|s| s.grain_amount = 0.5)),
+        ("grain_roughness", variant(|s| s.grain_roughness = 0.5)),
         ("grain_saturation", variant(|s| s.grain_saturation = 0.25)),
         ("halation", variant(|s| s.halation = true)),
         ("halation_strength", variant(|s| s.halation_strength = 1.)),
@@ -482,6 +494,20 @@ fn prepared_pairs_are_keyed_on_every_setting_they_read() {
 }
 
 #[test]
+fn grain_particles_follow_the_discrete_blur() {
+    assert_eq!(blur_variance(0.2), 1., "a skipped blur keeps all variance");
+    let mut last = 1.;
+    for sigma in [0.3, 0.6, 1., 2., 4.] {
+        let kept = blur_variance(sigma);
+        assert!(kept < last, "sigma {sigma} keeps {kept}");
+        last = kept;
+    }
+    // Wide kernels approach Gaussian-filtered white noise, 1 / (4 pi sigma^2).
+    let wide = blur_variance(4.) * 4. * std::f32::consts::PI * 16.;
+    assert!((wide - 1.).abs() < 0.01, "{wide}");
+}
+
+#[test]
 fn spektrafilm_license_ships_unmodified() {
     // CC BY-SA 4.0 obligates shipping the licence file as published; the
     // resource sync copies these bytes verbatim into the bundle.
@@ -492,7 +518,7 @@ fn spektrafilm_license_ships_unmodified() {
     );
     let shader = sha256(include_bytes!("render.wgsl"));
     assert_eq!(
-        shader, "e8c6ba0ee311d409860e539d10bcf25235506a92c9a3b6876baf0ef875ba4fd1",
+        shader, "560f25c666b6ec2e40200cb345af8d94cedd320fde8bc2727ed5b333b641a4ac",
         "render.wgsl changed; update assets/PROVENANCE.md and this hash, and          bump RENDER_VERSION if rendered pixels moved"
     );
 }
@@ -521,6 +547,7 @@ fn gpu_geometry_matches_cpu_sampling(renderer: &Renderer) {
             height: geom.height,
             orientation: 1,
             white_balance: source.white_balance,
+            color_mode_calibration: None,
         };
         let expected = renderer
             .render(
@@ -812,6 +839,267 @@ fn frames_carry_a_header_and_reject_flagged_pixels() {
 }
 
 /// `pack` flags NaN and infinity with alpha 0 and quantizes like the CPU.
+/// The digital tone curve, Whites/Blacks levels under extreme contrast, and
+/// wide-gamut exports, on neutral and out-of-sRGB patches.
+fn gpu_tone_and_levels(renderer: &Renderer) {
+    let cancel = AtomicBool::new(false);
+    let mut patches = image(7, 1);
+    patches.data = vec![
+        0., 0., 0., 0.18, 0.18, 0.18, 1., 1., 1., 4., 4., 4., -0.2, 0.6, 0.02, -0.5, 1., 0.1, 2.,
+        0.1, 0.01,
+    ];
+    let render = |recipe: EditRecipe, color_profile| {
+        renderer
+            .render(
+                &patches,
+                &EditRecipe {
+                    film: None,
+                    ..recipe
+                },
+                RenderOptions {
+                    color_profile,
+                    ..Default::default()
+                },
+                &cancel,
+            )
+            .unwrap()
+            .data
+            .iter()
+            .map(|&v| v as f64 / 65535.)
+            .collect::<Vec<_>>()
+    };
+    let encode = |c: f64| {
+        if c <= 0.0031308 {
+            12.92 * c
+        } else {
+            1.055 * c.powf(1. / 2.4) - 0.055
+        }
+    };
+    let tone = |x: f64| x.powf(1.63) / (x.powf(1.63) + 0.093);
+    let plain = render(EditRecipe::default(), ColorProfile::Srgb);
+    assert!(plain[0] < 1e-4, "black stays black: {}", plain[0]);
+    for (patch, x) in [(1, 0.18), (2, 1.), (3, 4.)] {
+        assert!(
+            (plain[patch * 3] - encode(tone(x))).abs() < 0.01,
+            "scene {x} renders {} not {}",
+            plain[patch * 3],
+            encode(tone(x))
+        );
+    }
+    let extreme = |whites, blacks| EditRecipe {
+        contrast: 100.,
+        whites,
+        blacks,
+        ..Default::default()
+    };
+    let floor = render(extreme(0., 100.), ColorProfile::Srgb);
+    assert!(
+        (floor[0] - 0.15).abs() < 0.002,
+        "Blacks +100 must lift black to the floor under contrast: {}",
+        floor[0]
+    );
+    let ceiling = render(extreme(-100., 0.), ColorProfile::Srgb);
+    assert!(
+        (ceiling[9] - 0.75).abs() < 0.002,
+        "Whites -100 must lower white to the ceiling under contrast: {}",
+        ceiling[9]
+    );
+    let crushed = render(
+        EditRecipe {
+            blacks: -100.,
+            ..Default::default()
+        },
+        ColorProfile::Srgb,
+    );
+    let stretched = render(
+        EditRecipe {
+            whites: 100.,
+            ..Default::default()
+        },
+        ColorProfile::Srgb,
+    );
+    assert!(crushed[3] < plain[3] && stretched[3] > plain[3]);
+    assert!(
+        stretched[6] > 0.999,
+        "Whites +100 pulls sensor white to white"
+    );
+    // Out-of-sRGB greens fit Adobe RGB and ProPhoto; the tone curve must keep
+    // their red channel instead of clipping it.
+    let adobe = render(EditRecipe::default(), ColorProfile::AdobeRgb);
+    assert!(adobe[12] > 0.01, "Adobe RGB red clipped: {}", adobe[12]);
+    let prophoto = render(EditRecipe::default(), ColorProfile::ProPhotoRgb);
+    for patch in [4, 5] {
+        assert!(
+            prophoto[patch * 3] > 0.01,
+            "ProPhoto red clipped on patch {patch}: {}",
+            prophoto[patch * 3]
+        );
+    }
+    // A small Blacks or Whites move must not throw those colours away.
+    let lifted = render(
+        EditRecipe {
+            blacks: 1.,
+            ..Default::default()
+        },
+        ColorProfile::AdobeRgb,
+    );
+    assert!(
+        (lifted[12] - adobe[12]).abs() < 0.01,
+        "Blacks +1 moved Adobe red {} -> {}",
+        adobe[12],
+        lifted[12]
+    );
+    let lowered = render(
+        EditRecipe {
+            whites: -1.,
+            ..Default::default()
+        },
+        ColorProfile::ProPhotoRgb,
+    );
+    assert!(
+        (lowered[18] - prophoto[18]).abs() < 0.01,
+        "Whites -1 moved ProPhoto red {} -> {}",
+        prophoto[18],
+        lowered[18]
+    );
+    // Sharpening comes before the levels, so its overshoot at an edge cannot
+    // pass the floor or the ceiling, with or without film. They hold the
+    // luminance; film dyes leave a slight tint around it.
+    let mut step = image(16, 4);
+    step.data = (0..16 * 4)
+        .flat_map(|i| [if i % 16 < 8 { 0. } else { 4. }; 3])
+        .collect();
+    for film in [None, Some(FilmSettings::default())] {
+        let edges = renderer
+            .render(
+                &step,
+                &EditRecipe {
+                    contrast: 100.,
+                    whites: -100.,
+                    blacks: 100.,
+                    sharpen: 100.,
+                    film: film.clone(),
+                    ..Default::default()
+                },
+                RenderOptions::default(),
+                &cancel,
+            )
+            .unwrap();
+        let decode = |v: u16| {
+            let v = v as f64 / 65535.;
+            if v <= 0.04045 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        for pixel in edges.data.as_chunks::<3>().0 {
+            let y = encode(
+                0.2126 * decode(pixel[0]) + 0.7152 * decode(pixel[1]) + 0.0722 * decode(pixel[2]),
+            );
+            assert!(
+                (0.148..=0.752).contains(&y),
+                "film {}: {pixel:?} has luminance {y} outside the floor and ceiling",
+                film.is_some()
+            );
+        }
+    }
+}
+
+/// Film looks reach the scanner's white and black levels, and the camera's
+/// metered gray prints as 18% gray: spektrafilm's scanner correction plus
+/// the metering that stands in for its auto exposure.
+fn gpu_film_scanner_levels(renderer: &Renderer) {
+    let cancel = AtomicBool::new(false);
+    let metered = camera::fallback_metered_gray() as f32;
+    let mut patches = image(3, 1);
+    patches.data = [0., metered, 64.].iter().flat_map(|&v| [v; 3]).collect();
+    let encode = |c: f64| 1.055 * c.powf(1. / 2.4) - 0.055;
+    for (name, film) in [
+        ("color print", FilmSettings::default()),
+        (
+            "slide",
+            FilmSettings {
+                film: 18,
+                negative: true,
+                ..Default::default()
+            },
+        ),
+        (
+            "B&W print",
+            FilmSettings {
+                film: 20,
+                paper: 8,
+                ..Default::default()
+            },
+        ),
+        (
+            "B&W slide",
+            FilmSettings {
+                film: 21,
+                negative: true,
+                ..Default::default()
+            },
+        ),
+    ] {
+        let recipe = EditRecipe {
+            film: Some(FilmSettings {
+                grain: false,
+                ..film
+            }),
+            ..Default::default()
+        };
+        let rendered = renderer
+            .render(&patches, &recipe, RenderOptions::default(), &cancel)
+            .unwrap();
+        let mean = |i: usize| {
+            rendered.data[i * 3..][..3]
+                .iter()
+                .map(|&v| v as f64)
+                .sum::<f64>()
+                / 3.
+                / 65535.
+        };
+        let (black, gray, white) = (mean(0), mean(1), mean(2));
+        assert!((black - 0.01).abs() < 0.008, "{name}: black {black}");
+        assert!((white - 0.98).abs() < 0.01, "{name}: white {white}");
+        assert!(
+            (gray - encode(0.184)).abs() < 0.03,
+            "{name}: metered gray {gray}"
+        );
+    }
+}
+
+/// Large grain blurs over several pixels. Tiles must still match the whole
+/// frame, which needs the grain blur in the tile overlap.
+fn gpu_grain_blur_tiles(renderer: &Renderer) {
+    let film = FilmSettings {
+        grain_size: 4.,
+        grain_roughness: 1.,
+        ..Default::default()
+    };
+    let spatial = film::Spatial::new(&film, 2048.);
+    assert!(spatial.grain >= 1., "grain blur {} px", spatial.grain);
+    let (passes, _) = build_passes([[0.; 4]; 48], Some((&film, &spatial)), 0.);
+    assert!(passes
+        .iter()
+        .any(|p| p.entry == "blur" && p.params[21][0] == spatial.grain));
+    let cancel = AtomicBool::new(false);
+    let img = image(2048, 40);
+    let recipe = EditRecipe {
+        film: Some(film),
+        seed: 17,
+        ..Default::default()
+    };
+    let whole = renderer
+        .render_tiled(&img, &recipe, RenderOptions::default(), &cancel, (2048, 0))
+        .unwrap();
+    let tiles = renderer
+        .render_tiled(&img, &recipe, RenderOptions::default(), &cancel, (128, 0))
+        .unwrap();
+    assert_eq!(whole.data, tiles.data, "grain blur must not seam tiles");
+}
+
 fn gpu_pack_flags_non_finite(renderer: &Renderer) {
     let cancel = AtomicBool::new(false);
     let source = renderer.upload(&image(1, 1), &cancel).unwrap();
@@ -924,7 +1212,7 @@ fn gpu_rgba8_and_tiling(renderer: &Renderer) {
         assert_eq!(packed.png().unwrap(), plain.png().unwrap());
     }
     let plan = renderer
-        .plan_source(&img, &recipe, rgba8, None, None)
+        .plan_source(&img, &recipe, rgba8, None, Look::plain())
         .unwrap();
     assert_eq!(plan.tiles.len(), 1);
     assert_eq!(plan.passes.last().unwrap().entry, "output");
@@ -938,7 +1226,7 @@ fn gpu_rgba8_and_tiling(renderer: &Renderer) {
     );
     let tables = plan.tables.clone().unwrap();
     let again = renderer
-        .plan_source(&img, &recipe, rgba8, None, None)
+        .plan_source(&img, &recipe, rgba8, None, Look::plain())
         .unwrap();
     assert!(
         Arc::ptr_eq(&tables, again.tables.as_ref().unwrap()),
@@ -1087,7 +1375,9 @@ fn gpu_monochrome(renderer: &Renderer) {
                 .render(&source, &recipe, RenderOptions::default(), &cancel)
                 .unwrap();
             for (pixel, value) in rendered.data.as_chunks::<3>().0.iter().zip(expected) {
-                let linear: f64 = value * 2f64.powf(exposure as f64);
+                // The digital tone curve maps neutrals the same in any primaries.
+                let scene: f64 = value * 2f64.powf(exposure as f64);
+                let linear = scene.powf(1.63) / (scene.powf(1.63) + 0.093);
                 let encoded = ((1.055 * linear.powf(1. / 2.4) - 0.055) * 65535.).round() as u16;
                 assert_eq!(pixel[0], pixel[1]);
                 assert_eq!(pixel[1], pixel[2]);
@@ -1297,6 +1587,7 @@ fn spektrafilm_parity() {
         orientation: 1,
         data: quantized.iter().map(|&v| v as f32 / 65535.).collect(),
         white_balance: image(1, 1).white_balance,
+        color_mode_calibration: None,
     };
     let recipe = EditRecipe {
         film: Some(FilmSettings {
@@ -1306,7 +1597,7 @@ fn spektrafilm_parity() {
         ..Default::default()
     };
     let rendered = renderer
-        .render(&source, &recipe, RenderOptions::default(), &cancel)
+        .render_spektrafilm(&source, &recipe, &cancel)
         .unwrap();
     let mut worst = 0u16;
     for (got, want) in rendered.data.iter().zip(&reference) {
@@ -1338,6 +1629,9 @@ fn gpu_pipeline() {
     gpu_bw_film(&renderer);
     gpu_rgba8_and_tiling(&renderer);
     gpu_pack_flags_non_finite(&renderer);
+    gpu_tone_and_levels(&renderer);
+    gpu_grain_blur_tiles(&renderer);
+    gpu_film_scanner_levels(&renderer);
     let img = image(96, 64);
     let cancel = AtomicBool::new(false);
     let recipe = EditRecipe {
@@ -1642,7 +1936,7 @@ fn gpu_pipeline() {
             ..Default::default()
         };
         let rendered = renderer
-            .render(&flat, &recipe, RenderOptions::default(), &cancel)
+            .render_spektrafilm(&flat, &recipe, &cancel)
             .unwrap();
         let expected = expected.map(|v: f64| {
             ((if v <= 0.0031308 {

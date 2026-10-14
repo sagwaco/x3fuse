@@ -288,6 +288,7 @@ mod tests {
                 xyz_to_camera: [1., 0., 0., 0., 1., 0., 0., 0., 1.],
                 as_shot_neutral: [1.; 3],
             },
+            color_mode_calibration: None,
         };
         for orientation in 1..=8 {
             image.orientation = orientation;
@@ -418,6 +419,7 @@ mod tests {
                     xyz_to_camera: [1., 0., 0., 0., 1., 0., 0., 0., 1.],
                     as_shot_neutral: [1.; 3],
                 },
+                color_mode_calibration: None,
             };
             let recipe = EditRecipe {
                 pitch,
