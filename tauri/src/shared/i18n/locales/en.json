@@ -51,7 +51,7 @@
   "settings.cineon.help": "Use a Cineon-style flat tone curve for TIFF output",
   "settings.color_mode": "Sigma color mode",
   "settings.color_mode.off": "Off",
-  "settings.color_mode.help": "Applies a Sigma Photo Pro color mode. TIFF exports apply the mode to the image. DNG exports keep the RAW data, add each available mode as a camera profile, and select this mode. Merrill cameras support Standard to FOV Classic Blue. dp Quattro cameras support all modes. Other cameras export without a color mode.",
+  "settings.color_mode.help": "Applies a Sigma Photo Pro color mode to the TIFF image. Merrill cameras support Standard to FOV Classic Blue. dp Quattro cameras support all modes. If a photo cannot use the mode, such as a photo shot in Monochrome, the export uses Standard. Other cameras export without a color mode. DNG exports always include every color mode as a camera profile.",
   "settings.debug_logging": "Debug logging",
   "settings.debug_logging.help": "Enable detailed debug logging for troubleshooting",
   "settings.debug_logs": "Debug logs",

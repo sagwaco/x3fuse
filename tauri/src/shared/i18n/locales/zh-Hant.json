@@ -51,7 +51,7 @@
   "settings.cineon.help": "為 TIFF 輸出使用 Cineon 風格的平坦色調曲線",
   "settings.color_mode": "Sigma 色彩模式",
   "settings.color_mode.off": "關閉",
-  "settings.color_mode.help": "套用 Sigma Photo Pro 色彩模式。TIFF 會將模式套用到影像。DNG 保留 RAW 資料，將每個可用模式加入為相機設定檔，並選取此模式。Merrill 相機支援標準到 FOV Classic Blue，dp Quattro 相機支援所有模式。其他相機匯出時不使用色彩模式。",
+  "settings.color_mode.help": "將 Sigma Photo Pro 色彩模式套用到 TIFF 影像。Merrill 相機支援標準到 FOV Classic Blue，dp Quattro 相機支援所有模式。如果相片無法使用該模式（例如以單色拍攝的相片），則使用標準匯出。其他相機匯出時不使用色彩模式。DNG 一律將所有色彩模式包含為相機設定檔。",
   "settings.debug_logging": "偵錯日誌記錄",
   "settings.debug_logging.help": "啟用詳細的偵錯日誌以進行故障排除",
   "settings.debug_logs": "偵錯日誌",

@@ -51,7 +51,7 @@
   "settings.cineon.help": "TIFF 출력에 Cineon 스타일의 평탄한 톤 커브를 사용합니다",
   "settings.color_mode": "Sigma 컬러 모드",
   "settings.color_mode.off": "끔",
-  "settings.color_mode.help": "Sigma Photo Pro 컬러 모드를 적용합니다. TIFF는 모드를 이미지에 적용합니다. DNG는 RAW 데이터를 유지하고, 사용 가능한 각 모드를 카메라 프로파일로 추가하며, 이 모드를 선택합니다. Merrill 카메라는 표준부터 FOV Classic Blue까지, dp Quattro 카메라는 모든 모드를 지원합니다. 다른 카메라는 컬러 모드 없이 내보냅니다.",
+  "settings.color_mode.help": "Sigma Photo Pro 컬러 모드를 TIFF 이미지에 적용합니다. Merrill 카메라는 표준부터 FOV Classic Blue까지, dp Quattro 카메라는 모든 모드를 지원합니다. 모노크롬으로 촬영한 사진처럼 모드를 사용할 수 없으면 표준으로 내보냅니다. 다른 카메라는 컬러 모드 없이 내보냅니다. DNG에는 항상 모든 컬러 모드가 카메라 프로파일로 포함됩니다.",
   "settings.debug_logging": "디버그 로깅",
   "settings.debug_logging.help": "문제 해결을 위한 자세한 디버그 로그를 활성화합니다",
   "settings.debug_logs": "디버그 로그",

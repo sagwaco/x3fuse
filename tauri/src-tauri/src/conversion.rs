@@ -167,18 +167,20 @@ pub fn process_options(settings: &BatchSettings, opcodes: PathBuf) -> x3f_core::
         dng_highlight_recovery: settings.output_format == OutputFormat::Dng
             && settings.dng_highlight_recovery,
         cineon: settings.output_format == OutputFormat::Tiff && settings.cineon,
-        // TIFF Color Modes need rendered color without Cineon. Other formats ignore the mode.
-        color_mode: settings
-            .color_mode
-            .as_deref()
-            .filter(|_| match settings.output_format {
-                OutputFormat::Dng => true,
-                OutputFormat::Tiff => {
-                    !settings.cineon && settings.color_profile != ColorProfile::None
-                }
-                _ => false,
-            })
-            .and_then(|mode| mode.parse().ok()),
+        // DNG always embeds every Color Mode profile, with the as-shot mode as
+        // the default. TIFF needs rendered color without Cineon. Other formats ignore the mode.
+        color_mode: match settings.output_format {
+            OutputFormat::Dng => Some(x3f_core::ColorMode::AsShot),
+            OutputFormat::Tiff
+                if !settings.cineon && settings.color_profile != ColorProfile::None =>
+            {
+                settings
+                    .color_mode
+                    .as_deref()
+                    .and_then(|mode| mode.parse().ok())
+            }
+            _ => None,
+        },
         opcodes_dir: (settings.output_format == OutputFormat::Dng
             && !settings.dng_highlight_recovery)
             .then_some(opcodes),
@@ -187,8 +189,8 @@ pub fn process_options(settings: &BatchSettings, opcodes: PathBuf) -> x3f_core::
 }
 
 /// Converts with the selected Color Mode. If core cannot use the mode for this
-/// file, such as an unsupported camera or a Monochrome as-shot mode, it converts
-/// again without the mode and returns a warning.
+/// file, such as a Merrill-only mode set or a photo shot in Monochrome, it uses
+/// Standard. If the camera has no Color Modes, it converts without a mode.
 fn convert(
     input: &Path,
     output: &Path,
@@ -197,27 +199,51 @@ fn convert(
     cancel: &std::sync::atomic::AtomicBool,
     mut on_stage: impl FnMut(x3f_core::ConversionStage),
 ) -> Result<Vec<String>, String> {
-    match x3f_core::convert_file(input, output, format, options, cancel, &mut on_stage) {
-        Err(error) if !matches!(error, x3f_core::Error::Cancelled) => {
-            let Some(mode) = options.color_mode else {
-                return Err(error.to_string());
-            };
-            let options = x3f_core::ProcessOptions {
-                color_mode: None,
-                ..options.clone()
-            };
-            let report = x3f_core::convert_file(input, output, format, &options, cancel, on_stage)
-                .map_err(|e| e.to_string())?;
-            Ok(
-                std::iter::once(format!("Exported without the {mode} color mode: {error}"))
-                    .chain(report.warnings)
-                    .collect(),
-            )
+    use x3f_core::ColorMode::{AsShot, Standard};
+    let requested = options.color_mode;
+    let mut options = options.clone();
+    let mut reason = String::new();
+    // As shot is the DNG default, so a camera without Color Modes is not a warning.
+    let mut quiet = false;
+    // Read the camera's modes first, so that an unusable mode costs no decode.
+    if let Some(mode) = requested {
+        match x3f_core::Reader::open(input).and_then(|mut reader| reader.available_color_modes()) {
+            Ok(modes) if modes.contains(&Standard) => {
+                if mode != AsShot && !modes.contains(&mode) {
+                    options.color_mode = Some(Standard);
+                    reason = "this camera does not have it".into();
+                }
+            }
+            result => {
+                options.color_mode = None;
+                reason = result.map_or_else(|e| e.to_string(), |_| "no color modes".into());
+                quiet = format == x3f_core::OutputFormat::Dng && mode == AsShot;
+            }
         }
-        result => result
-            .map(|report| report.warnings)
-            .map_err(|e| e.to_string()),
     }
+    let report = loop {
+        match x3f_core::convert_file(input, output, format, &options, cancel, &mut on_stage) {
+            // Core reports an unusable mode as invalid data. ponytail: an as-shot
+            // Monochrome or Sepia photo decodes twice, because core does not tell
+            // the as-shot mode before the decode.
+            Err(x3f_core::Error::InvalidData(error)) if options.color_mode.is_some() => {
+                options.color_mode = (options.color_mode != Some(Standard)).then_some(Standard);
+                reason = error;
+            }
+            result => break result.map_err(|e| e.to_string())?,
+        }
+    };
+    let used = options.color_mode;
+    let warning = match (requested, used) {
+        (Some(mode), Some(used)) if used != mode => Some(format!(
+            "Used the {used} color mode instead of {mode}: {reason}"
+        )),
+        (Some(mode), None) if !quiet => {
+            Some(format!("Exported without the {mode} color mode: {reason}"))
+        }
+        _ => None,
+    };
+    Ok(warning.into_iter().chain(report.warnings).collect())
 }
 
 async fn process_file(
@@ -675,7 +701,8 @@ mod tests {
         };
         let mode =
             |settings: &BatchSettings| process_options(settings, "opcodes".into()).color_mode;
-        assert_eq!(mode(&settings), Some(x3f_core::ColorMode::FCBlue));
+        // DNG always embeds every Color Mode profile, with the as-shot default.
+        assert_eq!(mode(&settings), Some(x3f_core::ColorMode::AsShot));
         settings.output_format = OutputFormat::Tiff;
         assert_eq!(mode(&settings), Some(x3f_core::ColorMode::FCBlue));
         settings.cineon = true;
@@ -719,8 +746,22 @@ mod tests {
                 &cancel,
                 |_| {},
             );
-            assert!(warnings.unwrap()[0].contains("Sunset Red"));
+            let warnings = warnings.unwrap();
+            assert!(warnings[0].contains("Standard color mode instead of Sunset Red"));
             assert!(output.is_file());
+            let output = dir.path().join("c.dng");
+            let dng = process_options(&BatchSettings::default(), "opcodes".into());
+            let warnings = convert(
+                Path::new(&merrill),
+                &output,
+                x3f_core::OutputFormat::Dng,
+                &dng,
+                &cancel,
+                |_| {},
+            );
+            assert!(warnings.is_ok());
+            let bytes = std::fs::read(&output).unwrap();
+            assert!(bytes.windows(16).any(|w| w == b"FOV Classic Blue"));
         }
     }
 }

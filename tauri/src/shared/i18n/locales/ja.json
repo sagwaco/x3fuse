@@ -51,7 +51,7 @@
   "settings.cineon.help": "TIFF出力にCineon風のフラットなトーンカーブを使用します",
   "settings.color_mode": "Sigmaカラーモード",
   "settings.color_mode.off": "オフ",
-  "settings.color_mode.help": "Sigma Photo Proのカラーモードを適用します。TIFFではモードを画像に適用します。DNGではRAWデータを保持したまま、使用できる各モードをカメラプロファイルとして追加し、このモードを選択します。Merrillカメラは標準からFOV Classic Blueまで、dp Quattroカメラはすべてのモードに対応します。その他のカメラはカラーモードなしで書き出します。",
+  "settings.color_mode.help": "Sigma Photo ProのカラーモードをTIFF画像に適用します。Merrillカメラは標準からFOV Classic Blueまで、dp Quattroカメラはすべてのモードに対応します。モノクロで撮影した写真など、モードを使用できない場合は標準で書き出します。その他のカメラはカラーモードなしで書き出します。DNGには常にすべてのカラーモードがカメラプロファイルとして含まれます。",
   "settings.debug_logging": "デバッグログ",
   "settings.debug_logging.help": "トラブルシューティング用の詳細なデバッグログを有効にする",
   "settings.debug_logs": "デバッグログ",

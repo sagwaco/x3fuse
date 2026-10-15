@@ -73,7 +73,7 @@ export interface ConversionSettings {
   dngHighlightRecovery: boolean
   /** Cineon-style flat tone curve for TIFF. */
   cineon: boolean
-  /** Sigma Color Mode for DNG and TIFF; null exports without one. */
+  /** Sigma Color Mode for TIFF; null exports without one. DNG always embeds every mode. */
   colorMode: ColorMode | null
   /** null = write next to each input file; string = custom output directory. */
   outputDirectory: string | null
@@ -192,11 +192,10 @@ export const shouldShowDngHighlightRecoveryOption = (f: OutputFormat): boolean =
 
 export const shouldShowCineonOption = (f: OutputFormat): boolean => f === 'tiff'
 
-/** x3fuse-core applies a Color Mode to DNG, and to TIFF with a color profile and without Cineon. */
+/** x3fuse-core applies a Color Mode to TIFF with a color profile and without Cineon. */
 export const shouldShowColorModeOption = (
   s: Pick<ConversionSettings, 'outputFormat' | 'cineon' | 'colorProfile'>
-): boolean =>
-  s.outputFormat === 'dng' || (s.outputFormat === 'tiff' && !s.cineon && s.colorProfile !== 'none')
+): boolean => s.outputFormat === 'tiff' && !s.cineon && s.colorProfile !== 'none'
 
 /** Options captured once for a conversion batch. */
 export type BatchConversionSettings = Pick<

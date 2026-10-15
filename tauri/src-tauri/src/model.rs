@@ -68,8 +68,8 @@ pub struct BatchSettings {
     pub color_profile: ColorProfile,
     pub dng_highlight_recovery: bool,
     pub cineon: bool,
-    /// Sigma Color Mode name, such as "as-shot" or "Vivid", for DNG and TIFF.
-    /// None keeps the output without a Color Mode.
+    /// Sigma Color Mode name, such as "as-shot" or "Vivid", for TIFF.
+    /// None keeps the TIFF without a Color Mode. DNG always embeds every mode.
     #[serde(default)]
     pub color_mode: Option<String>,
     pub output_directory: Option<PathBuf>,

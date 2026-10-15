@@ -173,17 +173,25 @@ it('updates export settings through native menus and leaves them unchanged on di
   expect(useQueueStore.getState().draft!.settings.concurrency).toBe(2)
 })
 
-it('offers Sigma color modes for DNG and color TIFF exports only', async () => {
+it('offers Sigma color modes for color TIFF exports only', async () => {
   render(<ExportScreen />)
   const mode = (): HTMLElement | undefined =>
     screen
       .queryAllByRole('button', { name: t('settings.color_mode'), exact: true })
       .find((button) => button.getAttribute('aria-haspopup') === 'menu')
+  // DNG always embeds every color mode.
+  expect(mode()).toBeUndefined()
+  act(() => useQueueStore.getState().updateDraft({ outputFormat: 'tiff' }))
   invoke.mockResolvedValueOnce('FCBlue')
   fireEvent.keyDown(mode()!, { key: 'ArrowDown' })
+  expect(invoke.mock.lastCall?.[1].items[0]).toEqual({
+    value: 'off',
+    label: t('settings.color_mode.off'),
+    checked: true
+  })
   await waitFor(() => expect(useQueueStore.getState().draft!.settings.colorMode).toBe('FCBlue'))
   expect(screen.getByText('FOV Classic Blue')).toBeTruthy()
-  act(() => useQueueStore.getState().updateDraft({ outputFormat: 'tiff', cineon: true }))
+  act(() => useQueueStore.getState().updateDraft({ cineon: true }))
   expect(mode()).toBeUndefined()
   act(() => useQueueStore.getState().updateDraft({ cineon: false, colorProfile: 'none' }))
   expect(mode()).toBeUndefined()
