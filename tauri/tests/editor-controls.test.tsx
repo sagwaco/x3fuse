@@ -310,7 +310,8 @@ it('selects the logged camera profile and separates camera matching from film st
     t('editor.negativeFilm'),
     t('editor.slideFilm'),
     t('editor.cinemaFilm'),
-    t('editor.bwFilm')
+    t('editor.bwFilm'),
+    t('editor.fullSpectrum')
   ])
   fireEvent.click(screen.getByRole('button', { name: 'Forest Green' }))
   expect(change).toHaveBeenLastCalledWith({
@@ -320,6 +321,86 @@ it('selects the logged camera profile and separates camera matching from film st
   })
   fireEvent.click(screen.getByRole('button', { name: 'Kodak Portra 400' }))
   expect(change.mock.lastCall?.[0].cameraProfile).toBeNull()
+})
+
+it('selects and restores Aerochrome with the existing camera and film recipe', () => {
+  editor.setState({
+    session: {
+      ...editor.getState().session!,
+      cameraProfiles: [{ id: 'FCBlue', name: 'FOV Classic Blue' }]
+    }
+  })
+  const initial: EditRecipe = {
+    ...defaultRecipe(),
+    temperature: 2335,
+    tint: 115,
+    monochrome: { filter: 'green' },
+    film: { ...DEFAULT_FILM, film: 20, paper: 8, evFilm: 0.5 }
+  }
+  render(<Controls initial={initial} />)
+  chooseFilm(t('editor.aerochrome'))
+  expect(change.mock.lastCall?.[0]).toMatchObject({
+    cameraProfile: 'FCBlue',
+    monochrome: null,
+    film: { film: 15, paper: 0, negative: true, evFilm: 0.5 }
+  })
+  const saved: EditRecipe = JSON.parse(JSON.stringify({ ...initial, ...change.mock.lastCall?.[0] }))
+  expect(saved.temperature).toBe(2335)
+  expect(saved.tint).toBe(115)
+  const pasted = pasteRecipe(saved, defaultRecipe())
+  act(() => setRecipe(pasted))
+  expect(
+    screen.getByText(t('editor.aerochrome'), { selector: '[data-sidebar-page] *' })
+  ).toBeTruthy()
+  picker(t('editor.filmStock'))
+  expect(screen.getByRole('button', { name: t('editor.aerochrome') }).ariaPressed).toBe('true')
+  expect(screen.getByText(t('editor.aerochromeHelp'))).toBeTruthy()
+  darkroom()
+  expect(screen.queryByText(t('editor.paperStock'))).toBeNull()
+  chooseFilm('Kodak Ektachrome 100')
+  expect(change.mock.lastCall?.[0].cameraProfile).toBeNull()
+  expect(
+    screen.getByText('Kodak Ektachrome 100', { selector: '[data-sidebar-page] *' })
+  ).toBeTruthy()
+})
+
+it('does not offer an uncalibrated Aerochrome preview when FCBlue is missing', async () => {
+  editor.setState({ session: { ...editor.getState().session!, sessionId: 'no-fcblue' } })
+  render(<Controls />)
+  picker(t('editor.filmStock'))
+  const button = screen.getByRole('button', { name: t('editor.aerochrome') }) as HTMLButtonElement
+  expect(button.disabled).toBe(true)
+  expect(screen.getByText(t('editor.aerochromeHelp'), { exact: false }).textContent).toContain(
+    t('editor.aerochromeUnavailable')
+  )
+  fireEvent.click(button)
+  expect(change).not.toHaveBeenCalled()
+  await waitFor(() => expect(renderThumbnail).toHaveBeenCalled())
+  expect(renderThumbnail.mock.calls.some(([recipe]) => recipe.cameraProfile === 'FCBlue')).toBe(
+    false
+  )
+})
+
+it('identifies saved Aerochrome edits and explains the fallback on a camera without FCBlue', () => {
+  const pasted = pasteRecipe(
+    {
+      ...defaultRecipe(),
+      cameraProfile: 'FCBlue',
+      film: { ...DEFAULT_FILM, film: 15, negative: true }
+    },
+    defaultRecipe()
+  )
+  render(<Controls initial={pasted} />)
+  expect(
+    screen.getByText(t('editor.aerochrome'), { selector: '[data-sidebar-page] *' })
+  ).toBeTruthy()
+  picker(t('editor.filmStock'))
+  const button = screen.getByRole('button', { name: t('editor.aerochrome') }) as HTMLButtonElement
+  expect(button.ariaPressed).toBe('true')
+  expect(button.disabled).toBe(true)
+  expect(screen.getByText(t('editor.aerochromeHelp'), { exact: false }).textContent).toContain(
+    t('editor.aerochromeUnavailable')
+  )
 })
 
 it('starts white balance from the camera reading so leaving As shot does not jump', () => {

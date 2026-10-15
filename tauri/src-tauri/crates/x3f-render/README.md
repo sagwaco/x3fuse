@@ -28,6 +28,17 @@ to the recipe's `denoise` when preparing the RAW; changing that setting requires
 preparing it again. The renderer does not denoise twice. Other adjustments reuse
 the prepared float image. Camera-calibrated temperature/tint applies relative
 sensor-channel gains, normalized to green to preserve exposure.
+The white-balance picker validates the recovered sensor values. It accepts
+negative visible RGB components when all sensor values are positive, as can
+occur in full spectrum captures through a three-band filter.
+
+The frontend's Aerochrome-style preset uses `cameraProfile: "FCBlue"`,
+`film.film: 15` (Ektachrome 100), `film.negative: true`, and `monochrome: null`.
+It uses the existing CAMF and spectral film stages without a new stock index.
+This is a full spectrum Foveon approximation, not measured Aerochrome film data
+or a separation of visible and near-IR bands. White balance must be set for the
+capture filter. Attach the file's camera profiles to `PreparedImage` for both
+preview and export, as with other camera looks.
 
 Processing is geometric sampling → white balance/exposure → optional sensor-layer
 monochrome → highlights/shadows → optional spectral film → contrast/saturation/vibrance/HSL/curves

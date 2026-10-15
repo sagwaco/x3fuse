@@ -194,21 +194,24 @@ pub fn pick_white_balance(
             }
         }
     }
-    if rgb.iter().any(|&v| v <= 1e-5) || rgb.iter().copied().fold(0., f64::max) > 16. {
+    if rgb.iter().any(|v| !v.is_finite() || v.abs() > 16.) {
         return Err(
             "Choose a neutral midtone, away from clipped highlights or deep shadows".into(),
         );
     }
     let inv = inverse(image.white_balance.camera_to_rgb).map_err(|e| e.to_string())?;
+    // Full spectrum can produce negative visible RGB with valid positive sensor values.
     // M already contains the as-shot sensor gains. Its inverse returns the
     // original camera neutral directly; multiplying by as-shot neutral again
     // would apply the camera calibration twice.
     let target = vector(inv, rgb);
-    let target = target.map(|v| v / target[1]);
-    if target.iter().any(|&v| !v.is_finite() || v <= 0.) {
+    if target.iter().any(|&v| !v.is_finite() || v <= 1e-5) {
         return Err("This point cannot define a camera neutral".into());
     }
-    Ok(fit_neutral(&image.white_balance, target))
+    Ok(fit_neutral(
+        &image.white_balance,
+        target.map(|v| v / target[1]),
+    ))
 }
 /// The temperature and tint the sliders show for the camera's own white balance.
 pub fn as_shot_white_balance(cal: &WhiteBalanceCalibration) -> (f32, f32) {
@@ -353,5 +356,43 @@ mod tests {
         let m = white_balance_matrix(&calibration, Some(k), t).unwrap();
         let output = vector(m, scene.map(f64::from));
         assert!((output[0] - output[1]).abs() < 1e-4 && (output[2] - output[1]).abs() < 1e-4);
+    }
+
+    #[test]
+    fn picker_accepts_signed_rgb_but_requires_valid_sensor_values() {
+        let calibration = WhiteBalanceCalibration {
+            camera_to_rgb: [1.25, 0., 0., 0., 1., 0., -2., 0., 13. / 3.],
+            xyz_to_camera: [1., 0., 0., 0., 1., 0., 0., 0., 1.],
+            as_shot_neutral: [0.8, 1., 0.6],
+        };
+        let sensor = neutral(&calibration, 2335., 115.).map(|v| v * 0.18);
+        let rgb = vector(calibration.camera_to_rgb, sensor).map(|v| v as f32);
+        assert!(rgb[2] < 0.);
+        let mut image = SceneLinearImage {
+            data: rgb.repeat(25),
+            width: 5,
+            height: 5,
+            orientation: 1,
+            white_balance: calibration,
+            color_mode_calibration: None,
+        };
+        let (k, t) = pick_white_balance(&image, &EditRecipe::default(), 0.5, 0.5).unwrap();
+        assert!((k - 2335.).abs() <= 1. && (t - 115.).abs() <= 1.);
+        let output = vector(
+            white_balance_matrix(&calibration, Some(k), t).unwrap(),
+            rgb.map(f64::from),
+        );
+        assert!((output[0] - output[1]).abs() < 1e-4 && (output[2] - output[1]).abs() < 1e-4);
+        for invalid in [
+            [0.; 3],
+            [1e-8; 3],
+            [-0.1, 0.2, 0.3],
+            [100.; 3],
+            [f32::NAN; 3],
+            [f32::INFINITY; 3],
+        ] {
+            image.data = invalid.repeat(25);
+            assert!(pick_white_balance(&image, &EditRecipe::default(), 0.5, 0.5).is_err());
+        }
     }
 }

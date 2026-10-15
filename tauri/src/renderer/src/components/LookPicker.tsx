@@ -25,6 +25,7 @@ const FILMS = stocks
   .filter((stock) => !stock.isPaper)
   .sort((a, b) => FAMILIES.indexOf(family(a)) - FAMILIES.indexOf(family(b)))
 const PAPERS = stocks.filter((stock) => stock.isPaper)
+const AEROCHROME_FILM = FILMS.find((stock) => stock.key === 'kodak_ektachrome_100')!
 /** Black-and-white film prints only on black-and-white paper, and color on color. */
 const sameModel = (a: Stock | undefined, b: Stock): boolean => !!a?.monochrome === !!b.monochrome
 
@@ -32,6 +33,7 @@ interface Look {
   id: string
   name: string
   group?: string
+  disabled?: boolean
   recipe: EditRecipe
 }
 
@@ -47,10 +49,12 @@ function useThumbnails(looks: Look[]): [Record<string, string | undefined>, (id:
   const renderThumbnail = useEditorStore((state) => state.renderThumbnail)
   const [latest, setLatest] = useState<Record<string, string>>({})
   const [attempt, setAttempt] = useState(0)
-  const keyed = looks.map((look) => ({
-    ...look,
-    key: `${sessionId}:${JSON.stringify(look.recipe)}`
-  }))
+  const keyed = looks
+    .filter((look) => !look.disabled)
+    .map((look) => ({
+      ...look,
+      key: `${sessionId}:${JSON.stringify(look.recipe)}`
+    }))
   const signature = keyed.map((look) => look.key).join('|')
   useEffect(() => {
     if (!idle || !signature) return
@@ -103,6 +107,13 @@ export function LookPicker({
   const cameraProfiles = useEditorStore((state) => state.session?.cameraProfiles)
   const base = recipe.film ?? DEFAULT_FILM
   const filter = recipe.monochrome?.filter ?? 'neutral'
+  const hasFCBlue = !!cameraProfiles?.some((profile) => profile.id === 'FCBlue')
+  const aerochrome =
+    !!recipe.film &&
+    base.film === AEROCHROME_FILM.index &&
+    base.negative &&
+    recipe.cameraProfile === 'FCBlue' &&
+    !recipe.monochrome
   // A stock comes with the print paper it was designed for, else keeps a paper it can print on.
   const paper = (stock: Stock): number =>
     (PAPERS.find((candidate) => candidate.key === stock.targetPaperKey) ??
@@ -150,7 +161,27 @@ export function LookPicker({
                 ? { filter: FILM_MONOCHROME_FILTERS.includes(filter) ? filter : 'neutral' }
                 : null
             }
-          }))
+          })),
+          {
+            id: 'aerochrome',
+            name: t('editor.aerochrome'),
+            group: t('editor.fullSpectrum'),
+            disabled: !hasFCBlue,
+            recipe: {
+              ...recipe,
+              cameraProfile: 'FCBlue',
+              monochrome: null,
+              film: {
+                ...base,
+                ...(recipe.film && base.film === AEROCHROME_FILM.index
+                  ? {}
+                  : filmHalationDefaults(AEROCHROME_FILM.index)),
+                film: AEROCHROME_FILM.index,
+                paper: paper(AEROCHROME_FILM),
+                negative: true
+              }
+            }
+          }
         ]
       : PAPERS.filter((stock) =>
           sameModel(
@@ -176,7 +207,9 @@ export function LookPicker({
         ? 'negative'
         : PAPERS.find((stock) => stock.index === base.paper)?.key
       : recipe.film
-        ? FILMS.find((stock) => stock.index === recipe.film?.film)?.key
+        ? aerochrome
+          ? 'aerochrome'
+          : FILMS.find((stock) => stock.index === recipe.film?.film)?.key
         : recipe.monochrome
           ? 'Monochrome'
           : looks.some((look) => look.id === cameraProfile)
@@ -194,8 +227,15 @@ export function LookPicker({
                 {look.group}
               </h2>
             )}
+            {look.id === 'aerochrome' && (
+              <p className="col-span-3 text-xs leading-relaxed text-neutral-400">
+                {t('editor.aerochromeHelp')}
+                {!hasFCBlue && ` ${t('editor.aerochromeUnavailable')}`}
+              </p>
+            )}
             <button
               type="button"
+              disabled={look.disabled}
               aria-pressed={look.id === selected}
               onClick={() =>
                 change({
@@ -244,7 +284,16 @@ export function LookPicker({
       {kind === 'film' && (
         // Positioned after the button, so it sits above the button's ::after.
         <span className="relative">
-          <HelpTooltip label={caption} text={t('editor.filmHelp')} />
+          <HelpTooltip
+            label={caption}
+            text={t(
+              aerochrome
+                ? hasFCBlue
+                  ? 'editor.aerochromeHelp'
+                  : 'editor.aerochromeUnavailable'
+                : 'editor.filmHelp'
+            )}
+          />
         </span>
       )}
       <ChevronRight aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-neutral-500" />

@@ -1106,6 +1106,44 @@ mod tests {
                 assert_eq!(fallback.rgb16(), standard.rgb16());
             }
         }
+        let film = EditRecipe {
+            film: Some(crate::FilmSettings {
+                film: 15,
+                negative: true,
+                grain: false,
+                ..Default::default()
+            }),
+            ..recipe.clone()
+        };
+        let saved: EditRecipe =
+            serde_json::from_str(&serde_json::to_string(&film).unwrap()).unwrap();
+        let rendered = renderer
+            .render_prepared(&prepared, &saved, crate::RenderOptions::default(), &cancel)
+            .unwrap();
+        let preview = renderer
+            .render_prepared(
+                &prepared,
+                &saved,
+                crate::RenderOptions {
+                    rgba8: true,
+                    ..Default::default()
+                },
+                &cancel,
+            )
+            .unwrap();
+        assert_eq!(rendered.rgb8(), preview.rgb8());
+        let plain_film = renderer
+            .render_prepared(
+                &prepared,
+                &EditRecipe {
+                    camera_profile: None,
+                    ..film
+                },
+                crate::RenderOptions::default(),
+                &cancel,
+            )
+            .unwrap();
+        assert_ne!(rendered.rgb16(), plain_film.rgb16());
         let mono = renderer
             .render_prepared(
                 &prepared,

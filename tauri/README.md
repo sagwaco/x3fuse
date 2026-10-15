@@ -256,6 +256,22 @@ Light's exposure control adjusts film exposure while this mode is enabled.
 The simulation models the negative, DIR couplers, grain, halation and print paper
 using the spektrafilm model, ported from spektrafilm-rs in `x3f-render`.
 
+The film picker includes **Full spectrum > Aerochrome-style (Foveon)** for
+full spectrum captures with a physical yellow, orange, green, or 550/660/850 nm
+bandpass filter. First use the white-balance picker on a neutral object in the
+scene, then select the look and adjust exposure. The supplied DP2 Merrill
+samples use the three-band filter with uncorrected Flash white balance.
+
+This look combines the file's FOV Classic Blue calibration with Spektrafilm's
+Ektachrome 100 reversal model. It is an Aerochrome approximation. It does not
+separate the captured IR band or model Aerochrome's measured spectral response.
+The [Spektrafilm discussion](https://discuss.pixls.us/t/spektrafilm-tech-discussions/57512/46)
+describes the missing near-IR reconstruction work. The preset requires FCBlue
+calibration in the X3F file. On a file without it, the picker disables the preset
+and saved edits follow the existing Standard camera-profile fallback. The look
+uses the existing recipe fields, so save, undo, copy/paste, preview and rendered
+JPEG/TIFF export use the same settings.
+
 Double-click a slider thumb to restore its default. Grain and halation each have
 a simple strength control, with their individual settings in Advanced collapsibles.
 New edits start with the camera's as-shot framing; the crop presets include 5:7,
