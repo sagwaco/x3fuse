@@ -1,6 +1,18 @@
 import { memo, useContext, useEffect, useRef, useState } from 'react'
 import { DenoiseControls } from './DenoiseControls'
-import { ChevronDown, RotateCcw, Pipette, Plus, Trash2 } from 'lucide-react'
+import {
+  Camera,
+  ChevronDown,
+  Cloud,
+  House,
+  Lightbulb,
+  RotateCcw,
+  Pipette,
+  Plus,
+  Sun,
+  Trash2,
+  Zap
+} from 'lucide-react'
 import {
   DEFAULT_FILM,
   FILM_MONOCHROME_FILTERS,
@@ -26,6 +38,29 @@ import { LookPicker } from './LookPicker'
 /** Tracks that show which way a slider moves the picture. */
 const TEMPERATURE = 'linear-gradient(to right, #4f7cff, #d4d4d4, #ffb43d)'
 const TINT = 'linear-gradient(to right, #3fbf5a, #d4d4d4, #e14fd0)'
+/** White balance presets in kelvin at zero tint. As shot is the camera's own. */
+const WHITE_BALANCE = [
+  ['asShot', Camera, null],
+  ['daylight', Sun, 5500],
+  ['cloudy', Cloud, 6500],
+  ['shade', House, 7500],
+  ['tungsten', Lightbulb, 2850],
+  ['flash', Zap, 6000]
+] as const
+/** Maps values onto slider positions, for a slider that is not linear. */
+interface Scale {
+  to: (value: number) => number
+  from: (position: number) => number
+  /** One arrow key step, in positions. */
+  step: number
+}
+/** The extended range spaces temperature by ratio and tint finest near zero. */
+const KELVIN: Scale = { to: Math.log, from: Math.exp, step: 0.01 }
+const TINT_SCALE: Scale = {
+  to: (tint: number) => Math.asinh(tint / 100),
+  from: (position: number) => 100 * Math.sinh(position),
+  step: 0.01
+}
 const hsl = (hue: number, saturation = 75, lightness = 55): string =>
   `hsl(${hue} ${saturation}% ${lightness}%)`
 /** Color mixer bands, in the renderer's order, by hue in degrees. */
@@ -60,6 +95,7 @@ export function Adjustment({
   step = 1,
   help,
   track,
+  scale,
   change,
   reset,
   commit
@@ -72,6 +108,7 @@ export function Adjustment({
   /** Only for controls whose effect the label can't convey on its own. */
   help?: string
   track?: string
+  scale?: Scale
   change: (value: number, commit: boolean) => void
   reset: () => void
   commit: () => void
@@ -98,8 +135,19 @@ export function Adjustment({
   }, [hover])
   const disabled = busy || inactive
   const resetting = hover && shift && !disabled
+  // A drag keeps the range it started with, so the thumb stays under the pointer.
+  const [held, setHeld] = useState<{ min: number; max: number; step: number; scale?: Scale }>()
+  const range = held ?? { min, max, step, scale }
+  const fit = (value: number): number =>
+    Math.max(range.min, Math.min(range.max, Math.round(value / range.step) * range.step))
+  const map = range.scale
   return (
-    <div className="space-y-1.5 py-2">
+    <div
+      className="space-y-1.5 py-2"
+      onPointerDown={() => setHeld({ min, max, step, scale })}
+      onPointerUp={() => setHeld(undefined)}
+      onPointerCancel={() => setHeld(undefined)}
+    >
       <div className="flex items-center justify-between gap-2">
         <span className="flex min-w-0 items-center gap-1.5">
           {/* Both texts share one cell, so the label keeps its width and the pointer stays on it. */}
@@ -142,20 +190,28 @@ export function Adjustment({
           className="h-6 w-14 shrink-0 translate-x-2.5 rounded-md border border-transparent bg-transparent px-2 text-right font-mono text-xs tabular-nums text-neutral-400 transition-transform [appearance:textfield] focus:translate-x-0 focus:border-white/40 focus:bg-white/[0.03] focus:text-neutral-100 focus:outline-none disabled:opacity-40 motion-reduce:transition-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
           onChange={(event) => {
             const value = event.currentTarget.valueAsNumber
-            if (Number.isFinite(value))
-              change(Math.max(min, Math.min(max, Math.round(value / step) * step)), true)
+            if (Number.isFinite(value)) change(fit(value), true)
           }}
         />
       </div>
       <Slider
         disabled={disabled}
         aria-label={label}
-        value={value}
-        min={min}
-        max={max}
-        step={step}
+        value={map ? map.to(value) : value}
+        min={map ? map.to(range.min) : range.min}
+        max={map ? map.to(range.max) : range.max}
+        step={map?.step ?? range.step}
+        valueText={map && String(value)}
         track={track}
-        onValueChange={(value) => change(value, false)}
+        onValueChange={(value) => change(map ? fit(map.from(value)) : value, false)}
+        // Radix rounds a step onto its grid of positions, and the value rounds back.
+        onKeyStep={
+          map &&
+          ((direction, large) => {
+            const next = fit(map.from(map.to(value) + direction * (large ? 10 : 1) * map.step))
+            if (next !== value) change(next, true)
+          })
+        }
         onValueCommit={commit}
         onReset={reset}
       />
@@ -244,7 +300,13 @@ export const EditorControls = memo(function EditorControls({
   )
   const asShotTint = useEditorStore((state) => (cloud ? undefined : state.preview?.asShotTint))
   const [band, setBand] = useState(0)
+  const [extended, setExtended] = useState(false)
   const hue = BANDS[band][1]
+  const temperature = recipe.temperature ?? Math.round(asShotTemperature ?? 6500)
+  // A value past the normal range keeps its slider extended.
+  const wideTemperature = extended || temperature < 2000 || temperature > 12000
+  // As shot, Tint is a green gain, not an offset from the light source.
+  const wideTint = (extended && recipe.temperature !== null) || Math.abs(recipe.tint) > 100
   const control = (
     key: keyof EditRecipe,
     options: Partial<Parameters<typeof Adjustment>[0]> = {}
@@ -336,15 +398,26 @@ export const EditorControls = memo(function EditorControls({
         </Section>
       )}
       <Section name={t('editor.whiteBalance')} open>
+        <div
+          role="radiogroup"
+          aria-label={t('editor.whiteBalancePreset')}
+          className="grid grid-cols-3 gap-1.5"
+        >
+          {WHITE_BALANCE.map(([key, Icon, kelvin]) => (
+            <button
+              key={key}
+              type="button"
+              role="radio"
+              aria-checked={recipe.temperature === kelvin && recipe.tint === 0}
+              onClick={() => change({ temperature: kelvin, tint: 0 })}
+              className="flex flex-col items-center gap-1 rounded-lg border border-transparent px-0.5 py-1.5 text-[10px] leading-none text-neutral-400 hover:bg-white/5 hover:text-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50 aria-checked:border-white/30 aria-checked:bg-white/10 aria-checked:text-white"
+            >
+              <Icon aria-hidden="true" className="h-4 w-4" />
+              <span className="max-w-full truncate">{t(`editor.${key}`)}</span>
+            </button>
+          ))}
+        </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Button
-            size="sm"
-            variant="bordered"
-            aria-pressed={recipe.temperature === null && recipe.tint === 0}
-            onClick={() => change({ temperature: null, tint: 0 })}
-          >
-            {t('editor.asShot')}
-          </Button>
           <Button
             size="sm"
             variant="bordered"
@@ -362,10 +435,11 @@ export const EditorControls = memo(function EditorControls({
         )}
         <Adjustment
           label={t('editor.temperature')}
-          value={recipe.temperature ?? Math.round(asShotTemperature ?? 6500)}
-          min={2000}
-          max={12000}
-          step={50}
+          value={temperature}
+          min={wideTemperature ? 500 : 2000}
+          max={wideTemperature ? 50000 : 12000}
+          step={wideTemperature ? 10 : 50}
+          scale={wideTemperature ? KELVIN : undefined}
           track={TEMPERATURE}
           // Leaving As shot starts from the camera's own tint, so nothing jumps.
           change={(temperature, commit) =>
@@ -379,7 +453,16 @@ export const EditorControls = memo(function EditorControls({
           reset={() => change({ temperature: null })}
           commit={commit}
         />
-        {control('tint', { track: TINT })}
+        {control('tint', {
+          track: TINT,
+          ...(wideTint && { min: -2000, max: 2000, scale: TINT_SCALE })
+        })}
+        <ToggleRow
+          label={t('editor.extendedRange')}
+          help={t('editor.extendedRangeHelp')}
+          checked={extended}
+          onChange={setExtended}
+        />
       </Section>
       <Section name={t('editor.color')}>
         {control('saturation')}

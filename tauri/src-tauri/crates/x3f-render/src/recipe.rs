@@ -233,10 +233,12 @@ impl EditRecipe {
         range("exposure", self.exposure, -5., 5.)?;
         range("fill light", self.fill_light, -2., 2.)?;
         if let Some(t) = self.temperature {
-            range("temperature", t, 2000., 12000.)?;
+            let [lo, hi] = crate::color::EXTENDED_TEMPERATURE;
+            range("temperature", t, lo, hi)?;
         }
+        let tint = crate::color::EXTENDED_TINT;
+        range("tint", self.tint, -tint, tint)?;
         for (n, v) in [
-            ("tint", self.tint),
             ("contrast", self.contrast),
             ("highlights", self.highlights),
             ("shadows", self.shadows),

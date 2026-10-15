@@ -87,10 +87,47 @@ fn white_xyz(k: f64, tint: f64) -> [f64; 3] {
     let y = 2. * v / den;
     [x / y, 1., (1. - x - y) / y]
 }
-fn neutral(cal: &WhiteBalanceCalibration, k: f64, t: f64) -> [f64; 3] {
+/// The normal slider range, in mired and tint.
+const MIRED: [f64; 2] = [1e6 / 12000., 1e6 / 2000.];
+const TINT: f64 = 100.;
+/// The extended slider range: temperature in kelvin, and tint.
+pub(crate) const EXTENDED_TEMPERATURE: [f32; 2] = [500., 50000.];
+pub(crate) const EXTENDED_TINT: f32 = 2000.;
+fn planck(cal: &WhiteBalanceCalibration, k: f64, t: f64) -> [f64; 3] {
     let n = vector(cal.xyz_to_camera, white_xyz(k, t));
     let g = n[1].max(1e-8);
     n.map(|v| (v / g).max(1e-6))
+}
+/// The camera neutral for slider values. Past the normal range, the log
+/// neutral continues in a straight line in mired and tint from the edge.
+/// No light source has the neutral of an infrared or full-spectrum photo,
+/// but this line reaches it. Each line has one slope: temperature the slope
+/// at zero tint, and tint the slope at 5000 K. Then the two directions stay
+/// apart, and each neutral has only one pair of slider values.
+fn neutral(cal: &WhiteBalanceCalibration, k: f64, t: f64) -> [f64; 3] {
+    let m = 1e6 / k;
+    let (mc, tc) = (m.clamp(MIRED[0], MIRED[1]), t.clamp(-TINT, TINT));
+    if (m, t) == (mc, tc) {
+        return planck(cal, k, t);
+    }
+    let log = |m: f64, t: f64| planck(cal, 1e6 / m, t).map(f64::ln);
+    let mut n = log(mc, tc);
+    // The slope over one step inward from the edge.
+    if m != mc {
+        let step = (m - mc).signum();
+        let (outer, inner) = (log(mc, 0.), log(mc - step, 0.));
+        for c in 0..3 {
+            n[c] += (m - mc) * step * (outer[c] - inner[c]);
+        }
+    }
+    if t != tc {
+        let step = (t - tc).signum();
+        let (outer, inner) = (log(200., tc), log(200., tc - step));
+        for c in 0..3 {
+            n[c] += (t - tc) * step * (outer[c] - inner[c]);
+        }
+    }
+    n.map(f64::exp)
 }
 pub(crate) fn white_balance_matrix(
     cal: &WhiteBalanceCalibration,
@@ -178,33 +215,47 @@ pub fn as_shot_white_balance(cal: &WhiteBalanceCalibration) -> (f32, f32) {
     let n = cal.as_shot_neutral;
     fit_neutral(cal, [n[0] / n[1], 1., n[2] / n[1]])
 }
-/// Grid-search the slider values whose camera neutral matches `target`.
+/// Search the extended slider range for the values whose camera neutral
+/// matches `target`: a coarse grid in log kelvin and tint, then finer grids
+/// until a step is below one kelvin and one tint unit.
 fn fit_neutral(cal: &WhiteBalanceCalibration, target: [f64; 3]) -> (f32, f32) {
-    let error = |k: f64, t: f64| {
-        let n = neutral(cal, k, t);
+    let error = |lk: f64, t: f64| {
+        let n = neutral(cal, lk.exp(), t);
         (n[0] / target[0]).ln().powi(2) + (n[2] / target[2]).ln().powi(2)
     };
-    let mut best = (6500., 0., f64::INFINITY);
-    for k in (2000..=12000).step_by(100) {
-        for t in (-100..=100).step_by(5) {
-            let e = error(k as f64, t as f64);
+    let [lo, hi] = EXTENDED_TEMPERATURE.map(|k| f64::from(k).ln());
+    let edge = f64::from(EXTENDED_TINT);
+    let mut best = (6500f64.ln(), 0., f64::INFINITY);
+    for i in 0..=92 {
+        let lk = lo + (hi - lo) * i as f64 / 92.;
+        for j in -40..=40 {
+            let t = edge * j as f64 / 40.;
+            let e = error(lk, t);
             if e < best.2 {
-                best = (k as f64, t as f64, e);
+                best = (lk, t, e);
             }
         }
     }
-    let (bk, bt) = (best.0, best.1);
-    for dk in -100..=100 {
-        for dt in -5..=5 {
-            let k = (bk + dk as f64).clamp(2000., 12000.);
-            let t = (bt + dt as f64).clamp(-100., 100.);
-            let e = error(k, t);
-            if e < best.2 {
-                best = (k, t, e);
+    // Grids around the best point. A grid moves with the best point along a
+    // valley, then the next grid is a fifth of the size.
+    let (mut dk, mut dt) = ((hi - lo) / 92., edge / 40.);
+    while dk * hi.exp() > 1. || dt > 1. {
+        let (k0, t0, e0) = best;
+        for i in -5..=5 {
+            for j in -5..=5 {
+                let lk = (k0 + dk * f64::from(i) / 5.).clamp(lo, hi);
+                let t = (t0 + dt * f64::from(j) / 5.).clamp(-edge, edge);
+                let e = error(lk, t);
+                if e < best.2 {
+                    best = (lk, t, e);
+                }
             }
         }
+        if best.2 == e0 {
+            (dk, dt) = (dk / 5., dt / 5.);
+        }
     }
-    (best.0 as f32, best.1 as f32)
+    (best.0.exp().round() as f32, best.1.round() as f32)
 }
 fn eval(points: &[Point], x: f32) -> f32 {
     let next = points
@@ -231,6 +282,52 @@ pub(crate) fn curve_table(c: &Curves) -> Vec<[f32; 4]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn extended_range_reaches_full_spectrum_neutrals_and_joins_the_normal_range() {
+        // A full-spectrum DP2 Merrill. The target is the camera neutral of
+        // the mean of its scene, which no Planckian light reaches.
+        let cal = WhiteBalanceCalibration {
+            camera_to_rgb: [1., 0., 0., 0., 1., 0., 0., 0., 1.],
+            xyz_to_camera: [
+                0.8949, -0.2988, -0.1924, 0.7444, 0.2723, -0.1365, 0.3678, 0.8089, 0.3128,
+            ],
+            as_shot_neutral: [0.6198, 1., 1.1862],
+        };
+        let close = |a: [f64; 3], b: [f64; 3], tolerance: f64| {
+            (0..3).all(|c| (a[c] / b[c]).ln().abs() < tolerance)
+        };
+        // The line continues from each edge without a step.
+        for (k, t) in [
+            (2000., 0.),
+            (12000., 0.),
+            (5000., 100.),
+            (5000., -100.),
+            (2000., -100.),
+        ] {
+            let outside = neutral(&cal, k * if k < 5000. { 0.999 } else { 1.001 }, t * 1.01);
+            assert!(close(neutral(&cal, k, t), outside, 1e-3), "{k} K, tint {t}");
+        }
+        let target = [0.937, 1., 0.999];
+        let (k, t) = fit_neutral(&cal, target);
+        assert!(k < 2000. && t < -100., "{k} K, tint {t}");
+        assert!(
+            close(neutral(&cal, k.into(), t.into()), target, 2e-3),
+            "{k} K, tint {t}"
+        );
+        // Values inside the normal range keep the Planckian model.
+        assert_eq!(neutral(&cal, 5000., 20.), planck(&cal, 5000., 20.));
+        // Each neutral in the extended range has one pair of slider values.
+        for k in [500., 800., 1500., 2850., 6500., 11000., 20000., 50000.] {
+            for t in [-2000., -1380., -500., -100., 0., 60., 300., 1000., 2000.] {
+                let (fk, ft) = fit_neutral(&cal, neutral(&cal, k, t));
+                let mired = 1e6 / f64::from(fk) - 1e6 / k;
+                assert!(
+                    mired.abs() < 0.5 && (f64::from(ft) - t).abs() <= 1.,
+                    "{k} K, tint {t}: fit {fk} K, tint {ft}"
+                );
+            }
+        }
+    }
     #[test]
     fn picker_recovers_camera_neutral_without_double_white_balance() {
         let calibration = WhiteBalanceCalibration {

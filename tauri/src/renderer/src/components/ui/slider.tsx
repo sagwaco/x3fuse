@@ -6,6 +6,14 @@ import { detent } from '../../lib/detent'
 
 /** How close (in pixels) a drag must come to a detent to snap onto it. */
 const SNAP_PX = 4
+const STEP_KEYS: Record<string, 1 | -1> = {
+  ArrowRight: 1,
+  ArrowUp: 1,
+  PageUp: 1,
+  ArrowLeft: -1,
+  ArrowDown: -1,
+  PageDown: -1
+}
 
 export interface SliderProps {
   value: number
@@ -18,6 +26,10 @@ export interface SliderProps {
   onReset?: () => void
   /** CSS background for the track, e.g. a gradient showing what the slider does. */
   track?: string
+  /** The value to announce when the position is not the value. */
+  valueText?: string
+  /** Replaces the arrow and page key steps. `large` is a page key or Shift. */
+  onKeyStep?: (direction: 1 | -1, large: boolean) => void
   'aria-label'?: string
 }
 
@@ -31,6 +43,8 @@ export function Slider({
   onValueCommit,
   onReset,
   track,
+  valueText,
+  onKeyStep,
   'aria-label': label
 }: SliderProps): React.JSX.Element {
   // Bipolar ranges fill outward from zero, like a camera's exposure scale.
@@ -56,6 +70,13 @@ export function Slider({
       }}
       onPointerUp={endDrag}
       onPointerCancel={endDrag}
+      onKeyDown={(event) => {
+        const direction = STEP_KEYS[event.key]
+        if (!onKeyStep || !direction) return
+        // Radix skips its own step for a handled key.
+        event.preventDefault()
+        onKeyStep(direction, event.shiftKey || event.key.startsWith('Page'))
+      }}
       className={cn(
         'relative flex h-5 w-full touch-none select-none items-center',
         disabled && 'opacity-40'
@@ -100,6 +121,7 @@ export function Slider({
       </SliderPrimitive.Track>
       <SliderPrimitive.Thumb
         aria-label={label}
+        aria-valuetext={valueText}
         onDoubleClick={(event) => {
           if (disabled || !onReset) return
           event.preventDefault()

@@ -29,7 +29,7 @@ use std::{
     path::Path,
     sync::{
         atomic::{AtomicBool, Ordering},
-        mpsc, Arc, Mutex, MutexGuard,
+        mpsc, Arc, Mutex, MutexGuard, OnceLock,
     },
 };
 use x3f_core::SceneLinearImage;
@@ -238,6 +238,7 @@ pub struct PreparedImage {
     image: SceneLinearImage,
     camera_profiles: CameraProfiles,
     gpu: Mutex<Option<GpuSource>>,
+    as_shot: OnceLock<(f32, f32)>,
 }
 impl PreparedImage {
     pub fn new(image: SceneLinearImage, cancel: &AtomicBool) -> Result<Self, RenderError> {
@@ -246,10 +247,17 @@ impl PreparedImage {
             image,
             camera_profiles: CameraProfiles::default(),
             gpu: Mutex::new(None),
+            as_shot: OnceLock::new(),
         })
     }
     pub fn image(&self) -> &SceneLinearImage {
         &self.image
+    }
+    /// The slider values for the camera's own white balance, found once.
+    pub fn as_shot_white_balance(&self) -> (f32, f32) {
+        *self
+            .as_shot
+            .get_or_init(|| as_shot_white_balance(&self.image.white_balance))
     }
     /// Attaches the source file's calibration for camera-profile rendering.
     pub fn with_camera_profiles(mut self, camera_profiles: CameraProfiles) -> Self {

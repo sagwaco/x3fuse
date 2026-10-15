@@ -55,7 +55,23 @@ fn recipes_validate_and_round_trip() {
     }
     let tilted: EditRecipe = serde_json::from_str(r#"{"pitch":40,"yaw":-40}"#).unwrap();
     tilted.validate().unwrap();
-    for json in [r#"{"pitch":40.5}"#, r#"{"yaw":-41}"#] {
+    // The extended white balance range is valid with the switch on or off.
+    for json in [
+        r#"{"temperature":500,"tint":-2000}"#,
+        r#"{"temperature":50000,"tint":2000}"#,
+    ] {
+        serde_json::from_str::<EditRecipe>(json)
+            .unwrap()
+            .validate()
+            .unwrap();
+    }
+    for json in [
+        r#"{"pitch":40.5}"#,
+        r#"{"yaw":-41}"#,
+        r#"{"temperature":499}"#,
+        r#"{"temperature":50001}"#,
+        r#"{"tint":2001}"#,
+    ] {
         assert!(serde_json::from_str::<EditRecipe>(json)
             .unwrap()
             .validate()

@@ -327,13 +327,103 @@ it('starts white balance from the camera reading so leaving As shot does not jum
   expect(
     screen.getByRole('slider', { name: t('editor.temperature') }).getAttribute('aria-valuenow')
   ).toBe('5150')
-  expect(screen.getByRole('button', { name: t('editor.asShot') }).ariaPressed).toBe('true')
+  expect(swatch(t('editor.whiteBalancePreset'), t('editor.asShot')).ariaChecked).toBe('true')
   adjust(t('editor.temperature'), 5600)
   expect(change).toHaveBeenLastCalledWith({ temperature: 5600, tint: 7 }, true)
   adjust(t('editor.temperature'), 6000)
   expect(change).toHaveBeenLastCalledWith({ temperature: 6000 }, true)
-  fireEvent.click(screen.getByRole('button', { name: t('editor.asShot') }))
+  fireEvent.click(swatch(t('editor.whiteBalancePreset'), t('editor.asShot')))
   expect(change).toHaveBeenLastCalledWith({ temperature: null, tint: 0 })
+})
+
+it('offers common white balance presets beside the camera reading', () => {
+  render(<Controls />)
+  const preset = (name: string): HTMLElement => swatch(t('editor.whiteBalancePreset'), name)
+  fireEvent.click(preset(t('editor.tungsten')))
+  expect(change).toHaveBeenLastCalledWith({ temperature: 2850, tint: 0 })
+  act(() => setRecipe({ ...defaultRecipe(), temperature: 7500 }))
+  expect(preset(t('editor.shade')).ariaChecked).toBe('true')
+  expect(preset(t('editor.asShot')).ariaChecked).toBe('false')
+  // A tint makes it a custom balance.
+  act(() => setRecipe({ ...defaultRecipe(), temperature: 7500, tint: 4 }))
+  const group = screen.getByRole('radiogroup', { name: t('editor.whiteBalancePreset') })
+  expect(within(group).queryByRole('radio', { checked: true })).toBeNull()
+})
+
+it('extends the white balance range for infrared and full-spectrum photos', () => {
+  render(<Controls />)
+  const field = (name: string): HTMLInputElement => screen.getByRole('spinbutton', { name })
+  adjust(t('editor.temperature'), 900)
+  expect(change).toHaveBeenLastCalledWith({ temperature: 2000, tint: 7 }, true)
+  fireEvent.click(screen.getByRole('switch', { name: t('editor.extendedRange') }))
+  expect([field(t('editor.temperature')).min, field(t('editor.temperature')).max]).toEqual([
+    '500',
+    '50000'
+  ])
+  expect(field(t('editor.tint')).min).toBe('-2000')
+  adjust(t('editor.temperature'), 900)
+  expect(change).toHaveBeenLastCalledWith({ temperature: 900 }, true)
+  // The slider moves by ratio, so one step is about 1% at any temperature.
+  const slider = screen.getByRole('slider', { name: t('editor.temperature') })
+  expect(slider.getAttribute('aria-valuetext')).toBe('900')
+  fireEvent.keyDown(slider, { key: 'ArrowRight' })
+  expect(change).toHaveBeenLastCalledWith({ temperature: 910 }, true)
+  // Values where a rounded position used to give back the same value.
+  for (const [from, key, to] of [
+    [560, 'ArrowRight', 570],
+    [560, 'ArrowLeft', 550],
+    [6000, 'ArrowRight', 6060],
+    [6000, 'PageUp', 6630]
+  ] as const) {
+    act(() => setRecipe({ ...defaultRecipe(), temperature: from }))
+    fireEvent.keyDown(screen.getByRole('slider', { name: t('editor.temperature') }), { key })
+    expect(change).toHaveBeenLastCalledWith({ temperature: to }, true)
+  }
+  // As shot, Tint is a green gain and keeps its normal range.
+  act(() => setRecipe(defaultRecipe()))
+  expect(field(t('editor.tint')).min).toBe('-100')
+  // Without the switch, only a value past the normal range extends its slider.
+  fireEvent.click(screen.getByRole('switch', { name: t('editor.extendedRange') }))
+  act(() => setRecipe({ ...defaultRecipe(), temperature: 5000, tint: -700 }))
+  expect(field(t('editor.temperature')).max).toBe('12000')
+  expect(field(t('editor.tint')).min).toBe('-2000')
+  expect(
+    screen.getByRole('slider', { name: t('editor.tint') }).getAttribute('aria-valuetext')
+  ).toBe('-700')
+})
+
+it('keeps an extended slider extended while a drag brings it into the normal range', () => {
+  render(<Controls initial={{ ...defaultRecipe(), temperature: 1500 }} />)
+  vi.stubGlobal('PointerEvent', MouseEvent)
+  const proto = HTMLElement.prototype as unknown as Record<string, unknown>
+  const saved = ['setPointerCapture', 'releasePointerCapture', 'hasPointerCapture'].map((k) => [
+    k,
+    proto[k]
+  ])
+  proto.setPointerCapture = () => {}
+  proto.releasePointerCapture = () => {}
+  proto.hasPointerCapture = () => true
+  const rect = vi
+    .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+    .mockReturnValue(DOMRect.fromRect({ x: 0, y: 0, width: 100, height: 10 }))
+  try {
+    const thumb = (): HTMLElement => screen.getByRole('slider', { name: t('editor.temperature') })
+    const root = thumb().closest('[data-orientation]')!.parentElement!.closest('[data-orientation]')
+    const track = root ?? thumb().closest('[data-orientation]')!
+    fireEvent.pointerDown(track, { clientX: 30, pointerId: 1, button: 0 })
+    expect(change.mock.lastCall![0].temperature).toBeLessThan(2000)
+    // On the log scale, 41% of the track is about 3300 K. A linear slider would give 6000 K.
+    fireEvent.pointerMove(track, { clientX: 40, pointerId: 1 })
+    fireEvent.pointerMove(track, { clientX: 41, pointerId: 1 })
+    const temperature = change.mock.lastCall![0].temperature
+    expect(temperature).toBeGreaterThan(2000)
+    expect(temperature).toBeLessThan(4000)
+    fireEvent.pointerUp(track, { clientX: 41, pointerId: 1 })
+    expect(thumb().getAttribute('aria-valuemax')).toBe('12000')
+  } finally {
+    rect.mockRestore()
+    for (const [k, v] of saved) proto[k as string] = v
+  }
 })
 
 it('turns the controls on and shows the camera reading after the developing cloud leaves', () => {

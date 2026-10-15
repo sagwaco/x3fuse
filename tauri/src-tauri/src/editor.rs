@@ -889,7 +889,7 @@ impl Editor {
         let as_shot = worker
             .prepared
             .as_ref()
-            .map(|p| x3f_render::as_shot_white_balance(&p.image.image().white_balance));
+            .map(|p| p.image.as_shot_white_balance());
         drop(worker);
         let preview = RenderedPreview {
             session_id: request.session_id,
