@@ -1,6 +1,11 @@
 import { Fragment, useEffect, useState } from 'react'
 import { ChevronRight } from 'lucide-react'
-import { DEFAULT_FILM, FILM_MONOCHROME_FILTERS, type EditRecipe } from '@shared/editor'
+import {
+  DEFAULT_FILM,
+  FILM_MONOCHROME_FILTERS,
+  filmHalationDefaults,
+  type EditRecipe
+} from '@shared/editor'
 import stocks from '@shared/film-stocks.json'
 import { useEditorStore } from '../stores/editorStore'
 import { t } from '../lib/strings'
@@ -132,7 +137,15 @@ export function LookPicker({
               // Film stocks use their own color response, without a camera look.
               cameraProfile: null,
               // Positive film is scanned directly, without a print.
-              film: { ...base, film: stock.index, paper: paper(stock), negative: stock.isPositive },
+              film: {
+                ...base,
+                ...(recipe.film && base.film === stock.index
+                  ? {}
+                  : filmHalationDefaults(stock.index)),
+                film: stock.index,
+                paper: paper(stock),
+                negative: stock.isPositive
+              },
               monochrome: stock.monochrome
                 ? { filter: FILM_MONOCHROME_FILTERS.includes(filter) ? filter : 'neutral' }
                 : null

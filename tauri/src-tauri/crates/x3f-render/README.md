@@ -76,33 +76,42 @@ balance adjusts the layer gains before mixing. A final luminance projection
 removes film, grain, and channel-curve tint; all supported output profiles receive
 equal RGB channels with the appropriate transfer curve.
 
-Film rendering is the spektrafilm model, ported from spektrafilm-rs. Linear
+Film rendering follows spektrafilm experimental `28bf883`, based on the
+original spektrafilm-rs port. Linear
 sRGB is spectrally upsampled through a per-film 192x192 chromaticity LUT built
 from the bundled 81-wavelength irradiance table and the film's own log
 sensitivity - with spektrafilm's input gamut compression baked into that LUT,
 so out-of-gamut input chromaticities are handled before any per-pixel work -
-then developed against the measured density curves, coupled by DIR
-couplers with spatial inhibitor diffusion, grained by a Poisson-binomial
-particle model, printed through a dichroic enlarger solved to a per-stock
+then developed against fitted density curves and chemistry contrast, coupled
+by stock-specific Langmuir DIR couplers with Gaussian and exponential
+inhibitor diffusion, grained by a stock-calibrated sublayer particle model, printed through a dichroic enlarger solved to a per-stock
 neutral, developed on the paper's fitted curves, and scanned back to linear
 sRGB across the same 81 wavelengths. Optional halation adds spectral scatter
-and a three-bounce reflection off the film base. These are physical-model
-stages, not a baked RGB look LUT.
+and a three-bounce reflection off the film base, each with a size and strength
+per channel. Scatter uses an exponential tail. Film selection applies stock
+halation defaults and preserves the current values when the stock is unchanged.
+Output gamut compression uses the upstream OkLCh knees in the selected output
+RGB space before encoding. These stages operate on spectral film densities.
 
 The scan applies spektrafilm's scanner white and black correction: the print's
 paper white and deepest black, or a slide's clear and densest film, map to sRGB
-0.98 and 0.01, and the print (or film) exposure is corrected so mid-gray stays at
+0.98 and 0.01 before output gamut compression. The print (or film) exposure
+is corrected so mid-gray stays at
 0.184. A negative scanned directly is not corrected. In place of spektrafilm's
 auto exposure, the film exposes the camera's metered gray as its mid-gray: the
 scene value the camera's own tone curve renders as 18% gray (Sigma's Standard
 Color Mode for a prepared image, else the fitted digital curve).
 
 Halation, grain and DIR couplers are optional; `negative: true` scans the
-developed film and skips the paper entirely. Stages spektrafilm has that this
-crate omits - glare, output gamut compression, highlight boost, its own unsharp
-mask, diffusion filters and lens blur, and the coupler diffusion tail - are
-listed in [NOTICE](NOTICE). The 20 film and 8 paper indices and names are fixed
-in the bundled profiles; use `STOCKS_JSON` for the UI.
+developed film and skips the paper. The 22 film and 9 paper indices are stable;
+use `STOCKS_JSON` for the UI. Existing recipes remain readable. Renderer version
+6 invalidates older rendered previews because the calibration and models changed.
+
+Grain uses stock RMS calibration, fitted sublayers, dye-cloud blur, microstructure
+and log-domain sharpening. A local mass correction replaces upstream's global
+image normalization so tiles and cropped regions use the same local result.
+This changes the grain texture slightly. Grain amount zero skips the grain chain.
+See [NOTICE](NOTICE) for the other X3Fuse workflow differences.
 
 Spatial parameters are physical (micrometres over a 35 mm frame) and are
 converted using the whole sensor frame at the current render scale, so a crop
@@ -139,19 +148,19 @@ Checks:
 ```sh
 cargo test --manifest-path src-tauri/Cargo.toml -p x3f-render
 cargo test --manifest-path src-tauri/Cargo.toml -p x3f-render gpu_pipeline -- --ignored --nocapture
+cargo test --manifest-path src-tauri/Cargo.toml -p x3f-render gpu_experimental_reference -- --ignored --nocapture
+cargo test --manifest-path src-tauri/Cargo.toml -p x3f-render gpu_stock_grain_statistics -- --ignored --nocapture
 cargo run --release --manifest-path src-tauri/Cargo.toml -p x3f-render --example render -- input.X3F preview.png 2
 cargo run --release --manifest-path src-tauri/Cargo.toml -p x3f-render --example benchmark -- input.X3F 5
 cargo run --release --manifest-path src-tauri/Cargo.toml -p x3f-render --example benchmark -- input.X3F 5 red
 ```
 
-The explicit GPU test fails if hardware is unavailable. It covers all 160
-film/paper combinations, patches pinned against spektrafilm-rs, output encoders/profiles,
+The explicit GPU tests fail if hardware is unavailable. They cover compatible
+film/paper combinations, experimental reference patches, output encoders/profiles,
 crop/region/tile/grain consistency, GPU/CPU geometry parity, and cancellation.
-A PNG example is a 1600-pixel
-preview; JPEG/TIFF examples render native resolution. Reference math and data
-come from spektrafilm via the spektrafilm-rs revision pinned in
-[assets/PROVENANCE.md](assets/PROVENANCE.md), which also documents how to
-regenerate the pinned patches and run the optional `spektrafilm_parity` oracle.
+A PNG example is a 1600-pixel preview; JPEG/TIFF examples render native
+resolution. [assets/PROVENANCE.md](assets/PROVENANCE.md) records the experimental
+source revision, independent reference generation and checks.
 
 The bounded benchmark warms each resolution, changes exposure on every measured
 request, and reports median rendering and lossless PNG encoding separately for

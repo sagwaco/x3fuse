@@ -25,10 +25,11 @@ CHANGELOG.txt accompanies them:
   - assets/irradiance_xy_tc.npy spectral upsampling table
   - assets/neutral_print_filters.json  per-stock neutral enlarger filtration
   - assets/filters/hoya/*.csv   coloured taking-filter transmittance
+  - assets/presets/grain.toml   stock grain calibration
 
-The B&W profiles (kodak_doublex, kodak_trix, kodak_2302) and the Hoya filter
-curves come from the spektrafilm `experimental` branch, revision 28bf883
-(2026-07-08). All other data comes from the spektrafilm-rs revision below.
+The profiles, neutral filters, grain presets and Hoya filter curves come from
+spektrafilm experimental revision 28bf883. The irradiance table is unchanged
+from the spektrafilm-rs revision below.
 
 Film and paper names identify the modeled materials and do not imply
 affiliation or endorsement. "spektrafilm" is not used as X3Fuse branding.
@@ -49,7 +50,9 @@ https://github.com/turbasvin/spektrafilm-rs
 Pinned at v0.1.2, revision 9dd59b0. The WGSL kernels in src/render.wgsl and the
 Rust parameter preparation in src/film/ are a direct port of that project's
 `spektrafilm-shaders/wgsl`, `spektrafilm-core` and `spektrafilm-model` crates.
-It is also used as an external parity oracle; see assets/PROVENANCE.md.
+The current profiles, chemistry, couplers, gamut handling, grain and halation
+follow spektrafilm experimental revision 28bf883. Independent Python reference
+checks and regeneration commands are in assets/PROVENANCE.md.
 
 Spectral upsampling table
 -------------------------
@@ -57,6 +60,20 @@ Spectral upsampling table
 assets/irradiance_xy_tc.npy originates from Johannes Hanika's work for vkdt
 (https://github.com/hanatos/vkdt, https://jo.dreggn.org/vkdt/) and is
 distributed by spektrafilm under the CC BY-SA 4.0 terms above.
+
+Inverse-curve interpolation
+---------------------------
+
+The sequential interpolation search in src/film/mod.rs follows NumPy 2.4.6,
+numpy/_core/src/multiarray/compiled_base.c. Copyright (c) 2005-2025, NumPy
+Developers. Its BSD terms are in licenses/NUMPY_LICENSE.txt.
+
+Illuminants and color transforms
+--------------------------------
+
+The D65, Incandescent and Kinoton 75P samples in src/film/data.rs and the
+output color transforms use Colour 0.4.7. Copyright (c) 2013, Colour
+Developers. The BSD terms are in licenses/COLOUR_LICENSE.txt.
 
 X3Fuse modifications to the code (not to the data)
 --------------------------------------------------
@@ -70,15 +87,19 @@ X3Fuse modifications to the code (not to the data)
     pixel index, so tiles, regions and whole previews agree.
   - An added grain chroma control mixes the per-channel noise toward its
     achromatic mean.
-  - The grain blur is physical (5 um at grain size 1) instead of a fixed
-    0.65 px, and scales with the grain size, so larger grain also softens the
-    image. The particle count compensates for the discrete blur, so previews
-    show the grain strength of the export.
+  - Grain size scales particle area and optical blur. Stock RMS calibration
+    uses the fitted sublayer curves. The grain USM uses local mass correction
+    to keep tiles and cropped regions consistent; upstream uses one global
+    image scalar. The random sequence is specific to this renderer.
   - An added grain roughness control clumps the particles: a smooth random
     field anchored to native pixels varies the particle count and inversely
     the particle density, keeping the mean density.
   - `halation_midtones` gates the added halation by the blurred signal level;
     spektrafilm's separate highlight-boost stage is not ported.
+  - The recipe sets spektrafilm's per-channel scatter and halation sizes and
+    strengths. Scatter size sets the exponential decay length; the Gaussian
+    core keeps its ratio to it. Stock selection sets halation defaults from
+    the film use and antihalation tags. Saved channel overrides are preserved.
   - The enlarger is normalised against an uncompensated mid-gray card
     (`normalize_print_exposure` without `print_exposure_compensation`).
     spektrafilm's default re-solves the print exposure at the compensated film
@@ -92,19 +113,16 @@ X3Fuse modifications to the code (not to the data)
     value the camera's own tone curve renders as 18% gray as its mid-gray.
   - Blurs whose radius would round away are skipped.
   - f32 preview precision throughout, against spektrafilm's f64 export path.
-  - Stages not ported: glare, output gamut compression, highlight boost,
-    unsharp (this crate has its own sharpening), the DIR coupler diffusion
-    tail, camera/enlarger diffusion filters, camera and scanner lens blur, the
-    mallett2019 and arctic2026alpha02 front passes, development-time choice
-    (B&W stocks use spektrafilm's default middle time), the PCHIP 3D LUT
-    export path, and the s023 print curve morph.
+  - Stages not ported: glare, highlight boost, scanner unsharp masking,
+    camera/enlarger diffusion filters, camera and scanner lens blur, alternate
+    spectral upsampling methods, development-time choice, LUT export, and
+    chemistry controls beyond the existing film and paper contrast sliders.
+    B&W stocks use the default middle development time.
   - B&W stocks run through the three-channel pipeline as three identical
     channels. Each carries a third of the silver density, all channels share
     one grain draw, DIR couplers inhibit only the same layer, and per-channel
     constants take the first channel's value, as spektrafilm's
-    `match_channels` does. Grain and halation use this crate's colour
-    defaults, not the experimental branch's B&W presets for its newer
-    granularity model.
+    `match_channels` does. Grain uses the stock RMS preset.
   - A B&W negative is printed without enlarger filtration: its density is the
     same at every wavelength, so the print exposure normalisation cancels any
     filtration.

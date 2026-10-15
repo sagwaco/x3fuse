@@ -48,7 +48,7 @@ pub fn spectra_table() -> Result<Vec<f32>, RenderError> {
 }
 
 /// erf4 spectral bandpass modelling the camera UV/IR cutoff, normalised so it
-/// preserves white balance under `illuminant`.
+/// preserves the neutral spectrum reconstructed by the irradiance LUT.
 fn window(params: &[f64], sensitivity: &[[f64; 3]], illuminant: &[f64]) -> Vec<[f64; 3]> {
     if params.len() < 4 {
         return vec![[1.; 3]; N_WL];
@@ -94,7 +94,11 @@ pub fn tc_lut(
     window_params: &[f64],
     illuminant: &[f64],
 ) -> Vec<f64> {
-    let w = window(window_params, sensitivity, illuminant);
+    let white = data::illuminant_white(illuminant);
+    let sum = white.iter().sum::<f64>();
+    let (tx, ty) = data::xy_to_tc(white[0] / sum, white[1] / sum);
+    let neutral = sample_channels::<N_WL>(tx, ty, |i| spectra[i] as f64);
+    let w = window(window_params, sensitivity, &neutral);
     let sw: Vec<[f64; 3]> = (0..N_WL)
         .map(|i| std::array::from_fn(|c| sensitivity[i][c] * w[i][c]))
         .collect();
@@ -118,6 +122,10 @@ pub fn tc_lut(
 /// Sample the tc LUT with the same Mitchell-Netravali bicubic the renderer
 /// uses, for the midgray calibration that has to agree with the shader.
 pub fn sample(lut: &[f64], tx: f64, ty: f64) -> [f64; 3] {
+    sample_channels(tx, ty, |i| lut[i])
+}
+
+fn sample_channels<const C: usize>(tx: f64, ty: f64, value: impl Fn(usize) -> f64) -> [f64; C] {
     let scale = (LUT_SIZE - 1) as f64;
     let (fx, fy) = (tx * scale, ty * scale);
     let clamp = |v: f64| v.clamp(0., scale);
@@ -145,7 +153,7 @@ pub fn sample(lut: &[f64], tx: f64, ty: f64) -> [f64; 3] {
         }
         idx.clamp(0, n - 1) as usize
     };
-    let mut sum = [0.0f64; 3];
+    let mut sum = [0.0f64; C];
     let mut total = 0.0f64;
     for j in 0..4 {
         let wy = mitchell(dy - (j as f64 - 1.));
@@ -154,9 +162,9 @@ pub fn sample(lut: &[f64], tx: f64, ty: f64) -> [f64; 3] {
             let w = mitchell(dx - (i as f64 - 1.)) * wy;
             let sx = reflect(xi as isize + i as isize - 1);
             total += w;
-            let base = (sx * LUT_SIZE + sy) * 3;
-            for c in 0..3 {
-                sum[c] += w * lut[base + c];
+            let base = (sx * LUT_SIZE + sy) * C;
+            for (c, sum) in sum.iter_mut().enumerate() {
+                *sum += w * value(base + c);
             }
         }
     }
@@ -168,11 +176,32 @@ pub fn sample(lut: &[f64], tx: f64, ty: f64) -> [f64; 3] {
     sum
 }
 
-/// ACES-RGC-style radial compression toward the CIE 1931 spectral locus,
-/// baked into the tc LUT so the per-pixel path stays compression-agnostic.
-/// This is spektrafilm's default `io.input_gamut_compress.algorithm = "xy"`.
-pub fn compress_input_gamut(lut: &[f64], white: [f64; 2]) -> Vec<f64> {
-    // 380..700 nm at 5 nm, closed.
+fn ray_polygon_distance(white: [f64; 2], dir: [f64; 2], polygon: &[[f64; 2]]) -> f64 {
+    let mut t_min = f64::INFINITY;
+    for seg in polygon.windows(2) {
+        let (a, b) = (seg[0], seg[1]);
+        let e = [b[0] - a[0], b[1] - a[1]];
+        let denom = dir[0] * e[1] - dir[1] * e[0];
+        if denom.abs() <= 1e-12 {
+            continue;
+        }
+        let o = [white[0] - a[0], white[1] - a[1]];
+        let t = (-o[0] * e[1] + o[1] * e[0]) / denom;
+        let s = (-o[0] * dir[1] + o[1] * dir[0]) / denom;
+        if t > 1e-9 && (-1e-9..=1. + 1e-9).contains(&s) && t < t_min {
+            t_min = t;
+        }
+    }
+    if t_min.is_finite() {
+        t_min
+    } else {
+        f64::NAN
+    }
+}
+
+/// Build the 1024-angle inscribed hull from Spektrafilm 28bf883, with detail 5.
+fn inscribed_locus_hull(white: [f64; 2]) -> Vec<[f64; 2]> {
+    const N: usize = 1024;
     let mut locus: Vec<[f64; 2]> = (0..65)
         .map(|i| {
             let (x, y, z) = (data::CMF_X_F64[i], data::CMF_Y_F64[i], data::CMF_Z_F64[i]);
@@ -181,49 +210,88 @@ pub fn compress_input_gamut(lut: &[f64], white: [f64; 2]) -> Vec<f64> {
         })
         .collect();
     locus.push(locus[0]);
-
-    let boundary = |dir: [f64; 2]| {
-        let mut t_min = f64::INFINITY;
-        for seg in locus.windows(2) {
-            let (a, b) = (seg[0], seg[1]);
-            let e = [b[0] - a[0], b[1] - a[1]];
-            let denom = dir[0] * e[1] - dir[1] * e[0];
-            if denom.abs() <= 1e-12 {
-                continue;
-            }
-            let o = [white[0] - a[0], white[1] - a[1]];
-            let t = (-o[0] * e[1] + o[1] * e[0]) / denom;
-            let s = (-o[0] * dir[1] + o[1] * dir[0]) / denom;
-            if t > 1e-9 && (0. ..=1.).contains(&s) && t < t_min {
-                t_min = t;
-            }
-        }
-        t_min
-    };
-    // Reinhard knee at spektrafilm's default (threshold 0, limit 1, power 6).
-    let knee = |d: f64| {
-        if d > 0. {
-            d / (1. + d.powf(6.)).powf(1. / 6.)
+    let angle = |i: usize| std::f64::consts::TAU * i as f64 / N as f64;
+    let dirs: Vec<_> = (0..N).map(|i| [angle(i).cos(), angle(i).sin()]).collect();
+    let mut reach: Vec<_> = dirs
+        .iter()
+        .map(|&d| ray_polygon_distance(white, d, &locus))
+        .collect();
+    if reach.iter().any(|v| !v.is_finite()) {
+        let mut finite: Vec<_> = reach.iter().copied().filter(|v| v.is_finite()).collect();
+        finite.sort_by(f64::total_cmp);
+        let median = if finite.is_empty() {
+            1e-12
         } else {
-            d
+            (finite[(finite.len() - 1) / 2] + finite[finite.len() / 2]) * 0.5
+        };
+        for r in &mut reach {
+            if !r.is_finite() {
+                *r = median;
+            }
         }
-    };
+    }
+    // This small table uses a direct real DFT to avoid an FFT dependency.
+    let modes: Vec<[f64; 2]> = (0..=N / 2)
+        .map(|k| {
+            let weight = (-0.5 * (k as f64 / 5.).powi(2)).exp() / N as f64;
+            let mut mode = [0.; 2];
+            for (i, &r) in reach.iter().enumerate() {
+                let (s, c) = (angle(i) * k as f64).sin_cos();
+                mode[0] += r * c;
+                mode[1] += r * s;
+            }
+            mode.map(|v| v * weight)
+        })
+        .collect();
+    let smooth: Vec<_> = (0..N)
+        .map(|i| {
+            modes
+                .iter()
+                .enumerate()
+                .map(|(k, m)| {
+                    let (s, c) = (angle(i) * k as f64).sin_cos();
+                    let factor = if k == 0 || k == N / 2 { 1. } else { 2. };
+                    factor * (m[0] * c + m[1] * s)
+                })
+                .sum::<f64>()
+                .max(1e-12)
+        })
+        .collect();
+    let scale = reach
+        .iter()
+        .zip(&smooth)
+        .map(|(r, s)| r / s)
+        .fold(f64::INFINITY, f64::min);
+    let mut hull: Vec<_> = dirs
+        .iter()
+        .zip(smooth)
+        .map(|(d, r)| [white[0] + scale * r * d[0], white[1] + scale * r * d[1]])
+        .collect();
+    hull.push(hull[0]);
+    hull
+}
 
+fn compress_xy(xy: [f64; 2], white: [f64; 2], hull: &[[f64; 2]]) -> [f64; 2] {
+    let delta = [xy[0] - white[0], xy[1] - white[1]];
+    let dist = delta[0].hypot(delta[1]);
+    if dist < 1e-9 {
+        return xy;
+    }
+    let dir = delta.map(|v| v / dist);
+    let edge = ray_polygon_distance(white, dir, hull).max(1e-12);
+    let scaled = super::gamut::reinhard_knee(dist / edge, 0.815, 1.2) * edge;
+    [white[0] + dir[0] * scaled, white[1] + dir[1] * scaled]
+}
+
+/// Bake the default inscribed-hull compression into the tc LUT.
+pub fn compress_input_gamut(lut: &[f64], white: [f64; 2]) -> Vec<f64> {
+    let hull = inscribed_locus_hull(white);
     let inv = 1. / (LUT_SIZE as f64 - 1.);
     let mut out = vec![0.0f64; lut.len()];
     for i in 0..LUT_SIZE {
         for j in 0..LUT_SIZE {
             let (x, y) = data::tc_to_xy(i as f64 * inv, j as f64 * inv);
-            let delta = [x - white[0], y - white[1]];
-            let dist = (delta[0] * delta[0] + delta[1] * delta[1]).sqrt();
-            let (cx, cy) = if dist < 1e-9 {
-                (x, y)
-            } else {
-                let dir = [delta[0] / dist, delta[1] / dist];
-                let edge = boundary(dir).max(1e-12);
-                let scaled = knee(dist / edge) * edge;
-                (white[0] + dir[0] * scaled, white[1] + dir[1] * scaled)
-            };
+            let [cx, cy] = compress_xy([x, y], white, &hull);
             let (tx, ty) = data::xy_to_tc(cx, cy);
             let s = bilinear(
                 lut,
@@ -251,4 +319,147 @@ fn bilinear(lut: &[f64], ci: f64, cj: f64) -> [f64; 3] {
             + cell(i1, j0, c) * fi * (1. - fj)
             + cell(i1, j1, c) * fi * fj
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hull_vertex_rays_do_not_fall_between_edges() {
+        for white in [[0.3127, 0.329], [0.3457, 0.3585]] {
+            let hull = inscribed_locus_hull(white);
+            for vertex in &hull {
+                let delta = [vertex[0] - white[0], vertex[1] - white[1]];
+                let length = delta[0].hypot(delta[1]);
+                let reach = ray_polygon_distance(white, delta.map(|v| v / length), &hull);
+                assert!(reach.is_finite() && (reach - length).abs() < 1e-10);
+            }
+        }
+    }
+
+    #[test]
+    fn inscribed_hull_and_input_knee_match_upstream() {
+        // Expected values come from Spektrafilm 28bf883, not this port.
+        let white = [0.3127, 0.329];
+        let hull = inscribed_locus_hull(white);
+        assert_eq!(hull.len(), 1025);
+        assert_eq!(hull[0], hull[1024]);
+        let expected: [[f64; 2]; 7] = [
+            [0.6475331787387982, 0.329],
+            [0.6466905293614581, 0.33104936594080664],
+            [0.5187509448948979, 0.47411744838131176],
+            [0.3127, 0.681606418520718],
+            [0.044498320444501305, 0.32900000000000007],
+            [0.3126999999999999, 0.0725399745244869],
+            [0.6483359046004842, 0.3269405380364674],
+        ];
+        for (i, expected) in [0, 1, 100, 256, 512, 768, 1023].into_iter().zip(expected) {
+            for c in 0..2 {
+                assert!((hull[i][c] - expected[c]).abs() < 2e-12);
+            }
+        }
+        let xy = [
+            [0.3127, 0.329],
+            [0.2, 0.3],
+            [0.8, 0.1],
+            [0.05, 0.8],
+            [0.0, 0.0],
+            [1.0, 0.0],
+        ];
+        let expected = [
+            [0.3127, 0.329],
+            [0.2, 0.3],
+            [0.5819120746384399, 0.2024874510728448],
+            [0.09185518908991444, 0.7249570077603742],
+            [0.11390299622632555, 0.11984037658606048],
+            [0.5821179189999044, 0.20003376203845694],
+        ];
+        for (xy, expected) in xy.into_iter().zip(expected) {
+            let actual = compress_xy(xy, white, &hull);
+            for c in 0..2 {
+                assert!((actual[c] - expected[c]).abs() < 2e-12);
+            }
+        }
+        let white = [0.3457, 0.3585];
+        let hull = inscribed_locus_hull(white);
+        assert_eq!(hull.len(), 1025);
+        assert_eq!(hull[0], hull[1024]);
+        let expected: [[f64; 2]; 7] = [
+            [0.631886209192307, 0.3585],
+            [0.6306288313615156, 0.3602483233541457],
+            [0.5137897264368662, 0.47688214191190886],
+            [0.3457, 0.6505202560534786],
+            [0.0433384143714729, 0.35850000000000004],
+            [0.34569999999999995, 0.09070220309317667],
+            [0.6331262289031261, 0.3567363526141453],
+        ];
+        for (i, expected) in [0, 1, 100, 256, 512, 768, 1023].into_iter().zip(expected) {
+            for c in 0..2 {
+                assert!((hull[i][c] - expected[c]).abs() < 2e-12);
+            }
+        }
+        let xy = [
+            [0.3457, 0.3585],
+            [0.2, 0.3],
+            [0.8, 0.1],
+            [0.05, 0.8],
+            [0.0, 0.0],
+            [1.0, 0.0],
+        ];
+        let expected = [
+            [0.3457, 0.3585],
+            [0.2, 0.3],
+            [0.5971588143038845, 0.21541810808374612],
+            [0.0992139164847477, 0.7265203106932158],
+            [0.12052548429152687, 0.12498809985106271],
+            [0.6038958765108267, 0.21703091589617704],
+        ];
+        for (xy, expected) in xy.into_iter().zip(expected) {
+            let actual = compress_xy(xy, white, &hull);
+            for c in 0..2 {
+                assert!((actual[c] - expected[c]).abs() < 2e-12);
+            }
+        }
+        let white = [0.33242, 0.34743];
+        let hull = inscribed_locus_hull(white);
+        assert_eq!(hull.len(), 1025);
+        assert_eq!(hull[0], hull[1024]);
+        let expected: [[f64; 2]; 7] = [
+            [0.6390023695665581, 0.34743],
+            [0.6378624268057416, 0.3493041947790249],
+            [0.515330088921398, 0.4762498188123395],
+            [0.33242, 0.6634224085585141],
+            [0.043338179216843076, 0.34743000000000007],
+            [0.33241999999999994, 0.0832018294633462],
+            [0.6401162585797875, 0.3455419757088543],
+        ];
+        for (i, expected) in [0, 1, 100, 256, 512, 768, 1023].into_iter().zip(expected) {
+            for c in 0..2 {
+                assert!((hull[i][c] - expected[c]).abs() < 2e-12);
+            }
+        }
+        let xy = [
+            [0.33242, 0.34743],
+            [0.2, 0.3],
+            [0.8, 0.1],
+            [0.05, 0.8],
+            [0.0, 0.0],
+            [1.0, 0.0],
+        ];
+        let expected = [
+            [0.33242, 0.34743],
+            [0.2, 0.3],
+            [0.5914860419556218, 0.21033963950323045],
+            [0.09598661699660244, 0.7263077570492444],
+            [0.11757275416880072, 0.1228816015307937],
+            [0.5958394298148582, 0.210338097156032],
+        ];
+        for (xy, expected) in xy.into_iter().zip(expected) {
+            let actual = compress_xy(xy, white, &hull);
+            for c in 0..2 {
+                assert!((actual[c] - expected[c]).abs() < 2e-12);
+            }
+        }
+    }
 }

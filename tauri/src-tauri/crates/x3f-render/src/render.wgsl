@@ -4,7 +4,7 @@
 // assets/PROVENANCE.md; source attribution: NOTICE.
 struct Pixels { v: array<vec4<f32>> }
 struct Table { v: array<f32> }
-struct Uniforms { v: array<vec4<f32>, 51> }
+struct Uniforms { v: array<vec4<f32>, 56> }
 @group(0) @binding(0) var<storage, read> source: Pixels;
 @group(0) @binding(1) var<storage, read> auxiliary: Pixels;
 @group(0) @binding(2) var<storage, read_write> destination: Pixels;
@@ -12,6 +12,7 @@ struct Uniforms { v: array<vec4<f32>, 51> }
 @group(0) @binding(4) var<storage, read> spectral: Table;
 @group(0) @binding(5) var<storage, read> tc_lut: Table;
 @group(0) @binding(6) var<storage, read> curves: Pixels;
+@group(0) @binding(7) var<storage, read> output_gamut: Table;
 @group(1) @binding(0) var raw_source: texture_2d<f32>;
 @group(1) @binding(1) var<storage, read_write> frame: array<u32>;
 @group(1) @binding(2) var<storage, read> fill: array<vec2<f32>>;
@@ -141,7 +142,8 @@ fn expose(@builtin(global_invocation_id) id:vec3<u32>) {
                      clamp(chroma.y/max(1.0-chroma.x,1e-10),0.0,1.0));
     destination.v[i]=vec4<f32>(sample_tc(tc)*b,1);
 }
-// Halation scatter mix at spektrafilm's default scatter_amount of 1.0.
+// Halation scatter mix at spektrafilm's default scatter_amount of 1.0, with the
+// recipe's per-channel scatter strength as the tail weight.
 @compute @workgroup_size(16,8)
 fn scatter_mix(@builtin(global_invocation_id) id:vec3<u32>) {
     let pos=id.xy;if !in_bounds(pos) {return;}let i=index(pos);let w=p.v[37].xyz;
@@ -171,56 +173,22 @@ fn develop(@builtin(global_invocation_id) id:vec3<u32>) {
 fn dir_matmul(@builtin(global_invocation_id) id:vec3<u32>) {
     let pos=id.xy;if !in_bounds(pos) {return;}let i=index(pos);
     var silver=source.v[i].rgb;
-    if p.v[32].w>0.5 { silver=p.v[32].xyz-silver; }
+    if p.v[32].w>0.5 {
+        silver=p.v[32].xyz-silver;
+    } else {
+        silver=silver*1.5*p.v[32].xyz/max(p.v[32].xyz+silver,vec3<f32>(1e-20));
+    }
     destination.v[i]=vec4<f32>(p.v[29].xyz*silver.x+p.v[30].xyz*silver.y+p.v[31].xyz*silver.z,1);
 }
 @compute @workgroup_size(16,8)
 fn dir_develop(@builtin(global_invocation_id) id:vec3<u32>) {
     let pos=id.xy;if !in_bounds(pos) {return;}let i=index(pos);
-    let corrected=log10v(source.v[i].rgb)-auxiliary.v[i].rgb;
-    destination.v[i]=vec4<f32>(develop_curve(SP_FILM_LOG_EXP,SP_FILM_CURVES_0,p.v[16].y,corrected),1);
-}
-@compute @workgroup_size(16,8)
-fn grain(@builtin(global_invocation_id) id:vec3<u32>) {
-    let pos=id.xy;if !in_bounds(pos) {return;}let i=index(pos);
-    let density=source.v[i].rgb;
-    // Anchor the RNG to native image coordinates so tiles, regions and whole
-    // previews of the same output size draw identical noise.
-    let global=vec3<f32>(vec2<f32>(pos)+p.v[0].zw+0.5,1.0);
-    let native=clamp(vec2<f32>(dot(p.v[22].xyz,global),dot(p.v[23].xyz,global)),
-                     vec2<f32>(0.0),vec2<f32>(p.v[22].w,p.v[23].w)-1.0);
-    let cell=vec2<u32>(native);
-    let coord=cell.y*u32(p.v[22].w)+cell.x;
-    let layers=u32(p.v[33].w);
-    let seed=bitcast<u32>(p.v[34].w);
-    // B&W film has one silver layer: all channels draw the same grains.
-    let silver=p.v[37].w>0.5;
-    // Roughness clumps the particles: a clump holds m times as many particles,
-    // each 1/m as dense, so the mean density stays and only the grain varies.
-    let roughness=p.v[35].w;
-    let m=select(1.0,exp2(3.0*roughness*clump_field(native,p.v[36].w,seed^0x5bd1e995u)),roughness>0.0);
-    var developed_density=vec3<f32>(0);
-    for (var c=0u; c<3u; c++) {
-        let dmin=p.v[33][c];let dmax=p.v[34][c];let npp=p.v[35][c]*m;
-        let od=dmax/npp;
-        let ratio=clamp((density[c]+dmin)/dmax,1e-6,1.0-1e-6);
-        let saturation=1.0-ratio*p.v[36][c]*(1.0-1e-6);
-        let lambda=npp/saturation;
-        var total=0.0;
-        for (var layer=0u; layer<layers; layer++) {
-            var rng=splitmix32(select(c,0u,silver)+layer*10u+seed)^splitmix32(coord);
-            let seeds=max(0.0,round(lambda+sqrt(lambda)*standard_normal(&rng)));
-            let mean=seeds*ratio;let variance=mean*(1.0-ratio);
-            var grains=mean;
-            if variance>0.0 { grains=clamp(round(mean+sqrt(variance)*standard_normal(&rng)),0.0,seeds); }
-            total+=grains*od*saturation;
-        }
-        developed_density[c]=total/f32(layers)-dmin;
+    var inhibitor=auxiliary.v[i].rgb;
+    if p.v[32].w>0.5 {
+        inhibitor=inhibitor*3.0*p.v[51].xyz/max(2.0*p.v[51].xyz+inhibitor,vec3<f32>(1e-20));
     }
-    var noise=developed_density-density;
-    // X3Fuse extension: desaturate the grain toward its achromatic mean.
-    noise=mix(vec3<f32>(dot(noise,vec3<f32>(1.0/3.0))),noise,p.v[17].w)*p.v[17].z;
-    destination.v[i]=vec4<f32>(density+noise,1);
+    let corrected=log10v(source.v[i].rgb)-inhibitor;
+    destination.v[i]=vec4<f32>(develop_curve(SP_FILM_LOG_EXP,SP_FILM_CURVES_0,p.v[16].y,corrected),1);
 }
 @compute @workgroup_size(16,8)
 fn print_spectral(@builtin(global_invocation_id) id:vec3<u32>) {
@@ -315,12 +283,15 @@ fn adjust(@builtin(global_invocation_id) id:vec3<u32>) {
     rgb*=exp2(p.v[2].w*shadow*2.0+p.v[2].z*high*2.0);
     destination.v[i]=vec4<f32>(rgb,select(1.0,gain,native));
 }
+// One axis of a separable Gaussian: p.v[21].xyz holds a sigma per channel,
+// p.v[21].w the tap radius and p.v[22].x the axis.
 @compute @workgroup_size(16,8)
 fn blur(@builtin(global_invocation_id) id:vec3<u32>) {
     let pos=id.xy;if !in_bounds(pos) {return;}
-    let radius=i32(p.v[21].z);let sigma=max(p.v[21].x,0.01);let axis=select(vec2<i32>(1,0),vec2<i32>(0,1),p.v[21].y>0.5);
-    var sum=vec3<f32>(0);var weight=0.0;
-    for(var k=-radius;k<=radius;k++) {let w=exp(-0.5*f32(k*k)/(sigma*sigma));sum+=w*load_at(vec2<i32>(pos)+axis*k);weight+=w;}
+    let radius=i32(p.v[21].w);let sigma=max(p.v[21].xyz,vec3<f32>(0.01));let axis=select(vec2<i32>(1,0),vec2<i32>(0,1),p.v[22].x>0.5);
+    let falloff=-0.5/(sigma*sigma);
+    var sum=vec3<f32>(0);var weight=vec3<f32>(0);
+    for(var k=-radius;k<=radius;k++) {let w=exp(f32(k*k)*falloff);sum+=w*load_at(vec2<i32>(pos)+axis*k);weight+=w;}
     destination.v[index(pos)]=vec4<f32>(sum/weight,1);
 }
 fn rgb_to_hsv(c:vec3<f32>)->vec3<f32> {
@@ -426,10 +397,22 @@ fn output(@builtin(global_invocation_id) id:vec3<u32>) {
     if monochrome { c=vec3<f32>(dot(c,vec3<f32>(0.2126,0.7152,0.0722))); }
     if p.v[1].y>1.5 {
         // Linear sRGB D65 -> Bradford D50 -> ProPhoto RGB.
-        if !monochrome { c=mat3x3<f32>(vec3<f32>(0.529345,0.098374,0.016883),vec3<f32>(0.330072,0.873461,0.117673),vec3<f32>(0.140583,0.028165,0.865444))*c; }
+        if !monochrome {
+            if p.v[1].z>0.5 { c=mat3x3<f32>(vec3<f32>(0.5288241003643182,0.09752941484853804,0.01635990179731055),vec3<f32>(0.3340609866357058,0.8790074094009789,0.10661249325366998),vec3<f32>(0.1373616909346029,0.023398117522046773,0.877248518530815))*c; }
+            else { c=mat3x3<f32>(vec3<f32>(0.529345,0.098374,0.016883),vec3<f32>(0.330072,0.873461,0.117673),vec3<f32>(0.140583,0.028165,0.865444))*c; }
+        }
+    } else if p.v[1].y>0.5 {
+        if !monochrome {
+            if p.v[1].z>0.5 { c=mat3x3<f32>(vec3<f32>(0.7151773009999999,-8.124599999998504e-05,-2.7899000000002072e-05),vec3<f32>(0.2848856159999999,1.0000474719999999,0.041163335999999995),vec3<f32>(4.74079999999303e-05,-5.999999983976074e-09,0.9587994129999999))*c; }
+            else { c=mat3x3<f32>(vec3<f32>(0.715162,0,0),vec3<f32>(0.284838,1,0.041170),vec3<f32>(0,0,0.958830))*c; }
+        }
+    }
+    if p.v[1].z>0.5 { c=compress_output_gamut(c,u32(p.v[1].y)); }
+    // Keep B&W neutral after the native-white output compression.
+    if monochrome { c=vec3<f32>(dot(c,vec3<f32>(0.2126,0.7152,0.0722))); }
+    if p.v[1].y>1.5 {
         c=max(c,vec3<f32>(0));c=select(pow(c,vec3<f32>(1.0/1.8)),c*16.0,c<vec3<f32>(1.0/512.0));
     } else if p.v[1].y>0.5 {
-        if !monochrome { c=mat3x3<f32>(vec3<f32>(0.715162,0,0),vec3<f32>(0.284838,1,0.041170),vec3<f32>(0,0,0.958830))*c; }
         c=pow(max(c,vec3<f32>(0)),vec3<f32>(256.0/563.0));
     } else { c=encode_srgb(c); }
     destination.v[i]=vec4<f32>(clamp(c,vec3<f32>(0),vec3<f32>(1)),1);

@@ -162,6 +162,18 @@ pub struct FilmSettings {
     pub halation_strength: f32,
     pub halation_radius: f32,
     pub halation_midtones: f32,
+    /// Per-channel (RGB) scatter decay length in um: `scatter_tail_um`.
+    /// The scatter core keeps its ratio to it.
+    pub scatter_size_rgb: [f32; 3],
+    /// Per-channel fraction of the scattered light in the wide tail; the rest
+    /// stays in the narrow core. spektrafilm's `scatter_tail_weight`.
+    pub scatter_strength_rgb: [f32; 3],
+    /// Per-channel first-bounce halation sigma in um: spektrafilm's
+    /// `halation_first_sigma_um`. `halation_radius` scales it.
+    pub halation_size_rgb: [f32; 3],
+    /// Per-channel fraction of light that halates: spektrafilm's
+    /// `halation_strength`. `halation_strength` scales it.
+    pub halation_strength_rgb: [f32; 3],
     pub gamma_film: f32,
     pub gamma_paper: f32,
     pub tune_m: f32,
@@ -186,6 +198,10 @@ impl Default for FilmSettings {
             halation_strength: 0.35,
             halation_radius: 0.0015,
             halation_midtones: 0.,
+            scatter_size_rgb: crate::film::SCATTER_TAIL_UM.map(|v| v as f32),
+            scatter_strength_rgb: crate::film::SCATTER_TAIL_WEIGHT.map(|v| v as f32),
+            halation_size_rgb: crate::film::HALATION_FIRST_SIGMA_UM.map(|v| v as f32),
+            halation_strength_rgb: crate::film::HALATION_STRENGTH.map(|v| v as f32),
             gamma_film: 1.,
             gamma_paper: 1.,
             tune_m: 0.,
@@ -320,6 +336,19 @@ impl FilmSettings {
         }
         if let Some(e) = self.ev_paper {
             range("paper exposure", e, -6., 6.)?;
+        }
+        for (n, values, hi) in [
+            // The editor's 50 um red keeps green, at its default ratio, below.
+            ("scatter size", self.scatter_size_rgb, 60.),
+            ("scatter strength", self.scatter_strength_rgb, 1.),
+            // Wider halation pushes the tile margin past the GPU buffer limit
+            // at the largest Halation amount on a 3:2 crop straightened 45°.
+            ("halation size", self.halation_size_rgb, 150.),
+            ("halation channel strength", self.halation_strength_rgb, 0.3),
+        ] {
+            for v in values {
+                range(n, v, 0., hi)?;
+            }
         }
         Ok(())
     }

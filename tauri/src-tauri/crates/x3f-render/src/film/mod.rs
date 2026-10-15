@@ -4,9 +4,12 @@
 //!
 //! CPU side: profiles, the per-film spectral upsampling LUT, the enlarger
 //! solve, and every scalar the shader stages need. GPU side: `render.wgsl`.
+pub mod couplers;
 pub mod data;
 pub mod enlarger;
 pub mod filter;
+pub mod gamut;
+pub mod grain;
 pub mod profile;
 pub mod spectra;
 
@@ -15,41 +18,17 @@ use data::N_WL;
 
 /// Fixed 35 mm frame; spektrafilm's spatial parameters are physical (µm).
 const FILM_FORMAT_MM: f64 = 35.0;
-/// spektrafilm `GrainParams` defaults.
-const GRAIN_PARTICLE_AREA_UM2: f64 = 0.2;
-const GRAIN_PARTICLE_SCALE: [f64; 3] = [1.6, 1.6, 3.2];
-const GRAIN_DENSITY_MIN: [f64; 3] = [0.03, 0.03, 0.03];
-const GRAIN_UNIFORMITY: [f64; 3] = [0.97, 0.99, 0.97];
-/// Grain blur sigma at grain size 1, in µm: spektrafilm's `GrainParams::blur`
-/// of 0.65 px at a 4700 px export. Physical, so previews match exports and
-/// `grain_size` makes the grain, and the image, softer.
-const GRAIN_BLUR_UM: f64 = 5.0;
 /// Roughness clump cell at grain size 1, in µm (X3Fuse extension).
 const GRAIN_CLUMP_UM: f64 = 40.0;
-const GRAIN_SUB_LAYERS: u32 = 1;
-/// spektrafilm `HalationParams` defaults.
+/// spektrafilm `HalationParams` defaults. The recipe's per-channel scatter and
+/// halation settings default to them.
 const SCATTER_CORE_UM: [f64; 3] = [2.2, 2.0, 1.6];
-const SCATTER_TAIL_UM: [f64; 3] = [9.3, 9.7, 9.1];
-const SCATTER_TAIL_WEIGHT: [f64; 3] = [0.78, 0.65, 0.67];
-const HALATION_STRENGTH: [f64; 3] = [0.05, 0.015, 0.0];
-const HALATION_FIRST_SIGMA_UM: f64 = 65.0;
+pub(crate) const SCATTER_TAIL_UM: [f64; 3] = [9.3, 9.7, 9.1];
+pub(crate) const SCATTER_TAIL_WEIGHT: [f64; 3] = [0.78, 0.65, 0.67];
+pub(crate) const HALATION_STRENGTH: [f64; 3] = [0.015, 0.005, 0.0];
+pub(crate) const HALATION_FIRST_SIGMA_UM: [f64; 3] = [65.0, 65.0, 65.0];
 pub const HALATION_BOUNCES: usize = 3;
 const HALATION_BOUNCE_DECAY: f64 = 0.5;
-/// spektrafilm `DirCouplersParams` defaults. `diffusion_size_um` is driven by
-/// the recipe; the exponential tail sub-stage is not ported.
-const DIR_INHIBITION: f64 = 1.0;
-const DIR_GAMMA_NEGATIVE: ([f64; 3], [f64; 2], [f64; 2], [f64; 2]) = (
-    [0.336, 0.319, 0.273],
-    [0.353, 0.302],
-    [0.154, 0.353],
-    [0.168, 0.226],
-);
-const DIR_GAMMA_POSITIVE: ([f64; 3], [f64; 2], [f64; 2], [f64; 2]) =
-    ([0.12, 0.08, 0.06], [0.12, 0.06], [0.08, 0.06], [0.06, 0.06]);
-/// One silver layer inhibits only itself: spektrafilm experimental
-/// `presets/couplers.toml` `bw.negative` / `bw.positive` same-layer gamma.
-const DIR_GAMMA_BW_NEGATIVE: f64 = 0.5159;
-const DIR_GAMMA_BW_POSITIVE: f64 = 0.2291;
 /// The recipe's halation radius is a fraction of the long edge; this default
 /// reproduces spektrafilm's `halation_first_sigma_um` exactly.
 const HALATION_RADIUS_DEFAULT: f64 = 0.0015;
@@ -82,7 +61,8 @@ mod offset {
     pub const TOTAL: usize = SCAN_ILLUM_CMF + N_WL * 3;
 }
 /// Padded so the storage binding keeps a 16-byte multiple.
-pub const SPECTRAL_FLOATS: usize = offset::TOTAL.next_multiple_of(4);
+pub const SPECTRAL_FLOATS: usize =
+    (offset::TOTAL.next_multiple_of(4) + grain::MAX_TABLE_FLOATS).next_multiple_of(4);
 
 /// Numpy `np.add.reduce` pairwise summation over a wavelength axis.
 pub(crate) fn pairwise_sum(xs: &[f64]) -> f64 {
@@ -134,7 +114,8 @@ impl FilmLut {
                 &film.data.hanatos2025_adaptation_window_params,
                 reference,
             );
-            spectra::compress_input_gamut(&lut, white_xy)
+            // D65 integrated on the same 5 nm observer grid as the irradiance LUT.
+            spectra::compress_input_gamut(&lut, [0.3127205251723142, 0.32903068500484106])
         };
         let mut data = build(&film.sensitivity());
         if let Some(transmittance) = filter.and_then(filter::transmittance) {
@@ -176,12 +157,12 @@ pub struct FilmPair {
     /// A B&W film; see [`FilmLut::monochrome`].
     pub monochrome: bool,
     pub spectral: Vec<f32>,
-    /// Per-channel `halation_strength * halation_amount`.
-    pub halation_a_tot: [f32; 3],
     pub dir_matrix: [[f32; 3]; 3],
     pub dir_density_max: [f32; 3],
+    pub dir_receiver_reference: [f32; 3],
     pub dir_positive: bool,
-    pub grain_density_max: [f32; 3],
+    pub grain: grain::Grain,
+    pub grain_offset: usize,
     pub rgb_to_adapted_xyz: [[f32; 3]; 3],
     pub scan_xyz_to_rgb: [[f32; 3]; 3],
     pub scan_normalization: f32,
@@ -198,7 +179,7 @@ pub struct FilmPair {
 /// Identifies a prepared pair. Floats are compared by bits so a cached pair is
 /// only reused for the exact same settings.
 #[derive(PartialEq, Eq, Clone, Copy)]
-pub struct Key(u32, u32, bool, u32, u32, u32, u32, u32);
+pub struct Key(u32, u32, bool, u32, u32, u32, u32, u32, u32);
 impl Key {
     /// Every setting [`FilmPair::build`] reads. Anything consumed there and
     /// missing here silently serves a stale pair;
@@ -215,6 +196,7 @@ impl Key {
             s.tune_y.to_bits(),
             s.ev_paper.unwrap_or(f32::NAN).to_bits(),
             s.gamma_film.to_bits(),
+            s.gamma_paper.to_bits(),
             s.couplers.to_bits(),
         )
     }
@@ -235,12 +217,13 @@ impl FilmPair {
     #[cfg(test)]
     pub fn fingerprint(&self) -> Vec<f32> {
         let mut out = self.spectral.clone();
-        out.extend(self.halation_a_tot);
         out.extend(self.dir_matrix.iter().flatten());
         out.extend(self.dir_density_max);
+        out.extend(self.dir_receiver_reference);
         out.push(f32::from(self.dir_positive));
         out.push(f32::from(self.monochrome));
-        out.extend(self.grain_density_max);
+        out.extend(self.grain.preset.uniformity.map(|v| v as f32));
+        out.extend(self.grain.preset.floor.map(|v| v as f32));
         out.extend(self.rgb_to_adapted_xyz.iter().flatten());
         out.extend(self.scan_xyz_to_rgb.iter().flatten());
         out.push(self.scan_normalization);
@@ -255,8 +238,11 @@ impl FilmPair {
     /// next to [`FilmLut::build`], which supplies `lut`.
     pub fn build(settings: &FilmSettings, lut: &FilmLut) -> Result<Self, RenderError> {
         let key = Key::new(settings);
-        let film = profile::load(settings.film as usize)?;
-        let paper = profile::load(profile::FILM_COUNT + settings.paper as usize)?;
+        let mut film = profile::load(settings.film as usize)?;
+        let mut paper = profile::load(profile::FILM_COUNT + settings.paper as usize)?;
+        film.apply_gamma(settings.gamma_film as f64)?;
+        paper.apply_gamma(settings.gamma_paper as f64)?;
+        let grain = grain::Grain::build(&film)?;
         let scan = if settings.negative { &film } else { &paper };
         let rgb_to_adapted_xyz = lut.rgb_to_adapted_xyz;
 
@@ -288,7 +274,6 @@ impl FilmPair {
             let (tx, ty) = data::xy_to_tc(xyz[0] / b, xyz[1] / b);
             spectra::sample(&lut.data, tx, ty).map(|v| v * b)
         };
-        let gamma_film = settings.gamma_film as f64;
         // Normalize the enlarger against an uncompensated mid-gray card, i.e.
         // spektrafilm's `normalize_print_exposure` without its
         // `print_exposure_compensation`. With compensation on, the enlarger
@@ -297,16 +282,14 @@ impl FilmPair {
         // H&D curve: no brightness change pulling up, lifted blacks pulling
         // down. `ev_film` has to expose the film and let the print follow.
         let normalized = enlarger::exposure_factor(
-            &enlarger::midgray_density(midgray_raw(1.), &film, gamma_film),
+            &enlarger::midgray_density(midgray_raw(1.), &film, 1.),
             &print_illuminant,
             &paper_sensitivity,
         );
         let print_normalization = normalized * 2f64.powf(settings.ev_paper.unwrap_or(0.) as f64);
 
         // ── Scan: density -> XYZ under the viewing illuminant -> linear sRGB ─
-        // Every bundled profile views under D50 (spektrafilm falls back to D50
-        // for the print-film stocks' "K75P" name).
-        let viewing = &data::ILLUMINANT_D50_F64[..];
+        let viewing = data::reference_illuminant(&scan.info.viewing_illuminant).0;
         let n_scan = scan.data.channel_density.len().min(N_WL);
         let scan_normalization: f64 = (0..n_scan).map(|i| viewing[i] * data::CMF_Y_F64[i]).sum();
         let scan_xyz_to_rgb = data::mat_mul(
@@ -316,39 +299,8 @@ impl FilmPair {
 
         // ── DIR couplers ───────────────────────────────────────────────────
         let dir_positive = film.is_positive();
-        let gammas = if dir_positive {
-            DIR_GAMMA_POSITIVE
-        } else {
-            DIR_GAMMA_NEGATIVE
-        };
-        let (same, r_gb, g_rb, b_rg) = gammas;
-        let amount = settings.couplers as f64;
-        let mut dir = [[0.0f64; 3]; 3];
-        for c in 0..3 {
-            dir[c][c] = same[c] * DIR_INHIBITION;
-        }
-        dir[0][1] = r_gb[0] * DIR_INHIBITION;
-        dir[0][2] = r_gb[1] * DIR_INHIBITION;
-        dir[1][0] = g_rb[0] * DIR_INHIBITION;
-        dir[1][2] = g_rb[1] * DIR_INHIBITION;
-        dir[2][0] = b_rg[0] * DIR_INHIBITION;
-        dir[2][1] = b_rg[1] * DIR_INHIBITION;
-        if monochrome {
-            let gamma = if dir_positive {
-                DIR_GAMMA_BW_POSITIVE
-            } else {
-                DIR_GAMMA_BW_NEGATIVE
-            };
-            dir = [[0.; 3]; 3];
-            for (c, row) in dir.iter_mut().enumerate() {
-                row[c] = gamma * DIR_INHIBITION;
-            }
-        }
-        for row in &mut dir {
-            for v in row.iter_mut() {
-                *v *= amount;
-            }
-        }
+        let dir_unit = couplers::matrix(&film);
+        let dir = dir_unit.map(|row| row.map(|value| value * settings.couplers as f64));
 
         let film_curves = film.normalized_curves();
         let density_max: [f64; 3] = std::array::from_fn(|c| {
@@ -358,12 +310,14 @@ impl FilmPair {
                 .filter(|v| v.is_finite())
                 .fold(f64::NEG_INFINITY, f64::max)
         });
+        let dir_receiver_reference = couplers::receiver_reference(density_max, &dir_unit);
         let curves_0 = curves_before_dir(
             &film_curves,
             &film.data.log_exposure,
             &dir,
             dir_positive,
             density_max,
+            dir_receiver_reference,
         );
         let paper_curves = paper.model_curves()?;
 
@@ -429,7 +383,7 @@ impl FilmPair {
                         interp(log_raw, &paper.data.log_exposure, &column)
                     })
                 };
-                let y_black = scan_y(develop(GRAIN_DENSITY_MIN.map(|v| -v)));
+                let y_black = scan_y(develop(grain.preset.floor.map(|v| -v)));
                 let y_white = scan_y(develop(density_max));
                 let (m, q, corrected) = remap(y_white, y_black);
                 let shift = exposure(&paper, &paper_curves, -corrected.log10(), true)
@@ -447,7 +401,7 @@ impl FilmPair {
             };
 
         // ── Pack the spectral tables the shader samples ────────────────────
-        let mut spectral = vec![0.0f32; SPECTRAL_FLOATS];
+        let mut spectral = vec![0.0f32; offset::TOTAL.next_multiple_of(4)];
         let put = |dst: &mut [f32], at: usize, src: &[f64]| {
             for (i, v) in src.iter().enumerate() {
                 dst[at + i] = *v as f32;
@@ -497,19 +451,20 @@ impl FilmPair {
             &scan_weights,
         );
 
+        let grain_offset = grain.append_to(&mut spectral);
+        spectral.resize(SPECTRAL_FLOATS, 0.);
         Ok(Self {
             key,
             monochrome,
             spectral,
             // One silver layer takes the first channel's value, as
             // spektrafilm's `match_channels` does.
-            halation_a_tot: channels(HALATION_STRENGTH, monochrome).map(|v| v as f32),
             dir_matrix: mat_f32(&dir),
             dir_density_max: density_max.map(|v| v as f32),
+            dir_receiver_reference: dir_receiver_reference.map(|v| v as f32),
             dir_positive,
-            grain_density_max: std::array::from_fn(|c| {
-                (density_max[c] + GRAIN_DENSITY_MIN[c]) as f32
-            }),
+            grain,
+            grain_offset,
             rgb_to_adapted_xyz: mat_f32(&rgb_to_adapted_xyz),
             scan_xyz_to_rgb: mat_f32(&scan_xyz_to_rgb),
             scan_normalization: scan_normalization as f32,
@@ -596,54 +551,85 @@ fn curves_before_dir(
     matrix: &[[f64; 3]; 3],
     positive: bool,
     density_max: [f64; 3],
+    receiver_reference: [f64; 3],
 ) -> Vec<[f64; 3]> {
     let k = curves.len();
-    let silver: Vec<[f64; 3]> = curves
+    let amount: Vec<[f64; 3]> = curves
         .iter()
-        .map(|row| {
-            std::array::from_fn(|c| {
-                if positive {
-                    density_max[c] - row[c]
+        .map(|row| couplers::correction(*row, density_max, matrix, positive, receiver_reference))
+        .collect();
+    // Strong chemistry can fold the axis. Keep numpy.interp's previous-index
+    // search so each query selects the same branch as the reference.
+    fn interval(q: f64, x: &[f64], guess: isize) -> isize {
+        let n = x.len();
+        if q > x[n - 1] {
+            return n as isize;
+        }
+        if q < x[0] {
+            return -1;
+        }
+        if n <= 4 {
+            return (1..n).find(|&i| q < x[i]).unwrap_or(n) as isize - 1;
+        }
+        let guess = guess.clamp(1, n as isize - 3) as usize;
+        let (mut low, mut high) = (0, n);
+        if q < x[guess] {
+            if q >= x[guess - 1] {
+                return guess as isize - 1;
+            }
+            high = guess - 1;
+            if guess > 8 && q >= x[guess - 8] {
+                low = guess - 8;
+            }
+        } else {
+            if q < x[guess + 1] {
+                return guess as isize;
+            }
+            if q < x[guess + 2] {
+                return guess as isize + 1;
+            }
+            low = guess + 2;
+            if guess + 9 < n && q < x[guess + 8] {
+                high = guess + 8;
+            }
+        }
+        while low < high {
+            let mid = low + (high - low) / 2;
+            if q >= x[mid] {
+                low = mid + 1;
+            } else {
+                high = mid;
+            }
+        }
+        low as isize - 1
+    }
+    let mut out = vec![[0.; 3]; k];
+    for c in 0..3 {
+        let axis: Vec<f64> = (0..k).map(|i| log_exposure[i] - amount[i][c]).collect();
+        let mut guess = 0;
+        for (j, &q) in log_exposure.iter().enumerate() {
+            guess = interval(q, &axis, guess);
+            out[j][c] = if guess < 0 {
+                curves[0][c]
+            } else if guess as usize >= k - 1 {
+                curves[k - 1][c]
+            } else {
+                let lo = guess as usize;
+                if q == axis[lo] {
+                    curves[lo][c]
                 } else {
-                    row[c]
+                    let slope = (curves[lo + 1][c] - curves[lo][c]) / (axis[lo + 1] - axis[lo]);
+                    slope * (q - axis[lo]) + curves[lo][c]
                 }
-            })
-        })
-        .collect();
-    let amount: Vec<[f64; 3]> = silver
-        .iter()
-        .map(|s| {
-            std::array::from_fn(|m| s[0] * matrix[0][m] + s[1] * matrix[1][m] + s[2] * matrix[2][m])
-        })
-        .collect();
-    (0..k)
-        .map(|j| {
-            std::array::from_fn(|c| {
-                // Interpolate the original curve, sampled on a monotonically
-                // shifted axis, back onto the unshifted exposure grid.
-                let x = |i: usize| log_exposure[i] - amount[i][c];
-                let q = log_exposure[j];
-                if q <= x(0) {
-                    return curves[0][c];
-                }
-                if q >= x(k - 1) {
-                    return curves[k - 1][c];
-                }
-                let hi = (1..k).find(|&i| x(i) > q).unwrap_or(k - 1);
-                let dx = x(hi) - x(hi - 1);
-                let f = if dx != 0. { (q - x(hi - 1)) / dx } else { 0. };
-                curves[hi - 1][c] + f * (curves[hi][c] - curves[hi - 1][c])
-            })
-        })
-        .collect()
+            };
+        }
+    }
+    out
 }
 
 /// Per-channel constants for a film: B&W films repeat the first channel.
 ///
-/// ponytail: B&W grain and halation reuse the first colour channel's
-/// defaults. spektrafilm experimental calibrates B&W grain for its newer
-/// rms-granularity model, which this crate does not port; port it if B&W
-/// grain must match the reference.
+/// B&W film uses the first emulsion channel for all three output channels.
 pub fn channels<T: Copy>(values: [T; 3], monochrome: bool) -> [T; 3] {
     if monochrome {
         [values[0]; 3]
@@ -654,29 +640,50 @@ pub fn channels<T: Copy>(values: [T; 3], monochrome: bool) -> [T; 3] {
 
 /// Per-stage blur sigmas in output pixels, derived from spektrafilm's physical
 /// parameters and the **full output frame** (never a tile), so previews, tiles
-/// and regions all diffuse identically.
+/// and regions all diffuse identically. Scatter and halation have a sigma per
+/// channel.
 pub struct Spatial {
-    pub scatter_core: f32,
-    pub scatter_tail: f32,
-    pub halation: [f32; HALATION_BOUNCES],
+    pub scatter_core: [f32; 3],
+    pub scatter_tail: [f32; 3],
+    pub halation: [[f32; 3]; HALATION_BOUNCES],
     pub coupler: f32,
-    /// Blur after grain; it softens the image too, as in spektrafilm.
-    pub grain: f32,
+    pub coupler_tail: f32,
 }
 impl Spatial {
-    pub fn new(settings: &FilmSettings, long_edge: f32) -> Self {
+    /// A B&W film takes the first channel's sigma for all three, so its
+    /// identical channels stay identical.
+    pub fn new(settings: &FilmSettings, long_edge: f32, monochrome: bool) -> Self {
         let pixel_um = pixel_size_um(long_edge);
         let px = |um: f64| (um / pixel_um) as f32;
+        let rgb = |um: [f64; 3]| channels(um, monochrome).map(px);
+        let scatter = settings.scatter_size_rgb.map(f64::from);
         let halation_scale = settings.halation_radius as f64 / HALATION_RADIUS_DEFAULT;
-        let first = HALATION_FIRST_SIGMA_UM * halation_scale;
+        // With no halation light to add, the bounces change nothing; zero
+        // sigmas skip them and their tile margin.
+        let halates = settings.halation_strength > 0.
+            && widest(channels(settings.halation_strength_rgb, monochrome)) > 0.;
+        let first = settings.halation_size_rgb.map(|um| {
+            if halates {
+                um as f64 * halation_scale
+            } else {
+                0.
+            }
+        });
         Self {
-            scatter_core: px(mean(SCATTER_CORE_UM)),
-            scatter_tail: px(mean(SCATTER_TAIL_UM)),
-            halation: std::array::from_fn(|k| px(first * (k as f64 + 1.).sqrt())),
+            // The scatter size sets the tail; the core keeps its ratio to it.
+            scatter_core: rgb(std::array::from_fn(|c| {
+                scatter[c] * SCATTER_CORE_UM[c] / SCATTER_TAIL_UM[c]
+            })),
+            scatter_tail: rgb(scatter),
+            halation: std::array::from_fn(|k| rgb(first.map(|um| um * (k as f64 + 1.).sqrt()))),
             // `couplers_radius` is a fraction of the frame, so its µm size
             // divided by the µm pixel pitch collapses to the long edge.
             coupler: px(settings.couplers_radius as f64 * FILM_FORMAT_MM * 1000.),
-            grain: px(GRAIN_BLUR_UM * settings.grain_size as f64),
+            coupler_tail: if settings.couplers_radius > 0. {
+                px(couplers::TAIL_UM)
+            } else {
+                0.
+            },
         }
     }
 }
@@ -684,8 +691,9 @@ impl Spatial {
 fn pixel_size_um(long_edge: f32) -> f64 {
     FILM_FORMAT_MM * 1000. / (long_edge as f64).max(1.)
 }
-fn mean(v: [f64; 3]) -> f64 {
-    (v[0] + v[1] + v[2]) / 3.
+/// The largest of three per-channel sigmas.
+pub fn widest(sigma: [f32; 3]) -> f32 {
+    sigma[0].max(sigma[1]).max(sigma[2])
 }
 
 /// Normalised multi-bounce decay weights, `rho^k` summing to one.
@@ -696,28 +704,8 @@ pub fn bounce_weights() -> [f32; HALATION_BOUNCES] {
     raw.map(|v| (v / sum) as f32)
 }
 
-/// Grain particles per pixel per channel, already divided by the sub-layer
-/// count. `grain_size` scales the particle *area*.
-pub fn grain_particles(settings: &FilmSettings, long_edge: f32) -> [f32; 3] {
-    let pixel_um = pixel_size_um(long_edge);
-    let size = (settings.grain_size as f64).powi(2);
-    std::array::from_fn(|c| {
-        let area = GRAIN_PARTICLE_AREA_UM2 * GRAIN_PARTICLE_SCALE[c] * size;
-        (pixel_um * pixel_um / area / GRAIN_SUB_LAYERS as f64) as f32
-    })
-}
 /// Roughness clump cell in native pixels. The grain RNG is anchored to native
 /// pixels, so the clumps are too.
 pub fn grain_clump_cell(settings: &FilmSettings, native_long_edge: f32) -> f32 {
     (GRAIN_CLUMP_UM * settings.grain_size as f64 / pixel_size_um(native_long_edge)).max(1.) as f32
-}
-pub fn grain_constants() -> ([f32; 3], [f32; 3], u32) {
-    (
-        GRAIN_DENSITY_MIN.map(|v| v as f32),
-        GRAIN_UNIFORMITY.map(|v| v as f32),
-        GRAIN_SUB_LAYERS,
-    )
-}
-pub fn scatter_tail_weight() -> [f32; 3] {
-    SCATTER_TAIL_WEIGHT.map(|v| v as f32)
 }

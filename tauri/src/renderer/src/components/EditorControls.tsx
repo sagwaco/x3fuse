@@ -18,6 +18,7 @@ import {
   FILM_MONOCHROME_FILTERS,
   MONOCHROME_FILTERS,
   defaultRecipe,
+  filmHalationDefaults,
   negativePrint,
   type EditRecipe,
   type FilmSettings,
@@ -758,6 +759,32 @@ export function FilmControls({
       commit={commit}
     />
   )
+  /** One slider for a per-channel setting, shown as `scale` times its red value.
+      Green and blue follow red at their default ratio, so red halation stays
+      strongest, as on real film. B&W film uses the red value only. */
+  const layers = (
+    key: 'scatterSizeRgb' | 'scatterStrengthRgb' | 'halationSizeRgb' | 'halationStrengthRgb',
+    max: number,
+    step: number,
+    scale = 1
+  ): React.JSX.Element => {
+    const defaults = { ...DEFAULT_FILM, ...filmHalationDefaults(film.film) }
+    const ratio = defaults[key].map((value) => value / defaults[key][0])
+    return (
+      <Adjustment
+        key={key}
+        label={t(`editor.${key}`)}
+        help={t(`editor.${key}Help`)}
+        value={Math.round((film[key][0] * scale) / step) * step}
+        min={0}
+        max={max}
+        step={step}
+        change={(value, save) => update({ [key]: ratio.map((r) => (r * value) / scale) }, save)}
+        reset={() => update({ [key]: defaults[key] })}
+        commit={commit}
+      />
+    )
+  }
   // Contrast as stops of gamma: 0 is the stock's own, ±100 halves or doubles it.
   const contrast = { to: (v: number) => 2 ** (v / 100), from: (g: number) => Math.log2(g) * 100 }
   if (darkroom)
@@ -825,6 +852,7 @@ export function FilmControls({
     <>
       <Adjustment
         label={t('editor.grain')}
+        help={t('editor.grainHelp')}
         value={film.grain ? film.grainAmount * 50 : 0}
         min={0}
         max={100}
@@ -838,14 +866,16 @@ export function FilmControls({
           min: 0,
           max: 100,
           to: (v) => 0.25 * 16 ** (v / 100),
-          from: (size) => (Math.log(size / 0.25) / Math.log(16)) * 100
+          from: (size) => (Math.log(size / 0.25) / Math.log(16)) * 100,
+          help: t('editor.grainSizeHelp')
         })}
       {film.grain &&
         slider('grainRoughness', {
           min: 0,
           max: 100,
           to: (v) => v / 100,
-          from: (roughness) => roughness * 100
+          from: (roughness) => roughness * 100,
+          help: t('editor.grainRoughnessHelp')
         })}
       <Adjustment
         label={t('editor.halation')}
@@ -884,6 +914,15 @@ export function FilmControls({
         }
         commit={commit}
       />
+      {/* spektrafilm's per-channel settings, which the Halation slider scales. */}
+      {film.halation && (
+        <Section name={t('editor.halationDetails')}>
+          {layers('scatterSizeRgb', 50, 0.1)}
+          {layers('scatterStrengthRgb', 100, 1, 100)}
+          {layers('halationSizeRgb', 150, 1)}
+          {layers('halationStrengthRgb', 30, 0.1, 100)}
+        </Section>
+      )}
     </>
   )
 }

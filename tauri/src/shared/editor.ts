@@ -11,6 +11,7 @@ export interface HslBand {
   saturation: number
   luminance: number
 }
+export type Rgb = [number, number, number]
 export interface FilmSettings {
   film: number
   paper: number
@@ -28,6 +29,16 @@ export interface FilmSettings {
   halationStrength: number
   halationRadius: number
   halationMidtones: number
+  /** Per-channel (RGB) settings from spektrafilm, in micrometers.
+      Scatter size is an exponential decay length; halation size is a Gaussian sigma.
+      Scatter strength is the fraction of the scattered light in the
+      wide tail; halation strength is the fraction of light that halates.
+      `halationRadius` and `halationStrength` scale the halation pair. The editor
+      keeps each at its default ratio to red. B&W film uses the first channel. */
+  scatterSizeRgb: Rgb
+  scatterStrengthRgb: Rgb
+  halationSizeRgb: Rgb
+  halationStrengthRgb: Rgb
   gammaFilm: number
   gammaPaper: number
   tuneM: number
@@ -95,10 +106,28 @@ export const DEFAULT_FILM: FilmSettings = {
   halationStrength: 0.35,
   halationRadius: 0.0015,
   halationMidtones: 0,
+  scatterSizeRgb: [9.3, 9.7, 9.1],
+  scatterStrengthRgb: [0.78, 0.65, 0.67],
+  halationSizeRgb: [65, 65, 65],
+  halationStrengthRgb: [0.015, 0.005, 0],
   gammaFilm: 1,
   gammaPaper: 1,
   tuneM: 0,
   tuneY: 0
+}
+/** Set the stock's physical halation defaults when selecting a new film. */
+export function filmHalationDefaults(
+  film: number
+): Pick<FilmSettings, 'halationSizeRgb' | 'halationStrengthRgb'> {
+  const stock = stocks.find((item) => !item.isPaper && item.index === film)
+  const size = stock?.use === 'cine' ? 50 : 65
+  const strength: Rgb =
+    stock?.antihalation === 'no'
+      ? [0.3, 0.1, 0.015]
+      : stock?.antihalation === 'weak'
+        ? [0.08, 0.02, 0]
+        : [0.015, 0.005, 0]
+  return { halationSizeRgb: [size, size, size], halationStrengthRgb: strength }
 }
 export function defaultRecipe(): EditRecipe {
   const line = (): CurvePoint[] => [

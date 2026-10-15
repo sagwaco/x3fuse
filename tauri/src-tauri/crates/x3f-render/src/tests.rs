@@ -244,6 +244,11 @@ fn bundled_spektrafilm_assets_cover_every_stock() {
     for (index, stock) in stocks.iter().enumerate() {
         let profile = film::profile::load(index).unwrap();
         assert_eq!(profile.info.stock, stock["key"].as_str().unwrap());
+        assert_eq!(profile.info.use_kind, stock["use"].as_str().unwrap());
+        assert_eq!(
+            profile.info.antihalation,
+            stock["antihalation"].as_str().unwrap()
+        );
         assert_eq!(
             profile.is_positive(),
             stock["isPositive"].as_bool().unwrap()
@@ -267,11 +272,10 @@ fn bundled_spektrafilm_assets_cover_every_stock() {
         let monochrome = stock["monochrome"].as_bool().unwrap_or(false);
         assert_eq!(profile.is_monochrome(), monochrome, "{index} channel model");
         if index < film::profile::FILM_COUNT {
-            assert_eq!(
-                film::data::reference_illuminant(&profile.info.reference_illuminant).0[0],
-                film::data::ILLUMINANT_D55_F64[0],
-                "film {index} must resolve to the D55 reference illuminant"
-            );
+            assert!(matches!(
+                profile.info.reference_illuminant.as_str(),
+                "D50" | "D55" | "T"
+            ));
             // spektrafilm skips the camera window for B&W profiles.
             assert_eq!(
                 profile.data.hanatos2025_adaptation_window_params.len() >= 4,
@@ -299,7 +303,9 @@ fn bw_profiles_load_as_three_identical_channels() {
     assert!(doublex.is_monochrome() && !doublex.is_positive());
     // Middle development time (6.5 min of 4, 5, 6.5, 9, 12): third column.
     assert_eq!(doublex.data.base_density[0], 0.209166);
-    assert_eq!(doublex.data.density_curves[128], [1.09603; 3]);
+    assert!(doublex.data.density_curves[128]
+        .iter()
+        .all(|v| (v - 1.0960335481154473).abs() < 1e-12));
     for row in &doublex.data.channel_density {
         assert_eq!(
             *row,
@@ -455,7 +461,7 @@ fn prepared_pairs_are_keyed_on_every_setting_they_read() {
         f(&mut s);
         s
     };
-    let cases: [(&str, FilmSettings); 20] = [
+    let cases: [(&str, FilmSettings); 24] = [
         ("film", variant(|s| s.film = 7)),
         ("paper", variant(|s| s.paper = 5)),
         ("negative", variant(|s| s.negative = true)),
@@ -472,6 +478,22 @@ fn prepared_pairs_are_keyed_on_every_setting_they_read() {
         ("halation_strength", variant(|s| s.halation_strength = 1.)),
         ("halation_radius", variant(|s| s.halation_radius = 0.004)),
         ("halation_midtones", variant(|s| s.halation_midtones = 0.75)),
+        (
+            "scatter_size_rgb",
+            variant(|s| s.scatter_size_rgb = [20., 10., 5.]),
+        ),
+        (
+            "scatter_strength_rgb",
+            variant(|s| s.scatter_strength_rgb = [0.5, 0.25, 0.1]),
+        ),
+        (
+            "halation_size_rgb",
+            variant(|s| s.halation_size_rgb = [120., 80., 40.]),
+        ),
+        (
+            "halation_strength_rgb",
+            variant(|s| s.halation_strength_rgb = [0.1, 0.05, 0.01]),
+        ),
         ("gamma_film", variant(|s| s.gamma_film = 1.6)),
         ("gamma_paper", variant(|s| s.gamma_paper = 1.6)),
         ("tune_m", variant(|s| s.tune_m = 0.5)),
@@ -509,18 +531,63 @@ fn prepared_pairs_are_keyed_on_every_setting_they_read() {
     }
 }
 
+/// Each channel scatters and halates at its own size, and a B&W film keeps its
+/// identical channels identical.
 #[test]
-fn grain_particles_follow_the_discrete_blur() {
-    assert_eq!(blur_variance(0.2), 1., "a skipped blur keeps all variance");
-    let mut last = 1.;
-    for sigma in [0.3, 0.6, 1., 2., 4.] {
-        let kept = blur_variance(sigma);
-        assert!(kept < last, "sigma {sigma} keeps {kept}");
-        last = kept;
+fn halation_sigmas_follow_each_channel() {
+    let film = FilmSettings {
+        halation: true,
+        scatter_size_rgb: [40., 20., 10.],
+        halation_size_rgb: [150., 100., 50.],
+        ..Default::default()
+    };
+    film.validate().unwrap();
+    let colour = film::Spatial::new(&film, 2048., false);
+    let tail = colour.scatter_tail;
+    assert!(tail[0] > tail[1] && tail[1] > tail[2], "{tail:?}");
+    let grain = film::grain::Grain::build(&film::profile::load(film.film as usize).unwrap())
+        .unwrap()
+        .spatial(2048., film.grain_size);
+    let (passes, _) = build_passes(
+        [[0.; 4]; PARAMETER_SLOTS],
+        Some((&film, &colour, &grain)),
+        0.,
+    );
+    for sigma in [
+        colour.scatter_core,
+        tail.map(|s| s * film::couplers::EXPONENTIAL_MAX_SIGMA),
+        colour.halation[0],
+        colour.halation[2],
+    ] {
+        assert!(
+            passes
+                .iter()
+                .any(|p| p.entry == "blur" && p.params[21][..3] == sigma),
+            "no blur pass at {sigma:?}"
+        );
     }
-    // Wide kernels approach Gaussian-filtered white noise, 1 / (4 pi sigma^2).
-    let wide = blur_variance(4.) * 4. * std::f32::consts::PI * 16.;
-    assert!((wide - 1.).abs() < 0.01, "{wide}");
+    let silver = film::Spatial::new(&film, 2048., true);
+    for sigma in [silver.scatter_core, silver.scatter_tail, silver.halation[2]] {
+        assert_eq!(sigma, [sigma[0]; 3]);
+    }
+}
+
+/// The editor sets each per-channel setting by red, with green and blue at
+/// their default ratio. Each slider's maximum (EditorControls.tsx) must stay
+/// valid in every channel.
+#[test]
+fn editor_halation_maxima_validate() {
+    let at_red = |defaults: [f32; 3], red: f32| defaults.map(|v| v / defaults[0] * red);
+    let d = FilmSettings::default();
+    FilmSettings {
+        scatter_size_rgb: at_red(d.scatter_size_rgb, 50.),
+        scatter_strength_rgb: at_red(d.scatter_strength_rgb, 1.),
+        halation_size_rgb: at_red(d.halation_size_rgb, 150.),
+        halation_strength_rgb: at_red(d.halation_strength_rgb, 0.2),
+        ..d.clone()
+    }
+    .validate()
+    .unwrap();
 }
 
 #[test]
@@ -532,11 +599,26 @@ fn spektrafilm_license_ships_unmodified() {
         digest, "76d629501783ae52e8d63aee1e054c1e1a9713b9fe7d36fb306e25b1d14b24e9",
         "licenses/SPEKTRAFILM_LICENSE.txt changed; it must stay byte-identical"
     );
-    let shader = sha256(include_bytes!("render.wgsl"));
-    assert_eq!(
-        shader, "d2c0cf6f36316df242f33eb81adfb35d51479150f3084be255c68c1309d63238",
-        "render.wgsl changed; update assets/PROVENANCE.md and this hash, and          bump RENDER_VERSION if rendered pixels moved"
-    );
+    for (shader, expected) in [
+        (
+            include_bytes!("render.wgsl").as_slice(),
+            "4b10d0ce5169a218f156d6da4485e0ff138a6b72be1bfdc8d05eec24209c46ef",
+        ),
+        (
+            include_bytes!("gamut.wgsl").as_slice(),
+            "28e03614fc6efe2895b5c5161f04ab62d045171f9324d342df77f167f88b4158",
+        ),
+        (
+            include_bytes!("grain.wgsl").as_slice(),
+            "e333d122de0ccded56e2cc330b5c846128cf4f3292f15059b2d725db6beede9d",
+        ),
+    ] {
+        assert_eq!(
+            sha256(shader),
+            expected,
+            "Shader changed: update provenance and renderer version"
+        );
+    }
 }
 
 fn gpu_geometry_matches_cpu_sampling(renderer: &Renderer) {
@@ -1178,6 +1260,12 @@ fn gpu_film_scanner_levels(renderer: &Renderer) {
     let mut patches = image(3, 1);
     patches.data = [0., metered, 64.].iter().flat_map(|&v| [v; 3]).collect();
     let encode = |c: f64| 1.055 * c.powf(1. / 2.4) - 0.055;
+    let scan_white = ((0.98 + 0.055) / 1.055f64).powf(2.4);
+    let compressed_white = film::gamut::compress_output_gamut([scan_white; 3], ColorProfile::Srgb)
+        .map(encode)
+        .iter()
+        .sum::<f64>()
+        / 3.;
     for (name, film) in [
         ("color print", FilmSettings::default()),
         (
@@ -1225,7 +1313,10 @@ fn gpu_film_scanner_levels(renderer: &Renderer) {
         };
         let (black, gray, white) = (mean(0), mean(1), mean(2));
         assert!((black - 0.01).abs() < 0.008, "{name}: black {black}");
-        assert!((white - 0.98).abs() < 0.01, "{name}: white {white}");
+        assert!(
+            (white - compressed_white).abs() < 0.01,
+            "{name}: white {white}, expected {compressed_white}"
+        );
         assert!(
             (gray - encode(0.184)).abs() < 0.03,
             "{name}: metered gray {gray}"
@@ -1241,12 +1332,19 @@ fn gpu_grain_blur_tiles(renderer: &Renderer) {
         grain_roughness: 1.,
         ..Default::default()
     };
-    let spatial = film::Spatial::new(&film, 2048.);
-    assert!(spatial.grain >= 1., "grain blur {} px", spatial.grain);
-    let (passes, _) = build_passes([[0.; 4]; 51], Some((&film, &spatial)), 0.);
+    let spatial = film::Spatial::new(&film, 2048., false);
+    let grain = film::grain::Grain::build(&film::profile::load(film.film as usize).unwrap())
+        .unwrap()
+        .spatial(2048., film.grain_size);
+    assert!(grain.blur >= 1.);
+    let (passes, _) = build_passes(
+        [[0.; 4]; PARAMETER_SLOTS],
+        Some((&film, &spatial, &grain)),
+        0.,
+    );
     assert!(passes
         .iter()
-        .any(|p| p.entry == "blur" && p.params[21][0] == spatial.grain));
+        .any(|p| p.entry == "blur" && p.params[21][0] == grain.blur));
     let cancel = AtomicBool::new(false);
     let img = image(2048, 40);
     let recipe = EditRecipe {
@@ -1458,6 +1556,33 @@ fn gpu_bw_film(renderer: &Renderer) {
     assert!(plain[0] > plain[4] + 5000.);
     // Blue has no measured curve: it renders as no filter.
     assert_eq!(render(doublex.clone(), MonochromeFilter::Blue), plain);
+    // One silver layer halates once: only the first channel's sizes and
+    // strengths count. The output is neutralized anyway, so compare against
+    // the same settings in every channel.
+    let mut edge = image(2048, 2);
+    for (i, v) in edge.data.iter_mut().enumerate() {
+        *v = if (i / 3) % 2048 < 1024 { 4. } else { 0.02 };
+    }
+    let halated = |scatter: [f32; 3], size: [f32; 3], strength: [f32; 3]| {
+        let recipe = EditRecipe {
+            film: Some(FilmSettings {
+                halation: true,
+                scatter_size_rgb: scatter,
+                halation_size_rgb: size,
+                halation_strength_rgb: strength,
+                ..doublex.clone()
+            }),
+            monochrome: Some(MonochromeSettings::default()),
+            ..Default::default()
+        };
+        renderer
+            .render(&edge, &recipe, RenderOptions::default(), &cancel)
+            .unwrap()
+            .data
+    };
+    let uneven = halated([40., 20., 10.], [150., 100., 50.], [0.2, 0., 0.1]);
+    assert_eq!(uneven, halated([40.; 3], [150.; 3], [0.2; 3]));
+    assert_ne!(uneven, halated([40.; 3], [150.; 3], [0.; 3]));
     // One silver layer: every channel draws the same grains. The output is
     // neutralized anyway, so check the draw itself: identical channel noise
     // has no chroma for the grain saturation control to remove.
@@ -1664,129 +1789,6 @@ fn gpu_monochrome(renderer: &Renderer) {
     assert!(image::load_from_memory(&full.jpeg(95).unwrap()).is_ok());
 }
 
-/// External parity guard against the real spektrafilm-rs binary, for when the
-/// shader stages are edited. Opt in by building the oracle once:
-///
-/// ```sh
-/// cd /path/to/spektrafilm-rs && cargo build --release -p spektrafilm-cli
-/// SPEKTRAFILM_CLI=.../target/release/spektrafilm SPEKTRAFILM_DATA=.../data \
-///   cargo test -p x3f-render spektrafilm_parity -- --ignored --nocapture
-/// ```
-///
-/// Covers the bare chain: front pass, film develop, DIR matrix, print and
-/// scan. Spatial stages are disabled on both sides because this crate skips
-/// sub-pixel blurs that spektrafilm still convolves.
-#[test]
-#[ignore = "needs a spektrafilm-rs build; set SPEKTRAFILM_CLI and SPEKTRAFILM_DATA"]
-fn spektrafilm_parity() {
-    let (Ok(cli), Ok(data)) = (
-        std::env::var("SPEKTRAFILM_CLI"),
-        std::env::var("SPEKTRAFILM_DATA"),
-    ) else {
-        panic!("set SPEKTRAFILM_CLI and SPEKTRAFILM_DATA to run the parity oracle");
-    };
-    let dir = std::env::temp_dir().join("x3f-render-spektrafilm-parity");
-    std::fs::create_dir_all(&dir).unwrap();
-    let (input, output, raw, config) = (
-        dir.join("in.tiff"),
-        dir.join("out.tiff"),
-        dir.join("raw.bin"),
-        dir.join("params.json"),
-    );
-
-    // Quantize to 16 bits first: the oracle only sees the TIFF.
-    const N: u32 = 64;
-    let quantized: Vec<u16> = (0..N * N)
-        .flat_map(|i| {
-            let (x, y) = (
-                (i % N) as f32 / (N - 1) as f32,
-                (i / N) as f32 / (N - 1) as f32,
-            );
-            [x, y, 0.5 * (x + y)].map(|v| (v * 1.6 * 65535.).min(65535.).round() as u16)
-        })
-        .collect();
-    let cancel = AtomicBool::new(false);
-    x3f_core::output::tiff::write_rgb16(&quantized, N, N, &input, false, None, &cancel).unwrap();
-    std::fs::write(
-        &config,
-        r#"{"camera":{"auto_exposure":false},
-            "io":{"input_color_space":"sRGB","input_cctf_decoding":false,
-                  "output_color_space":"sRGB","output_cctf_encoding":false,
-                  "output_gamut_compress":{"algorithm":"off"}},
-            "film_render":{"grain":{"active":false},"halation":{"active":false},
-                           "glare":{"active":false},
-                           "dir_couplers":{"amount":0.25,"diffusion_size_um":0.0,
-                                           "diffusion_tail_weight":0.0}},
-            "print_render":{"glare":{"active":false}},
-            "scanner":{"unsharp_mask":[0.0,0.0]}}"#,
-    )
-    .unwrap();
-    let status = std::process::Command::new(&cli)
-        .args(["process"])
-        .arg(&input)
-        .arg("-o")
-        .arg(&output)
-        .args([
-            "--film",
-            "kodak_portra_400",
-            "--paper",
-            "kodak_portra_endura",
-        ])
-        .arg("--data-dir")
-        .arg(&data)
-        .arg("--params")
-        .arg(&config)
-        .arg("--raw-out")
-        .arg(&raw)
-        .status()
-        .unwrap();
-    assert!(status.success(), "spektrafilm CLI failed");
-    let bytes = std::fs::read(&raw).unwrap();
-    let reference: Vec<f64> = bytes
-        .as_chunks::<8>()
-        .0
-        .iter()
-        .map(|b| f64::from_le_bytes(*b))
-        .collect();
-    assert_eq!(reference.len(), quantized.len());
-
-    let renderer = Renderer::new().unwrap();
-    let source = SceneLinearImage {
-        width: N,
-        height: N,
-        orientation: 1,
-        data: quantized.iter().map(|&v| v as f32 / 65535.).collect(),
-        white_balance: image(1, 1).white_balance,
-        color_mode_calibration: None,
-    };
-    let recipe = EditRecipe {
-        film: Some(FilmSettings {
-            grain: false,
-            ..Default::default()
-        }),
-        ..Default::default()
-    };
-    let rendered = renderer
-        .render_spektrafilm(&source, &recipe, &cancel)
-        .unwrap();
-    let mut worst = 0u16;
-    for (got, want) in rendered.data.iter().zip(&reference) {
-        let want = want.clamp(0., 1.);
-        let encoded = ((if want <= 0.0031308 {
-            12.92 * want
-        } else {
-            1.055 * want.powf(1. / 2.4) - 0.055
-        }) * 65535.)
-            .round() as u16;
-        worst = worst.max(got.abs_diff(encoded));
-    }
-    eprintln!("spektrafilm CLI parity: max u16 delta {worst} of 65535");
-    assert!(worst <= 514, "max u16 delta {worst} exceeds 2/255");
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-// Opt-in because headless CI may not expose a GPU. A requested GPU check MUST fail
-// on unavailable hardware; it never silently exercises a CPU fallback.
 #[test]
 #[ignore = "requires hardware GPU; cargo test -p x3f-render gpu_pipeline -- --ignored --nocapture"]
 fn gpu_pipeline() {
@@ -2047,93 +2049,6 @@ fn gpu_pipeline() {
             assert_eq!(render.data.len(), 12, "stock {stock},paper {paper}");
         }
     }
-    // Reference values from spektrafilm-rs v0.1.2 (9dd59b0) on its CPU backend
-    // with every stage this crate does not implement switched off: grain,
-    // halation, glare, unsharp mask and output gamut compression off, auto
-    // exposure off, linear sRGB in and out, DIR couplers at the recipe default.
-    // Regeneration is documented in assets/PROVENANCE.md.
-    let mut flat = image(8, 8);
-    let neutral = FilmSettings {
-        grain: false,
-        ..Default::default()
-    };
-    let cases: [(FilmSettings, [f32; 3], [f64; 3]); 6] = [
-        (
-            neutral.clone(),
-            [0.184; 3],
-            [0.175920382142, 0.178913980722, 0.187772050500],
-        ),
-        (
-            neutral.clone(),
-            [0., 0., 0.],
-            [0.003905232530, 0.004238163121, 0.005496182479],
-        ),
-        (
-            neutral.clone(),
-            [0.45, 0.28, 0.21],
-            [0.409098744392, 0.289901643991, 0.239676132798],
-        ),
-        (
-            neutral.clone(),
-            [2., 2., 2.],
-            [0.779674291611, 0.781614482403, 0.773847043514],
-        ),
-        (
-            // Slide film scanned directly, skipping the paper entirely.
-            FilmSettings {
-                film: 18,
-                negative: true,
-                ..neutral.clone()
-            },
-            [0.184; 3],
-            [0.188368186355, 0.181645467877, 0.183615848422],
-        ),
-        (
-            // Enlarger trim: +10 magenta, -5 yellow filter units.
-            FilmSettings {
-                tune_m: 0.5,
-                tune_y: -0.25,
-                ..neutral.clone()
-            },
-            [0.184; 3],
-            [0.172593876719, 0.223124980927, 0.139309808612],
-        ),
-    ];
-    let mut worst = 0u16;
-    for (settings, input, expected) in cases {
-        flat.data = input.repeat(64);
-        let recipe = EditRecipe {
-            film: Some(settings.clone()),
-            ..Default::default()
-        };
-        let rendered = renderer
-            .render_spektrafilm(&flat, &recipe, &cancel)
-            .unwrap();
-        let expected = expected.map(|v: f64| {
-            ((if v <= 0.0031308 {
-                12.92 * v
-            } else {
-                1.055 * v.powf(1. / 2.4) - 0.055
-            }) * 65535.)
-                .round() as u16
-        });
-        for (value, reference) in rendered
-            .data
-            .as_chunks::<3>()
-            .0
-            .iter()
-            .flat_map(|p| p.iter().zip(expected))
-        {
-            worst = worst.max(value.abs_diff(reference));
-            assert!(
-                value.abs_diff(reference) <= 32,
-                "spektrafilm patch {input:?} film {} paper {}: {value} vs {reference}",
-                settings.film,
-                settings.paper
-            );
-        }
-    }
-    eprintln!("spektrafilm parity: max u16 delta {worst} of 65535");
     cancel.store(true, Ordering::Relaxed);
     assert!(matches!(
         renderer.render(&img, &recipe, RenderOptions::default(), &cancel),
@@ -2141,76 +2056,160 @@ fn gpu_pipeline() {
     ));
 }
 
-/// Values printed by spektrafilm-rs v0.1.2 (`9dd59b0`) for Portra 400 on
-/// Portra Endura with `auto_exposure = false` and linear sRGB input, via
-/// `Pipeline::{tc_lut, print_illuminant_slice, print_exposure_factor}`.
+/// Calibration generated by the pinned experimental Python pipeline.
 #[test]
 fn spektrafilm_calibration_matches_reference() {
+    let fixture: serde_json::Value =
+        serde_json::from_str(include_str!("../tests/experimental_calibration.json")).unwrap();
+    let reference = &fixture["calibration"];
     let lut = film::FilmLut::build(2, None).unwrap();
-    for (i, j, want) in [
-        (
-            0usize,
-            0usize,
-            [8.037559559490e0, 3.838885502449e-1, 4.583906389200e0],
-        ),
-        (
-            37,
-            91,
-            [6.727003906276e0, 3.026833599327e-1, 2.571768047361e0],
-        ),
-        (
-            95,
-            95,
-            [1.409664979721e0, 2.087212094499e0, 1.883525499154e0],
-        ),
-        (
-            191,
-            191,
-            [5.184326951427e-1, 6.284266336399e0, 9.586498740657e-2],
-        ),
-        (
-            10,
-            180,
-            [9.282101411120e0, 2.261275489813e-1, 2.512172937174e0],
-        ),
-    ] {
-        let at = (i * film::spectra::LUT_SIZE + j) * 3;
-        for (c, want) in want.iter().enumerate() {
-            let got = lut.data[at + c];
+    for node in reference["lut_nodes"].as_array().unwrap() {
+        let i = node["i"].as_u64().unwrap() as usize;
+        let j = node["j"].as_u64().unwrap() as usize;
+        for c in 0..3 {
+            let want = node["rgb"][c].as_f64().unwrap();
+            let got = lut.data[(i * film::spectra::LUT_SIZE + j) * 3 + c];
             assert!(
-                (got - want).abs() <= want.abs() * 1e-9,
-                "tc lut ({i},{j}) channel {c}: {got:e} vs {want:e}"
+                (got - want).abs() < want.abs() * 1e-9,
+                "LUT ({i},{j})/{c}: {got} vs {want}"
             );
         }
     }
-    let film = film::profile::load(2).unwrap();
-    let paper = film::profile::load(film::profile::FILM_COUNT + 3).unwrap();
-    let neutral = film::enlarger::neutral_filters(&paper.info.stock, &film.info.stock).unwrap();
-    assert_eq!(neutral, [0.0, 51.56801468495496, 52.53400422349596]);
+    let neutral =
+        film::enlarger::neutral_filters("kodak_portra_endura", "kodak_portra_400").unwrap();
+    let expected: [f64; 3] = serde_json::from_value(reference["neutral_filters"].clone()).unwrap();
+    assert_eq!(neutral, expected);
     let illuminant = film::enlarger::filtered_illuminant(neutral);
-    for (i, want) in [
-        (0usize, 8.088674859767e-2),
-        (20, 2.472911877067e-1),
-        (40, 4.505604283922e-1),
-        (60, 1.301948239188e0),
-        (80, 4.145529258993e-1),
-    ] {
-        assert!(
-            (illuminant[i] - want).abs() <= want * 1e-9,
-            "enlarger illuminant {i}: {:e} vs {want:e}",
-            illuminant[i]
+    for sample in reference["illuminant_samples"].as_array().unwrap() {
+        let i = sample["index"].as_u64().unwrap() as usize;
+        let want = sample["value"].as_f64().unwrap();
+        assert!((illuminant[i] - want).abs() < want * 1e-9);
+    }
+    let pair = film::FilmPair::build(&FilmSettings::default(), &lut).unwrap();
+    let expected = reference["print_exposure_factor"].as_f64().unwrap();
+    assert!((pair.print_normalization as f64 - expected).abs() < 1e-6);
+}
+
+/// Deterministic patches generated by the pinned experimental Python pipeline.
+#[test]
+#[ignore = "requires hardware GPU"]
+fn gpu_experimental_reference() {
+    let renderer = Renderer::new().unwrap();
+    let cancel = AtomicBool::new(false);
+    let fixture: serde_json::Value =
+        serde_json::from_str(include_str!("../tests/experimental_patches.json")).unwrap();
+    let inputs: Vec<[f32; 3]> =
+        serde_json::from_value(fixture["input_linear_srgb"].clone()).unwrap();
+    let mut source = image(inputs.len() as u32, 1);
+    source.data = inputs.iter().flatten().copied().collect();
+    let stock = |key: &str| {
+        film::profile::PROFILE_JSON
+            .iter()
+            .position(|(name, _)| *name == key)
+            .unwrap() as u32
+    };
+    let mut worst = 0u16;
+    for case in fixture["cases"].as_array().unwrap() {
+        let film_index = stock(case["film"].as_str().unwrap());
+        let output = match case["output_space"].as_str().unwrap() {
+            "sRGB" => ColorProfile::Srgb,
+            "Adobe RGB (1998)" => ColorProfile::AdobeRgb,
+            "ProPhoto RGB" => ColorProfile::ProPhotoRgb,
+            other => panic!("unknown reference output {other}"),
+        };
+        // X3Fuse keeps B&W exports neutral in every output profile.
+        if film_index >= 20 && output != ColorProfile::Srgb {
+            continue;
+        }
+        let recipe = EditRecipe {
+            film: Some(FilmSettings {
+                film: film_index,
+                paper: stock(case["paper"].as_str().unwrap()) - film::profile::FILM_COUNT as u32,
+                negative: case["direct"].as_bool().unwrap(),
+                grain: false,
+                halation: false,
+                couplers: case["couplers"].as_f64().unwrap() as f32,
+                couplers_radius: 0.,
+                gamma_film: case["gamma_film"].as_f64().unwrap() as f32,
+                gamma_paper: case["gamma_paper"].as_f64().unwrap() as f32,
+                tune_m: case["tune_m"].as_f64().unwrap() as f32,
+                tune_y: case["tune_y"].as_f64().unwrap() as f32,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let mut uploaded = renderer.upload(&source, &cancel).unwrap();
+        let rendered = renderer
+            .render_source(
+                &source,
+                &mut uploaded,
+                &recipe,
+                RenderOptions {
+                    color_profile: output,
+                    ..Default::default()
+                },
+                &cancel,
+                None,
+                Look::spektrafilm(),
+            )
+            .unwrap();
+        let reference: Vec<[f64; 3]> = serde_json::from_value(case["linear_rgb"].clone()).unwrap();
+        let encode = |v: f64| {
+            let v = v.max(0.);
+            let value = match output {
+                ColorProfile::Srgb => {
+                    if v <= 0.0031308 {
+                        12.92 * v
+                    } else {
+                        1.055 * v.powf(1. / 2.4) - 0.055
+                    }
+                }
+                ColorProfile::AdobeRgb => v.powf(256. / 563.),
+                ColorProfile::ProPhotoRgb => {
+                    if v < 1. / 512. {
+                        16. * v
+                    } else {
+                        v.powf(1. / 1.8)
+                    }
+                }
+            };
+            (value.clamp(0., 1.) * 65535.).round() as u16
+        };
+        let mut case_worst = 0;
+        for (i, (&got, want)) in rendered
+            .data
+            .iter()
+            .zip(reference.iter().flatten().map(|v| encode(*v)))
+            .enumerate()
+        {
+            case_worst = case_worst.max(got.abs_diff(want));
+            if got.abs_diff(want) > 40 {
+                eprintln!(
+                    "{} {} gamma={}/{} couplers={} trim={}/{} patch={} channel={}: {got} vs {want}",
+                    case["film"],
+                    case["output_space"],
+                    case["gamma_film"],
+                    case["gamma_paper"],
+                    case["couplers"],
+                    case["tune_m"],
+                    case["tune_y"],
+                    i / 3,
+                    i % 3
+                );
+            }
+        }
+        worst = worst.max(case_worst);
+        eprintln!(
+            "{} {} gamma={}/{} couplers={} trim={}/{} max delta {case_worst}",
+            case["film"],
+            case["output_space"],
+            case["gamma_film"],
+            case["gamma_paper"],
+            case["couplers"],
+            case["tune_m"],
+            case["tune_y"]
         );
     }
-    let settings = FilmSettings {
-        film: 2,
-        paper: 3,
-        ..Default::default()
-    };
-    let pair = film::FilmPair::build(&settings, &lut).unwrap();
-    let want = 8.357499185829e-1f64;
-    let got = pair.print_normalization as f64;
-    assert!(
-        (got - want).abs() <= want * 1e-4,
-        "print exposure factor: {got:e} vs {want:e}"
-    );
+    eprintln!("Experimental parity: max u16 delta {worst}");
+    assert!(worst <= 40);
 }

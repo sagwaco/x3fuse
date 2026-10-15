@@ -226,7 +226,7 @@ it('offers black-and-white looks with their own filters, papers and darkroom', (
   expect(papers()).not.toContain('Kodak 2302')
   chooseFilm('Kodak Double-X 5222')
   expect(change).toHaveBeenLastCalledWith({
-    film: { ...DEFAULT_FILM, film: 20, paper: 8, negative: false },
+    film: { ...DEFAULT_FILM, film: 20, paper: 8, negative: false, halationSizeRgb: [50, 50, 50] },
     monochrome: { filter: 'neutral' },
     cameraProfile: null
   })
@@ -594,6 +594,53 @@ it('maps grain, halation and darkroom sliders so dragging right does what the la
   expect(film()?.gammaFilm).toBe(0.5)
   adjust(t('editor.couplers'), 60)
   expect(film()?.couplers).toBe(0.6)
+})
+
+it('sets scattering and halation by red, with green and blue at their default ratio', () => {
+  render(<Controls />)
+  const details = (): HTMLDetailsElement | null =>
+    screen.queryByText(t('editor.halationDetails'), { selector: 'summary' })?.closest('details') ??
+    null
+  const rgb = (key: 'scatterSizeRgb' | 'halationStrengthRgb'): number[] | undefined =>
+    film()?.[key].map((value) => Number(value.toFixed(6)))
+  // The per-channel settings scale with the Halation slider, so they show only with it.
+  expect(details()).toBeNull()
+  adjust(t('editor.halation'), 50)
+  details()!.open = true
+  expect(screen.queryByRole('spinbutton', { name: t('editor.red') })).toBeNull()
+  // Portra uses the strong antihalation preset.
+  adjust(t('editor.halationStrengthRgb'), 10)
+  expect(rgb('halationStrengthRgb')).toEqual([0.1, 0.033333, 0])
+  adjust(t('editor.scatterSizeRgb'), 18.6)
+  expect(rgb('scatterSizeRgb')).toEqual([18.6, 19.4, 18.2])
+  reset(t('editor.halationStrengthRgb'))
+  expect(film()?.halationStrengthRgb).toEqual([0.015, 0.005, 0])
+  // B&W film uses the red value, and the same slider sets it.
+  chooseFilm('Kodak Tri-X 7266')
+  details()!.open = true
+  adjust(t('editor.halationSizeRgb'), 120)
+  expect(film()?.halationSizeRgb).toEqual([120, 120, 120])
+})
+
+it('loads halation presets on a stock change and preserves saved channel overrides', () => {
+  const recipe = defaultRecipe()
+  recipe.film!.halationSizeRgb = [91, 72, 53]
+  recipe.film!.halationStrengthRgb = [0.12, 0.07, 0.01]
+  render(<Controls initial={recipe} />)
+  chooseFilm('Kodak Portra 400')
+  expect(film()?.halationSizeRgb).toEqual([91, 72, 53])
+  expect(film()?.halationStrengthRgb).toEqual([0.12, 0.07, 0.01])
+  chooseFilm('Kodak Gold 200')
+  expect(film()?.halationStrengthRgb).toEqual([0.08, 0.02, 0])
+  expect(film()?.halationSizeRgb).toEqual([65, 65, 65])
+  adjust(t('editor.halation'), 50)
+  adjust(t('editor.halationStrengthRgb'), 12)
+  expect(film()?.halationStrengthRgb).toEqual([0.12, 0.03, 0])
+  reset(t('editor.halationStrengthRgb'))
+  expect(film()?.halationStrengthRgb).toEqual([0.08, 0.02, 0])
+  chooseFilm('Kodak Vision3 50D')
+  expect(film()?.halationSizeRgb).toEqual([50, 50, 50])
+  expect(film()?.halationStrengthRgb).toEqual([0.015, 0.005, 0])
 })
 
 it('adjusts color ranges chosen from swatches and edits curve points from the keyboard', () => {

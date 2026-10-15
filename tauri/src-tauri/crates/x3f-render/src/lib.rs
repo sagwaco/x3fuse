@@ -19,8 +19,9 @@ pub use stocks::STOCKS_JSON;
 /// their cache keys, or previews produced by an older build keep being served
 /// next to freshly rendered exports. `2` is the spektrafilm model; `1` was the
 /// implementation it replaced.
-/// Version 3 adds CAMF camera picture modes.
-pub const RENDER_VERSION: u32 = 4;
+/// Version 3 adds CAMF camera picture modes. Version 5 blurs scatter and
+/// halation with a sigma per channel. Version 6 ports the experimental models.
+pub const RENDER_VERSION: u32 = 6;
 
 use image::ImageEncoder;
 use serde::{Deserialize, Serialize};
@@ -32,6 +33,7 @@ use std::{
         mpsc, Arc, Mutex, MutexGuard, OnceLock,
     },
 };
+use wgpu::util::DeviceExt;
 use x3f_core::SceneLinearImage;
 
 #[derive(Debug, thiserror::Error)]
@@ -276,9 +278,10 @@ struct GpuSource {
     fill: Option<[u32; 4]>,
 }
 
-type Parameters = [[f32; 4]; 51];
+const PARAMETER_SLOTS: usize = 56;
+type Parameters = [[f32; 4]; PARAMETER_SLOTS];
 const PARAMETER_BYTES: u64 = std::mem::size_of::<Parameters>() as u64;
-const MAX_DISPATCHES: u64 = 36;
+const MAX_DISPATCHES: u64 = 80;
 /// Blurs below this radius are indistinguishable from a copy; skipping them
 /// keeps sub-pixel spektrafilm stages off the pass list entirely.
 const MIN_SIGMA: f32 = 0.3;
@@ -377,16 +380,19 @@ impl Chain {
     fn two(&mut self, name: &'static str, src: usize, aux: usize) -> usize {
         self.emit(name, src, aux, self.base)
     }
-    /// Separable Gaussian. Returns `src` unchanged when the radius would round
-    /// away, so sub-pixel spektrafilm stages cost no dispatches.
-    fn blur(&mut self, src: usize, sigma: f32) -> usize {
-        if sigma < MIN_SIGMA || sigma.is_nan() {
+    /// Separable Gaussian with a sigma per channel. Returns `src` unchanged
+    /// when the widest radius would round away, so sub-pixel spektrafilm
+    /// stages cost no dispatches. The blur reads only slots 0, 21 and 22.
+    fn blur(&mut self, src: usize, sigma: [f32; 3]) -> usize {
+        let widest = film::widest(sigma);
+        if widest < MIN_SIGMA || sigma.iter().any(|s| s.is_nan()) {
             return src;
         }
         let mut q = self.base;
-        q[21] = [sigma, 0., (3. * sigma).ceil(), 0.];
+        q[21] = [sigma[0], sigma[1], sigma[2], (3. * widest).ceil()];
+        q[22] = [0.; 4];
         let mid = self.emit("blur", src, src, q);
-        q[21][1] = 1.;
+        q[22][0] = 1.;
         let dst = self.emit("blur", mid, mid, q);
         self.release(mid);
         dst
@@ -396,21 +402,105 @@ impl Chain {
         q[21] = [a, b, 0., 0.];
         self.emit("combine", src, aux, q)
     }
+    fn grain(&mut self, original: usize, spatial: &film::grain::Spatial) -> usize {
+        let mut accumulated = None;
+        for (layer, &sigma) in spatial.dye_clouds.iter().enumerate() {
+            let mut params = self.base;
+            params[52][3] = layer as f32;
+            let particles = self.emit("grain_layer", original, original, params);
+            let clouds = self.blur(particles, sigma);
+            if clouds != particles {
+                self.release(particles);
+            }
+            accumulated = Some(match accumulated {
+                None => clouds,
+                Some(previous) => {
+                    let sum = self.scaled(previous, clouds, 1., 1.);
+                    self.release(previous);
+                    self.release(clouds);
+                    sum
+                }
+            });
+        }
+        let mut current = accumulated.expect("grain has at least one emulsion sublayer");
+        if spatial.micro_sigma > 0.05 {
+            let noise = self.one("grain_micro_field", original);
+            let clumps = if spatial.micro_blur > 0.4 {
+                self.blur(noise, [spatial.micro_blur; 3])
+            } else {
+                noise
+            };
+            if clumps != noise {
+                self.release(noise);
+            }
+            let textured = self.two("grain_multiply", current, clumps);
+            self.release(current);
+            self.release(clumps);
+            current = textured;
+        }
+        let blurred = self.blur(current, [spatial.blur; 3]);
+        if blurred != current {
+            self.release(current);
+        }
+        current = blurred;
+        let reference = self.blur(current, [spatial.usm_sigma; 3]);
+        if reference != current {
+            let sharp = self.two("grain_usm", current, reference);
+            self.release(reference);
+            let sharp_blur = self.blur(sharp, [spatial.usm_sigma; 3]);
+            let ratio = self.two("grain_ratio", current, sharp_blur);
+            self.release(current);
+            self.release(sharp_blur);
+            let weights = self.blur(ratio, [spatial.usm_sigma; 3]);
+            self.release(ratio);
+            current = self.two("grain_multiply", sharp, weights);
+            self.release(sharp);
+            self.release(weights);
+        }
+        let result = self.two("grain_finish", current, original);
+        self.release(current);
+        self.release(original);
+        result
+    }
+    /// Mix independent Gaussian blurs of the source to form an exponential tail.
+    fn exponential(&mut self, src: usize, decay: [f32; 3]) -> usize {
+        if film::widest(decay) * film::couplers::EXPONENTIAL_MAX_SIGMA < MIN_SIGMA {
+            return src;
+        }
+        let mut accumulated = None;
+        for (weight, ratio) in film::couplers::EXPONENTIAL_GAUSSIANS {
+            let component = self.blur(src, decay.map(|value| value * ratio));
+            accumulated = Some(match accumulated {
+                None => self.scaled(component, component, weight, 0.),
+                Some(previous) => {
+                    let sum = self.scaled(previous, component, 1., weight);
+                    self.release(previous);
+                    sum
+                }
+            });
+            if component != src {
+                self.release(component);
+            }
+        }
+        accumulated.expect("the exponential fit has three components")
+    }
     /// Scatter mix plus the multi-bounce halation add, on linear film raw.
     fn halation(&mut self, raw: usize, spatial: &film::Spatial) -> usize {
         let mut current = raw;
-        if spatial.scatter_tail >= MIN_SIGMA {
+        if film::widest(spatial.scatter_tail) * film::couplers::EXPONENTIAL_MAX_SIGMA >= MIN_SIGMA {
             let core = self.blur(current, spatial.scatter_core);
-            let tail = self.blur(current, spatial.scatter_tail);
+            let tail = self.exponential(current, spatial.scatter_tail);
             let scattered = self.two("scatter_mix", core, tail);
             if core != current {
                 self.release(core);
             }
-            self.release(tail);
+            if tail != current {
+                self.release(tail);
+            }
             self.release(current);
             current = scattered;
         }
-        if spatial.halation[0] < MIN_SIGMA {
+        if film::widest(spatial.halation[0]) < MIN_SIGMA {
             return current;
         }
         let weights = film::bounce_weights();
@@ -470,20 +560,6 @@ impl Look<'_> {
             ..Self::plain()
         }
     }
-}
-
-/// The fraction of white-noise variance left after [`Chain::blur`] with
-/// `sigma`, from the same kernel the `blur` pass samples. One when the blur
-/// is skipped.
-fn blur_variance(sigma: f32) -> f32 {
-    if sigma < MIN_SIGMA || sigma.is_nan() {
-        return 1.;
-    }
-    let radius = (3. * sigma).ceil() as i64;
-    let (sum, squares) = (-radius..=radius)
-        .map(|k| (-0.5 * (k as f64 / sigma as f64).powi(2)).exp())
-        .fold((0., 0.), |(sum, squares), w| (sum + w, squares + w * w));
-    (squares / (sum * sum)).powi(2) as f32
 }
 
 /// One tile of a frame. `x`, `y`, `width` and `height` are frame pixels;
@@ -601,12 +677,12 @@ fn choose_tiling(
 /// Returns the passes and the buffer that holds the output.
 fn build_passes(
     base: Parameters,
-    film: Option<(&FilmSettings, &film::Spatial)>,
+    film: Option<(&FilmSettings, &film::Spatial, &film::grain::Spatial)>,
     sharpen: f32,
 ) -> (Vec<Pass>, usize) {
     let mut chain = Chain::new(base);
     let mut current = chain.start();
-    if let Some((settings, spatial)) = film {
+    if let Some((settings, spatial, grain)) = film {
         let raw = chain.one("expose", current);
         chain.release(current);
         current = if settings.halation {
@@ -618,7 +694,29 @@ fn build_passes(
         current = if settings.couplers > 0. {
             let inhibitor = chain.one("dir_matmul", density);
             chain.release(density);
-            let diffused = chain.blur(inhibitor, spatial.coupler);
+            let diffused = if spatial.coupler > 0. {
+                let core = chain.blur(inhibitor, [spatial.coupler; 3]);
+                let tail = chain.exponential(inhibitor, [spatial.coupler_tail; 3]);
+                if core == inhibitor && tail == inhibitor {
+                    inhibitor
+                } else {
+                    let mix = chain.scaled(
+                        core,
+                        tail,
+                        1. - film::couplers::TAIL_WEIGHT,
+                        film::couplers::TAIL_WEIGHT,
+                    );
+                    if core != inhibitor {
+                        chain.release(core);
+                    }
+                    if tail != inhibitor {
+                        chain.release(tail);
+                    }
+                    mix
+                }
+            } else {
+                inhibitor
+            };
             if diffused != inhibitor {
                 chain.release(inhibitor);
             }
@@ -630,13 +728,8 @@ fn build_passes(
             chain.release(current);
             density
         };
-        if settings.grain {
-            let grained = chain.one("grain", current);
-            chain.release(current);
-            current = chain.blur(grained, spatial.grain);
-            if current != grained {
-                chain.release(grained);
-            }
+        if settings.grain && settings.grain_amount > 0. {
+            current = chain.grain(current, grain);
         }
         if !settings.negative {
             let exposed = chain.one("print_spectral", current);
@@ -651,7 +744,7 @@ fn build_passes(
     let finished = chain.one("finish", current);
     chain.release(current);
     let sharp = if sharpen > 0. {
-        chain.blur(finished, sharpen)
+        chain.blur(finished, [sharpen; 3])
     } else {
         finished
     };
@@ -677,6 +770,7 @@ pub struct Renderer {
     source_layout: wgpu::BindGroupLayout,
     frame_layout: wgpu::BindGroupLayout,
     pipelines: HashMap<&'static str, wgpu::ComputePipeline>,
+    output_gamut: wgpu::Buffer,
     /// ponytail: one-entry film/paper cache; make it a small LRU only if
     /// switching stocks in the UI measurably stalls.
     film: Mutex<Option<FilmCache>>,
@@ -708,9 +802,18 @@ impl Renderer {
         device.push_error_scope(wgpu::ErrorFilter::Validation);
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Spectral RAW editor"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("render.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                concat!(
+                    include_str!("render.wgsl"),
+                    "\n",
+                    include_str!("gamut.wgsl"),
+                    "\n",
+                    include_str!("grain.wgsl")
+                )
+                .into(),
+            ),
         });
-        let entries: Vec<_> = (0..7)
+        let entries: Vec<_> = (0..8)
             .map(|binding| wgpu::BindGroupLayoutEntry {
                 binding,
                 visibility: wgpu::ShaderStages::COMPUTE,
@@ -796,7 +899,12 @@ impl Renderer {
             "develop",
             "dir_matmul",
             "dir_develop",
-            "grain",
+            "grain_layer",
+            "grain_micro_field",
+            "grain_multiply",
+            "grain_usm",
+            "grain_ratio",
+            "grain_finish",
             "print_spectral",
             "print_develop",
             "scan",
@@ -840,6 +948,11 @@ impl Renderer {
                 *error = Some(format!("GPU device lost ({reason:?}): {message}"));
             }
         });
+        let output_gamut = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Output gamut boundaries"),
+            contents: bytemuck::cast_slice(&film::gamut::output_gamut_tables()),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
         Ok(Self {
             device,
             queue,
@@ -847,6 +960,7 @@ impl Renderer {
             source_layout,
             frame_layout,
             pipelines,
+            output_gamut,
             film: Mutex::new(None),
             adapter_name: info.name,
             gpu_error,
@@ -929,25 +1043,6 @@ impl Renderer {
         Ok(gpu)
     }
     /// Renders with spektrafilm's own defaults, for parity checks.
-    #[cfg(test)]
-    fn render_spektrafilm(
-        &self,
-        image: &SceneLinearImage,
-        recipe: &EditRecipe,
-        cancel: &AtomicBool,
-    ) -> Result<RenderedImage, RenderError> {
-        let mut source = self.upload(image, cancel)?;
-        let options = RenderOptions::default();
-        self.render_source(
-            image,
-            &mut source,
-            recipe,
-            options,
-            cancel,
-            None,
-            Look::spektrafilm(),
-        )
-    }
     #[cfg(test)]
     fn render_tiled(
         &self,
@@ -1093,36 +1188,6 @@ impl Renderer {
         let geom = geometry::Geometry::new(image, recipe, options)?;
         let (full_width, full_height) = output_dimensions(image, recipe)?;
         let (width, height) = (geom.width, geom.height);
-        // spektrafilm's spatial parameters are physical, so they are derived
-        // from the full output frame; a tile or region must never change them.
-        let spatial = recipe
-            .film
-            .as_ref()
-            .map(|f| film::Spatial::new(f, geom.long_edge()));
-        let stage_sigma =
-            |pick: fn(&film::Spatial, &FilmSettings) -> f32| match (&spatial, &recipe.film) {
-                (Some(s), Some(f)) => pick(s, f),
-                _ => 0.,
-            };
-        let coupler_sigma = stage_sigma(|s, f| if f.couplers > 0. { s.coupler } else { 0. });
-        // Scatter and the widest bounce are applied in series, so their halos add.
-        let halation_sigma = stage_sigma(|s, f| {
-            if f.halation {
-                s.scatter_tail + s.halation[film::HALATION_BOUNCES - 1]
-            } else {
-                0.
-            }
-        });
-        let grain_sigma = stage_sigma(|s, f| if f.grain { s.grain } else { 0. });
-        let sharpen_sigma = if recipe.sharpen > 0. {
-            1.0 / geom.scale
-        } else {
-            0.
-        };
-        let margin = ((3. * coupler_sigma).ceil()
-            + (3. * halation_sigma).ceil()
-            + (3. * grain_sigma).ceil()
-            + (3. * sharpen_sigma).ceil()) as u32;
         // Preparing the pair is the expensive CPU step. The plan keeps its
         // tables through an Arc, so the lock is held only while planning.
         let mut film_cache = self
@@ -1150,6 +1215,55 @@ impl Renderer {
             }
         }
         let prepared = recipe.film.as_ref().and(film_cache.as_ref());
+        // spektrafilm's spatial parameters are physical, so they are derived
+        // from the full output frame; a tile or region must never change them.
+        let spatial = recipe
+            .film
+            .as_ref()
+            .zip(prepared)
+            .map(|(f, (_, pair, _))| film::Spatial::new(f, geom.long_edge(), pair.monochrome));
+        let grain_spatial = recipe
+            .film
+            .as_ref()
+            .zip(prepared)
+            .map(|(f, (_, pair, _))| pair.grain.spatial(geom.long_edge(), f.grain_size));
+        let stage_sigma =
+            |pick: fn(&film::Spatial, &FilmSettings) -> f32| match (&spatial, &recipe.film) {
+                (Some(s), Some(f)) => pick(s, f),
+                _ => 0.,
+            };
+        let coupler_sigma = stage_sigma(|s, f| {
+            if f.couplers > 0. {
+                s.coupler
+                    .max(s.coupler_tail * film::couplers::EXPONENTIAL_MAX_SIGMA)
+            } else {
+                0.
+            }
+        });
+        // Scatter and the widest bounce are applied in series, so their halos add.
+        let halation_sigma = stage_sigma(|s, f| {
+            if f.halation {
+                film::widest(s.scatter_tail) * film::couplers::EXPONENTIAL_MAX_SIGMA
+                    + film::widest(s.halation[film::HALATION_BOUNCES - 1])
+            } else {
+                0.
+            }
+        });
+        let grain_margin = recipe
+            .film
+            .as_ref()
+            .zip(grain_spatial.as_ref())
+            .filter(|(f, _)| f.grain && f.grain_amount > 0.)
+            .map_or(0., |(_, grain)| grain.margin());
+        let sharpen_sigma = if recipe.sharpen > 0. {
+            1.0 / geom.scale
+        } else {
+            0.
+        };
+        let margin = ((3. * coupler_sigma).ceil()
+            + (3. * halation_sigma).ceil()
+            + grain_margin
+            + (3. * sharpen_sigma).ceil()) as u32;
         let mut base = self.parameters(
             image,
             recipe,
@@ -1234,7 +1348,12 @@ impl Renderer {
         base[0] = [0.; 4];
         let (passes, output) = build_passes(
             base,
-            recipe.film.as_ref().zip(spatial.as_ref()),
+            recipe
+                .film
+                .as_ref()
+                .zip(spatial.as_ref())
+                .zip(grain_spatial.as_ref())
+                .map(|((settings, spatial), grain)| (settings, spatial, grain)),
             sharpen_sigma,
         );
         let candidates = match tiling {
@@ -1245,7 +1364,7 @@ impl Renderer {
             choose_tiling(width, height, margin, self.buffer_limit(), &candidates).ok_or_else(
                 || {
                     RenderError::Gpu(
-                    "Effect radius exceeds this GPU's tile memory limit. Reduce diffusion radius."
+                    "Effect radius exceeds this GPU's tile memory limit. Reduce the halation size or the Halation amount."
                         .into(),
                 )
                 },
@@ -1452,7 +1571,7 @@ impl Renderer {
         spatial: Option<&film::Spatial>,
         look: Look<'_>,
     ) -> Result<Parameters, RenderError> {
-        let mut p: Parameters = [[0.; 4]; 51];
+        let mut p: Parameters = [[0.; 4]; PARAMETER_SLOTS];
         // A B&W film already makes a neutral image; the sensor-layer mix is
         // only for colour film or no film. Both neutralize the output.
         let silver = r.film.is_some() && pair.is_some_and(|pair| pair.monochrome);
@@ -1497,27 +1616,14 @@ impl Renderer {
                 centers[i],
             ];
         }
-        if let (Some(f), Some(pair), Some(s)) = (&r.film, pair, spatial) {
-            let (grain_min, grain_uniformity, sub_layers) = film::grain_constants();
+        if let (Some(f), Some(pair), Some(_)) = (&r.film, pair, spatial) {
             let channels = |values| film::channels(values, pair.monochrome);
-            let (grain_min, grain_uniformity) = (channels(grain_min), channels(grain_uniformity));
-            // Grain correlated over `s.grain` pixels keeps 1 / (1 + 4 pi
-            // sigma^2) of its variance in each pixel. The discrete blur keeps
-            // a different fraction, and none is lost when a sub-pixel blur
-            // rounds away at preview size. Scale the particle count for the
-            // difference, so a preview shows the grain strength of the export
-            // at the same size and `grain_size` moves it smoothly.
-            let compensation = if f.grain {
-                blur_variance(s.grain) * (1. + 4. * std::f32::consts::PI * s.grain * s.grain)
-            } else {
-                1.
-            };
-            let particles =
-                channels(film::grain_particles(f, g.long_edge())).map(|n| n * compensation);
-            let scatter_tail_weight = channels(film::scatter_tail_weight());
-            // The recipe's halation strength scales spektrafilm's per-channel
-            // baseline, which its own default reproduces exactly.
+            let grain = pair.grain.spatial(g.long_edge(), f.grain_size);
+            let scatter_strength = channels(f.scatter_strength_rgb);
+            // The recipe's halation strength scales the per-channel strength,
+            // as spektrafilm's `halation_amount` does. The default scale is one.
             let strength = f.halation_strength / recipe::FilmSettings::default().halation_strength;
+            let halation_strength = channels(f.halation_strength_rgb).map(|v| v * strength);
             // The camera's metered gray exposes the film as its mid-gray. The
             // scanner correction keeps it there after the white and black
             // remap.
@@ -1532,8 +1638,8 @@ impl Renderer {
             let metering = (0.184 / look.metered_gray) as f32;
             p[16] = [
                 2f32.powf(f.ev_film) * metering * film_correction,
-                1. / f.gamma_film,
-                1. / f.gamma_paper,
+                1.,
+                1.,
                 f32::from(f.negative),
             ];
             p[17] = [
@@ -1547,12 +1653,11 @@ impl Renderer {
                 p[26 + i][..3].copy_from_slice(&pair.scan_xyz_to_rgb[i]);
                 p[29 + i][..3].copy_from_slice(&pair.dir_matrix[i]);
                 p[32][i] = pair.dir_density_max[i];
-                p[33][i] = grain_min[i];
-                p[34][i] = pair.grain_density_max[i];
-                p[35][i] = particles[i];
-                p[36][i] = grain_uniformity[i];
-                p[37][i] = scatter_tail_weight[i];
-                p[38][i] = pair.halation_a_tot[i] * strength;
+                p[51][i] = pair.dir_receiver_reference[i];
+                p[53][i] = pair.grain.preset.uniformity[i] as f32;
+                p[54][i] = pair.grain.preset.floor[i] as f32;
+                p[37][i] = scatter_strength[i];
+                p[38][i] = halation_strength[i];
                 p[39][i] = 1. / (1. + p[38][i]);
             }
             if let Some([m, q]) = pair.scan_remap.filter(|_| look.scanner) {
@@ -1563,7 +1668,15 @@ impl Renderer {
             p[32][3] = f32::from(pair.dir_positive);
             // One silver layer: every channel draws the same grain.
             p[37][3] = f32::from(pair.monochrome);
-            p[33][3] = sub_layers as f32;
+            p[52] = [
+                pair.grain_offset as f32,
+                pair.grain.layers.len() as f32,
+                pair.grain.curve_count as f32,
+                0.,
+            ];
+            p[53][3] = grain.micro_sigma;
+            p[54][3] = 1.5;
+            p[55][0] = grain.pixel_area;
             p[34][3] = f32::from_bits(r.seed);
             p[35][3] = f.grain_roughness;
             p[36][3] = film::grain_clump_cell(f, g.native_width.max(g.native_height) as f32);
@@ -1667,7 +1780,7 @@ impl Renderer {
     ) -> wgpu::CommandEncoder {
         let slot0 = plan.slot0(tile);
         let pack = pack.then(|| {
-            let mut params: Parameters = [[0.; 4]; 51];
+            let mut params: Parameters = [[0.; 4]; PARAMETER_SLOTS];
             params[21] = [
                 plan.margin as f32,
                 plan.width as f32,
@@ -1708,6 +1821,7 @@ impl Renderer {
                     &workspace.spectral,
                     &workspace.tc_lut,
                     &workspace.curves,
+                    &self.output_gamut,
                 ];
                 let entries: Vec<_> = bound
                     .iter()
@@ -1824,4 +1938,66 @@ pub fn output_dimensions(
     recipe.validate().map_err(RenderError::Invalid)?;
     let g = geometry::Geometry::new(image, recipe, RenderOptions::default())?;
     Ok((g.width, g.height))
+}
+
+#[cfg(test)]
+mod coupler_chain_tests {
+    use super::*;
+
+    #[test]
+    fn exponential_components_read_the_original_source_and_keep_it_live() {
+        for decay in [0., 0.1, 0.2, 1., 30.] {
+            let mut chain = Chain::new([[0.; 4]; PARAMETER_SLOTS]);
+            let src = chain.alloc();
+            let output = chain.exponential(src, [decay; 3]);
+            assert!(chain.busy[src]);
+            assert!(chain.busy[output]);
+            assert_eq!(
+                chain.busy.iter().filter(|&&busy| busy).count(),
+                if output == src { 1 } else { 2 }
+            );
+            for (name, [input, auxiliary, destination], parameters) in &chain.passes {
+                assert_ne!(input, destination);
+                assert_ne!(auxiliary, destination);
+                if *name == "blur" && parameters[22][0] == 0. {
+                    assert_eq!(*input, src);
+                }
+            }
+            if decay <= 0.1 {
+                assert!(chain.passes.is_empty());
+                assert_eq!(output, src);
+            }
+        }
+    }
+
+    #[test]
+    fn coupler_tail_passes_fit_the_workspace_at_zero_and_subpixel_radii() {
+        for radius in [0., 0.000001, 0.0015, 0.01] {
+            let settings = FilmSettings {
+                couplers: 1.,
+                couplers_radius: radius,
+                halation: true,
+                grain: true,
+                ..FilmSettings::default()
+            };
+            for long_edge in [1., 128., 6000., 100_000.] {
+                let spatial = film::Spatial::new(&settings, long_edge, false);
+                let profile = film::profile::load(settings.film as usize).unwrap();
+                let grain = film::grain::Grain::build(&profile)
+                    .unwrap()
+                    .spatial(long_edge, settings.grain_size);
+                assert_eq!(spatial.coupler_tail == 0., radius == 0.);
+                let (passes, _) = build_passes(
+                    [[0.; 4]; PARAMETER_SLOTS],
+                    Some((&settings, &spatial, &grain)),
+                    1.,
+                );
+                assert!(passes.len() < MAX_DISPATCHES as usize);
+                for pass in &passes {
+                    assert_ne!(pass.buffers[0], pass.buffers[2]);
+                    assert_ne!(pass.buffers[1], pass.buffers[2]);
+                }
+            }
+        }
+    }
 }

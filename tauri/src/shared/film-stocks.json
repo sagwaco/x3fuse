@@ -6,7 +6,8 @@
     "isPaper": false,
     "isPositive": false,
     "antihalation": "strong",
-    "targetPaperKey": "kodak_portra_endura"
+    "targetPaperKey": "kodak_portra_endura",
+    "use": "still"
   },
   {
     "index": 1,
@@ -15,7 +16,8 @@
     "isPaper": false,
     "isPositive": false,
     "antihalation": "strong",
-    "targetPaperKey": "kodak_portra_endura"
+    "targetPaperKey": "kodak_portra_endura",
+    "use": "still"
   },
   {
     "index": 2,
@@ -24,7 +26,8 @@
     "isPaper": false,
     "isPositive": false,
     "antihalation": "strong",
-    "targetPaperKey": "kodak_portra_endura"
+    "targetPaperKey": "kodak_portra_endura",
+    "use": "still"
   },
   {
     "index": 3,
@@ -33,7 +36,8 @@
     "isPaper": false,
     "isPositive": false,
     "antihalation": "strong",
-    "targetPaperKey": "kodak_portra_endura"
+    "targetPaperKey": "kodak_portra_endura",
+    "use": "still"
   },
   {
     "index": 4,
@@ -42,7 +46,8 @@
     "isPaper": false,
     "isPositive": false,
     "antihalation": "strong",
-    "targetPaperKey": "kodak_portra_endura"
+    "targetPaperKey": "kodak_portra_endura",
+    "use": "still"
   },
   {
     "index": 5,
@@ -51,7 +56,8 @@
     "isPaper": false,
     "isPositive": false,
     "antihalation": "strong",
-    "targetPaperKey": "kodak_portra_endura"
+    "targetPaperKey": "kodak_portra_endura",
+    "use": "still"
   },
   {
     "index": 6,
@@ -60,7 +66,8 @@
     "isPaper": false,
     "isPositive": false,
     "antihalation": "weak",
-    "targetPaperKey": "kodak_portra_endura"
+    "targetPaperKey": "kodak_portra_endura",
+    "use": "still"
   },
   {
     "index": 7,
@@ -69,7 +76,8 @@
     "isPaper": false,
     "isPositive": false,
     "antihalation": "weak",
-    "targetPaperKey": "kodak_portra_endura"
+    "targetPaperKey": "kodak_portra_endura",
+    "use": "still"
   },
   {
     "index": 8,
@@ -78,7 +86,8 @@
     "isPaper": false,
     "isPositive": false,
     "antihalation": "strong",
-    "targetPaperKey": "kodak_2383"
+    "targetPaperKey": "kodak_2383",
+    "use": "cine"
   },
   {
     "index": 9,
@@ -87,7 +96,8 @@
     "isPaper": false,
     "isPositive": false,
     "antihalation": "strong",
-    "targetPaperKey": "kodak_2383"
+    "targetPaperKey": "kodak_2383",
+    "use": "cine"
   },
   {
     "index": 10,
@@ -96,7 +106,8 @@
     "isPaper": false,
     "isPositive": false,
     "antihalation": "strong",
-    "targetPaperKey": "kodak_2383"
+    "targetPaperKey": "kodak_2383",
+    "use": "cine"
   },
   {
     "index": 11,
@@ -105,7 +116,8 @@
     "isPaper": false,
     "isPositive": false,
     "antihalation": "strong",
-    "targetPaperKey": "kodak_2383"
+    "targetPaperKey": "kodak_2383",
+    "use": "cine"
   },
   {
     "index": 12,
@@ -114,7 +126,8 @@
     "isPaper": false,
     "isPositive": false,
     "antihalation": "strong",
-    "targetPaperKey": "fujifilm_crystal_archive_typeii"
+    "targetPaperKey": "fujifilm_crystal_archive_typeii",
+    "use": "still"
   },
   {
     "index": 13,
@@ -123,7 +136,8 @@
     "isPaper": false,
     "isPositive": false,
     "antihalation": "weak",
-    "targetPaperKey": "fujifilm_crystal_archive_typeii"
+    "targetPaperKey": "fujifilm_crystal_archive_typeii",
+    "use": "still"
   },
   {
     "index": 14,
@@ -132,7 +146,8 @@
     "isPaper": false,
     "isPositive": false,
     "antihalation": "weak",
-    "targetPaperKey": "fujifilm_crystal_archive_typeii"
+    "targetPaperKey": "fujifilm_crystal_archive_typeii",
+    "use": "still"
   },
   {
     "index": 15,
@@ -141,7 +156,8 @@
     "isPaper": false,
     "isPositive": true,
     "antihalation": "strong",
-    "targetPaperKey": null
+    "targetPaperKey": null,
+    "use": "still"
   },
   {
     "index": 16,
@@ -150,7 +166,8 @@
     "isPaper": false,
     "isPositive": true,
     "antihalation": "weak",
-    "targetPaperKey": null
+    "targetPaperKey": null,
+    "use": "still"
   },
   {
     "index": 17,
@@ -159,7 +176,8 @@
     "isPaper": false,
     "isPositive": true,
     "antihalation": "strong",
-    "targetPaperKey": null
+    "targetPaperKey": null,
+    "use": "still"
   },
   {
     "index": 18,
@@ -168,7 +186,8 @@
     "isPaper": false,
     "isPositive": true,
     "antihalation": "strong",
-    "targetPaperKey": null
+    "targetPaperKey": null,
+    "use": "still"
   },
   {
     "index": 19,
@@ -177,7 +196,8 @@
     "isPaper": false,
     "isPositive": false,
     "antihalation": "strong",
-    "targetPaperKey": "kodak_2383"
+    "targetPaperKey": "kodak_2383",
+    "use": "cine"
   },
   {
     "index": 20,
@@ -187,7 +207,8 @@
     "isPositive": false,
     "antihalation": "strong",
     "targetPaperKey": "kodak_2302",
-    "monochrome": true
+    "monochrome": true,
+    "use": "cine"
   },
   {
     "index": 21,
@@ -197,7 +218,8 @@
     "isPositive": true,
     "antihalation": "strong",
     "targetPaperKey": null,
-    "monochrome": true
+    "monochrome": true,
+    "use": "cine"
   },
   {
     "index": 0,
@@ -206,7 +228,8 @@
     "isPaper": true,
     "isPositive": false,
     "antihalation": "strong",
-    "targetPaperKey": null
+    "targetPaperKey": null,
+    "use": "still"
   },
   {
     "index": 1,
@@ -215,7 +238,8 @@
     "isPaper": true,
     "isPositive": false,
     "antihalation": "strong",
-    "targetPaperKey": null
+    "targetPaperKey": null,
+    "use": "still"
   },
   {
     "index": 2,
@@ -224,7 +248,8 @@
     "isPaper": true,
     "isPositive": false,
     "antihalation": "strong",
-    "targetPaperKey": null
+    "targetPaperKey": null,
+    "use": "still"
   },
   {
     "index": 3,
@@ -233,7 +258,8 @@
     "isPaper": true,
     "isPositive": false,
     "antihalation": "strong",
-    "targetPaperKey": null
+    "targetPaperKey": null,
+    "use": "still"
   },
   {
     "index": 4,
@@ -242,7 +268,8 @@
     "isPaper": true,
     "isPositive": false,
     "antihalation": "strong",
-    "targetPaperKey": null
+    "targetPaperKey": null,
+    "use": "still"
   },
   {
     "index": 5,
@@ -251,7 +278,8 @@
     "isPaper": true,
     "isPositive": false,
     "antihalation": "strong",
-    "targetPaperKey": null
+    "targetPaperKey": null,
+    "use": "cine"
   },
   {
     "index": 6,
@@ -260,7 +288,8 @@
     "isPaper": true,
     "isPositive": false,
     "antihalation": "strong",
-    "targetPaperKey": null
+    "targetPaperKey": null,
+    "use": "cine"
   },
   {
     "index": 7,
@@ -269,7 +298,8 @@
     "isPaper": true,
     "isPositive": false,
     "antihalation": "strong",
-    "targetPaperKey": null
+    "targetPaperKey": null,
+    "use": "still"
   },
   {
     "index": 8,
@@ -279,6 +309,7 @@
     "isPositive": false,
     "antihalation": "strong",
     "targetPaperKey": null,
-    "monochrome": true
+    "monochrome": true,
+    "use": "cine"
   }
 ]
