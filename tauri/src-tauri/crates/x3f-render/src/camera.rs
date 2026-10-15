@@ -943,6 +943,52 @@ mod tests {
             "metered gray {gray} renders {}",
             lut_at(gray * 4095.)
         );
+        // Fill Light reads the counts on SPP's 12-bit scale, so a 14-bit
+        // sensor (dp Quattro) with the same scene gets the same lift. Its own
+        // tone table already differs a little.
+        let lit = |bits: u32, fill_light| {
+            let saturation = f64::from((1u32 << bits) - 1);
+            let params = sys::ColorModeParameters {
+                pixel_saturation: saturation,
+                ..params
+            };
+            let sensor = sys::ColorModeCalibration {
+                normalized_to_counts: [saturation; 3],
+                ..sensor.clone()
+            };
+            let profiles = profiles_from_calibration("Standard", |id| {
+                Ok((id == "Standard").then(|| Calibration {
+                    native: Some(Native::new(params)),
+                    ..Default::default()
+                }))
+            })
+            .unwrap();
+            let prepared = crate::PreparedImage::new(image(Some(sensor)), &cancel)
+                .unwrap()
+                .with_camera_profiles(profiles);
+            let recipe = EditRecipe {
+                film: None,
+                camera_profile: Some("Standard".into()),
+                fill_light,
+                ..Default::default()
+            };
+            renderer
+                .render_prepared(&prepared, &recipe, crate::RenderOptions::default(), &cancel)
+                .unwrap()
+                .data
+        };
+        let delta = |fill_light| {
+            let (merrill, quattro) = (lit(12, fill_light), lit(14, fill_light));
+            (merrill.iter().zip(quattro.iter()))
+                .map(|(a, b)| a.abs_diff(*b))
+                .max()
+                .unwrap()
+        };
+        assert!(
+            lit(12, 1.)[0] > native.data[0] + 1000,
+            "Fill Light lifts shadows"
+        );
+        assert!(delta(1.) <= delta(0.), "{} {}", delta(1.), delta(0.));
     }
     #[test]
     #[ignore = "requires a hardware GPU; run with --ignored"]

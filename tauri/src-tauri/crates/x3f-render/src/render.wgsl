@@ -4,7 +4,7 @@
 // assets/PROVENANCE.md; source attribution: NOTICE.
 struct Pixels { v: array<vec4<f32>> }
 struct Table { v: array<f32> }
-struct Uniforms { v: array<vec4<f32>, 48> }
+struct Uniforms { v: array<vec4<f32>, 51> }
 @group(0) @binding(0) var<storage, read> source: Pixels;
 @group(0) @binding(1) var<storage, read> auxiliary: Pixels;
 @group(0) @binding(2) var<storage, read_write> destination: Pixels;
@@ -14,6 +14,7 @@ struct Uniforms { v: array<vec4<f32>, 48> }
 @group(0) @binding(6) var<storage, read> curves: Pixels;
 @group(1) @binding(0) var raw_source: texture_2d<f32>;
 @group(1) @binding(1) var<storage, read_write> frame: array<u32>;
+@group(1) @binding(2) var<storage, read> fill: array<vec2<f32>>;
 
 // Offsets into `spectral`, mirroring film::offset.
 const K: u32 = 256u;
@@ -264,23 +265,55 @@ fn sample(@builtin(global_invocation_id) id:vec3<u32>) {
     let h=vec3<f32>(dot(p.v[24].xyz,global),dot(p.v[25].xyz,global),dot(p.v[40].xyz,global));
     let at=clamp(h.xy/h.z,vec2<f32>(0),vec2<f32>(bounds));
     let lo=vec2<i32>(floor(at));let hi=min(lo+1,bounds);let f=at-vec2<f32>(lo);
-    let top=textureLoad(raw_source,lo,0).rgb*(1.0-f.x)+textureLoad(raw_source,vec2<i32>(hi.x,lo.y),0).rgb*f.x;
-    let bottom=textureLoad(raw_source,vec2<i32>(lo.x,hi.y),0).rgb*(1.0-f.x)+textureLoad(raw_source,hi,0).rgb*f.x;
-    destination.v[index(pos)]=vec4<f32>(top*(1.0-f.y)+bottom*f.y,1);
+    let t0=textureLoad(raw_source,lo,0).rgb;let t1=textureLoad(raw_source,vec2<i32>(hi.x,lo.y),0).rgb;
+    let t2=textureLoad(raw_source,vec2<i32>(lo.x,hi.y),0).rgb;let t3=textureLoad(raw_source,hi,0).rgb;
+    let top=t0*(1.0-f.x)+t1*f.x;let bottom=t2*(1.0-f.x)+t3*f.x;
+    var gain=1.0;
+    if p.v[49].x!=0.0 {
+        let x0=fill_x(t0,lo)*(1.0-f.x)+fill_x(t1,vec2<i32>(hi.x,lo.y))*f.x;
+        let x1=fill_x(t2,vec2<i32>(lo.x,hi.y))*(1.0-f.x)+fill_x(t3,hi)*f.x;
+        gain=fill_gain(x0*(1.0-f.y)+x1*f.y);
+    }
+    destination.v[index(pos)]=vec4<f32>(top*(1.0-f.y)+bottom*f.y,gain);
+}
+// SIGMA Photo Pro's X3 Fill Light (fill.rs). Each texel has a Retinex map
+// value x: its target minus its own log luminance. Like SPP, `sample`
+// interpolates x, not the luminance, and `adjust` or `finish` applies the gain.
+fn fill_field(at:vec2<f32>)->vec2<f32> {
+    let size=vec2<i32>(p.v[50].xy);
+    let g=clamp((at-p.v[50].w)/p.v[50].z,vec2<f32>(0),vec2<f32>(size-1));
+    let lo=vec2<i32>(floor(g));let hi=min(lo+1,size-1);let f=g-vec2<f32>(lo);
+    let cell=fill[1+lo.y*size.x+lo.x]*(1.0-f.x)+fill[1+lo.y*size.x+hi.x]*f.x;
+    let below=fill[1+hi.y*size.x+lo.x]*(1.0-f.x)+fill[1+hi.y*size.x+hi.x]*f.x;
+    return mix(cell,below,f.y);
+}
+fn fill_x(rgb:vec3<f32>,texel:vec2<i32>)->f32 {
+    let field=fill_field(vec2<f32>(texel));
+    // Sigma's luminance in 12-bit counts, without exposure, as fill::log_luma.
+    let l=log(clamp(dot(p.v[48].xyz,rgb)+p.v[48].w,0.0,32767.0)+30.0);
+    return field.y*(l-field.x)-(l-fill[0].x);
+}
+fn fill_gain(x:f32)->f32 {
+    // tanh is 1 to float precision past 10; larger arguments can overflow.
+    return exp(p.v[49].x*tanh(clamp(x*p.v[49].y,-10.0,10.0)));
 }
 @compute @workgroup_size(16,8)
 fn adjust(@builtin(global_invocation_id) id:vec3<u32>) {
     let pos=id.xy;if !in_bounds(pos) { return; }let i=index(pos);let c=source.v[i].rgb;
-    var rgb=vec3<f32>(dot(p.v[5].xyz,c),dot(p.v[6].xyz,c),dot(p.v[7].xyz,c))*exp2(p.v[2].x);
+    // Fill Light gain from `sample`. Sigma's native Color Mode takes it on its
+    // counts in `finish`, as SIGMA Photo Pro does.
+    let native=p.v[41].y>0.5;let gain=source.v[i].w;
+    var rgb=vec3<f32>(dot(p.v[5].xyz,c),dot(p.v[6].xyz,c),dot(p.v[7].xyz,c))*exp2(p.v[2].x)*select(gain,1.0,native);
     if p.v[41].x>0.5 { rgb=camera_look(rgb); }
     // Calibrated inverse camera matrix recovers the B/M/T layer mixture. Keep
     // signed samples and highlight headroom until the ordinary output transform.
     // B&W film takes the colour image; its spectral sensitivity makes it gray.
     if p.v[1].w>0.5 && p.v[37].w<0.5 { rgb=vec3<f32>(dot(p.v[4].yzw,rgb)); }
-    let y=max(0.0,dot(rgb,vec3<f32>(0.2126,0.7152,0.0722)));
+    // The masks see Fill Light on every path, as SPP's tone curve does.
+    let y=max(0.0,dot(rgb*select(1.0,gain,native),vec3<f32>(0.2126,0.7152,0.0722)));
     let shadow=1.0-smoothstep(0.01,0.4,y);let high=smoothstep(0.18,1.0,y);
     rgb*=exp2(p.v[2].w*shadow*2.0+p.v[2].z*high*2.0);
-    destination.v[i]=vec4<f32>(rgb,1);
+    destination.v[i]=vec4<f32>(rgb,select(1.0,gain,native));
 }
 @compute @workgroup_size(16,8)
 fn blur(@builtin(global_invocation_id) id:vec3<u32>) {
@@ -347,6 +380,7 @@ fn finish(@builtin(global_invocation_id) id:vec3<u32>) {
         // tone curve per channel, then its output matrix to linear sRGB.
         var counts=matrix_at(42u,rgb)+vec3<f32>(p.v[42].w,p.v[43].w,p.v[44].w);
         if p.v[41].w>0.5 {counts=color_dq(counts);}
+        counts*=source.v[i].w;
         rgb=matrix_at(45u,vec3<f32>(native_tone(counts.x),native_tone(counts.y),native_tone(counts.z)));
     } else if p.v[1].z<0.5 {
         // Other cameras. A Naka-Rushton S-curve per channel, fitted to

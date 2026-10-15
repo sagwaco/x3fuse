@@ -518,7 +518,7 @@ fn spektrafilm_license_ships_unmodified() {
     );
     let shader = sha256(include_bytes!("render.wgsl"));
     assert_eq!(
-        shader, "560f25c666b6ec2e40200cb345af8d94cedd320fde8bc2727ed5b333b641a4ac",
+        shader, "d2c0cf6f36316df242f33eb81adfb35d51479150f3084be255c68c1309d63238",
         "render.wgsl changed; update assets/PROVENANCE.md and this hash, and          bump RENDER_VERSION if rendered pixels moved"
     );
 }
@@ -729,6 +729,7 @@ fn gpu_preview_matches_tiled(renderer: &Renderer) {
             ..Default::default()
         }),
         sharpen: 35.,
+        fill_light: 1.5,
         seed: 17,
         ..Default::default()
     };
@@ -760,6 +761,152 @@ fn gpu_preview_matches_tiled(renderer: &Renderer) {
     assert!(
         delta <= 3,
         "whole preview versus tiles: max u16 delta {delta}"
+    );
+}
+
+/// A scene dark on the left half and bright on the right.
+fn split_scene(width: u32, height: u32) -> SceneLinearImage {
+    let mut scene = image(width, height);
+    for (i, rgb) in scene.data.as_chunks_mut::<3>().0.iter_mut().enumerate() {
+        rgb.fill(if i as u32 % width < width / 2 {
+            0.01
+        } else {
+            0.5
+        });
+    }
+    scene
+}
+
+#[test]
+fn fill_light_map_follows_sigma_photo_pro() {
+    let weights = [4096. * 0.25, 4096. * 0.65, 4096. * 0.1, 0.];
+    // A flat scene is its own local mean. Its target is halfway to 18% of
+    // 4096 counts, then half a natural stop up.
+    let mut flat = image(64, 48);
+    flat.data.fill(0.1);
+    let map = fill::map(&fill::Grid::new(&flat), 64, 48, weights);
+    let l = fill::log_luma(409.6);
+    assert!((map[0][0] - (0.5 * (l + 737.28f32.ln()) + 0.5)).abs() < 1e-5);
+    for &[b, r] in &map[1..] {
+        assert!((b - l).abs() < 1e-4 && (r - 2.).abs() < 1e-4, "{b} {r}");
+    }
+    // The dark half moves up and the bright half down.
+    let map = fill::map(&fill::Grid::new(&split_scene(64, 48)), 64, 48, weights);
+    let x = |column: usize, value: f32| {
+        let [b, r] = map[1 + 24 * 64 + column];
+        let l = fill::log_luma(4096. * value);
+        r * (l - b) - (l - map[0][0])
+    };
+    assert!(x(4, 0.01) > 0. && x(60, 0.5) < 0.);
+    // SPP's gain curve: k = 1.33 s, slope k / (|k| + 1/16)^0.25 at zero.
+    let (k, inverse) = fill::curve(1.);
+    assert!((k - 1.33).abs() < 1e-6 && (k * inverse - 1.2244).abs() < 1e-3);
+    assert!(EditRecipe {
+        fill_light: 2.1,
+        ..Default::default()
+    }
+    .validate()
+    .is_err());
+}
+
+fn gpu_fill_light(renderer: &Renderer) {
+    let cancel = AtomicBool::new(false);
+    // Wider than the 1024-cell grid, so three pixels share a cell.
+    let (width, height) = (2050, 6);
+    let prepared = PreparedImage::new(split_scene(width, height), &cancel).unwrap();
+    let render = |prepared: &PreparedImage, fill_light, temperature| {
+        let recipe = EditRecipe {
+            film: None,
+            fill_light,
+            temperature,
+            ..Default::default()
+        };
+        renderer
+            .render_prepared(prepared, &recipe, RenderOptions::default(), &cancel)
+            .unwrap()
+    };
+    let at = |image: &RenderedImage, x: u32| image.data[((3 * width + x) * 3) as usize];
+    let plain = render(&prepared, 0., None);
+    let lit = render(&prepared, 1., None);
+    assert!(
+        at(&lit, 8) > at(&plain, 8) + 1000,
+        "Fill Light lifts the dark side"
+    );
+    assert!(
+        at(&lit, width - 8) < at(&plain, width - 8),
+        "and keeps the bright side down"
+    );
+    assert!(
+        at(&render(&prepared, -1., None), 8) < at(&plain, 8),
+        "negative values darken it"
+    );
+    assert_eq!(
+        render(&prepared, 0., None).data,
+        plain.data,
+        "zero is the plain render"
+    );
+    // White balance changes rebuild the map; changing it back restores it.
+    let warm = render(&prepared, 1., Some(4000.));
+    let fresh = PreparedImage::new(split_scene(width, height), &cancel).unwrap();
+    assert_eq!(warm.data, render(&fresh, 1., Some(4000.)).data);
+    assert_ne!(warm.data, lit.data);
+    assert_eq!(
+        render(&prepared, 1., None).data,
+        lit.data,
+        "the map is rebuilt"
+    );
+    // A half-size preview samples halfway between two source columns. As SPP
+    // resamples its map, the gain comes from the mean of the four texels'
+    // map values, not from the mean colour.
+    let mut checker = image(64, 8);
+    for (i, rgb) in checker.data.as_chunks_mut::<3>().0.iter_mut().enumerate() {
+        rgb.fill(if i.is_multiple_of(2) { 0.01 } else { 0.5 });
+    }
+    let recipe = EditRecipe {
+        film: None,
+        fill_light: 1.,
+        ..Default::default()
+    };
+    let half = RenderOptions {
+        max_dimension: Some(32),
+        ..Default::default()
+    };
+    let weights = renderer
+        .plan_source(&checker, &recipe, half, None, Look::plain())
+        .unwrap()
+        .fill
+        .unwrap();
+    let map = fill::map(&fill::Grid::new(&checker), 64, 8, weights);
+    let x = |column: usize, row: usize| {
+        let value = if column.is_multiple_of(2) { 0.01 } else { 0.5 };
+        let [b, r] = map[1 + row * 64 + column];
+        let l = fill::log_luma(value * (weights[0] + weights[1] + weights[2]) + weights[3]);
+        r * (l - b) - (l - map[0][0])
+    };
+    let (k, inverse) = fill::curve(1.);
+    let mean = (x(32, 4) + x(33, 4) + x(32, 5) + x(33, 5)) / 4.;
+    let gain = (k * (mean * inverse).tanh()).exp();
+    let mut patch = image(32, 4);
+    patch.data.fill(0.255 * gain);
+    let expected = renderer
+        .render(
+            &patch,
+            &EditRecipe {
+                fill_light: 0.,
+                ..recipe.clone()
+            },
+            RenderOptions::default(),
+            &cancel,
+        )
+        .unwrap();
+    let actual = renderer.render(&checker, &recipe, half, &cancel).unwrap();
+    let (actual, expected) = (
+        actual.data[(2 * 32 + 16) * 3],
+        expected.data[(2 * 32 + 16) * 3],
+    );
+    assert!(
+        actual.abs_diff(expected) <= 16,
+        "midpoint {actual}, interpolated map {expected}"
     );
 }
 
@@ -1080,7 +1227,7 @@ fn gpu_grain_blur_tiles(renderer: &Renderer) {
     };
     let spatial = film::Spatial::new(&film, 2048.);
     assert!(spatial.grain >= 1., "grain blur {} px", spatial.grain);
-    let (passes, _) = build_passes([[0.; 4]; 48], Some((&film, &spatial)), 0.);
+    let (passes, _) = build_passes([[0.; 4]; 51], Some((&film, &spatial)), 0.);
     assert!(passes
         .iter()
         .any(|p| p.entry == "blur" && p.params[21][0] == spatial.grain));
@@ -1123,6 +1270,7 @@ fn gpu_pack_flags_non_finite(renderer: &Renderer) {
         buffer_bytes: 64,
         tables: None,
         curves: Vec::new(),
+        fill: None,
     };
     let pixels: [[f32; 4]; 4] = [
         [0.5, 0.25, 1., 1.],
@@ -1632,6 +1780,7 @@ fn gpu_pipeline() {
     gpu_tone_and_levels(&renderer);
     gpu_grain_blur_tiles(&renderer);
     gpu_film_scanner_levels(&renderer);
+    gpu_fill_light(&renderer);
     let img = image(96, 64);
     let cancel = AtomicBool::new(false);
     let recipe = EditRecipe {

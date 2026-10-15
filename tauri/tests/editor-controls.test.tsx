@@ -275,6 +275,19 @@ it('offers black-and-white looks with their own filters, papers and darkroom', (
   })
 })
 
+it('sets Fill Light on the SIGMA Photo Pro scale, -2 to 2 in steps of 0.1', () => {
+  render(<Controls />)
+  const slider = screen.getByRole('slider', { name: t('editor.fillLight') })
+  expect([slider.getAttribute('aria-valuemin'), slider.getAttribute('aria-valuemax')]).toEqual([
+    '-2',
+    '2'
+  ])
+  adjust(t('editor.fillLight'), 3)
+  expect(change).toHaveBeenLastCalledWith({ fillLight: 2 }, true)
+  adjust(t('editor.fillLight'), 0.54)
+  expect(change.mock.lastCall?.[0].fillLight).toBeCloseTo(0.5)
+})
+
 it('selects the logged camera profile and separates camera matching from film stocks', () => {
   editor.setState({
     session: {

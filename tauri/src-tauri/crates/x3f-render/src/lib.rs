@@ -1,6 +1,7 @@
 //! GPU-only scene-linear RAW editing. The physical film implementation is GPL-3.0-only.
 mod camera;
 mod color;
+mod fill;
 mod film;
 mod geometry;
 mod recipe;
@@ -259,10 +260,15 @@ impl PreparedImage {
 
 struct GpuSource {
     device: wgpu::Device,
+    view: wgpu::TextureView,
     bind: wgpu::BindGroup,
+    /// The scene on the Fill Light grid, built on first use.
+    grid: Option<fill::Grid>,
+    /// The luminance weights of the bound Fill Light map.
+    fill: Option<[u32; 4]>,
 }
 
-type Parameters = [[f32; 4]; 48];
+type Parameters = [[f32; 4]; 51];
 const PARAMETER_BYTES: u64 = std::mem::size_of::<Parameters>() as u64;
 const MAX_DISPATCHES: u64 = 36;
 /// Blurs below this radius are indistinguishable from a copy; skipping them
@@ -518,6 +524,8 @@ struct Plan {
     tables: Option<Arc<FilmTables>>,
     /// Edit curves followed by the camera tone curve and hue map (binding 6).
     curves: Vec<[f32; 4]>,
+    /// Luminance weights of the Fill Light map; `None` without Fill Light.
+    fill: Option<[f32; 4]>,
 }
 impl Plan {
     /// Padded `[width, height, origin x, origin y]` of a tile, as parameter slot 0.
@@ -723,17 +731,29 @@ impl Renderer {
             push_constant_ranges: &[],
         });
         let source_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Prepared RAW texture"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
+            label: Some("Prepared RAW texture and Fill Light map"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
                 },
-                count: None,
-            }],
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
         });
         let sample_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("RAW geometry"),
@@ -840,8 +860,8 @@ impl Renderer {
             calibration: profiles.selected(&recipe)?,
             ..Look::plain()
         };
-        let source = self.upload(image, cancel)?;
-        self.render_source(image, &source, &recipe, options, cancel, None, look)
+        let mut source = self.upload(image, cancel)?;
+        self.render_source(image, &mut source, &recipe, options, cancel, None, look)
     }
     pub fn render_prepared(
         &self,
@@ -864,10 +884,10 @@ impl Renderer {
                 .metered_gray(sensor, image.image.white_balance.camera_to_rgb),
             scanner: true,
         };
-        let gpu = self.source(image, cancel)?;
+        let mut gpu = self.source(image, cancel)?;
         self.render_source(
             image.image(),
-            gpu.as_ref().unwrap(),
+            gpu.as_mut().unwrap(),
             &recipe,
             options,
             cancel,
@@ -908,11 +928,11 @@ impl Renderer {
         recipe: &EditRecipe,
         cancel: &AtomicBool,
     ) -> Result<RenderedImage, RenderError> {
-        let source = self.upload(image, cancel)?;
+        let mut source = self.upload(image, cancel)?;
         let options = RenderOptions::default();
         self.render_source(
             image,
-            &source,
+            &mut source,
             recipe,
             options,
             cancel,
@@ -929,10 +949,10 @@ impl Renderer {
         cancel: &AtomicBool,
         tiling: (u32, u32),
     ) -> Result<RenderedImage, RenderError> {
-        let source = self.upload(image, cancel)?;
+        let mut source = self.upload(image, cancel)?;
         self.render_source(
             image,
-            &source,
+            &mut source,
             recipe,
             options,
             cancel,
@@ -1001,18 +1021,50 @@ impl Renderer {
         }
         self.queue.submit([]);
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Prepared RAW source"),
-            layout: &self.source_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&view),
-            }],
-        });
+        // The sample pass reads the map only with Fill Light set.
+        let bind = self.source_bind(&view, &[[0.; 2]]);
         Ok(GpuSource {
             device: self.device.clone(),
+            view,
             bind,
+            grid: None,
+            fill: None,
         })
+    }
+    fn source_bind(&self, view: &wgpu::TextureView, map: &[[f32; 2]]) -> wgpu::BindGroup {
+        let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Fill Light map"),
+            size: std::mem::size_of_val(map) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        self.queue
+            .write_buffer(&buffer, 0, bytemuck::cast_slice(map));
+        self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Prepared RAW source"),
+            layout: &self.source_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: buffer.as_entire_binding(),
+                },
+            ],
+        })
+    }
+    /// Builds and binds the Fill Light map for `weights`, unless it is bound.
+    fn bind_fill(&self, source: &mut GpuSource, image: &SceneLinearImage, weights: [f32; 4]) {
+        let key = weights.map(f32::to_bits);
+        if source.fill == Some(key) {
+            return;
+        }
+        let grid = source.grid.get_or_insert_with(|| fill::Grid::new(image));
+        let map = fill::map(grid, image.width, image.height, weights);
+        source.bind = self.source_bind(&source.view, &map);
+        source.fill = Some(key);
     }
     /// Plans one frame: geometry, film tables, tiles and the shared pass list.
     /// `tiling` forces a (tile size, slack) pair for tests.
@@ -1140,6 +1192,37 @@ impl Renderer {
                 base[45 + i / 3][i % 3] = inverse[i] as f32;
             }
         }
+        // Fill Light reads luminance in Sigma's 12-bit counts without
+        // exposure, as SIGMA Photo Pro's Retinex map does. Without a native
+        // Color Mode, a scene value of 1 is taken as 4096 counts.
+        let fill = (recipe.fill_light != 0.).then(|| {
+            let (counts, offset): ([[f32; 3]; 3], [f32; 3]) = match native {
+                Some((native, _)) => {
+                    let scale = (4096. / (native.params.pixel_saturation + 1.)) as f32;
+                    (
+                        std::array::from_fn(|r| std::array::from_fn(|c| base[42 + r][c] * scale)),
+                        std::array::from_fn(|r| base[42 + r][3] * scale),
+                    )
+                }
+                None => (
+                    std::array::from_fn(|r| std::array::from_fn(|c| 4096. * f32::from(r == c))),
+                    [0.; 3],
+                ),
+            };
+            let mut weights = [0f32; 4];
+            for (r, luma) in fill::LUMA.iter().enumerate() {
+                for (c, weight) in weights.iter_mut().take(3).enumerate() {
+                    *weight += luma * (0..3).map(|j| counts[r][j] * base[5 + j][c]).sum::<f32>();
+                }
+                weights[3] += luma * offset[r];
+            }
+            let (k, inverse) = fill::curve(recipe.fill_light);
+            let (cell, w, h) = fill::grid_size(image.width, image.height);
+            base[48] = weights;
+            base[49] = [k, inverse, 0., 0.];
+            base[50] = [w as f32, h as f32, cell as f32, (cell as f32 - 1.) / 2.];
+            weights
+        });
         base[0] = [0.; 4];
         let (passes, output) = build_passes(
             base,
@@ -1193,6 +1276,7 @@ impl Renderer {
             output,
             buffer_bytes,
             tables,
+            fill,
             curves: color::curve_table(&recipe.curves)
                 .into_iter()
                 .chain(camera::look_table(
@@ -1214,7 +1298,7 @@ impl Renderer {
     fn render_source(
         &self,
         image: &SceneLinearImage,
-        source: &GpuSource,
+        source: &mut GpuSource,
         recipe: &EditRecipe,
         options: RenderOptions,
         cancel: &AtomicBool,
@@ -1243,6 +1327,9 @@ impl Renderer {
             *cached = Some(self.new_workspace(plan.buffer_bytes));
         }
         let workspace = cached.as_mut().unwrap();
+        if let Some(weights) = plan.fill {
+            self.bind_fill(source, image, weights);
+        }
         if let Some(tables) = &plan.tables {
             self.queue.write_buffer(
                 &workspace.spectral,
@@ -1357,7 +1444,7 @@ impl Renderer {
         spatial: Option<&film::Spatial>,
         look: Look<'_>,
     ) -> Result<Parameters, RenderError> {
-        let mut p: Parameters = [[0.; 4]; 48];
+        let mut p: Parameters = [[0.; 4]; 51];
         // A B&W film already makes a neutral image; the sensor-layer mix is
         // only for colour film or no film. Both neutralize the output.
         let silver = r.film.is_some() && pair.is_some_and(|pair| pair.monochrome);
@@ -1572,7 +1659,7 @@ impl Renderer {
     ) -> wgpu::CommandEncoder {
         let slot0 = plan.slot0(tile);
         let pack = pack.then(|| {
-            let mut params: Parameters = [[0.; 4]; 48];
+            let mut params: Parameters = [[0.; 4]; 51];
             params[21] = [
                 plan.margin as f32,
                 plan.width as f32,

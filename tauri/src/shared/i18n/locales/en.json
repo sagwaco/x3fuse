@@ -223,6 +223,8 @@
   "editor.shadows": "Shadows",
   "editor.whites": "Whites",
   "editor.blacks": "Blacks",
+  "editor.fillLight": "Fill Light",
+  "editor.fillLightHelp": "Adds light to dark areas, as Fill Light in SIGMA Photo Pro does. Bright areas do not become overexposed. Negative values make dark areas darker.",
   "editor.whiteBalance": "White balance",
   "editor.asShot": "As shot",
   "editor.picker": "Neutral picker",

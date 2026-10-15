@@ -303,6 +303,7 @@ export const EditorControls = memo(function EditorControls({
         {(['contrast', 'highlights', 'shadows', 'whites', 'blacks'] as const).map((key) =>
           control(key)
         )}
+        {control('fillLight', { min: -2, max: 2, step: 0.1, help: t('editor.fillLightHelp') })}
       </Section>
       <Section name={t('editor.look')} open>
         <LookPicker kind="film" recipe={recipe} onOpen={() => onNavigate('film')} />

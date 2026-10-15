@@ -223,6 +223,8 @@
   "editor.shadows": "어두운 영역",
   "editor.whites": "흰색 계열",
   "editor.blacks": "검정 계열",
+  "editor.fillLight": "필 라이트",
+  "editor.fillLightHelp": "SIGMA Photo Pro의 Fill Light처럼 밝은 부분은 하얗게 날리지 않고 어두운 부분을 밝게 합니다. 음수 값은 어두운 부분을 더 어둡게 합니다.",
   "editor.whiteBalance": "화이트 밸런스",
   "editor.asShot": "촬영 시 설정",
   "editor.picker": "중성색 선택",

@@ -55,6 +55,8 @@ export interface EditRecipe {
   shadows: number
   whites: number
   blacks: number
+  /** SIGMA Photo Pro's X3 Fill Light, -2..2 in steps of 0.1. */
+  fillLight: number
   saturation: number
   vibrance: number
   curves: Record<'master' | 'red' | 'green' | 'blue', CurvePoint[]>
@@ -114,6 +116,7 @@ export function defaultRecipe(): EditRecipe {
     shadows: 0,
     whites: 0,
     blacks: 0,
+    fillLight: 0,
     saturation: 0,
     vibrance: 0,
     curves: { master: line(), red: line(), green: line(), blue: line() },

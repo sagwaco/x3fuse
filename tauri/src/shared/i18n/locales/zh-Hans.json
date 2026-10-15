@@ -223,6 +223,8 @@
   "editor.shadows": "阴影",
   "editor.whites": "白色色阶",
   "editor.blacks": "黑色色阶",
+  "editor.fillLight": "补光",
+  "editor.fillLightHelp": "与 SIGMA Photo Pro 的 Fill Light 相同，提亮暗部，同时避免高光过曝。负值会使暗部更暗。",
   "editor.whiteBalance": "白平衡",
   "editor.asShot": "拍摄时设置",
   "editor.picker": "选取中性色",

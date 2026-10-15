@@ -15,6 +15,9 @@ pub struct EditRecipe {
     pub shadows: f32,
     pub whites: f32,
     pub blacks: f32,
+    /// SIGMA Photo Pro's X3 Fill Light (-2..2). Positive values add light to
+    /// dark areas from their surroundings; highlights keep their exposure.
+    pub fill_light: f32,
     pub saturation: f32,
     pub vibrance: f32,
     pub curves: Curves,
@@ -48,6 +51,7 @@ impl Default for EditRecipe {
             shadows: 0.,
             whites: 0.,
             blacks: 0.,
+            fill_light: 0.,
             saturation: 0.,
             vibrance: 0.,
             curves: Curves::default(),
@@ -227,6 +231,7 @@ impl EditRecipe {
             }
         }
         range("exposure", self.exposure, -5., 5.)?;
+        range("fill light", self.fill_light, -2., 2.)?;
         if let Some(t) = self.temperature {
             range("temperature", t, 2000., 12000.)?;
         }

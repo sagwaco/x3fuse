@@ -223,6 +223,8 @@
   "editor.shadows": "シャドウ",
   "editor.whites": "白レベル",
   "editor.blacks": "黒レベル",
+  "editor.fillLight": "フィルライト",
+  "editor.fillLightHelp": "SIGMA Photo ProのFill Lightと同じく、明るい部分を白飛びさせずに暗い部分を明るくします。マイナスの値では暗い部分をさらに暗くします。",
   "editor.whiteBalance": "ホワイトバランス",
   "editor.asShot": "撮影時の設定",
   "editor.picker": "ニュートラルを選択",
