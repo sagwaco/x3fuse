@@ -281,6 +281,8 @@ fn adjust(@builtin(global_invocation_id) id:vec3<u32>) {
     let y=max(0.0,dot(rgb*select(1.0,gain,native),vec3<f32>(0.2126,0.7152,0.0722)));
     let shadow=1.0-smoothstep(0.01,0.4,y);let high=smoothstep(0.18,1.0,y);
     rgb*=exp2(p.v[2].w*shadow*2.0+p.v[2].z*high*2.0);
+    // Film receives the selected camera look, including its native tone curve.
+    if native && p.v[1].z>0.5 { rgb=native_look(rgb,gain); }
     destination.v[i]=vec4<f32>(rgb,select(1.0,gain,native));
 }
 // One axis of a separable Gaussian: p.v[21].xyz holds a sigma per channel,
@@ -338,6 +340,12 @@ fn color_dq(q:vec3<f32>)->vec3<f32> {
     for (var c=0u;c<3u;c++) {out[c]=q[c]-curves.v[COLOR_DQ+(bitcast<u32>(residual[c]-mean)&mask)][c];}
     return out;
 }
+fn native_look(rgb:vec3<f32>,gain:f32)->vec3<f32> {
+    var counts=matrix_at(42u,rgb)+vec3<f32>(p.v[42].w,p.v[43].w,p.v[44].w);
+    if p.v[41].w>0.5 {counts=color_dq(counts);}
+    counts*=gain;
+    return matrix_at(45u,vec3<f32>(native_tone(counts.x),native_tone(counts.y),native_tone(counts.z)));
+}
 fn sample_curve(x:f32,ch:u32)->f32 {
     if x<0.0 {return curves.v[0][ch]+x*1023.0*(curves.v[1][ch]-curves.v[0][ch]);}
     if x>1.0 {return curves.v[1023][ch]+(x-1.0)*1023.0*(curves.v[1023][ch]-curves.v[1022][ch]);}
@@ -346,13 +354,8 @@ fn sample_curve(x:f32,ch:u32)->f32 {
 @compute @workgroup_size(16,8)
 fn finish(@builtin(global_invocation_id) id:vec3<u32>) {
     let pos=id.xy;if !in_bounds(pos) {return;}let i=index(pos);var rgb=source.v[i].rgb;
-    if p.v[41].y>0.5 {
-        // Sigma's native Color Mode (Merrill, dp Quattro): native counts, its
-        // tone curve per channel, then its output matrix to linear sRGB.
-        var counts=matrix_at(42u,rgb)+vec3<f32>(p.v[42].w,p.v[43].w,p.v[44].w);
-        if p.v[41].w>0.5 {counts=color_dq(counts);}
-        counts*=source.v[i].w;
-        rgb=matrix_at(45u,vec3<f32>(native_tone(counts.x),native_tone(counts.y),native_tone(counts.z)));
+    if p.v[41].y>0.5 && p.v[1].z<0.5 {
+        rgb=native_look(rgb,source.v[i].w);
     } else if p.v[1].z<0.5 {
         // Other cameras. A Naka-Rushton S-curve per channel, fitted to
         // Sigma's in-camera JPEGs (sd Quattro, dp0 Quattro, SD1 Merrill). It

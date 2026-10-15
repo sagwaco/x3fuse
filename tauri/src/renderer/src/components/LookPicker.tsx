@@ -171,8 +171,10 @@ export function LookPicker({
               ...recipe,
               cameraProfile: 'FCBlue',
               monochrome: null,
+              ...(!aerochrome && { temperature: 1170, tint: -263 }),
               film: {
                 ...base,
+                ...(!aerochrome && { grain: true, grainAmount: 2, grainSize: 1.5 }),
                 ...(recipe.film && base.film === AEROCHROME_FILM.index
                   ? {}
                   : filmHalationDefaults(AEROCHROME_FILM.index)),
@@ -241,7 +243,11 @@ export function LookPicker({
                 change({
                   film: look.recipe.film,
                   monochrome: look.recipe.monochrome,
-                  cameraProfile: look.recipe.cameraProfile
+                  cameraProfile: look.recipe.cameraProfile,
+                  ...(look.id === 'aerochrome' && {
+                    temperature: look.recipe.temperature,
+                    tint: look.recipe.tint
+                  })
                 })
               }
               className="group self-start rounded-md text-left focus-visible:outline-none disabled:opacity-50"

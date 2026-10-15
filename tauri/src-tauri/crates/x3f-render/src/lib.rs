@@ -21,7 +21,8 @@ pub use stocks::STOCKS_JSON;
 /// implementation it replaced.
 /// Version 3 adds CAMF camera picture modes. Version 5 blurs scatter and
 /// halation with a sigma per channel. Version 6 ports the experimental models.
-pub const RENDER_VERSION: u32 = 6;
+/// Version 7 applies native camera looks before film exposure.
+pub const RENDER_VERSION: u32 = 7;
 
 use image::ImageEncoder;
 use serde::{Deserialize, Serialize};
@@ -1278,8 +1279,8 @@ impl Renderer {
         let native_tone = native.map(|(native, _)| native.tone()).transpose()?;
         if let Some((native, sensor)) = native {
             // Sigma's native Color Mode: scene-linear sRGB back to the camera
-            // BMT, then to native counts. `finish` applies its tone curve and
-            // output matrix; the profile's own matrix and look stay off.
+            // BMT, then to native counts. The native look runs before film
+            // exposure, or in `finish` without film. The legacy look stays off.
             let (counts, offset) = sensor.render_matrix(&native.params);
             let to_counts =
                 color::multiply(counts, color::inverse(image.white_balance.camera_to_rgb)?);
@@ -1635,7 +1636,12 @@ impl Renderer {
             } else {
                 (1., 1.)
             };
-            let metering = (0.184 / look.metered_gray) as f32;
+            // A native camera look already maps scene values to output luminance.
+            let metering = if look.native.is_some() {
+                1.
+            } else {
+                (0.184 / look.metered_gray) as f32
+            };
             p[16] = [
                 2f32.powf(f.ev_film) * metering * film_correction,
                 1.,

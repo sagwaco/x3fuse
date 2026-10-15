@@ -321,7 +321,7 @@ impl FilmSettings {
             ("couplers", self.couplers, 0., 1.),
             ("coupler radius", self.couplers_radius, 0., 0.05),
             ("grain size", self.grain_size, 0.25, 4.),
-            ("grain amount", self.grain_amount, 0., 2.),
+            ("grain amount", self.grain_amount, 0., 8.),
             ("grain roughness", self.grain_roughness, 0., 1.),
             ("grain saturation", self.grain_saturation, 0., 1.),
             ("halation strength", self.halation_strength, 0., 2.),

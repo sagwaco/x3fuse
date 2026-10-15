@@ -258,12 +258,15 @@ using the spektrafilm model, ported from spektrafilm-rs in `x3f-render`.
 
 The film picker includes **Full spectrum > Aerochrome-style (Foveon)** for
 full spectrum captures with a physical yellow, orange, green, or 550/660/850 nm
-bandpass filter. First use the white-balance picker on a neutral object in the
-scene, then select the look and adjust exposure. The supplied DP2 Merrill
-samples use the three-band filter with uncorrected Flash white balance.
+bandpass filter. Select the look, then adjust white balance and exposure for the
+capture. The preset starts at 1170 K and -263 tint, with twice the stock grain
+strength and 1.5 times its particle size. These starting values suit the supplied
+DP2 Merrill three-band captures. Other filters and cameras can need different
+white balance. Extended Range turns on when white balance exceeds the normal range.
 
 This look combines the file's FOV Classic Blue calibration with Spektrafilm's
-Ektachrome 100 reversal model. It is an Aerochrome approximation. It does not
+Ektachrome 100 reversal model. On Merrill and dp Quattro, the native FOV Classic
+Blue tone curve runs before the film stage. It is an Aerochrome approximation. It does not
 separate the captured IR band or model Aerochrome's measured spectral response.
 The [Spektrafilm discussion](https://discuss.pixls.us/t/spektrafilm-tech-discussions/57512/46)
 describes the missing near-IR reconstruction work. The preset requires FCBlue
@@ -271,6 +274,9 @@ calibration in the X3F file. On a file without it, the picker disables the prese
 and saved edits follow the existing Standard camera-profile fallback. The look
 uses the existing recipe fields, so save, undo, copy/paste, preview and rendered
 JPEG/TIFF export use the same settings.
+
+Grain intensity 50 keeps the stock's grain strength. The control reaches eight
+times that strength at 100. Existing grain amounts keep their rendered strength.
 
 Double-click a slider thumb to restore its default. Grain and halation each have
 a simple strength control, with their individual settings in Advanced collapsibles.

@@ -304,10 +304,11 @@ export const EditorControls = memo(function EditorControls({
   const [extended, setExtended] = useState(false)
   const hue = BANDS[band][1]
   const temperature = recipe.temperature ?? Math.round(asShotTemperature ?? 6500)
-  // A value past the normal range keeps its slider extended.
-  const wideTemperature = extended || temperature < 2000 || temperature > 12000
+  // A value past the normal range enables the extended controls.
+  const wideTemperature =
+    extended || temperature < 2000 || temperature > 12000 || Math.abs(recipe.tint) > 100
   // As shot, Tint is a green gain, not an offset from the light source.
-  const wideTint = (extended && recipe.temperature !== null) || Math.abs(recipe.tint) > 100
+  const wideTint = (wideTemperature && recipe.temperature !== null) || Math.abs(recipe.tint) > 100
   const control = (
     key: keyof EditRecipe,
     options: Partial<Parameters<typeof Adjustment>[0]> = {}
@@ -461,7 +462,7 @@ export const EditorControls = memo(function EditorControls({
         <ToggleRow
           label={t('editor.extendedRange')}
           help={t('editor.extendedRangeHelp')}
-          checked={extended}
+          checked={wideTemperature}
           onChange={setExtended}
         />
       </Section>
@@ -853,10 +854,10 @@ export function FilmControls({
       <Adjustment
         label={t('editor.grain')}
         help={t('editor.grainHelp')}
-        value={film.grain ? film.grainAmount * 50 : 0}
+        value={film.grain ? Math.cbrt(film.grainAmount) * 50 : 0}
         min={0}
         max={100}
-        change={(value, save) => update({ grain: value > 0, grainAmount: value / 50 }, save)}
+        change={(value, save) => update({ grain: value > 0, grainAmount: (value / 50) ** 3 }, save)}
         reset={() => update({ grain: DEFAULT_FILM.grain, grainAmount: DEFAULT_FILM.grainAmount })}
         commit={commit}
       />

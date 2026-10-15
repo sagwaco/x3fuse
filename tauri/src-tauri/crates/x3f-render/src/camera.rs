@@ -174,12 +174,9 @@ impl CameraProfiles {
             .filter(|gray| (1e-3..=2.).contains(gray))
             .unwrap_or_else(fallback_metered_gray)
     }
-    /// The selected profile's native Color Mode. Film stocks have their own
-    /// colour response.
+    /// The selected profile's native Color Mode. An explicit camera look is
+    /// applied before film exposure.
     pub(crate) fn native(&self, recipe: &EditRecipe) -> Result<Option<&Native>, RenderError> {
-        if recipe.film.is_some() {
-            return Ok(None);
-        }
         Ok(self
             .selected(recipe)?
             .and_then(|calibration| calibration.native.as_ref()))
@@ -924,15 +921,57 @@ mod tests {
             );
             assert!(pixel[1].abs_diff(pixel[0]) <= 1 && pixel[2].abs_diff(pixel[0]) <= 1);
         }
-        // Without the sensor calibration, and under film, the native mode is
-        // off. (The calibration still meters film exposure.)
+        // Without sensor calibration, the native mode is off.
         assert_ne!(render(None, None).data, native.data);
         let film = EditRecipe {
-            film: Some(crate::FilmSettings::default()),
+            film: Some(crate::FilmSettings {
+                film: 15,
+                negative: true,
+                grain: false,
+                halation: false,
+                couplers: 0.,
+                ..Default::default()
+            }),
             camera_profile: Some("Standard".into()),
             ..Default::default()
         };
-        assert!(profiles().native(&film).unwrap().is_none());
+        // Native tone must run once before film, with no scene metering gain.
+        let film_profiles = profiles();
+        let mode = film_profiles.native(&film).unwrap().unwrap();
+        let (counts, offset) = sensor.render_matrix(&mode.params);
+        let mut toned = image(None);
+        toned.data = levels
+            .iter()
+            .flat_map(|&v| {
+                [mode.neutral_luminance(&sensor, &counts, offset, v as f64)
+                    .unwrap() as f32; 3]
+            })
+            .collect();
+        let mut source = renderer.upload(&toned, &cancel).unwrap();
+        let expected = renderer
+            .render_source(
+                &toned,
+                &mut source,
+                &film,
+                crate::RenderOptions::default(),
+                &cancel,
+                None,
+                crate::Look {
+                    metered_gray: 0.184,
+                    ..crate::Look::plain()
+                },
+            )
+            .unwrap();
+        let actual = render(Some(sensor.clone()), film.film.clone());
+        assert!(
+            actual
+                .data
+                .iter()
+                .zip(expected.data.iter())
+                .all(|(a, b)| a.abs_diff(*b) <= 4),
+            "Native tone must precede film and must not run again after scanning"
+        );
+        assert_ne!(actual.data, render(None, film.film.clone()).data);
         let gray = profiles().metered_gray(Some(&sensor), IDENTITY);
         let lut_at = |count: f64| {
             let (index, fraction) = (count as usize, count.fract());

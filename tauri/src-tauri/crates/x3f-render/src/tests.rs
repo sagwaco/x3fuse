@@ -46,6 +46,24 @@ fn recipes_validate_and_round_trip() {
     // Recipes saved before grain roughness keep spektrafilm's even grain.
     let film: FilmSettings = serde_json::from_str(r#"{"grainSize":2}"#).unwrap();
     assert_eq!(film.grain_roughness, 0.);
+    for amount in [0., 1., 2., 8.] {
+        let film = FilmSettings {
+            grain_amount: amount,
+            ..Default::default()
+        };
+        film.validate().unwrap();
+        let saved: FilmSettings =
+            serde_json::from_str(&serde_json::to_string(&film).unwrap()).unwrap();
+        assert_eq!(saved.grain_amount, amount);
+    }
+    for amount in [-0.1, 8.1, f32::NAN, f32::INFINITY] {
+        assert!(FilmSettings {
+            grain_amount: amount,
+            ..Default::default()
+        }
+        .validate()
+        .is_err());
+    }
     for roughness in [-0.1, 1.1] {
         let rough = FilmSettings {
             grain_roughness: roughness,
@@ -122,6 +140,57 @@ fn recipes_validate_and_round_trip() {
         ..Default::default()
     });
     assert!(bad.validate().is_err());
+}
+
+#[test]
+#[ignore = "requires a hardware GPU; run with --ignored"]
+fn gpu_grain_intensity_has_headroom() {
+    let renderer = Renderer::new().unwrap();
+    let cancel = AtomicBool::new(false);
+    let mut image = image(256, 128);
+    image.data.fill(0.184);
+    let render = |amount| {
+        renderer
+            .render(
+                &image,
+                &EditRecipe {
+                    film: Some(FilmSettings {
+                        film: 15,
+                        negative: true,
+                        grain_amount: amount,
+                        grain_size: 1.5,
+                        halation: false,
+                        couplers: 0.,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                RenderOptions::default(),
+                &cancel,
+            )
+            .unwrap()
+    };
+    let clean = render(0.);
+    let rms = |amount| {
+        let grained = render(amount);
+        (grained
+            .data
+            .iter()
+            .zip(clean.data.iter())
+            .map(|(a, b)| (f64::from(*a) - f64::from(*b)).powi(2))
+            .sum::<f64>()
+            / clean.data.len() as f64)
+            .sqrt()
+    };
+    let (stock, preset, maximum) = (rms(1.), rms(2.), rms(8.));
+    assert!(
+        preset > stock * 1.5,
+        "Preset grain {preset} must exceed stock {stock}"
+    );
+    assert!(
+        maximum > preset * 2.,
+        "Maximum grain {maximum} must exceed preset {preset}"
+    );
 }
 
 fn layer_test_image() -> SceneLinearImage {
@@ -602,7 +671,7 @@ fn spektrafilm_license_ships_unmodified() {
     for (shader, expected) in [
         (
             include_bytes!("render.wgsl").as_slice(),
-            "4b10d0ce5169a218f156d6da4485e0ff138a6b72be1bfdc8d05eec24209c46ef",
+            "3a55fd209a889f9992eb00b87425dbb07f5bae2e351aee8e74ca64851da06c06",
         ),
         (
             include_bytes!("gamut.wgsl").as_slice(),

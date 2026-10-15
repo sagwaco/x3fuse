@@ -60,7 +60,7 @@ X3Fuse metering and scanner workflow.
 
 - `assets/camera-tone-deltas.json`: 2ee2bea81844b572b08d4b5eb1e21f0905798ac571aef66038eaa33482d19144
 
-- `src/render.wgsl`: 4b10d0ce5169a218f156d6da4485e0ff138a6b72be1bfdc8d05eec24209c46ef
+- `src/render.wgsl`: 3a55fd209a889f9992eb00b87425dbb07f5bae2e351aee8e74ca64851da06c06
 - `licenses/SPEKTRAFILM_LICENSE.txt`: 76d629501783ae52e8d63aee1e054c1e1a9713b9fe7d36fb306e25b1d14b24e9
 - `assets/irradiance_xy_tc.npy`: 52f90c724811f5fab80769f8548bf24d08a521eb09e65ab6e016893258d2a783
 - `assets/neutral_print_filters.json`: 22ae6cca433cfbeab87df7f17cd58a2f65e88cab845818819195e6f1a80db67c
@@ -106,3 +106,10 @@ X3Fuse metering and scanner workflow.
 The editor reads `CMCM_<mode>`, `CMCC_<mode>`, and `MultiAxisTable_<mode>` from each X3F. It folds the color matrix into the calibrated scene transform and uses the core DNG hue map in linear ProPhoto RGB. The tone curve runs in the editor sRGB display encoding. Endpoint slopes retain signed samples and highlight headroom. This path does not reproduce the full Sigma Photo Pro renderer.
 
 `camera-tone-deltas.json` copies the positive and negative 256-point reference deltas from `x3fuse-core/crates/x3f-core/src/output/dng/tone_curves.rs` (Apache-2.0). The core derives these curves from its reference Sigma-aware DNG. The synthesis uses the same contrast scaling and identity threshold.
+
+On Merrill and dp Quattro, sensor calibration enables the native Color Mode
+from x3f-sys instead of the DNG look. It applies the native count transform,
+Merrill ColorDQ, the mode's tone curve, and the output matrix. An explicit camera
+profile with film now applies this native look before spectral film exposure.
+Film metering uses unit gain for this already toned input. The Aerochrome-style
+preset uses this path with FCBlue and Ektachrome 100. No spectral data was changed.

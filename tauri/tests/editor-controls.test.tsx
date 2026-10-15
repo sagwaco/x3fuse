@@ -342,11 +342,22 @@ it('selects and restores Aerochrome with the existing camera and film recipe', (
   expect(change.mock.lastCall?.[0]).toMatchObject({
     cameraProfile: 'FCBlue',
     monochrome: null,
-    film: { film: 15, paper: 0, negative: true, evFilm: 0.5 }
+    film: {
+      film: 15,
+      paper: 0,
+      negative: true,
+      evFilm: 0.5,
+      grain: true,
+      grainAmount: 2,
+      grainSize: 1.5
+    }
   })
   const saved: EditRecipe = JSON.parse(JSON.stringify({ ...initial, ...change.mock.lastCall?.[0] }))
-  expect(saved.temperature).toBe(2335)
-  expect(saved.tint).toBe(115)
+  expect(saved.temperature).toBe(1170)
+  expect(saved.tint).toBe(-263)
+  expect(
+    screen.getByRole('switch', { name: t('editor.extendedRange') }).getAttribute('aria-checked')
+  ).toBe('true')
   const pasted = pasteRecipe(saved, defaultRecipe())
   act(() => setRecipe(pasted))
   expect(
@@ -355,6 +366,21 @@ it('selects and restores Aerochrome with the existing camera and film recipe', (
   picker(t('editor.filmStock'))
   expect(screen.getByRole('button', { name: t('editor.aerochrome') }).ariaPressed).toBe('true')
   expect(screen.getByText(t('editor.aerochromeHelp'))).toBeTruthy()
+  // Selecting the active look keeps the user's white balance and grain edits.
+  act(() =>
+    setRecipe({
+      ...pasted,
+      temperature: 1500,
+      tint: -210,
+      film: { ...pasted.film!, grainAmount: 4 }
+    })
+  )
+  fireEvent.click(screen.getByRole('button', { name: t('editor.aerochrome') }))
+  expect(change.mock.lastCall?.[0]).toMatchObject({
+    temperature: 1500,
+    tint: -210,
+    film: { grainAmount: 4 }
+  })
   darkroom()
   expect(screen.queryByText(t('editor.paperStock'))).toBeNull()
   chooseFilm('Kodak Ektachrome 100')
@@ -463,14 +489,46 @@ it('extends the white balance range for infrared and full-spectrum photos', () =
   // As shot, Tint is a green gain and keeps its normal range.
   act(() => setRecipe(defaultRecipe()))
   expect(field(t('editor.tint')).min).toBe('-100')
-  // Without the switch, only a value past the normal range extends its slider.
+  // An out-of-range value enables Extended Range for both controls.
   fireEvent.click(screen.getByRole('switch', { name: t('editor.extendedRange') }))
   act(() => setRecipe({ ...defaultRecipe(), temperature: 5000, tint: -700 }))
-  expect(field(t('editor.temperature')).max).toBe('12000')
+  expect(field(t('editor.temperature')).max).toBe('50000')
   expect(field(t('editor.tint')).min).toBe('-2000')
   expect(
     screen.getByRole('slider', { name: t('editor.tint') }).getAttribute('aria-valuetext')
   ).toBe('-700')
+})
+
+it.each([{ temperature: 1990 }, { temperature: 12010 }, { tint: -101 }, { tint: 101 }])(
+  'shows Extended Range for loaded or picked white balance %o',
+  (balance) => {
+    const field = (name: string): HTMLInputElement => screen.getByRole('spinbutton', { name })
+    render(<Controls initial={{ ...defaultRecipe(), temperature: 6500, ...balance }} />)
+    const toggle = (): HTMLElement =>
+      screen.getByRole('switch', { name: t('editor.extendedRange') })
+    expect(toggle().getAttribute('aria-checked')).toBe('true')
+    expect(field(t('editor.temperature')).min).toBe('500')
+    expect(field(t('editor.tint')).min).toBe('-2000')
+    fireEvent.click(toggle())
+    expect(toggle().getAttribute('aria-checked')).toBe('true')
+    expect(change).not.toHaveBeenCalled()
+    act(() => setRecipe(defaultRecipe()))
+    expect(toggle().getAttribute('aria-checked')).toBe('false')
+    act(() => setRecipe({ ...defaultRecipe(), ...balance }))
+    expect(toggle().getAttribute('aria-checked')).toBe('true')
+  }
+)
+
+it('allows manual Extended Range changes within the normal white balance limits', () => {
+  render(<Controls initial={{ ...defaultRecipe(), temperature: 2000, tint: -100 }} />)
+  const toggle = (): HTMLElement => screen.getByRole('switch', { name: t('editor.extendedRange') })
+  expect(toggle().getAttribute('aria-checked')).toBe('false')
+  fireEvent.click(toggle())
+  act(() => setRecipe({ ...defaultRecipe(), temperature: 12000, tint: 100 }))
+  expect(toggle().getAttribute('aria-checked')).toBe('true')
+  fireEvent.click(toggle())
+  expect(toggle().getAttribute('aria-checked')).toBe('false')
+  expect(change).not.toHaveBeenCalled()
 })
 
 it('keeps an extended slider extended while a drag brings it into the normal range', () => {
@@ -637,7 +695,9 @@ it('maps grain, halation and darkroom sliders so dragging right does what the la
   // Darkroom is a closed section under the film look.
   expect(darkroomSection().open).toBe(false)
   adjust(t('editor.grain'), 100)
-  expect(film()).toMatchObject({ grain: true, grainAmount: 2 })
+  expect(film()).toMatchObject({ grain: true, grainAmount: 8 })
+  adjust(t('editor.grain'), 50)
+  expect(film()).toMatchObject({ grain: true, grainAmount: 1 })
   adjust(t('editor.grainSize'), 100)
   expect(film()?.grainSize).toBeCloseTo(4)
   adjust(t('editor.grainSize'), 50)

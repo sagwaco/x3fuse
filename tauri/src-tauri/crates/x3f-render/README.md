@@ -34,7 +34,9 @@ occur in full spectrum captures through a three-band filter.
 
 The frontend's Aerochrome-style preset uses `cameraProfile: "FCBlue"`,
 `film.film: 15` (Ektachrome 100), `film.negative: true`, and `monochrome: null`.
-It uses the existing CAMF and spectral film stages without a new stock index.
+It starts at 1170 K and -263 tint, grain amount 2, and grain size 1.5, based on
+the supplied DP2 Merrill three-band captures. It uses the existing CAMF and
+spectral film stages without a new stock index.
 This is a full spectrum Foveon approximation, not measured Aerochrome film data
 or a separation of visible and near-IR bands. White balance must be set for the
 capture filter. Attach the file's camera profiles to `PreparedImage` for both
@@ -42,18 +44,20 @@ preview and export, as with other camera looks.
 
 Processing is geometric sampling → white balance/exposure → optional sensor-layer
 monochrome → highlights/shadows → optional spectral film → contrast/saturation/vibrance/HSL/curves
-→ luminance sharpening → whites/blacks → output primaries/transfer curve. With film
-disabled, a Merrill or dp Quattro camera profile renders through Sigma's native
+→ luminance sharpening → whites/blacks → output primaries/transfer curve. An
+explicit Merrill or dp Quattro camera profile renders through Sigma's native
 Color Mode from x3f-sys: the scene goes back to camera BMT and on to native
 counts, then takes Merrill ColorDQ, the mode's tone curve per channel and its
-output matrix. It needs the `color_mode_calibration` that `prepare_scene_linear`
+output matrix. With film enabled, this camera look runs before film exposure,
+with unit metering gain because the camera curve has already mapped scene gray.
+It needs the `color_mode_calibration` that `prepare_scene_linear`
 measures, and the file's profiles from `read_camera_profiles` attached with
 `PreparedImage::with_camera_profiles`. Other cameras, and images without that
 calibration, use a tone curve fitted to Sigma's in-camera JPEGs: it maps 18%
 gray to 0.40, adds a toe and rolls highlights off toward display white, per
 channel on linear Rec.2020 primaries so Adobe RGB and ProPhoto exports keep their
-wide-gamut colours. With film enabled, the measured paper/film response supplies
-the tone transform. Whites and blacks set the white and black points
+wide-gamut colours. Film without a camera profile uses the measured paper/film
+response for its tone transform. Whites and blacks set the white and black points
 (levels) in the perceptual representation, after every other control. A raised
 floor or lowered ceiling clamps luminance only, so wide-gamut colours survive.
 `EditRecipe::default()` enables film; an explicit `film: None` selects digital rendering.
