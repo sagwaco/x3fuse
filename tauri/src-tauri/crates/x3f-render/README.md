@@ -55,16 +55,20 @@ Enable it with `monochrome: { filter: "neutral" }`; the filter can be `neutral`,
 recovers corrected, normalized Foveon Bottom/Middle/Top samples. Every layer is
 normalized to the camera response to neutral scene RGB before mixing, preserving
 neutral brightness and ISO exposure across filters. Bottom is red-sensitive,
-Middle green-sensitive, and Top blue-sensitive. The virtual mixes are:
+Middle green-sensitive, and Top blue-sensitive. The mixes are the grayscale
+mixes of the x3f-core DNG Monochrome camera profiles. The layer spectra overlap,
+so a filter subtracts its neighbor layers. The DNG has no orange profile; orange
+is halfway from yellow to red. A saturated color can mix below zero, and the
+output clips it to black.
 
 | Filter | Bottom | Middle | Top |
 |---|---:|---:|---:|
 | Neutral | 1/3 | 1/3 | 1/3 |
-| Red | 1 | 0 | 0 |
-| Orange | 3/4 | 1/4 | 0 |
-| Yellow | 1/2 | 1/2 | 0 |
-| Green | 0 | 1 | 0 |
-| Blue | 0 | 0 | 1 |
+| Red | 2 | -1 | 0 |
+| Orange | 7/4 | -3/4 | 0 |
+| Yellow | 3/2 | -1/2 | 0 |
+| Green | -1/2 | 2 | -1/2 |
+| Blue | 0 | -1 | 2 |
 
 These are layer mixes, rather than measured optical-filter transmission curves.
 They retain preceding RAW corrections and Quattro layer reconstruction. White

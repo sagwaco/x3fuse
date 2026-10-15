@@ -34,13 +34,17 @@ pub(crate) fn monochrome_mix(
     cal: &WhiteBalanceCalibration,
     filter: MonochromeFilter,
 ) -> Result<[f32; 3], RenderError> {
+    // The grayscale mixes of the x3f-core DNG Monochrome camera profiles. The
+    // layers overlap in spectrum, so a filter subtracts its neighbor layers.
+    // The DNG has no orange profile; orange is halfway from yellow to red.
+    // Saturated colors can go below zero, and the output clips them to black.
     let weights = match filter {
         MonochromeFilter::Neutral => [1. / 3.; 3],
-        MonochromeFilter::Red => [1., 0., 0.],
-        MonochromeFilter::Orange => [0.75, 0.25, 0.],
-        MonochromeFilter::Yellow => [0.5, 0.5, 0.],
-        MonochromeFilter::Green => [0., 1., 0.],
-        MonochromeFilter::Blue => [0., 0., 1.],
+        MonochromeFilter::Red => [2., -1., 0.],
+        MonochromeFilter::Orange => [1.75, -0.75, 0.],
+        MonochromeFilter::Yellow => [1.5, -0.5, 0.],
+        MonochromeFilter::Green => [-0.5, 2., -0.5],
+        MonochromeFilter::Blue => [0., -1., 2.],
     };
     let inv = inverse(cal.camera_to_rgb)?;
     let neutral = vector(inv, [1.; 3]);

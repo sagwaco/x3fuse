@@ -139,7 +139,7 @@ fn monochrome_layer_calibration_preserves_neutrals_and_iso() {
     let mix = color::monochrome_mix(&cal, MonochromeFilter::Blue).unwrap();
     assert!((mix.iter().sum::<f32>() - 1.).abs() < 1e-6);
     let blue = mix[0] * 0.07 + mix[1] * 0.15 + mix[2] * -0.005;
-    assert!((blue - 0.03).abs() < 1e-6);
+    assert!((blue + 0.07).abs() < 1e-6);
     cal.camera_to_rgb = cal.camera_to_rgb.map(|v| v * 2.);
     let doubled_iso = color::monochrome_mix(&cal, MonochromeFilter::Blue).unwrap();
     let bright = doubled_iso[0] * 0.14 + doubled_iso[1] * 0.30 + doubled_iso[2] * -0.01;
@@ -1505,11 +1505,11 @@ fn gpu_monochrome(renderer: &Renderer) {
     let source = layer_test_image();
     let cases = [
         (MonochromeFilter::Neutral, [0.1, 0.07, 0.2 / 3., 0.08]),
-        (MonochromeFilter::Red, [0.1, 0.12, 0.02, 0.08]),
-        (MonochromeFilter::Orange, [0.1, 0.105, 0.025, 0.0925]),
-        (MonochromeFilter::Yellow, [0.1, 0.09, 0.03, 0.105]),
-        (MonochromeFilter::Green, [0.1, 0.06, 0.04, 0.13]),
-        (MonochromeFilter::Blue, [0.1, 0.03, 0.14, 0.03]),
+        (MonochromeFilter::Red, [0.1, 0.18, 0., 0.03]),
+        (MonochromeFilter::Orange, [0.1, 0.165, 0.005, 0.0425]),
+        (MonochromeFilter::Yellow, [0.1, 0.15, 0.01, 0.055]),
+        (MonochromeFilter::Green, [0.1, 0.045, 0., 0.205]),
+        (MonochromeFilter::Blue, [0.1, 0., 0.24, -0.07]),
     ];
     for (filter, expected) in cases {
         for exposure in [0., -1.] {
@@ -1524,9 +1524,15 @@ fn gpu_monochrome(renderer: &Renderer) {
                 .unwrap();
             for (pixel, value) in rendered.data.as_chunks::<3>().0.iter().zip(expected) {
                 // The digital tone curve maps neutrals the same in any primaries.
-                let scene: f64 = value * 2f64.powf(exposure as f64);
+                // The output clips a mix below zero to black.
+                let scene: f64 = (value * 2f64.powf(exposure as f64)).max(0.);
                 let linear = scene.powf(1.63) / (scene.powf(1.63) + 0.093);
-                let encoded = ((1.055 * linear.powf(1. / 2.4) - 0.055) * 65535.).round() as u16;
+                let encoded = if linear <= 0.0031308 {
+                    12.92 * linear
+                } else {
+                    1.055 * linear.powf(1. / 2.4) - 0.055
+                };
+                let encoded = (encoded * 65535.).round() as u16;
                 assert_eq!(pixel[0], pixel[1]);
                 assert_eq!(pixel[1], pixel[2]);
                 assert!(
