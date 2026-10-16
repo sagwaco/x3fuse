@@ -252,6 +252,7 @@ final class ConversionSettingsTests {
       #expect(!arguments.contains("-spp-pipeline"))
       #expect(arguments.contains("-v"))
     }
+    #expect(converter.buildX3FArguments(for: file).suffix(2) == ["-color", "none"])
   }
 
   @Test func rgbHighlightRecoveryDisablesChromaLutForTiffOnly() {

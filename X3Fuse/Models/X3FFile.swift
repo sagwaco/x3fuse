@@ -58,7 +58,7 @@ enum ColorProfile: Int, CaseIterable {
     case .sRGB: return nil  // default
     case .adobeRGB: return "AdobeRGB"
     case .proPhotoRGB: return "ProPhotoRGB"
-    case .none: return "None"
+    case .none: return "none"  // x3f_extract accepts only lowercase
     }
   }
 }
