@@ -83,6 +83,13 @@
 "settings.dng_highlight_recovery.warning" = "La recuperación de altas luces puede hacer que los DNG no se muestren correctamente en algunas apps. Si encuentras problemas, desactiva la recuperación.";
 "settings.cineon" = "Usar curva de tonos estilo Cineon";
 "settings.cineon.help" = "Usa una curva de tonos plana estilo Cineon para la salida TIFF";
+"settings.color_mode" = "Modo de color (experimental)";
+"settings.color_mode.as_shot" = "Como se tomó";
+"settings.color_mode.help" = "Aplica un modo de color de cámara de Sigma a los archivos Merrill y dp Quattro. Sunset Red, Forest Green, FOV Classic Yellow, Cinema y Teal and Orange son solo para dp Quattro. Los demás archivos se convierten sin modo de color. Los DNG conservan los datos RAW e incluyen los modos como perfiles de cámara seleccionables.";
+"settings.spp_pipeline" = "Procesamiento de Sigma Photo Pro (Merrill)";
+"settings.spp_pipeline.help" = "Usa la recuperación de altas luces, la reducción de ruido y el enfoque de Sigma Photo Pro en archivos Merrill de resolución completa (HI). Se procesa en la CPU y reemplaza los ajustes de reducción de ruido. Los demás archivos usan el procesamiento estándar.";
+"settings.rgb_highlight_recovery" = "Recuperación de altas luces";
+"settings.rgb_highlight_recovery.help" = "Reconstruye las altas luces recortadas en la salida TIFF con una tabla de color derivada de la escena. Desactívala para usar la recuperación básica anterior.";
 
 "settings.debug_logging" = "Registro de depuración";
 "settings.debug_logging.help" = "Activa el registro de depuración detallado para diagnosticar problemas";

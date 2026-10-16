@@ -89,6 +89,13 @@ struct LocalizationService {
     static let settingsDngHighlightRecoveryWarning = NSLocalizedString("settings.dng_highlight_recovery.warning", comment: "DNG highlight recovery warning text")
     static let settingsCineon = NSLocalizedString("settings.cineon", comment: "Cineon tone curve setting")
     static let settingsCineonHelp = NSLocalizedString("settings.cineon.help", comment: "Cineon tone curve help text")
+    static let settingsColorMode = NSLocalizedString("settings.color_mode", comment: "Camera color mode setting")
+    static let settingsColorModeAsShot = NSLocalizedString("settings.color_mode.as_shot", comment: "Camera color mode recorded by the camera")
+    static let settingsColorModeHelp = NSLocalizedString("settings.color_mode.help", comment: "Camera color mode help text")
+    static let settingsSppPipeline = NSLocalizedString("settings.spp_pipeline", comment: "Merrill SPP pipeline setting")
+    static let settingsSppPipelineHelp = NSLocalizedString("settings.spp_pipeline.help", comment: "Merrill SPP pipeline help text")
+    static let settingsRgbHighlightRecovery = NSLocalizedString("settings.rgb_highlight_recovery", comment: "TIFF highlight recovery setting")
+    static let settingsRgbHighlightRecoveryHelp = NSLocalizedString("settings.rgb_highlight_recovery.help", comment: "TIFF highlight recovery help text")
 
     static let settingsDebugLogging = NSLocalizedString("settings.debug_logging", comment: "Debug logging setting")
     static let settingsDebugLoggingHelp = NSLocalizedString("settings.debug_logging.help", comment: "Debug logging help text")

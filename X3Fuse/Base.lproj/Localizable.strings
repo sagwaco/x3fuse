@@ -83,6 +83,13 @@
 "settings.dng_highlight_recovery.warning" = "Highlight recovery may cause DNGs to render incorrectly in some apps. If you encounter issues, disable recovery.";
 "settings.cineon" = "Use cineon-style tone curve";
 "settings.cineon.help" = "Use a Cineon-style flat tone curve for TIFF output";
+"settings.color_mode" = "Color mode (experimental)";
+"settings.color_mode.as_shot" = "As shot";
+"settings.color_mode.help" = "Applies a Sigma camera color mode to Merrill and dp Quattro files. Sunset Red, Forest Green, FOV Classic Yellow, Cinema, and Teal and Orange are for dp Quattro only. Other files convert without a color mode. DNG files keep the RAW data and include the modes as selectable camera profiles.";
+"settings.spp_pipeline" = "Sigma Photo Pro processing (Merrill)";
+"settings.spp_pipeline.help" = "Uses Sigma Photo Pro highlight recovery, noise reduction, and sharpening for full-resolution (HI) Merrill files. It runs on the CPU and replaces the denoise settings. Other files use the standard processing.";
+"settings.rgb_highlight_recovery" = "Highlight recovery";
+"settings.rgb_highlight_recovery.help" = "Reconstructs clipped highlights in TIFF output from a scene-derived color table. Turn off to use the earlier basic recovery.";
 
 "settings.debug_logging" = "Debug logging";
 "settings.debug_logging.help" = "Enable detailed debug logging for troubleshooting";

@@ -58,7 +58,7 @@ enum ColorProfile: Int, CaseIterable {
     case .sRGB: return nil  // default
     case .adobeRGB: return "AdobeRGB"
     case .proPhotoRGB: return "ProPhotoRGB"
-    case .none: return "None"
+    case .none: return "none"  // x3f_extract accepts only lowercase
     }
   }
 }
@@ -155,6 +155,19 @@ class X3FFile: NSObject, Identifiable {
     progress = 0.0
     errorMessage = nil
     warningMessage = nil
+  }
+
+  // MARK: - Camera family
+
+  // ExifTool reports models such as "SIGMA DP1 Merrill", "SIGMA dp0 Quattro" and "sd Quattro H".
+  // Some x3f_extract options support only these families and fail for other cameras.
+  var isMerrill: Bool {
+    return cameraModel?.contains("Merrill") == true
+  }
+
+  var isDpQuattro: Bool {
+    guard let model = cameraModel else { return false }
+    return model.contains("dp") && model.contains("Quattro")
   }
 
   // MARK: - Computed properties for sorting
