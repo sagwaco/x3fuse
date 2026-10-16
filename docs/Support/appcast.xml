@@ -7,6 +7,16 @@
         <language>en</language>
         <!-- Sparkle will populate this with release items -->
         <item>
+            <title>0.1.9</title>
+            <pubDate>Fri, 16 Oct 2026 22:01:24 +0000</pubDate>
+            <link>https://github.com/sagwaco/x3fuse/releases</link>
+            <sparkle:version>0.1.9</sparkle:version>
+            <sparkle:shortVersionString>0.1.9</sparkle:shortVersionString>
+            <description><![CDATA[<style>body{font:13px/1.5 -apple-system,BlinkMacSystemFont,'Helvetica Neue',sans-serif;color:#1d1d1f;margin:0;padding:2px}h3{font-size:13px;font-weight:600;margin:0 0 6px}ul{margin:0;padding-left:18px}li{margin:0 0 5px}code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;background:rgba(127,127,127,.15);padding:1px 4px;border-radius:3px}@media(prefers-color-scheme:dark){body{color:#f5f5f7}}</style><h3>Beta 1.1.9</h3><ul><li>Update the converter to x3fuse-core 0.3.0. Default Merrill TIFF rendering now uses calibration, color, and tone corrections derived from Sigma Photo Pro, so TIFF output can differ from earlier releases. TIFFs now embed ICC profiles for sRGB, Adobe RGB, and ProPhoto RGB and record the camera orientation.</li><li>Add an experimental Color mode setting for DNG and TIFF that applies Sigma camera color modes, or the mode recorded in the file, to Merrill and dp Quattro files. DNGs include the modes as selectable camera profiles. Other cameras convert without a color mode.</li><li>Add a Sigma Photo Pro processing option for full-resolution Merrill TIFFs that uses Sigma Photo Pro highlight recovery, noise reduction, and sharpening.</li><li>Add a Highlight recovery setting for TIFF output. Turn it off to use the earlier basic recovery.</li><li>Fix conversions failing when the None color profile is selected.</li></ul>]]></description>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/sagwaco/x3fuse/releases/download/v0.1.9/X3Fuse-App.zip" length="53214999" type="application/octet-stream" sparkle:edSignature="7nREvitsjVuxqO6w1fjFCQGQ/Cx53NBGVm8YxeK9cPs4rJEIyDU52bZKAUgykLXLrPB8Rw+p0FGc5fmwKPgDAQ=="/>
+        </item>
+        <item>
             <title>0.1.8</title>
             <pubDate>Tue, 13 Oct 2026 16:25:28 +0000</pubDate>
             <link>https://github.com/sagwaco/x3fuse/releases</link>
@@ -25,16 +35,6 @@
             <description><![CDATA[<style>body{font:13px/1.5 -apple-system,BlinkMacSystemFont,'Helvetica Neue',sans-serif;color:#1d1d1f;margin:0;padding:2px}h3{font-size:13px;font-weight:600;margin:0 0 6px}ul{margin:0;padding-left:18px}li{margin:0 0 5px}code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;background:rgba(127,127,127,.15);padding:1px 4px;border-radius:3px}@media(prefers-color-scheme:dark){body{color:#f5f5f7}}</style><h3>Beta 1.1.7</h3><ul><li>Fix the primary Convert button processing only one file after adding multiple files; it now converts the entire queue.</li><li>Fix reconversion confirmation skipping requested files that do not already have output.</li><li>Reject truncated or corrupt X3F files before conversion so they cannot stall the queue, and continue processing the remaining files.</li></ul>]]></description>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
             <enclosure url="https://github.com/sagwaco/x3fuse/releases/download/v0.1.7/X3Fuse-App.zip" length="54901439" type="application/octet-stream" sparkle:edSignature="I9b2gEzXlN40iXF6V91hFNpBtWQPjEqRxLXfVw9tr/EyparZS8g+wO5HbY+lhZ3+2b3UEzo2Fdiy/36SycpnAg=="/>
-        </item>
-        <item>
-            <title>0.1.6</title>
-            <pubDate>Tue, 15 Sep 2026 17:39:23 +0000</pubDate>
-            <link>https://github.com/sagwaco/x3fuse/releases</link>
-            <sparkle:version>0.1.6</sparkle:version>
-            <sparkle:shortVersionString>0.1.6</sparkle:shortVersionString>
-            <description><![CDATA[<style>body{font:13px/1.5 -apple-system,BlinkMacSystemFont,'Helvetica Neue',sans-serif;color:#1d1d1f;margin:0;padding:2px}h3{font-size:13px;font-weight:600;margin:0 0 6px}ul{margin:0;padding-left:18px}li{margin:0 0 5px}code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;background:rgba(127,127,127,.15);padding:1px 4px;border-radius:3px}@media(prefers-color-scheme:dark){body{color:#f5f5f7}}</style><h3>Beta 1.1.6</h3><ul><li>Update the core converter to x3fuse-core 0.1.4.</li><li>Improve Quattro and Merrill DNG compatibility and color calibration in Apple RAW, Adobe Camera Raw, and LibRaw.</li><li>Improve color highlight recovery.</li></ul>]]></description>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <enclosure url="https://github.com/sagwaco/x3fuse/releases/download/v0.1.6/X3Fuse-App.zip" length="54891206" type="application/octet-stream" sparkle:edSignature="t+hQQMAxaCmX6GWlXOZKoGS3KWN0kbxq/gd+0xci0lP6rnaBXR7sRMgVJjsee38DTiEAZD8BHIab2eHjq8ZkDA=="/>
         </item>
     </channel>
 </rss>
