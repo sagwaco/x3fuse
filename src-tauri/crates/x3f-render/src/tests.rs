@@ -333,7 +333,8 @@ fn gpu_native_film_controls() {
         render(legacy_changes, (1024, 0)),
         "Native parameters must ignore legacy macros"
     );
-    let edits: [(&str, fn(&mut FilmSettings)); 7] = [
+    type FilmEdit = fn(&mut FilmSettings);
+    let edits: [(&str, FilmEdit); 7] = [
         ("RMS", |f| {
             f.grain_params.as_mut().unwrap().rms_granularity = [16., 12., 8.]
         }),
