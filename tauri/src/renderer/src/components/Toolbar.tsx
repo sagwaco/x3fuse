@@ -41,17 +41,17 @@ export function Toolbar(): React.JSX.Element {
     <div
       ref={ref}
       data-tauri-drag-region
-      className="window-toolbar flex h-12 shrink-0 items-center justify-between border-b border-white/10 px-3"
+      className="window-toolbar flex h-12 shrink-0 items-center justify-between border-b border-ink/10 px-3"
     >
       <div data-swap className="flex items-center gap-2">
         <ViewControls disabled={fileCount === 0} />
-        <div role="separator" aria-orientation="vertical" className="h-5 w-px bg-white/15" />
+        <div role="separator" aria-orientation="vertical" className="h-5 w-px bg-ink/15" />
         <FilterButton disabled={fileCount === 0} shortcut />
         <CullError />
         {/* Only the filmstrip shows a photo to zoom. */}
         {filmstrip && (
           <>
-            <div role="separator" aria-orientation="vertical" className="h-5 w-px bg-white/15" />
+            <div role="separator" aria-orientation="vertical" className="h-5 w-px bg-ink/15" />
             <ZoomControls />
           </>
         )}
@@ -79,7 +79,7 @@ export function Toolbar(): React.JSX.Element {
           title={t('inspector.toggle')}
           aria-label={t('inspector.toggle')}
           aria-pressed={inspectorOpen}
-          className={inspectorOpen ? 'bg-white/15 text-neutral-100' : ''}
+          className={inspectorOpen ? 'bg-ink/15 text-tone-100' : ''}
           onClick={() => void updateSettings({ inspectorOpen: !inspectorOpen })}
         >
           <PanelRight className="h-4 w-4" aria-hidden="true" />
@@ -94,7 +94,7 @@ export function CullError(): React.JSX.Element | null {
   const error = useQueueStore((s) => s.cullError)
   if (!error) return null
   return (
-    <span role="alert" title={error} className="flex items-center gap-1 text-xs text-red-300">
+    <span role="alert" title={error} className="flex items-center gap-1 text-xs text-danger">
       <TriangleAlert className="h-3.5 w-3.5" aria-hidden="true" />
       {t('cull.save_failed')}
     </span>
@@ -122,7 +122,7 @@ export function FilterButton({
       aria-label={label}
       aria-keyshortcuts={shortcut ? '\\' : undefined}
       aria-pressed={filterOpen}
-      className={cn((filterOpen || filtering) && 'bg-white/15 text-neutral-100')}
+      className={cn((filterOpen || filtering) && 'bg-ink/15 text-tone-100')}
       onClick={useQueueStore.getState().toggleFilterBar}
     >
       <ListFilter className="h-4 w-4" aria-hidden="true" />
@@ -149,12 +149,12 @@ export function ExportButton({
     <div
       role="group"
       aria-label={t('batch.convert_options')}
-      className="flex shrink-0 items-center rounded-md bg-white/5"
+      className="flex shrink-0 items-center rounded-md bg-ink/5"
     >
       <Button
         variant="ghost"
         size="md"
-        className="px-2 rounded-r-none text-xs border-l border-t border-b border-white/10"
+        className="px-2 rounded-r-none text-xs border-l border-t border-b border-ink/10"
         disabled={disabled}
         onClick={() => openExport(ids, returnScreen)}
         title={t('toolbar.convert_selected')}
@@ -164,7 +164,7 @@ export function ExportButton({
       <NativeMenuButton
         variant="ghost"
         size="icon"
-        className="w-6 rounded-l-none border-r border-t border-b border-white/10"
+        className="w-6 rounded-l-none border-r border-t border-b border-ink/10"
         disabled={disabled}
         aria-label={t('batch.convert_options')}
         items={[

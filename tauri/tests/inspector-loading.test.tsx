@@ -71,12 +71,12 @@ describe('inspector metadata loading', () => {
     expect(screen.queryByRole('button', { name: 'Scope view' })).toBeNull()
     expect(screen.getByText('Camera').nextElementSibling?.textContent).toBe('SIGMA')
     expect(
-      screen.getByText('Camera').nextElementSibling?.classList.contains('text-neutral-200')
+      screen.getByText('Camera').nextElementSibling?.classList.contains('text-tone-200')
     ).toBe(true)
     for (const label of ['ISO', 'Lens', 'Copyright']) {
       expect(screen.getByText(label).nextElementSibling?.textContent).toBe('Multiple values')
       expect(
-        screen.getByText(label).nextElementSibling?.classList.contains('text-neutral-500')
+        screen.getByText(label).nextElementSibling?.classList.contains('text-tone-500')
       ).toBe(true)
     }
     expect(invoke).not.toHaveBeenCalled()

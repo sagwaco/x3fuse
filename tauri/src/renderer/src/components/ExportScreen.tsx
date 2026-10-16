@@ -27,17 +27,17 @@ export function ExportScreen(): React.JSX.Element {
   const count = targets.length
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-neutral-950 text-neutral-100">
+    <div className="flex h-full min-h-0 flex-col bg-tone-950 text-tone-100">
       <div
         data-tauri-drag-region
-        className="window-toolbar flex h-12 shrink-0 items-center justify-between border-b border-white/10 px-3"
+        className="window-toolbar flex h-12 shrink-0 items-center justify-between border-b border-ink/10 px-3"
       >
         <div className="flex items-center gap-3">
-          <span className="font-mono text-xs tabular-nums text-neutral-500">
+          <span className="font-mono text-xs tabular-nums text-tone-500">
             {t('batch.image_count', { count })}
           </span>
           <ViewControls disabled={count === 0} />
-          <div role="separator" aria-orientation="vertical" className="h-5 w-px bg-white/15" />
+          <div role="separator" aria-orientation="vertical" className="h-5 w-px bg-ink/15" />
           <ZoomControls />
         </div>
         <div className="flex items-center gap-2">
@@ -61,7 +61,7 @@ export function ExportScreen(): React.JSX.Element {
       </div>
 
       {error && (
-        <p role="alert" className="px-4 py-2 text-sm text-red-400">
+        <p role="alert" className="px-4 py-2 text-sm text-danger">
           {error}
         </p>
       )}
@@ -69,7 +69,7 @@ export function ExportScreen(): React.JSX.Element {
       {/* Body: preview gallery · settings sidebar */}
       <div className="flex min-h-0 flex-1">
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <div className="flex h-8 shrink-0 items-center border-b border-white/10 px-4 font-mono text-xs font-medium uppercase tracking-[0.12em] text-neutral-400">
+          <div className="flex h-8 shrink-0 items-center border-b border-ink/10 px-4 font-mono text-xs font-medium uppercase tracking-[0.12em] text-tone-400">
             <span className="ml-0.5">{t('export.images_heading')}</span>
           </div>
           {count > 0 ? (
@@ -85,14 +85,14 @@ export function ExportScreen(): React.JSX.Element {
               }}
             />
           ) : (
-            <div className="flex flex-1 items-center justify-center px-6 text-center text-sm text-neutral-600">
+            <div className="flex flex-1 items-center justify-center px-6 text-center text-sm text-tone-600">
               {t('export.empty')}
             </div>
           )}
         </div>
 
         <ResizablePanel kind="export">
-          <div className="flex h-8 shrink-0 items-center border-b border-white/10 px-3 font-mono text-xs font-medium uppercase tracking-[0.12em] text-neutral-400">
+          <div className="flex h-8 shrink-0 items-center border-b border-ink/10 px-3 font-mono text-xs font-medium uppercase tracking-[0.12em] text-tone-400">
             <span className="ml-0.5">{t('export.settings_heading')}</span>
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto">

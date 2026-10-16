@@ -182,7 +182,7 @@ export function SurveyView(): React.JSX.Element {
       >
         <div ref={area} className="min-h-0 flex-1 p-3">
           {message ? (
-            <p className="flex h-full items-center justify-center text-sm text-neutral-400">
+            <p className="flex h-full items-center justify-center text-sm text-tone-400">
               {message}
             </p>
           ) : (
@@ -206,8 +206,8 @@ export function SurveyView(): React.JSX.Element {
                   className={cn(
                     'group relative min-h-0 min-w-0 cursor-default rounded-md border p-1',
                     file.id === activeId
-                      ? 'border-blue-400 ring-2 ring-blue-400/60'
-                      : 'border-white/10 hover:border-white/25'
+                      ? 'border-accent ring-2 ring-accent/60'
+                      : 'border-ink/10 hover:border-ink/25'
                   )}
                 >
                   {photos.length <= FIT_PHOTOS ? (
@@ -234,7 +234,7 @@ export function SurveyView(): React.JSX.Element {
                       removePhoto(file.id)
                     }}
                     onDoubleClick={(event) => event.stopPropagation()}
-                    className="absolute right-1 top-1 rounded bg-neutral-950/80 p-1 text-neutral-200 opacity-0 hover:text-white focus-visible:opacity-100 group-hover:opacity-100"
+                    className="absolute right-1 top-1 rounded bg-tone-950/80 p-1 text-tone-200 opacity-0 hover:text-ink focus-visible:opacity-100 group-hover:opacity-100"
                   >
                     <X aria-hidden="true" className="h-3 w-3" />
                   </button>
@@ -252,7 +252,7 @@ export function SurveyView(): React.JSX.Element {
               peekRef.current.shown = false
               setPeek(false)
             }}
-            className="fixed inset-0 z-50 flex bg-neutral-950 p-3"
+            className="fixed inset-0 z-50 flex bg-tone-950 p-3"
           >
             {/* The centered Fit image matches the window. The full-size layer is not centered here. */}
             <FilmstripImage key={active.id} file={active} containerClassName="h-full w-full" />

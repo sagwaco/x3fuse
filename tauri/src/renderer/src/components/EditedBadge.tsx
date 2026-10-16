@@ -21,8 +21,8 @@ export function EditedBadge({
       className={cn(
         'inline-flex shrink-0 items-center justify-center',
         overlay
-          ? 'absolute bottom-1 right-1 rounded bg-neutral-950/80 p-1 text-neutral-100'
-          : 'text-neutral-400'
+          ? 'absolute bottom-1 right-1 rounded bg-tone-950/80 p-1 text-tone-100'
+          : 'text-tone-400'
       )}
     >
       <Pencil aria-hidden="true" className="h-3 w-3" />

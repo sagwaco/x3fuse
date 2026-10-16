@@ -245,12 +245,12 @@ export function LookPicker({
         {looks.map((look, index) => (
           <Fragment key={look.id}>
             {look.group && look.group !== looks[index - 1]?.group && (
-              <h2 className="control-label col-span-3 pt-1 text-[10px] font-bold text-neutral-400">
+              <h2 className="control-label col-span-3 pt-1 text-[10px] font-bold text-tone-400">
                 {look.group}
               </h2>
             )}
             {look.id === 'aerochrome' && (
-              <p className="col-span-3 text-xs leading-relaxed text-neutral-400">
+              <p className="col-span-3 text-xs leading-relaxed text-tone-400">
                 {t('editor.aerochromeHelp')}
                 {!hasFCBlue && ` ${t('editor.aerochromeUnavailable')}`}
               </p>
@@ -272,7 +272,7 @@ export function LookPicker({
               }
               className="group self-start rounded-md text-left focus-visible:outline-none disabled:opacity-50"
             >
-              <span className="look-thumbnail relative block aspect-[3/2] overflow-hidden rounded-md bg-white/[0.06] group-hover:ring-1 group-hover:ring-white/30 group-focus-visible:ring-2 group-focus-visible:ring-white/60 group-aria-pressed:ring-2 group-aria-pressed:ring-white">
+              <span className="look-thumbnail relative block aspect-[3/2] overflow-hidden rounded-md bg-ink/[0.06] group-hover:ring-1 group-hover:ring-ink/30 group-focus-visible:ring-2 group-focus-visible:ring-ink/60 group-aria-pressed:ring-2 group-aria-pressed:ring-ink">
                 {thumbnails[look.id] && (
                   <img
                     src={thumbnails[look.id]}
@@ -283,7 +283,7 @@ export function LookPicker({
                   />
                 )}
               </span>
-              <span className="mt-1 line-clamp-2 block text-[10px] leading-tight text-neutral-300 group-aria-pressed:text-white">
+              <span className="mt-1 line-clamp-2 block text-[10px] leading-tight text-tone-300 group-aria-pressed:text-ink">
                 {look.name}
               </span>
             </button>
@@ -292,18 +292,18 @@ export function LookPicker({
       </div>
     )
   return (
-    <div className="relative flex items-center gap-2 rounded-xl border border-white/15 bg-white/[0.03] px-3 py-2.5 hover:border-white/25 has-[:disabled]:opacity-50">
+    <div className="relative flex items-center gap-2 rounded-xl border border-ink/15 bg-ink/[0.03] px-3 py-2.5 hover:border-ink/25 has-[:disabled]:opacity-50">
       {/* The button's ::after covers the box, so all of it opens the picker. */}
       <button
         type="button"
         data-sidebar-page={kind === 'film' ? 'emulsion' : 'paper'}
         onClick={onOpen}
-        className="min-w-0 flex-1 text-left after:absolute after:inset-0 after:rounded-xl focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-white/50"
+        className="min-w-0 flex-1 text-left after:absolute after:inset-0 after:rounded-xl focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-ink/50"
       >
-        <span className="control-label block text-[10px] tracking-[0.14em] text-neutral-500">
+        <span className="control-label block text-[10px] tracking-[0.14em] text-tone-500">
           {caption}
         </span>
-        <span className="block truncate text-[13px] text-neutral-100">
+        <span className="block truncate text-[13px] text-tone-100">
           {looks.find((look) => look.id === selected)?.name}
         </span>
       </button>
@@ -322,7 +322,7 @@ export function LookPicker({
           />
         </span>
       )}
-      <ChevronRight aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-neutral-500" />
+      <ChevronRight aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-tone-500" />
     </div>
   )
 }

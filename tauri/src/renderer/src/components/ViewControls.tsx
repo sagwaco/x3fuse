@@ -31,7 +31,7 @@ export function ViewControls({ disabled = false }: { disabled?: boolean }): Reac
           aria-keyshortcuts={key}
           aria-pressed={viewMode === mode}
           onClick={() => void update({ queueViewMode: mode })}
-          className={viewMode === mode ? 'bg-white/15 text-neutral-100' : ''}
+          className={viewMode === mode ? 'bg-ink/15 text-tone-100' : ''}
         >
           <Icon className="h-4 w-4" aria-hidden="true" />
         </Button>

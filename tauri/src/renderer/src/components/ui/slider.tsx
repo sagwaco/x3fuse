@@ -60,11 +60,11 @@ export function Slider({
   )
   // Radix moves the thumb in by up to half its width at the ends.
   const inBounds = THUMB_HALF_PX * (1 - current / 50)
-  const trackClass = cn('relative w-full grow', track ? 'h-1 rounded-full' : 'h-0.5 bg-white/15')
+  const trackClass = cn('relative w-full grow', track ? 'h-1 rounded-full' : 'h-0.5 bg-ink/15')
   const trackStyle = track ? { background: track } : undefined
   const fill = !track && (
     <div
-      className="absolute h-full bg-white/45"
+      className="absolute h-full bg-ink/45"
       style={{
         left: `${Math.min(origin, current)}%`,
         width: `${Math.abs(current - origin)}%`
@@ -138,9 +138,9 @@ export function Slider({
         <span
           className={cn(
             'slider-knob pointer-events-none absolute left-1/2 top-1/2 h-3.5 w-[3px] -translate-x-1/2 -translate-y-1/2',
-            'rounded-[1px] bg-white shadow-[0_0_0_2px_rgb(0_0_0/0.85)]',
+            'rounded-[1px] bg-ink shadow-[0_0_0_2px_rgb(0_0_0/0.85)]',
             // An outline, as the glass hover rules replace the box shadow.
-            'group-focus-visible:outline group-focus-visible:outline-2 group-focus-visible:outline-white/60'
+            'group-focus-visible:outline group-focus-visible:outline-2 group-focus-visible:outline-ink/60'
           )}
         >
           <span className="glass-lens">

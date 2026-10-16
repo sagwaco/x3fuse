@@ -78,7 +78,7 @@ function RenderedContent({
       {showSkeleton ? (
         <Skeleton className="preview-skeleton absolute inset-0 h-full w-full" />
       ) : failed && !ready ? (
-        <span role="alert" className="absolute text-xs text-neutral-500">
+        <span role="alert" className="absolute text-xs text-tone-500">
           {t('inspector.no_preview')}
         </span>
       ) : null}

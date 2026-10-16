@@ -5,14 +5,76 @@
 /* Camera-style control caption: monospace, uppercase, wide tracking. */
 @layer components {
   .control-label {
-    @apply font-mono text-[11px] uppercase leading-tight tracking-[0.12em] text-neutral-300;
+    @apply font-mono text-[11px] uppercase leading-tight tracking-[0.12em] text-tone-300;
   }
 }
 
-:root {
+/* Any element with data-theme='dark' keeps the dark tokens, such as the
+   scope box, whose canvas colors assume a dark backing. */
+:root,
+[data-theme='dark'] {
   color-scheme: dark;
+  --tone-950: 10 10 10;
+  --tone-900: 23 23 23;
+  --tone-800: 38 38 38;
+  --tone-700: 64 64 64;
+  --tone-600: 82 82 82;
+  --tone-500: 115 115 115;
+  --tone-400: 163 163 163;
+  --tone-300: 212 212 212;
+  --tone-200: 229 229 229;
+  --tone-100: 245 245 245;
+  --tone-50: 250 250 250;
+  --ink: 255 255 255;
+  --accent: 96 165 250;
+  --danger: 248 113 113;
+  --success: 74 222 128;
+  --warning: 251 146 60;
+}
+
+html[data-theme='light'] {
+  color-scheme: light;
+  --tone-950: 250 250 250;
+  --tone-900: 245 245 245;
+  --tone-800: 229 229 229;
+  --tone-700: 212 212 212;
+  --tone-600: 163 163 163;
+  --tone-500: 115 115 115;
+  --tone-400: 82 82 82;
+  --tone-300: 64 64 64;
+  --tone-200: 38 38 38;
+  --tone-100: 23 23 23;
+  --tone-50: 10 10 10;
+  --ink: 0 0 0;
+  --accent: 37 99 235;
+  --danger: 220 38 38;
+  --success: 22 163 74;
+  --warning: 234 88 12;
+}
+
+html[data-theme='gray'] {
+  color-scheme: light;
+  --tone-950: 119 119 119;
+  --tone-900: 112 112 112;
+  --tone-800: 102 102 102;
+  --tone-700: 92 92 92;
+  --tone-600: 60 60 60;
+  --tone-500: 46 46 46;
+  --tone-400: 34 34 34;
+  --tone-300: 24 24 24;
+  --tone-200: 16 16 16;
+  --tone-100: 10 10 10;
+  --tone-50: 4 4 4;
+  --ink: 0 0 0;
+  --accent: 30 64 175;
+  --danger: 185 28 28;
+  --success: 21 128 61;
+  --warning: 194 65 12;
+}
+
+:root {
   /* Paint the document canvas before React and between WebKit resize frames. */
-  background-color: #0a0a0a;
+  background-color: rgb(var(--tone-950));
 }
 
 /* The developing cloud animates its radial cover. A registered number interpolates. */
@@ -56,8 +118,8 @@ html.resizing-columns * {
 }
 
 .preview-skeleton {
-  --gray-a3: rgb(255 255 255 / 0.06);
-  --gray-a4: rgb(255 255 255 / 0.1);
+  --gray-a3: rgb(var(--ink) / 0.06);
+  --gray-a4: rgb(var(--ink) / 0.1);
   --radius-1: 4px;
   background-color: var(--gray-a3);
 }
@@ -87,23 +149,37 @@ html[data-platform='darwin'] .window-toolbar {
 }
 
 .app-tooltip {
-  background-color: #262626;
+  background-color: rgb(var(--tone-800));
 }
 
+/* The native material follows the window appearance, and the tooltip text
+   follows the theme. The glass shows only when the two schemes agree, so a
+   dark theme in a light window keeps the solid tone-800 tooltip. */
 @supports (-apple-visual-effect: -apple-system-glass-material) {
-  html[data-platform='darwin'] .export-help-tooltip {
-    background-color: transparent;
-    -apple-visual-effect: -apple-system-glass-material;
-    border-color: transparent;
-    box-shadow: none;
+  @media (prefers-color-scheme: dark) {
+    html[data-platform='darwin']:where([data-theme='dark']) .export-help-tooltip {
+      background-color: transparent;
+      -apple-visual-effect: -apple-system-glass-material;
+      border-color: transparent;
+      box-shadow: none;
+    }
+  }
+
+  @media (prefers-color-scheme: light) {
+    html[data-platform='darwin']:where(:not([data-theme='dark'])) .export-help-tooltip {
+      background-color: transparent;
+      -apple-visual-effect: -apple-system-glass-material;
+      border-color: transparent;
+      box-shadow: none;
+    }
   }
 }
 
 @media (prefers-reduced-transparency: reduce) {
   html[data-platform='darwin'] .export-help-tooltip {
     -apple-visual-effect: none;
-    background-color: #262626;
-    border-color: rgb(255 255 255 / 0.15);
+    background-color: rgb(var(--tone-800));
+    border-color: rgb(var(--ink) / 0.15);
   }
 }
 
@@ -128,13 +204,17 @@ html[data-platform='darwin'] .window-toolbar {
   }
 }
 
+/* The overlay text is white, so the native material is used only in a dark
+   window appearance. A light window keeps the dark CSS glass above. */
 @supports (-apple-visual-effect: -apple-system-glass-material) {
-  html[data-platform='darwin'] .glass-overlay {
-    background-color: rgb(0 0 0 / 0.12);
-    -apple-visual-effect: -apple-system-glass-material;
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
-    box-shadow: none;
+  @media (prefers-color-scheme: dark) {
+    html[data-platform='darwin'] .glass-overlay {
+      background-color: rgb(0 0 0 / 0.12);
+      -apple-visual-effect: -apple-system-glass-material;
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+      box-shadow: none;
+    }
   }
 }
 
@@ -195,7 +275,7 @@ html[data-platform='darwin'] .window-toolbar {
 /* The off track darkens a little while pressed, and its copy in the lens too. */
 .switch[data-pressed][data-state='unchecked']:not(:disabled),
 .switch[data-pressed]:not(:disabled) .glass-lens > [data-state='unchecked'] {
-  background-color: rgb(255 255 255 / 0.15);
+  background-color: rgb(var(--ink) / 0.15);
 }
 
 .slider-thumb:is(:hover, :active):not([data-disabled]) > .slider-knob {
@@ -216,7 +296,7 @@ html[data-platform='darwin'] .window-toolbar {
 
 /* Liquid glass. WebKit ignores url() in backdrop-filter, so the lens holds a
    copy of the track under the knob. Its color is the panel color,
-   neutral-900/30 on neutral-950. The lens scales down about the knob center,
+   tone-900/30 on tone-950. The lens scales down about the knob center,
    so the track looks smaller in the glass. An SVG filter (GlassFilters) can
    also bend the edges, but WebKit runs it at one pixel per CSS pixel, which
    shows pixel steps on a knob this small. */
@@ -229,7 +309,7 @@ html[data-platform='darwin'] .window-toolbar {
   /* WebKit fits a filter to the lens and to content that overflows it, such
      as the slider track copy. A clip keeps a filter on the lens box. */
   overflow: hidden;
-  background-color: #0e0e0e;
+  background-color: color-mix(in srgb, rgb(var(--tone-900)) 30%, rgb(var(--tone-950)));
   filter: brightness(1.1) saturate(1.5);
   transform: scale(0.65);
 }
@@ -267,14 +347,14 @@ html[data-platform='darwin'] .window-toolbar {
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  box-shadow: inset 0 0 4px rgb(250 250 250 / 0.5);
+  box-shadow: inset 0 0 4px rgb(var(--ink) / 0.5);
 }
 
 /* A solid knob that still grows, for reduced transparency and more contrast. */
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
   .switch[data-pressed]:not(:disabled) > .switch-knob,
   .slider-thumb:is(:hover, :active):not([data-disabled]) > .slider-knob {
-    background-color: #d4d4d4;
+    background-color: rgb(var(--tone-300));
     box-shadow: 0 1px 4px rgb(0 0 0 / 0.5);
   }
 
@@ -317,13 +397,13 @@ html[data-platform='darwin'] .window-toolbar {
   height: 10px;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.16);
+  background: rgb(var(--ink) / 0.16);
   border-radius: 6px;
   border: 2px solid transparent;
   background-clip: content-box;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.28);
+  background: rgb(var(--ink) / 0.28);
   background-clip: content-box;
 }
 ::-webkit-scrollbar-corner {

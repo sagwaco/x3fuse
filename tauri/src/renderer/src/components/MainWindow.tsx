@@ -71,7 +71,7 @@ export function MainWindow(): React.JSX.Element {
         if (node) node.inert = closing
       }}
       aria-busy={closing || undefined}
-      className="flex h-full flex-col bg-neutral-950 text-neutral-100"
+      className="flex h-full flex-col bg-tone-950 text-tone-100"
     >
       {onExportScreen && hasFiles ? (
         <ExportScreen />

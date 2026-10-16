@@ -26,7 +26,7 @@ export function FilterBar(): React.JSX.Element {
     <div
       role="toolbar"
       aria-label={t('filter.toggle')}
-      className="flex h-10 shrink-0 items-center gap-2 border-b border-white/10 px-3 text-xs text-neutral-400"
+      className="flex h-10 shrink-0 items-center gap-2 border-b border-ink/10 px-3 text-xs text-tone-400"
     >
       <span>{t('filter.flag')}</span>
       <div className="flex items-center gap-0.5">
@@ -50,7 +50,7 @@ export function FilterBar(): React.JSX.Element {
           </Button>
         ))}
       </div>
-      <div role="separator" aria-orientation="vertical" className="mx-1 h-5 w-px bg-white/15" />
+      <div role="separator" aria-orientation="vertical" className="mx-1 h-5 w-px bg-ink/15" />
       <span>{t('filter.rating')}</span>
       <NativeMenuButton
         variant="ghost"

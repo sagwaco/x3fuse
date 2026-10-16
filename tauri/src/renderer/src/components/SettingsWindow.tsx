@@ -30,11 +30,11 @@ export function SettingsWindow(): React.JSX.Element {
   }, [])
 
   if (!loaded) {
-    return <div className="h-full bg-neutral-950" />
+    return <div className="h-full bg-tone-950" />
   }
 
   return (
-    <div className="h-full overflow-y-auto bg-neutral-950 px-6 py-5 text-neutral-100">
+    <div className="h-full overflow-y-auto bg-tone-950 px-6 py-5 text-tone-100">
       <div className="mx-auto flex max-w-xl flex-col gap-6">
         {/* Debug */}
         <Section title={t('settings.section.debug')}>
@@ -44,7 +44,7 @@ export function SettingsWindow(): React.JSX.Element {
             onChange={(v) => void update({ debugLoggingEnabled: v })}
           />
           <div className="flex items-center justify-between gap-2">
-            <span className="text-sm text-neutral-300">{t('settings.debug_logs')}</span>
+            <span className="text-sm text-tone-300">{t('settings.debug_logs')}</span>
             <div className="flex items-center gap-2">
               <Button variant="bordered" size="sm" onClick={() => void ipc.invoke('logs:open')}>
                 {t('settings.open_logs_folder')}
@@ -59,7 +59,7 @@ export function SettingsWindow(): React.JSX.Element {
             </div>
           </div>
 
-          <div className="flex flex-col gap-1 text-xs text-neutral-500">
+          <div className="flex flex-col gap-1 text-xs text-tone-500">
             <LogSizeRow label={t('settings.log.conversion')} bytes={logSizes.conversion} />
             <LogSizeRow label={t('settings.log.error')} bytes={logSizes.error} />
             <LogSizeRow label={t('settings.log.debug')} bytes={logSizes.debug} />
@@ -89,17 +89,17 @@ export function SettingsWindow(): React.JSX.Element {
         <Section title={t('settings.section.about')}>
           <InfoRow label={t('settings.version')} value={version || '—'} />
           <div className="flex items-center justify-between gap-2">
-            <span className="text-sm text-neutral-300">{t('settings.acknowledgements')}</span>
+            <span className="text-sm text-tone-300">{t('settings.acknowledgements')}</span>
             <Button variant="bordered" size="sm" onClick={() => void ipc.invoke('licenses:open')}>
               {t('settings.view_licenses')}
             </Button>
           </div>
           {/* CC BY-SA 4.0 asks for attribution wherever the work is used,
               including an app's About screen. */}
-          <p className="text-xs leading-relaxed text-neutral-500">
+          <p className="text-xs leading-relaxed text-tone-500">
             {t('settings.film_attribution')}{' '}
             <a
-              className="underline hover:text-neutral-300"
+              className="underline hover:text-tone-300"
               href="https://github.com/andreavolpato/spektrafilm"
               target="_blank"
               rel="noreferrer"
@@ -116,7 +116,7 @@ export function SettingsWindow(): React.JSX.Element {
 function InfoRow({ label, value }: { label: string; value: string }): React.JSX.Element {
   return (
     <Row label={label}>
-      <span className="text-sm text-neutral-400">{value}</span>
+      <span className="text-sm text-tone-400">{value}</span>
     </Row>
   )
 }

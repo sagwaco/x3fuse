@@ -49,7 +49,7 @@ export function PreviewMinimap({ file }: { file: X3FFileDTO }): React.JSX.Elemen
       <OrientedImage
         file={file}
         loading="eager"
-        containerClassName="h-44 w-full rounded-md border border-white/10 bg-neutral-900"
+        containerClassName="h-44 w-full rounded-md border border-ink/10 bg-tone-900"
       />
     )
   }
@@ -68,7 +68,7 @@ export function PreviewMinimap({ file }: { file: X3FFileDTO }): React.JSX.Elemen
   }
 
   return (
-    <div className="flex h-44 items-center justify-center rounded-md border border-white/10 bg-neutral-900">
+    <div className="flex h-44 items-center justify-center rounded-md border border-ink/10 bg-tone-900">
       <div
         className="relative overflow-hidden"
         style={{ width: `min(100%, ${11 * map.aspectRatio}rem)`, aspectRatio: map.aspectRatio }}
@@ -131,7 +131,7 @@ export function PreviewMinimap({ file }: { file: X3FFileDTO }): React.JSX.Elemen
           }}
         >
           <div
-            className="pointer-events-none absolute border-2 border-blue-400 bg-blue-400/10 shadow-[0_0_0_999px_rgba(0,0,0,0.4)]"
+            className="pointer-events-none absolute border-2 border-accent bg-accent/10 shadow-[0_0_0_999px_rgba(0,0,0,0.4)]"
             style={{
               left: `${map.x * 100}%`,
               top: `${map.y * 100}%`,

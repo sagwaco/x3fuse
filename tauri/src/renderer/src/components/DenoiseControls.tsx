@@ -48,10 +48,10 @@ export function DenoiseControls({
         />
       </Row>
       {value.algorithm === 'bm3d' && (
-        <p className="text-xs text-neutral-500">{t('denoise.bm3dHelp')}</p>
+        <p className="text-xs text-tone-500">{t('denoise.bm3dHelp')}</p>
       )}
-      <details className="space-y-3 text-xs text-neutral-300">
-        <summary className="control-label cursor-pointer select-none font-bold text-neutral-400">
+      <details className="space-y-3 text-xs text-tone-300">
+        <summary className="control-label cursor-pointer select-none font-bold text-tone-400">
           {t('denoise.advanced')}
         </summary>
         <ToggleRow
@@ -64,7 +64,7 @@ export function DenoiseControls({
           checked={value.chroma}
           onChange={(chroma) => update({ chroma })}
         />
-        <p className="text-neutral-500">{t('denoise.channelsHelp')}</p>
+        <p className="text-tone-500">{t('denoise.channelsHelp')}</p>
         <div className="space-y-2">
           <span className="control-label">
             {t('denoise.strength')} ({value.strength.toFixed(1)}×)
@@ -85,12 +85,12 @@ export function DenoiseControls({
             {window('lumaSearch', 31, !value.luminance)}
             {window('chromaPatch', 9, !value.chroma)}
             {window('chromaSearch', 31, !value.chroma)}
-            <p className="text-neutral-500">{t('denoise.windowsHelp')}</p>
+            <p className="text-tone-500">{t('denoise.windowsHelp')}</p>
           </>
         )}
         <button
           type="button"
-          className="control-label text-neutral-500 hover:text-neutral-100"
+          className="control-label text-tone-500 hover:text-tone-100"
           onClick={() => change({ ...defaultDenoiseOptions(), algorithm: value.algorithm })}
         >
           {t('denoise.reset')}

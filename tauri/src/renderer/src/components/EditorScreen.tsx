@@ -354,18 +354,18 @@ export function EditorScreen(): React.JSX.Element {
     </>
   )
   const content = (
-    <div className="flex h-full min-h-0 flex-col bg-neutral-950">
+    <div className="flex h-full min-h-0 flex-col bg-tone-950">
       <div
         ref={swap.ref}
         data-tauri-drag-region
-        className="window-toolbar flex h-12 shrink-0 items-center justify-between gap-2 border-b border-white/10 px-3"
+        className="window-toolbar flex h-12 shrink-0 items-center justify-between gap-2 border-b border-ink/10 px-3"
       >
         <div className="flex min-w-0 items-center gap-2">
           {!swap.shown && (
             <div data-swap className="contents" {...inert}>
               <FilterButton />
               <CullError />
-              <div role="separator" aria-orientation="vertical" className="h-5 w-px bg-white/15" />
+              <div role="separator" aria-orientation="vertical" className="h-5 w-px bg-ink/15" />
               <ZoomControls />
             </div>
           )}
@@ -398,13 +398,13 @@ export function EditorScreen(): React.JSX.Element {
               <div
                 role="separator"
                 aria-orientation="vertical"
-                className="mx-1 h-5 w-px bg-white/15"
+                className="mx-1 h-5 w-px bg-ink/15"
               />
               {history}
               <div
                 role="separator"
                 aria-orientation="vertical"
-                className="mx-1 h-5 w-px bg-white/15"
+                className="mx-1 h-5 w-px bg-ink/15"
               />
               <Button variant="bordered" size="sm" disabled={unavailable} onClick={cancelCrop}>
                 {t('button.cancel')}
@@ -443,7 +443,7 @@ export function EditorScreen(): React.JSX.Element {
               <div
                 role="separator"
                 aria-orientation="vertical"
-                className="mx-1 h-5 w-px bg-white/15"
+                className="mx-1 h-5 w-px bg-ink/15"
               />
               {/* Resets every adjustment; crop mode's Cancel could not undo it. */}
               <Button
@@ -481,7 +481,7 @@ export function EditorScreen(): React.JSX.Element {
               <div
                 role="separator"
                 aria-orientation="vertical"
-                className="mx-1 h-5 w-px bg-white/15"
+                className="mx-1 h-5 w-px bg-ink/15"
               />
               <Button variant="ghost" size="md" disabled={busy} onClick={() => void editor.close()}>
                 {t('editor.done')}
@@ -498,7 +498,7 @@ export function EditorScreen(): React.JSX.Element {
                 aria-label={t('editor.togglePanel')}
                 aria-pressed={panelOpen}
                 // The same gap as in the browser toolbar.
-                className={cn('ml-1', panelOpen && 'bg-white/15 text-neutral-100')}
+                className={cn('ml-1', panelOpen && 'bg-ink/15 text-tone-100')}
                 onClick={() =>
                   void useSettingsStore.getState().update({ editorPanelOpen: !panelOpen })
                 }
@@ -512,7 +512,7 @@ export function EditorScreen(): React.JSX.Element {
       {editor.error && (
         <div
           role="alert"
-          className="flex items-center justify-between gap-3 border-b border-red-500/20 bg-red-950/30 px-4 py-2 text-xs text-red-300"
+          className="flex items-center justify-between gap-3 border-b border-danger/20 bg-danger/10 px-4 py-2 text-xs text-danger"
         >
           <span>{editor.error}</span>
           <Button
@@ -570,7 +570,7 @@ export function EditorScreen(): React.JSX.Element {
                 ) : cloudFile ? null : (
                   <div
                     role="status"
-                    className="flex h-full items-center justify-center gap-2 text-xs text-neutral-500"
+                    className="flex h-full items-center justify-center gap-2 text-xs text-tone-500"
                   >
                     {editor.loading || editor.rendering ? (
                       <>
@@ -607,7 +607,7 @@ export function EditorScreen(): React.JSX.Element {
         {/* Crop mode keeps the panel open for its controls. */}
         {sidebarShown && (
           <ResizablePanel kind="editor">
-            <div className="z-10 flex h-8 shrink-0 items-center justify-between gap-2 border-b border-white/10 px-3 font-mono text-xs uppercase tracking-[0.12em] text-neutral-400">
+            <div className="z-10 flex h-8 shrink-0 items-center justify-between gap-2 border-b border-ink/10 px-3 font-mono text-xs uppercase tracking-[0.12em] text-tone-400">
               {sidebarPage === 'edit' ? (
                 <>
                   <div className="ml-0.5 flex min-w-0 items-center gap-1.5">
@@ -669,7 +669,7 @@ export function EditorScreen(): React.JSX.Element {
               <div hidden={sidebarPage !== 'edit'}>
                 <div ref={scopeBox} className="p-3">
                   {editor.viewport && (
-                    <p className="control-label mb-1 text-[10px] text-neutral-500">
+                    <p className="control-label mb-1 text-[10px] text-tone-500">
                       {t('editor.visibleArea')}
                     </p>
                   )}
@@ -681,7 +681,7 @@ export function EditorScreen(): React.JSX.Element {
                     {doc.storage === 'backup' && (
                       <p
                         role="status"
-                        className="control-label px-4 py-1.5 text-[10px] text-neutral-500"
+                        className="control-label px-4 py-1.5 text-[10px] text-tone-500"
                         title={doc.storagePath}
                       >
                         {t('editor.savedBackup')}

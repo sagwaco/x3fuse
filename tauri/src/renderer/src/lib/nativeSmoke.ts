@@ -476,15 +476,24 @@ async function checkLayout() {
   await until(() => !!document.querySelector('.export-help-tooltip'), 'Export help did not open')
   const tooltip = document.querySelector('.export-help-tooltip')!
   const supported = CSS.supports('-apple-visual-effect', '-apple-system-glass-material')
+  // The native material shows only when the window scheme matches the theme scheme.
   const glass =
     document.documentElement.dataset.platform === 'darwin' &&
     supported &&
-    !matchMedia('(prefers-reduced-transparency: reduce)').matches
+    !matchMedia('(prefers-reduced-transparency: reduce)').matches &&
+    matchMedia('(prefers-color-scheme: dark)').matches ===
+      (document.documentElement.dataset.theme === 'dark')
   const style = getComputedStyle(tooltip)
+  // The solid fallback is the theme's tone-800 (38 38 38 in the dark theme).
+  const tone800 = getComputedStyle(document.documentElement)
+    .getPropertyValue('--tone-800')
+    .trim()
+    .split(/\s+/)
+    .join(', ')
   check(
     glass
       ? style.getPropertyValue('-apple-visual-effect') === '-apple-system-glass-material'
-      : style.backgroundColor === 'rgb(38, 38, 38)',
+      : style.backgroundColor === `rgb(${tone800})`,
     'Incorrect Export help material'
   )
   check(

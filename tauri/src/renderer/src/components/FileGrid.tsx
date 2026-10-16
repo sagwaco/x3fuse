@@ -89,7 +89,7 @@ export function FileGrid({ draft }: { draft?: ExportDraft }): React.JSX.Element 
         </div>
 
         {!draft && isDragOver && (
-          <div className="pointer-events-none absolute inset-0 rounded-md ring-2 ring-inset ring-blue-500/40 bg-blue-500/5" />
+          <div className="pointer-events-none absolute inset-0 rounded-md ring-2 ring-inset ring-accent/40 bg-accent/5" />
         )}
       </div>
     </QueueContextMenu>
@@ -124,8 +124,8 @@ const GridCell = memo(function GridCell({
       <div
         className={cn(
           'relative rounded-md border',
-          selected ? 'border-blue-500/70' : 'border-white/10 hover:border-white/25',
-          active && 'ring-2 ring-blue-400/60'
+          selected ? 'border-accent/70' : 'border-ink/10 hover:border-ink/25',
+          active && 'ring-2 ring-accent/60'
         )}
         style={{ height: THUMB_H }}
       >
@@ -139,13 +139,13 @@ const GridCell = memo(function GridCell({
       <span
         className={cn(
           'truncate px-1 pt-1 text-center text-xs',
-          selected ? 'text-neutral-100' : 'text-neutral-400'
+          selected ? 'text-tone-100' : 'text-tone-400'
         )}
       >
         {file.fileName}
       </span>
       {outputName && (
-        <span className="truncate px-1 text-center text-xs text-neutral-200" title={outputName}>
+        <span className="truncate px-1 text-center text-xs text-tone-200" title={outputName}>
           → {outputName}
         </span>
       )}

@@ -108,12 +108,13 @@ export function ColorScope({
 
   return (
     <div
+      data-theme="dark"
       ref={container}
       aria-busy={loading}
       className={
         compact
-          ? 'relative h-5 w-10 shrink-0 overflow-hidden rounded-sm bg-neutral-950/60'
-          : 'relative h-[200px] overflow-hidden rounded bg-neutral-950/60'
+          ? 'relative h-5 w-10 shrink-0 overflow-hidden rounded-sm bg-tone-950/60'
+          : 'relative h-[200px] overflow-hidden rounded bg-tone-950/60'
       }
     >
       <canvas
@@ -131,7 +132,7 @@ export function ColorScope({
         ? null
         : !visible &&
           !loading && (
-            <p className="absolute inset-0 flex items-center justify-center text-xs text-neutral-600">
+            <p className="absolute inset-0 flex items-center justify-center text-xs text-tone-600">
               {t('inspector.no_preview')}
             </p>
           )}

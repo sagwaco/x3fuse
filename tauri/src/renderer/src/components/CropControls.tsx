@@ -134,7 +134,7 @@ export function CropControls({
     )
   }
   return (
-    <div className="space-y-4 border-t border-white/10 px-4 py-3">
+    <div className="space-y-4 border-t border-ink/10 px-4 py-3">
       <div className="flex items-center justify-between gap-2">
         <h2 className="control-label font-bold tracking-[0.16em]">{t('editor.geometry')}</h2>
         <Button
@@ -153,14 +153,14 @@ export function CropControls({
         </Button>
       </div>
       <div className="flex items-center justify-between gap-2">
-        <span className="control-label text-[10px] text-neutral-500">
+        <span className="control-label text-[10px] text-tone-500">
           {t('editor.aspectRatio')}
         </span>
         {/* Choosing the other orientation swaps the frame's sides. A square frame has neither. */}
         <div
           role="group"
           aria-label={t('editor.orientation')}
-          className="flex rounded-lg border border-white/15 p-0.5"
+          className="flex rounded-lg border border-ink/15 p-0.5"
         >
           {(
             [
@@ -181,7 +181,7 @@ export function CropControls({
                 H &&
                 change(withFit({ crop: ratioCrop(1 / current, rotation, W, H) }))
               }
-              className="flex h-6 w-7 items-center justify-center rounded-md text-neutral-400 hover:text-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50 disabled:opacity-40 aria-pressed:bg-white/15 aria-pressed:text-white"
+              className="flex h-6 w-7 items-center justify-center rounded-md text-tone-400 hover:text-tone-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/50 disabled:opacity-40 aria-pressed:bg-ink/15 aria-pressed:text-ink"
             >
               <Icon aria-hidden="true" className="h-4 w-4" />
             </button>
@@ -202,7 +202,7 @@ export function CropControls({
             disabled={!W || !H}
             title={option.value === '65:24' ? 'XPan 65:24' : option.label}
             onClick={() => choose(option.value)}
-            className="flex flex-col items-center gap-1 rounded-lg border border-transparent px-0.5 py-1.5 text-[10px] leading-none text-neutral-400 hover:bg-white/5 hover:text-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50 disabled:opacity-40 aria-checked:border-white/30 aria-checked:bg-white/10 aria-checked:text-white"
+            className="flex flex-col items-center gap-1 rounded-lg border border-transparent px-0.5 py-1.5 text-[10px] leading-none text-tone-400 hover:bg-ink/5 hover:text-tone-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/50 disabled:opacity-40 aria-checked:border-ink/30 aria-checked:bg-ink/10 aria-checked:text-ink"
           >
             <Shape ratio={option.ratio} dashed={option.dashed} />
             <span className="max-w-full truncate">{option.label}</span>
@@ -242,11 +242,11 @@ export function CropControls({
         </Button>
       </div>
       {status && (
-        <p role="status" className="text-[11px] leading-snug text-neutral-400">
+        <p role="status" className="text-[11px] leading-snug text-tone-400">
           {status}
         </p>
       )}
-      <p className="control-label pt-1 text-[10px] font-bold text-neutral-500">
+      <p className="control-label pt-1 text-[10px] font-bold text-tone-500">
         {t('editor.perspective')}
       </p>
       <Adjustment
@@ -271,7 +271,7 @@ export function CropControls({
         reset={() => change(withFit({ yaw: 0 }))}
         commit={release}
       />
-      <p className="text-[11px] leading-snug text-neutral-500">{t('editor.cropCanvas')}</p>
+      <p className="text-[11px] leading-snug text-tone-500">{t('editor.cropCanvas')}</p>
     </div>
   )
 }

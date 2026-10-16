@@ -123,7 +123,7 @@ function ResetLabel({
         data-resetting={resetting || undefined}
         className={cn(
           'control-label grid min-w-0 select-none',
-          resetting && 'cursor-pointer text-neutral-100'
+          resetting && 'cursor-pointer text-tone-100'
         )}
         onPointerEnter={(event) => {
           setHover(true)
@@ -217,7 +217,7 @@ export function Adjustment({
           step={step}
           value={Number(value.toFixed(4))}
           // Shifted right so its digits end where the slider ends. Focus shows the box, in line.
-          className="h-6 w-14 shrink-0 translate-x-2.5 rounded-md border border-transparent bg-transparent px-2 text-right font-mono text-xs tabular-nums text-neutral-400 transition-transform [appearance:textfield] focus:translate-x-0 focus:border-white/40 focus:bg-white/[0.03] focus:text-neutral-100 focus:outline-none disabled:opacity-40 motion-reduce:transition-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+          className="h-6 w-14 shrink-0 translate-x-2.5 rounded-md border border-transparent bg-transparent px-2 text-right font-mono text-xs tabular-nums text-tone-400 transition-transform [appearance:textfield] focus:translate-x-0 focus:border-ink/40 focus:bg-ink/[0.03] focus:text-tone-100 focus:outline-none disabled:opacity-40 motion-reduce:transition-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
           onChange={(event) => {
             const value = event.currentTarget.valueAsNumber
             if (Number.isFinite(value)) change(fit(value), true)
@@ -264,13 +264,13 @@ export function Section({
   return (
     <details
       open={open || undefined}
-      className="border-t border-white/10 px-4 open:bg-gradient-to-b open:from-white/[0.03] open:to-transparent open:bg-[length:100%_3rem] open:bg-no-repeat [details_&]:-mx-4"
+      className="border-t border-ink/10 px-4 open:bg-gradient-to-b open:from-ink/[0.03] open:to-transparent open:bg-[length:100%_3rem] open:bg-no-repeat [details_&]:-mx-4"
     >
-      <summary className="control-label flex cursor-pointer list-none items-center justify-between rounded py-3 font-bold tracking-[0.16em] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50 [&::-webkit-details-marker]:hidden">
+      <summary className="control-label flex cursor-pointer list-none items-center justify-between rounded py-3 font-bold tracking-[0.16em] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/50 [&::-webkit-details-marker]:hidden">
         {name}
         <ChevronDown
           aria-hidden="true"
-          className="h-3.5 w-3.5 text-neutral-500 transition-transform [details[open]>summary>&]:rotate-180"
+          className="h-3.5 w-3.5 text-tone-500 transition-transform [details[open]>summary>&]:rotate-180"
         />
       </summary>
       <div className="space-y-2 pb-3">{children}</div>
@@ -301,7 +301,7 @@ function Swatches<T extends string>({
           aria-label={option.label}
           title={option.label}
           onClick={() => onChange(option.value)}
-          className="h-5 w-5 rounded-full ring-offset-2 ring-offset-neutral-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60 disabled:opacity-40 aria-checked:ring-2 aria-checked:ring-white"
+          className="h-5 w-5 rounded-full ring-offset-2 ring-offset-tone-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/60 disabled:opacity-40 aria-checked:ring-2 aria-checked:ring-ink"
           style={{ background: option.color }}
         />
       ))}
@@ -439,7 +439,7 @@ export const EditorControls = memo(function EditorControls({
           </Button>
         </div>
         {picking && (
-          <p role="status" className="control-label text-neutral-100">
+          <p role="status" className="control-label text-tone-100">
             {t('editor.pickNeutral')}
           </p>
         )}
@@ -477,7 +477,7 @@ export const EditorControls = memo(function EditorControls({
       <Section name={t('editor.color')}>
         {control('saturation')}
         {control('vibrance', { help: t('editor.vibranceHelp') })}
-        <p className="control-label pt-2 text-[10px] text-neutral-500">{t('editor.colorBand')}</p>
+        <p className="control-label pt-2 text-[10px] text-tone-500">{t('editor.colorBand')}</p>
         <Swatches
           label={t('editor.colorBand')}
           value={String(band)}
@@ -558,7 +558,7 @@ export function EmulsionControls({
               setTab(EMULSION_TABS[next][0])
               document.getElementById(`emulsion-tab-${EMULSION_TABS[next][0]}`)?.focus()
             }}
-            className="flex flex-col items-center gap-1 rounded-lg border border-transparent px-0.5 py-1.5 text-[10px] leading-none text-neutral-400 hover:bg-white/5 hover:text-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50 aria-selected:border-white/30 aria-selected:bg-white/10 aria-selected:text-white disabled:opacity-40"
+            className="flex flex-col items-center gap-1 rounded-lg border border-transparent px-0.5 py-1.5 text-[10px] leading-none text-tone-400 hover:bg-ink/5 hover:text-tone-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/50 aria-selected:border-ink/30 aria-selected:bg-ink/10 aria-selected:text-ink disabled:opacity-40"
           >
             <Icon aria-hidden="true" className="h-4 w-4" />
             <span className="max-w-full truncate">{t(`editor.${label}`)}</span>
@@ -575,7 +575,7 @@ export function EmulsionControls({
             <LookPicker kind="film" recipe={recipe} gallery />
             <div className="px-4">
               {recipe.monochrome && (
-                <p className="control-label flex items-center gap-1.5 pt-2 text-[10px] text-neutral-500">
+                <p className="control-label flex items-center gap-1.5 pt-2 text-[10px] text-tone-500">
                   {t('editor.filter')}
                   <HelpTooltip label={t('editor.filter')} text={t('editor.monochromeHelp')} />
                 </p>
@@ -822,7 +822,7 @@ function Curves({ recipe }: { recipe: EditRecipe }): React.JSX.Element {
           />
         ))}
       </svg>
-      <p className="text-[11px] leading-snug text-neutral-500">{t('editor.curveHint')}</p>
+      <p className="text-[11px] leading-snug text-tone-500">{t('editor.curveHint')}</p>
     </>
   )
 }
@@ -1008,7 +1008,7 @@ export function FilmControls({
           />
         </div>
       </div>
-      {!effect && <p className="text-xs text-neutral-400">{t('editor.legacyFilmEffect')}</p>}
+      {!effect && <p className="text-xs text-tone-400">{t('editor.legacyFilmEffect')}</p>}
       {isGrain && grain && film.grain && (
         <>
           <Adjustment

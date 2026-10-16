@@ -29,7 +29,7 @@ export function Inspector(): React.JSX.Element {
 
   return (
     <ResizablePanel kind="inspector">
-      <div className="flex h-8 shrink-0 items-center border-b border-white/10 px-3 font-mono text-xs font-medium uppercase tracking-[0.12em] text-neutral-400">
+      <div className="flex h-8 shrink-0 items-center border-b border-ink/10 px-3 font-mono text-xs font-medium uppercase tracking-[0.12em] text-tone-400">
         <span className="ml-0.5 truncate" title={title}>
           {t('inspector.title')}
           {title ? ` - ${title}` : ''}
@@ -37,12 +37,12 @@ export function Inspector(): React.JSX.Element {
       </div>
 
       {!active ? (
-        <div className="flex flex-1 items-center justify-center px-6 text-center text-xs text-neutral-600">
+        <div className="flex flex-1 items-center justify-center px-6 text-center text-xs text-tone-600">
           {t('inspector.no_selection')}
         </div>
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto">
-          <div className="border-b border-white/10 p-3">
+          <div className="border-b border-ink/10 p-3">
             {multiple ? (
               <PreviewStack files={selected} active={active} />
             ) : (
@@ -53,7 +53,7 @@ export function Inspector(): React.JSX.Element {
 
           <Section title={t('inspector.scopes')} action={!multiple && <ScopeMenu />}>
             {multiple ? (
-              <p className="py-6 text-center text-xs text-neutral-500">
+              <p className="py-6 text-center text-xs text-tone-500">
                 {t('inspector.scopes_multiple')}
               </p>
             ) : (
@@ -143,16 +143,16 @@ function ExifTable({ files }: { files: X3FFileDTO[] }): React.JSX.Element {
     }
   })
   if (rows.length === 0) {
-    return <p className="text-xs text-neutral-600">{t('inspector.no_metadata')}</p>
+    return <p className="text-xs text-tone-600">{t('inspector.no_metadata')}</p>
   }
 
   return (
     <dl className="space-y-1.5">
       {rows.map((row) => (
         <div key={row.label} className="flex items-baseline justify-between gap-3 text-xs">
-          <dt className="shrink-0 text-neutral-500">{row.label}</dt>
+          <dt className="shrink-0 text-tone-500">{row.label}</dt>
           <dd
-            className={`truncate text-right ${row.common ? 'text-neutral-200' : 'text-neutral-500'}`}
+            className={`truncate text-right ${row.common ? 'text-tone-200' : 'text-tone-500'}`}
             title={row.value}
           >
             {row.value}

@@ -5,12 +5,12 @@ type Variant = 'prominent' | 'bordered' | 'ghost' | 'destructive'
 type Size = 'sm' | 'md' | 'icon'
 
 const VARIANTS: Record<Variant, string> = {
-  prominent: 'bg-white text-black hover:bg-neutral-200 active:bg-neutral-300 disabled:bg-white/40',
+  prominent: 'bg-ink text-tone-950 hover:bg-tone-200 active:bg-tone-300 disabled:bg-ink/40',
   bordered:
-    'border border-white/15 bg-white/[0.03] text-neutral-200 hover:border-white/25 hover:bg-white/10 active:bg-white/15 aria-pressed:border-white/30 aria-pressed:bg-white/15 aria-pressed:text-white',
+    'border border-ink/15 bg-ink/[0.03] text-tone-200 hover:border-ink/25 hover:bg-ink/10 active:bg-ink/15 aria-pressed:border-ink/30 aria-pressed:bg-ink/15 aria-pressed:text-ink',
   ghost:
-    'text-neutral-300 hover:bg-white/10 hover:text-neutral-100 aria-pressed:bg-white/15 aria-pressed:text-neutral-100',
-  destructive: 'border border-red-500/40 bg-red-500/10 text-red-300 hover:bg-red-500/20'
+    'text-tone-300 hover:bg-ink/10 hover:text-tone-100 aria-pressed:bg-ink/15 aria-pressed:text-tone-100',
+  destructive: 'border border-danger/40 bg-danger/10 text-danger hover:bg-danger/20'
 }
 
 const SIZES: Record<Size, string> = {
@@ -33,7 +33,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       ref={ref}
       className={cn(
         'inline-flex select-none items-center rounded-lg font-mono font-medium uppercase tracking-[0.1em] transition-colors',
-        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/50',
         'disabled:pointer-events-none disabled:opacity-50',
         VARIANTS[variant],
         SIZES[size],

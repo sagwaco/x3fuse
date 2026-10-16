@@ -57,7 +57,7 @@ export function ResizeHandle({
       aria-valuemax={max}
       title={hint}
       className={cn(
-        'absolute z-20 w-2 touch-none cursor-col-resize focus-visible:bg-blue-400/30 focus-visible:outline-none',
+        'absolute z-20 w-2 touch-none cursor-col-resize focus-visible:bg-accent/30 focus-visible:outline-none',
         className
       )}
       onPointerDown={(event) => {

@@ -17,8 +17,8 @@ export function Section({
 }): React.JSX.Element {
   return (
     <section className="flex flex-col gap-3">
-      <h2 className="control-label tracking-[0.16em] text-neutral-500">{title}</h2>
-      <div className="flex flex-col gap-3 rounded-xl border border-white/10 bg-white/[0.02] p-4">
+      <h2 className="control-label tracking-[0.16em] text-tone-500">{title}</h2>
+      <div className="flex flex-col gap-3 rounded-xl border border-ink/10 bg-ink/[0.02] p-4">
         {children}
       </div>
     </section>
@@ -66,7 +66,7 @@ export function ToggleRow({
 }
 
 export function Divider(): React.JSX.Element {
-  return <div className="h-px bg-white/10" />
+  return <div className="h-px bg-ink/10" />
 }
 
 export function HelpTooltip({
@@ -89,7 +89,7 @@ export function HelpTooltip({
         aria-label={label}
         // The icon only shows help, so it keeps the default pointer.
         className={cn(
-          'cursor-default rounded text-neutral-400 hover:text-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50',
+          'cursor-default rounded text-tone-400 hover:text-tone-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/50',
           className
         )}
       >

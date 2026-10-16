@@ -25,14 +25,14 @@ export function ReconversionDialog(): React.JSX.Element {
     >
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-40 bg-black/40 backdrop-blur-[1px]" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 flex w-[420px] -translate-x-1/2 -translate-y-1/2 flex-col gap-4 rounded-xl border border-white/10 bg-neutral-900 p-5 shadow-2xl focus:outline-none">
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 flex w-[420px] -translate-x-1/2 -translate-y-1/2 flex-col gap-4 rounded-xl border border-ink/10 bg-tone-900 p-5 shadow-2xl focus:outline-none">
           <div className="flex items-start gap-3">
-            <TriangleAlert className="mt-0.5 h-6 w-6 shrink-0 text-orange-400" />
+            <TriangleAlert className="mt-0.5 h-6 w-6 shrink-0 text-warning" />
             <div className="flex flex-col gap-1">
-              <Dialog.Title className="text-base font-semibold text-neutral-50">
+              <Dialog.Title className="text-base font-semibold text-tone-50">
                 {t('reconversion.title')}
               </Dialog.Title>
-              <Dialog.Description className="text-sm text-neutral-400">
+              <Dialog.Description className="text-sm text-tone-400">
                 {t('batch.replace_message')}
               </Dialog.Description>
             </div>
@@ -43,14 +43,14 @@ export function ReconversionDialog(): React.JSX.Element {
               {pending?.map((file) => (
                 <div
                   key={file.id}
-                  className="flex items-center gap-2 rounded-md bg-white/5 px-2.5 py-2"
+                  className="flex items-center gap-2 rounded-md bg-ink/5 px-2.5 py-2"
                 >
-                  <FileText className="h-4 w-4 shrink-0 text-neutral-500" />
+                  <FileText className="h-4 w-4 shrink-0 text-tone-500" />
                   <div className="flex min-w-0 flex-col">
-                    <span className="truncate text-sm font-medium text-neutral-100">
+                    <span className="truncate text-sm font-medium text-tone-100">
                       {basename(file.outputPath)}
                     </span>
-                    <span className="truncate text-xs text-neutral-500">
+                    <span className="truncate text-xs text-tone-500">
                       {t('reconversion.location_prefix')}
                       {file.outputPath}
                     </span>
@@ -60,9 +60,9 @@ export function ReconversionDialog(): React.JSX.Element {
             </div>
           </div>
 
-          <div className="flex items-start gap-2 rounded-md bg-blue-500/10 px-3 py-2">
-            <Info className="mt-0.5 h-4 w-4 shrink-0 text-blue-400" />
-            <span className="text-xs text-neutral-400">{t('reconversion.warning')}</span>
+          <div className="flex items-start gap-2 rounded-md bg-accent/10 px-3 py-2">
+            <Info className="mt-0.5 h-4 w-4 shrink-0 text-accent" />
+            <span className="text-xs text-tone-400">{t('reconversion.warning')}</span>
           </div>
 
           <div className="flex justify-end gap-2">

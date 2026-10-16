@@ -20,7 +20,7 @@ export function QueueView({
   )
   if (allHidden)
     return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-3 text-sm text-neutral-400">
+      <div className="flex flex-1 flex-col items-center justify-center gap-3 text-sm text-tone-400">
         {t('filter.empty')}
         <Button onClick={() => useQueueStore.getState().setFilter(NO_FILTER)}>
           {t('filter.clear')}

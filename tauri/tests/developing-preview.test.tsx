@@ -197,7 +197,7 @@ it('shows only particles: blank at first, then a cloud that fades into the previ
   // The opaque canvas hides the preview below it until the cloud fades. A
   // full cover needs no mask.
   const canvas = view.container.querySelector('canvas')!
-  expect(canvas.className).toContain('bg-neutral-950')
+  expect(canvas.className).toContain('bg-tone-950')
   expect(mask()).toBe('')
   view.rerender(<DevelopingPreview file={file} matching developing ready onDone={done} />)
   // A radial mask opens the cover from the center while the cloud moves on.

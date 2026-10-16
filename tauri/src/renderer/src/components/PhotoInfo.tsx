@@ -17,7 +17,7 @@ export function PhotoInfo({ file }: { file: X3FFileDTO }): React.JSX.Element {
         <button
           type="button"
           aria-label={t('editor.photoInfo')}
-          className="shrink-0 cursor-default rounded text-neutral-500 hover:text-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50"
+          className="shrink-0 cursor-default rounded text-tone-500 hover:text-tone-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/50"
         >
           <Info className="h-3.5 w-3.5" aria-hidden="true" />
         </button>
@@ -49,7 +49,7 @@ function PhotoCard({ file }: { file: X3FFileDTO }): React.JSX.Element {
     exif.has('Shutter') && `${exif.get('Shutter')} s`
   ].filter(Boolean)
   return (
-    <div className="w-80 text-[13px] text-neutral-100">
+    <div className="w-80 text-[13px] text-tone-100">
       <div className="space-y-1 p-3">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
@@ -65,7 +65,7 @@ function PhotoCard({ file }: { file: X3FFileDTO }): React.JSX.Element {
                   aria-hidden="true"
                   className={cn(
                     'h-4 w-4',
-                    flashFired(flash) ? 'text-neutral-100' : 'text-neutral-600'
+                    flashFired(flash) ? 'text-tone-100' : 'text-tone-600'
                   )}
                 />
               </span>
@@ -83,13 +83,13 @@ function PhotoCard({ file }: { file: X3FFileDTO }): React.JSX.Element {
             </>
           )}
           {file.fileSize != null && <span>{formatBytes(file.fileSize)}</span>}
-          <span className="rounded bg-neutral-500 px-1 text-[10px] font-bold leading-4 text-neutral-900">
+          <span className="rounded bg-tone-500 px-1 text-[10px] font-bold leading-4 text-tone-900">
             {file.fileName.split('.').pop()?.toUpperCase()}
           </span>
         </div>
       </div>
       {capture.length > 0 && (
-        <div className="flex justify-between gap-3 border-t border-white/15 px-3 py-2 tabular-nums">
+        <div className="flex justify-between gap-3 border-t border-ink/15 px-3 py-2 tabular-nums">
           {capture.map((text) => (
             <span key={String(text)}>{text}</span>
           ))}
@@ -110,7 +110,7 @@ function MeteringIcon({ mode }: { mode: string }): React.JSX.Element {
       viewBox="0 0 24 24"
       role="img"
       aria-label={mode}
-      className="h-5 w-5 text-neutral-400"
+      className="h-5 w-5 text-tone-400"
       fill="none"
       stroke="currentColor"
       strokeWidth={1.5}

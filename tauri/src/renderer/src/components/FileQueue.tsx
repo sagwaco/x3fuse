@@ -130,7 +130,7 @@ export function FileQueue({ draft }: { draft?: ExportDraft }): React.JSX.Element
             <div
               className={cn(
                 GRID,
-                'sticky top-0 z-10 h-8 border-b border-white/10 bg-neutral-950 font-mono text-xs font-medium text-neutral-400'
+                'sticky top-0 z-10 h-8 border-b border-ink/10 bg-tone-950 font-mono text-xs font-medium text-tone-400'
               )}
             >
               {COLUMNS.map((column) => (
@@ -139,7 +139,7 @@ export function FileQueue({ draft }: { draft?: ExportDraft }): React.JSX.Element
                     type="button"
                     onClick={() => toggleSort(column.field)}
                     className={cn(
-                      'flex min-w-0 flex-1 items-center gap-1 pr-2 text-left hover:text-neutral-200',
+                      'flex min-w-0 flex-1 items-center gap-1 pr-2 text-left hover:text-tone-200',
                       column.key !== 'name' && 'pl-2'
                     )}
                   >
@@ -161,7 +161,7 @@ export function FileQueue({ draft }: { draft?: ExportDraft }): React.JSX.Element
                     onCommit={(width) => saveWidth(column.key, width)}
                     onCancel={() => setResizing(undefined)}
                     onReset={() => autoFit(column)}
-                    className="-right-1 inset-y-0 border-r border-white/15"
+                    className="-right-1 inset-y-0 border-r border-ink/15"
                   />
                 </div>
               ))}
@@ -186,7 +186,7 @@ export function FileQueue({ draft }: { draft?: ExportDraft }): React.JSX.Element
             </div>
           </div>
           {!draft && isDragOver && (
-            <div className="pointer-events-none absolute inset-0 rounded-md ring-2 ring-inset ring-blue-500/40 bg-blue-500/5" />
+            <div className="pointer-events-none absolute inset-0 rounded-md ring-2 ring-inset ring-accent/40 bg-accent/5" />
           )}
         </div>
       </QueueContextMenu>
@@ -230,8 +230,8 @@ const Row = memo(function Row({
       className={cn(
         GRID,
         'cursor-default text-sm',
-        selected ? 'bg-blue-600/30 text-neutral-50' : 'text-neutral-200 hover:bg-white/5',
-        active && 'ring-1 ring-inset ring-blue-400/40'
+        selected ? 'bg-accent/30 text-tone-50' : 'text-tone-200 hover:bg-ink/5',
+        active && 'ring-1 ring-inset ring-accent/40'
       )}
     >
       <div
@@ -243,12 +243,12 @@ const Row = memo(function Row({
         </div>
         <span className="truncate">
           {file.fileName}
-          {outputName && <span className="ml-2 text-xs text-neutral-400">→ {outputName}</span>}
+          {outputName && <span className="ml-2 text-xs text-tone-400">→ {outputName}</span>}
         </span>
         <CullBadge file={file} />
         <EditedBadge edit={file.edit} />
       </div>
-      <span className="truncate pl-2 text-neutral-400">
+      <span className="truncate pl-2 text-tone-400">
         {file.pending ? (
           <Skeleton className="w-28" />
         ) : file.capturedDate ? (
@@ -257,7 +257,7 @@ const Row = memo(function Row({
           t('placeholder.dash')
         )}
       </span>
-      <span className="truncate pl-2 text-neutral-400">
+      <span className="truncate pl-2 text-tone-400">
         {file.pending ? (
           <Skeleton className="w-12" />
         ) : file.fileSize != null ? (
@@ -271,5 +271,5 @@ const Row = memo(function Row({
 })
 
 function Skeleton({ className }: { className?: string }): React.JSX.Element {
-  return <span className={cn('inline-block h-3 animate-pulse rounded bg-white/10', className)} />
+  return <span className={cn('inline-block h-3 animate-pulse rounded bg-ink/10', className)} />
 }

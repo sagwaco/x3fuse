@@ -22,23 +22,23 @@ export function DropZone(): React.JSX.Element {
         className={cn(
           'flex h-52 w-52 items-center justify-center rounded-xl transition-colors',
           'border-4 border-dashed',
-          isDragOver ? 'border-blue-500 bg-blue-500/5' : 'border-white/20 hover:border-white/30'
+          isDragOver ? 'border-accent bg-accent/5' : 'border-ink/20 hover:border-ink/30'
         )}
       >
         <ImageDown
           className={cn(
             'h-14 w-14 transition-colors',
-            isDragOver ? 'text-blue-400' : 'text-neutral-500'
+            isDragOver ? 'text-accent' : 'text-tone-500'
           )}
         />
       </button>
 
       <div className="flex flex-col items-center gap-1.5 text-center">
-        <p className="text-lg font-medium text-neutral-300">{t('queue.empty.title')}</p>
+        <p className="text-lg font-medium text-tone-300">{t('queue.empty.title')}</p>
         <p
           className={cn(
             'max-w-xs text-sm transition-colors',
-            isDragOver ? 'text-blue-400' : 'text-neutral-500'
+            isDragOver ? 'text-accent' : 'text-tone-500'
           )}
         >
           {t('queue.empty.message')}

@@ -544,7 +544,7 @@ export function DevelopingPreview({
       role="img"
       aria-label={file.fileName}
       data-developing-preview=""
-      className="pointer-events-none absolute inset-0 h-full w-full bg-neutral-950"
+      className="pointer-events-none absolute inset-0 h-full w-full bg-tone-950"
       style={{ '--cover': covered ? 1 : 0, maskImage: MASK } as React.CSSProperties}
     />
   )

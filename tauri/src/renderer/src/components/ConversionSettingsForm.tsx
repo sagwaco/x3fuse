@@ -108,7 +108,7 @@ export function ConversionSettingsForm({
               <span className="control-label">{t('settings.output_location')}</span>
               <div className="flex min-w-0 items-center gap-2">
                 <span
-                  className="truncate font-mono text-xs text-neutral-400"
+                  className="truncate font-mono text-xs text-tone-400"
                   title={settings.outputDirectory ?? ''}
                 >
                   {settings.outputDirectory ? basename(settings.outputDirectory) : '—'}
@@ -150,7 +150,7 @@ export function ConversionSettingsForm({
               />
             </Row>
           )}
-          {rendered && <p className="text-xs text-neutral-500">{t('editor.renderedExportHint')}</p>}
+          {rendered && <p className="text-xs text-tone-500">{t('editor.renderedExportHint')}</p>}
           <Row label={t('settings.conversion_format')}>
             <Select
               aria-label={t('settings.conversion_format')}
@@ -260,7 +260,7 @@ export function ConversionSettingsForm({
                     max={10}
                     onValueChange={(v) => update({ denoiseIntensity: v })}
                   />
-                  <div className="control-label flex justify-between text-[10px] text-neutral-500">
+                  <div className="control-label flex justify-between text-[10px] text-tone-500">
                     <span>{t('settings.denoise.intensity.less')}</span>
                     <span>{t('settings.denoise.intensity.more')}</span>
                   </div>

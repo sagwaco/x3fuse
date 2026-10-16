@@ -86,7 +86,7 @@ export function BatchProgress(): React.JSX.Element | null {
                   fill="none"
                   stroke="currentColor"
                   strokeWidth="3"
-                  className="text-white/15"
+                  className="text-ink/15"
                 />
                 <circle
                   cx="12"
@@ -99,7 +99,7 @@ export function BatchProgress(): React.JSX.Element | null {
                   strokeDasharray="100"
                   strokeDashoffset={100 - progress * 100}
                   strokeLinecap={progress ? 'round' : 'butt'}
-                  className="text-blue-500"
+                  className="text-accent"
                 />
               </svg>
               <span aria-hidden="true">{t('batch.progress', { processed, total })}</span>
@@ -107,7 +107,7 @@ export function BatchProgress(): React.JSX.Element | null {
           ) : (
             <ResultIcon
               aria-hidden="true"
-              className={`h-4 w-4 ${hasIssues ? 'text-red-400' : summary?.cancelled ? 'text-neutral-400' : 'text-green-400'}`}
+              className={`h-4 w-4 ${hasIssues ? 'text-danger' : summary?.cancelled ? 'text-tone-400' : 'text-success'}`}
             />
           )}
           <span role="status" className="sr-only">
@@ -117,11 +117,11 @@ export function BatchProgress(): React.JSX.Element | null {
       </Dialog.Trigger>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-40 bg-black/50" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 flex max-h-[80vh] w-[min(560px,90vw)] -translate-x-1/2 -translate-y-1/2 flex-col gap-4 rounded-xl border border-white/10 bg-neutral-900 p-5 text-neutral-100 shadow-xl">
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 flex max-h-[80vh] w-[min(560px,90vw)] -translate-x-1/2 -translate-y-1/2 flex-col gap-4 rounded-xl border border-ink/10 bg-tone-900 p-5 text-tone-100 shadow-xl">
           <Dialog.Title className="font-semibold">{t('batch.details')}</Dialog.Title>
-          <Dialog.Description className="text-sm text-neutral-400">{title}</Dialog.Description>
+          <Dialog.Description className="text-sm text-tone-400">{title}</Dialog.Description>
           {error && (
-            <p role="alert" className="text-sm text-red-400">
+            <p role="alert" className="text-sm text-danger">
               {error}
             </p>
           )}
@@ -206,13 +206,13 @@ const ConversionRow = memo(function ConversionRow({
   const statusText = [t(`batch.status.${r.status}`), r.message].filter(Boolean).join(': ')
   const color =
     r.status === 'failed' || r.status === 'warning'
-      ? 'text-red-400'
+      ? 'text-danger'
       : r.status === 'completed'
-        ? 'text-green-400'
-        : 'text-neutral-400'
+        ? 'text-success'
+        : 'text-tone-400'
   return (
     <li
-      className="absolute left-0 top-0 flex w-full items-center gap-2 border-b border-white/10 py-1.5"
+      className="absolute left-0 top-0 flex w-full items-center gap-2 border-b border-ink/10 py-1.5"
       style={{ height: ROW_HEIGHT, transform: `translateY(${translateY}px)` }}
       aria-posinset={index + 1}
       aria-setsize={total}
@@ -237,7 +237,7 @@ const ConversionRow = memo(function ConversionRow({
           tabIndex={0}
           role="img"
           aria-label={statusText}
-          className={`flex h-7 w-7 shrink-0 items-center justify-center rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400 ${color}`}
+          className={`flex h-7 w-7 shrink-0 items-center justify-center rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${color}`}
         >
           <StatusIcon
             className={`h-4 w-4 ${r.status === 'processing' ? 'motion-safe:animate-spin' : ''}`}

@@ -128,7 +128,7 @@ function ImageContent({
         <div
           role="img"
           aria-label={t('inspector.no_preview')}
-          className="flex h-full w-full items-center justify-center text-neutral-600"
+          className="flex h-full w-full items-center justify-center text-tone-600"
         >
           <ImageOff className="h-5 w-5" />
         </div>

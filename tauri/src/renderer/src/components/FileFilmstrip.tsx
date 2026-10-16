@@ -65,7 +65,7 @@ export function FileFilmstrip({
         className="relative flex min-h-0 min-w-0 flex-1 flex-col outline-none"
       >
         <div
-          className="relative flex min-h-0 min-w-0 flex-1 items-center justify-center bg-neutral-950"
+          className="relative flex min-h-0 min-w-0 flex-1 items-center justify-center bg-tone-950"
           onContextMenu={() => active && sel.handleItemContextMenu(active.id)}
         >
           {preview ??
@@ -76,7 +76,7 @@ export function FileFilmstrip({
         </div>
 
         {draft && active && (
-          <p className="truncate px-3 py-1 text-center text-xs text-neutral-300">
+          <p className="truncate px-3 py-1 text-center text-xs text-tone-300">
             {active.fileName} → {outputFileName(active, draft.settings)}
           </p>
         )}
@@ -89,7 +89,7 @@ export function FileFilmstrip({
         />
 
         {!draft && isDragOver && (
-          <div className="pointer-events-none absolute inset-0 rounded-md ring-2 ring-inset ring-blue-500/40 bg-blue-500/5" />
+          <div className="pointer-events-none absolute inset-0 rounded-md ring-2 ring-inset ring-accent/40 bg-accent/5" />
         )}
       </div>
     </QueueContextMenu>
@@ -131,7 +131,7 @@ export function FilmstripStrip({
     <div
       ref={stripRef}
       data-filmstrip
-      className="h-[104px] shrink-0 scroll-px-3 overflow-x-auto overflow-y-hidden border-t border-white/10 bg-neutral-900/40"
+      className="h-[104px] shrink-0 scroll-px-3 overflow-x-auto overflow-y-hidden border-t border-ink/10 bg-tone-900/40"
     >
       <div className="relative h-full" style={{ width: virtualizer.getTotalSize() }}>
         {virtualizer.getVirtualItems().map((item) => {
@@ -184,10 +184,10 @@ const FilmstripCell = memo(function FilmstripCell({
       className={cn(
         'relative h-[76px] w-[76px] shrink-0 cursor-default overflow-hidden rounded-md border',
         active
-          ? 'border-blue-400 ring-2 ring-blue-400/60'
+          ? 'border-accent ring-2 ring-accent/60'
           : selected
-            ? 'border-blue-500/70'
-            : 'border-white/10 hover:border-white/25'
+            ? 'border-accent/70'
+            : 'border-ink/10 hover:border-ink/25'
       )}
     >
       <Thumbnail

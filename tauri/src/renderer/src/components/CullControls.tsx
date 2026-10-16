@@ -41,13 +41,13 @@ export function StarPicker({
             onPointerEnter={() => setHovered(stars)}
             onFocus={() => setHovered(stars)}
             onBlur={() => setHovered(null)}
-            className="rounded p-1 outline-none hover:bg-white/10 focus-visible:ring-1 focus-visible:ring-white/40"
+            className="rounded p-1 outline-none hover:bg-ink/10 focus-visible:ring-1 focus-visible:ring-ink/40"
           >
             <Star
               aria-hidden="true"
               className={cn(
                 'h-3.5 w-3.5',
-                stars <= shown ? 'fill-current text-neutral-100' : 'text-neutral-500'
+                stars <= shown ? 'fill-current text-tone-100' : 'text-tone-500'
               )}
             />
           </button>
@@ -66,7 +66,7 @@ export function CullControls(): React.JSX.Element | null {
   const ratings = new Set(targets.map((file) => file.rating ?? 0))
   const flag = flags.size === 1 ? [...flags][0] : undefined
   return (
-    <div className="flex items-center justify-between border-b border-white/10 px-2 py-1.5">
+    <div className="flex items-center justify-between border-b border-ink/10 px-2 py-1.5">
       <div className="flex items-center gap-0.5">
         {(['pick', 'reject'] as const).map((value) => {
           const Icon = value === 'pick' ? FlagIcon : FlagOff

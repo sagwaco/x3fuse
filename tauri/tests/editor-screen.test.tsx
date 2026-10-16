@@ -628,13 +628,13 @@ it('names the photo in the panel header and shows its capture details from the i
   // ExifTool writes On for some flashes that fired, and Off with red-eye for one that did not.
   const flash = (): string | null =>
     within(card).getByRole('img', { name: /^O/ }).firstElementChild!.getAttribute('class')
-  expect(flash()).toContain('text-neutral-100')
+  expect(flash()).toContain('text-tone-100')
   act(() =>
     queue.setState({
       files: [{ ...file, exif: [...exif, { label: 'Flash', value: 'Off, Red-eye reduction' }] }]
     })
   )
-  expect(flash()).not.toContain('text-neutral-100')
+  expect(flash()).not.toContain('text-tone-100')
 })
 
 it('toggles the neutral picker with W', () => {

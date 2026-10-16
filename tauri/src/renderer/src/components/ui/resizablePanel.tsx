@@ -35,7 +35,7 @@ export function ResizablePanel({
       ref={(node) => {
         parent.current = node?.parentElement ?? null
       }}
-      className="relative flex shrink-0 flex-col border-l border-white/10 bg-neutral-900/30"
+      className="relative flex shrink-0 flex-col border-l border-ink/10 bg-tone-900/30"
       style={{ width }}
     >
       <ResizeHandle

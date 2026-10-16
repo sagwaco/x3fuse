@@ -384,7 +384,7 @@ describe('batch workflow', () => {
       const trigger = screen.getByRole('button')
       const glyph = trigger.querySelector(icon)
       expect(glyph).not.toBeNull()
-      if (warnings || failed) expect(glyph?.classList.contains('text-red-400')).toBe(true)
+      if (warnings || failed) expect(glyph?.classList.contains('text-danger')).toBe(true)
       expect(trigger.querySelector('[role="status"]')?.classList.contains('sr-only')).toBe(true)
       expect(screen.queryByRole('progressbar')).toBeNull()
     }
