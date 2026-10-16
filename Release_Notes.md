@@ -1,3 +1,11 @@
+# 0.1.9 - Beta 1.1.9
+
+- Update the converter to x3fuse-core 0.3.0. Default Merrill TIFF rendering now uses calibration, color, and tone corrections derived from Sigma Photo Pro, so TIFF output can differ from earlier releases. TIFFs now embed ICC profiles for sRGB, Adobe RGB, and ProPhoto RGB and record the camera orientation.
+- Add an experimental Color mode setting for DNG and TIFF that applies Sigma camera color modes, or the mode recorded in the file, to Merrill and dp Quattro files. DNGs include the modes as selectable camera profiles. Other cameras convert without a color mode.
+- Add a Sigma Photo Pro processing option for full-resolution Merrill TIFFs that uses Sigma Photo Pro highlight recovery, noise reduction, and sharpening.
+- Add a Highlight recovery setting for TIFF output. Turn it off to use the earlier basic recovery.
+- Fix conversions failing when the None color profile is selected.
+
 # 0.1.8 - Beta 1.1.8
 
 - Update the converter to x3fuse-core 0.2.1 and add DNG and TIFF conversion for Sigma SD9, SD10, and SD14 files. SD9 and SD10 files have no embedded JPEG preview to extract.
