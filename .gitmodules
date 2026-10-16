@@ -1,3 +1,0 @@
-[submodule "Vendor/ExifTool"]
-	path = Vendor/ExifTool
-	url = https://github.com/exiftool/exiftool.git
