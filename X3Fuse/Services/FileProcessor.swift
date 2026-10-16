@@ -115,7 +115,9 @@ class FileProcessor {
       throw ProcessingError.conversionCancelled("Conversion cancelled by user")
     }
 
-    // Step 0: Ensure output directory exists
+    // Step 0: Reject files x3f_extract would hang on (e.g. truncated copies), then make sure
+    // the output directory exists
+    try fileValidator.validateInputFile(for: file)
     try fileValidator.ensureOutputDirectoryExists(for: file)
 
     // Step 1: Extract EXIF data

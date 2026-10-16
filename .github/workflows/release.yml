@@ -160,6 +160,7 @@ jobs:
         if: success()
         with:
           ref: ${{ steps.comment-branch.outputs.head_ref }}
+          submodules: true
 
       - name: Setup Xcode
         uses: maxim-lobanov/setup-xcode@v1
@@ -445,6 +446,7 @@ jobs:
         with:
           name: v${{ steps.info.outputs.new_version }} - ${{ steps.info.outputs.title }}
           tag_name: v${{ steps.info.outputs.new_version }}
+          target_commitish: ${{ steps.comment-branch.outputs.head_ref }}
           fail_on_unmatched_files: true
           body_path: latest_changes
           files: |

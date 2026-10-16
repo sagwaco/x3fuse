@@ -1,10 +1,38 @@
-<!-- Not a released version: this section has no version number, so
-     Configuration/inject_release_notes.py skips it when building the appcast. -->
-# Unreleased - Cross-platform editor
+# 0.1.9 - Beta 1.1.9
 
-- The RAW editor's film simulation now uses the spektrafilm model (Andrea Volpato, https://github.com/andreavolpato/spektrafilm, profiles and data CC BY-SA 4.0), ported from spektrafilm-rs (GPL-3.0). It replaces the previous implementation entirely.
-- Existing saved film edits load unchanged, but render differently because the underlying model changed. The recipe format is unchanged; nothing needs re-saving.
-- Settings -> About -> View Licenses opens the bundled third-party notices.
+- Update the converter to x3fuse-core 0.3.0. Default Merrill TIFF rendering now uses calibration, color, and tone corrections derived from Sigma Photo Pro, so TIFF output can differ from earlier releases. TIFFs now embed ICC profiles for sRGB, Adobe RGB, and ProPhoto RGB and record the camera orientation.
+- Add an experimental Color mode setting for DNG and TIFF that applies Sigma camera color modes, or the mode recorded in the file, to Merrill and dp Quattro files. DNGs include the modes as selectable camera profiles. Other cameras convert without a color mode.
+- Add a Sigma Photo Pro processing option for full-resolution Merrill TIFFs that uses Sigma Photo Pro highlight recovery, noise reduction, and sharpening.
+- Add a Highlight recovery setting for TIFF output. Turn it off to use the earlier basic recovery.
+- Fix conversions failing when the None color profile is selected.
+
+# 0.1.8 - Beta 1.1.8
+
+- Update the converter to x3fuse-core 0.2.1 and add DNG and TIFF conversion for Sigma SD9, SD10, and SD14 files. SD9 and SD10 files have no embedded JPEG preview to extract.
+- Add NLM and BM3D denoise controls, separate luminance and color noise settings, strength and NLM window controls, and automatic, CPU, or GPU processing.
+- Update default NLM processing to reduce color noise with luminance noise reduction off. Existing intensity settings are retained; denoised output can differ from earlier releases.
+- Fix large conversion batches exhausting the file limit by closing subprocess pipe descriptors after use.
+- Leave unavailable camera metadata unset instead of substituting Merrill camera details when metadata extraction fails.
+
+# 0.1.7 - Beta 1.1.7
+
+- Fix the primary Convert button processing only one file after adding multiple files; it now converts the entire queue.
+- Fix reconversion confirmation skipping requested files that do not already have output.
+- Reject truncated or corrupt X3F files before conversion so they cannot stall the queue, and continue processing the remaining files.
+
+# 0.1.6 - Beta 1.1.6
+
+- Update the core converter to x3fuse-core 0.1.4.
+- Improve Quattro and Merrill DNG compatibility and color calibration in Apple RAW, Adobe Camera Raw, and LibRaw.
+- Improve color highlight recovery.
+
+# 0.1.5 - Beta 1.1.5
+
+- Update the core converter to x3fuse-core 0.1.2, improving compatibility of converted DNGs (including compressed DNGs) with software powered by Apple RAW and LibRaw, and improving Capture One compatibility for Merrill-generation files.
+- Fix highlights clipping prematurely near white on some files, caused by DigitalISOGain scaling during preprocessing.
+- Add Spanish (es) localization.
+- Fix the denoise slider labels in Settings showing raw localization keys instead of translated text.
+- The in-app update prompt now displays release notes, so you can see what changed before updating.
 
 # 0.1.4 - Beta 1.1.4
 

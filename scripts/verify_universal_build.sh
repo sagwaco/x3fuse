@@ -84,7 +84,14 @@ check_binary "$APP_PATH/Contents/MacOS/X3Fuse" "Main App Executable"
 
 # Check embedded binaries
 check_binary "$APP_PATH/Contents/Resources/x3f_extract" "x3f_extract"
-check_binary "$APP_PATH/Contents/Resources/exiftool" "exiftool (Perl script)"
+
+echo "Checking bundled ExifTool:"
+if [ ! -f "$APP_PATH/Contents/Resources/lib/Image/ExifTool.pm" ] ||
+    ! "$APP_PATH/Contents/Resources/exiftool" -config "" -ver; then
+    echo "❌ Bundled ExifTool or its Perl library is missing or cannot run."
+    exit 1
+fi
+echo ""
 
 # Check code signing
 echo "================================================"

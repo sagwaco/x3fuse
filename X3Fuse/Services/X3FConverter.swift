@@ -12,10 +12,12 @@ class X3FConverter {
 
   private let logger = LoggingService.shared
   private let binaryManager = BinaryManager.shared
-  private let settings = ConversionSettings.shared
+  private let settings: ConversionSettings
   private var currentProcess: Process?
 
-  private init() {}
+  init(settings: ConversionSettings = .shared) {
+    self.settings = settings
+  }
 
   // MARK: - X3F Conversion
 
@@ -65,6 +67,7 @@ class X3FConverter {
     do {
       try process.run()
     } catch {
+      closeParentEnds(of: outputPipe, errorPipe)
       let nsError = error as NSError
       logger.logError("Failed to start process: \(error.localizedDescription)", file: file.fileName)
       logger.logError(
@@ -83,6 +86,12 @@ class X3FConverter {
     let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
 
     process.waitUntilExit()
+
+    // Release the pipe descriptors now instead of whenever the Pipe objects are finally
+    // freed. The batch loop never suspends, so the handles piled up in the autorelease
+    // pool: four descriptors per file, until the process hit its open-file limit and
+    // every remaining file in a large queue failed instantly.
+    closeParentEnds(of: outputPipe, errorPipe)
 
     // Clear the current process reference
     currentProcess = nil
@@ -123,7 +132,7 @@ class X3FConverter {
 
   // MARK: - Argument Building
 
-  private func buildX3FArguments(for file: X3FFile) -> [String] {
+  func buildX3FArguments(for file: X3FFile) -> [String] {
     var args: [String] = []
 
     // Use file-specific settings if available, otherwise use global settings
@@ -133,6 +142,20 @@ class X3FConverter {
     let colorProfile = file.colorProfile ?? settings.colorProfile
     let dngHighlightRecovery = settings.dngHighlightRecovery
     let cineon = settings.cineon
+    // Color modes and the SPP pipeline need rendered RGB and a supported camera.
+    // Other files convert without them, because x3f_extract fails on them.
+    let renderedTiff = settings.rendersRgbTiff(outputFormat, colorProfile)
+    let sppPipeline = settings.sppPipeline && renderedTiff && file.isMerrill
+    let colorMode = settings.colorMode
+    let colorModeOutput = outputFormat == .dng || renderedTiff
+    let applyColorMode = colorModeOutput && colorMode.isSupported(by: file)
+    if (colorModeOutput && colorMode != .off && !applyColorMode)
+      || (settings.sppPipeline && renderedTiff && !sppPipeline)
+    {
+      logger.logConversion(
+        "Camera \(file.cameraModel ?? "unknown") does not support the selected color mode or SPP processing. Converting without it.",
+        file: file.fileName)
+    }
 
     // Specify output directory - use custom directory if set, otherwise use input file directory
     let outputDirectory = settings.effectiveOutputDirectory(for: file.url)
@@ -141,10 +164,11 @@ class X3FConverter {
 
     args.append("-v")
 
-    // Denoise intensity (default is 10/full strength, so only pass when it differs)
-    if denoiseIntensity != 10 {
-      args.append("-denoise")
-      args.append(String(denoiseIntensity))
+    // The SPP pipeline uses its own noise reduction and rejects denoise options.
+    if sppPipeline {
+      args.append("-spp-pipeline")
+    } else {
+      args += settings.buildDenoiseArguments(intensity: denoiseIntensity)
     }
 
     // Compression (only for DNG and TIFF)
@@ -183,10 +207,20 @@ class X3FConverter {
       args.append("-cineon")
     }
 
+    // Chroma LUT highlight recovery is on by default for rendered TIFF
+    if !settings.rgbHighlightRecovery && renderedTiff {
+      args.append("-no-chroma-lut")
+    }
+
     // Color profile
     if let colorArg = colorProfile.x3fArgument {
       args.append("-color")
       args.append(colorArg)
+    }
+
+    // Camera color mode (DNG and rendered TIFF, supported cameras only)
+    if applyColorMode {
+      args += ["-color-mode", colorMode.rawValue]
     }
 
     return args
@@ -280,5 +314,14 @@ class X3FConverter {
 
   var isProcessRunning: Bool {
     return currentProcess?.isRunning ?? false
+  }
+}
+
+/// Closes both ends of each pipe in the parent. Process closes the child-side ends after
+/// spawning, so closing an already-closed handle here is expected and ignored.
+func closeParentEnds(of pipes: Pipe...) {
+  for pipe in pipes {
+    try? pipe.fileHandleForReading.close()
+    try? pipe.fileHandleForWriting.close()
   }
 }

@@ -48,6 +48,20 @@ class FileValidator {
         }
     }
     
+    // MARK: - Input Validation
+
+    /// Rejects files x3f_extract cannot handle before launching it. A truncated X3F keeps a
+    /// valid header, so x3f_extract accepts it and then spins forever at 100% CPU; failing
+    /// here marks the file as failed and lets the rest of the queue proceed.
+    func validateInputFile(for file: X3FFile) throws {
+        do {
+            try X3FFileInspector.validateStructure(at: file.url)
+            logger.logDebug("[\(file.fileName)] Input file structure validated")
+        } catch {
+            throw ProcessingError.validationFailed(error.localizedDescription)
+        }
+    }
+
     // MARK: - File Validation
     
     func validateOutputFile(for file: X3FFile) throws {
