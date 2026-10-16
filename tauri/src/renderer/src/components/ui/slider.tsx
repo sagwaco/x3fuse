@@ -6,6 +6,8 @@ import { detent } from '../../lib/detent'
 
 /** How close (in pixels) a drag must come to a detent to snap onto it. */
 const SNAP_PX = 4
+/** Half the thumb width (w-[3px]). Radix uses it to keep the thumb in the track. */
+const THUMB_HALF_PX = 1.5
 const STEP_KEYS: Record<string, 1 | -1> = {
   ArrowRight: 1,
   ArrowUp: 1,
@@ -56,6 +58,19 @@ export function Slider({
   const detents = Array.from({ length: 21 }, (_, i) =>
     Number((min + Math.round(((max - min) / 20 / step) * i) * step).toFixed(10))
   )
+  // Radix moves the thumb in by up to half its width at the ends.
+  const inBounds = THUMB_HALF_PX * (1 - current / 50)
+  const trackClass = cn('relative w-full grow', track ? 'h-1 rounded-full' : 'h-0.5 bg-white/15')
+  const trackStyle = track ? { background: track } : undefined
+  const fill = !track && (
+    <div
+      className="absolute h-full bg-white/45"
+      style={{
+        left: `${Math.min(origin, current)}%`,
+        width: `${Math.abs(current - origin)}%`
+      }}
+    />
+  )
   const root = useRef<HTMLSpanElement>(null)
   const drag = useRef<{ last: number; tolerance: number } | null>(null)
   const endDrag = (): void => {
@@ -78,7 +93,8 @@ export function Slider({
         onKeyStep(direction, event.shiftKey || event.key.startsWith('Page'))
       }}
       className={cn(
-        'relative flex h-5 w-full touch-none select-none items-center',
+        // The glass lens sizes its track copy with cqw units of the slider.
+        'relative flex h-5 w-full touch-none select-none items-center [container-type:inline-size]',
         disabled && 'opacity-40'
       )}
       value={[value]}
@@ -97,19 +113,8 @@ export function Slider({
       }}
       onValueCommit={(v) => onValueCommit?.(v[0])}
     >
-      <SliderPrimitive.Track
-        className={cn('relative w-full grow', track ? 'h-1 rounded-full' : 'h-0.5 bg-white/15')}
-        style={track ? { background: track } : undefined}
-      >
-        {!track && (
-          <div
-            className="absolute h-full bg-white/45"
-            style={{
-              left: `${Math.min(origin, current)}%`,
-              width: `${Math.abs(current - origin)}%`
-            }}
-          />
-        )}
+      <SliderPrimitive.Track className={trackClass} style={trackStyle}>
+        {fill}
       </SliderPrimitive.Track>
       <SliderPrimitive.Thumb
         aria-label={label}
@@ -132,12 +137,24 @@ export function Slider({
       >
         <span
           className={cn(
-            'slider-knob absolute left-1/2 top-1/2 h-3.5 w-[3px] -translate-x-1/2 -translate-y-1/2',
+            'slider-knob pointer-events-none absolute left-1/2 top-1/2 h-3.5 w-[3px] -translate-x-1/2 -translate-y-1/2',
             'rounded-[1px] bg-white shadow-[0_0_0_2px_rgb(0_0_0/0.85)]',
             // An outline, as the glass hover rules replace the box shadow.
             'group-focus-visible:outline group-focus-visible:outline-2 group-focus-visible:outline-white/60'
           )}
-        />
+        >
+          <span className="glass-lens">
+            {/* The track under the knob, which starts at the slider's left edge. */}
+            <span
+              className="flex w-[100cqw] items-center"
+              style={{ left: `calc(50% - ${current}cqw - ${inBounds}px)` }}
+            >
+              <span className={trackClass} style={trackStyle}>
+                {fill}
+              </span>
+            </span>
+          </span>
+        </span>
       </SliderPrimitive.Thumb>
     </SliderPrimitive.Root>
   )

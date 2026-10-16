@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { MainWindow } from './components/MainWindow'
 import { SettingsWindow } from './components/SettingsWindow'
+import { GlassFilters } from './components/ui/glassFilters'
 
 /**
  * Both windows load the same bundle; the Settings window is opened with a
@@ -15,5 +16,10 @@ export default function App(): React.JSX.Element {
     return () => window.removeEventListener('hashchange', onHash)
   }, [])
 
-  return hash.startsWith('#settings') ? <SettingsWindow /> : <MainWindow />
+  return (
+    <>
+      <GlassFilters />
+      {hash.startsWith('#settings') ? <SettingsWindow /> : <MainWindow />}
+    </>
+  )
 }

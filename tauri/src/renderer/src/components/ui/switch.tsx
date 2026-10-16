@@ -2,6 +2,13 @@ import { useState } from 'react'
 import * as SwitchPrimitive from '@radix-ui/react-switch'
 import { cn } from '../../lib/cn'
 
+/** The track look, for the switch and for its copy in the glass lens. */
+const TRACK = cn(
+  'rounded-full border transition-colors',
+  'data-[state=checked]:border-yellow-400 data-[state=checked]:bg-yellow-400',
+  'data-[state=unchecked]:border-transparent data-[state=unchecked]:bg-white/20'
+)
+
 export interface SwitchProps {
   checked: boolean
   onCheckedChange: (checked: boolean) => void
@@ -39,21 +46,22 @@ export function Switch({
       onCheckedChange={onCheckedChange}
       disabled={disabled}
       className={cn(
-        'switch peer inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full',
-        'border transition-colors',
+        'switch peer inline-flex h-5 w-9 shrink-0 cursor-pointer items-center',
+        TRACK,
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50',
-        'disabled:cursor-not-allowed disabled:opacity-40',
-        'data-[state=checked]:border-white data-[state=checked]:bg-white',
-        'data-[state=unchecked]:border-white/20 data-[state=unchecked]:bg-white/[0.03]'
+        'disabled:cursor-not-allowed disabled:opacity-40'
       )}
     >
       <SwitchPrimitive.Thumb
         className={cn(
-          'switch-knob pointer-events-none block h-3.5 w-3.5 rounded-full',
-          'data-[state=checked]:translate-x-[18px] data-[state=checked]:bg-black',
-          'data-[state=unchecked]:translate-x-[2px] data-[state=unchecked]:bg-neutral-400'
+          'switch-knob pointer-events-none relative block h-3.5 w-3.5 rounded-full',
+          'data-[state=checked]:bg-black data-[state=unchecked]:bg-neutral-400'
         )}
-      />
+      >
+        <span className="glass-lens">
+          <span data-state={checked ? 'checked' : 'unchecked'} className={cn(TRACK, 'w-9')} />
+        </span>
+      </SwitchPrimitive.Thumb>
     </SwitchPrimitive.Root>
   )
 }
