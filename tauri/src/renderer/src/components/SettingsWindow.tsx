@@ -5,6 +5,8 @@ import { useSettingsStore } from '../stores/settingsStore'
 import { formatBytes } from '../lib/format'
 import { t } from '../lib/strings'
 import { Button } from './ui/button'
+import { Segmented } from './ui/segmented'
+import { Select } from './ui/select'
 import { Row, Section, ToggleRow } from './ui/settingsLayout'
 
 /** Settings window (port of SettingsView). Backed by the Rust settings service. */
@@ -40,6 +42,45 @@ export function SettingsWindow(): React.JSX.Element {
   return (
     <div className="h-full overflow-y-auto bg-tone-950 px-6 py-5 text-tone-100">
       <div className="mx-auto flex max-w-xl flex-col gap-6">
+        <Section title={t('settings.section.appearance')}>
+          <Row label={t('settings.appearance.mode')}>
+            <Segmented
+              aria-label={t('settings.appearance.mode')}
+              value={settings.appearanceMode}
+              options={[
+                { value: 'auto', label: t('settings.appearance.auto') },
+                { value: 'light', label: t('theme.light') },
+                { value: 'dark', label: t('theme.dark') }
+              ]}
+              onValueChange={(v) => void update({ appearanceMode: v })}
+            />
+          </Row>
+          <Row label={t('settings.appearance.light_theme')}>
+            <Select
+              aria-label={t('settings.appearance.light_theme')}
+              value={settings.lightTheme}
+              options={[
+                { value: 'light', label: t('theme.light') },
+                { value: 'gray', label: t('theme.gray') },
+                { value: 'dark', label: t('theme.dark') }
+              ]}
+              onValueChange={(v) => void update({ lightTheme: v })}
+            />
+          </Row>
+          <Row label={t('settings.appearance.dark_theme')}>
+            <Select
+              aria-label={t('settings.appearance.dark_theme')}
+              value={settings.darkTheme}
+              options={[
+                { value: 'dark', label: t('theme.dark') },
+                { value: 'gray', label: t('theme.gray') },
+                { value: 'light', label: t('theme.light') }
+              ]}
+              onValueChange={(v) => void update({ darkTheme: v })}
+            />
+          </Row>
+        </Section>
+
         {/* Debug */}
         <Section title={t('settings.section.debug')}>
           <ToggleRow
