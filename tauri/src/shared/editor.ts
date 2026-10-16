@@ -1,5 +1,6 @@
 import { defaultDenoiseOptions, type DenoiseOptions } from './denoise'
 import stocks from './film-stocks.json'
+import grainRms from './film-grain.json'
 
 /** Versioned, non-destructive adjustments shared with x3f-core's GPU renderer. */
 export interface CurvePoint {
@@ -12,6 +13,19 @@ export interface HslBand {
   luminance: number
 }
 export type Rgb = [number, number, number]
+export interface GrainParams {
+  rmsGranularity: Rgb
+  /** Main slider value. The renderer uses the absolute channel values. */
+  rmsBase?: number
+  blur: number
+  multUsmAmount: number
+}
+export interface HalationParams {
+  scatterAmount: number
+  scatterSpatialScale: number
+  halationAmount: number
+  halationSpatialScale: number
+}
 export interface FilmSettings {
   film: number
   paper: number
@@ -21,11 +35,14 @@ export interface FilmSettings {
   couplers: number
   couplersRadius: number
   grain: boolean
+  /** Missing parameters keep the previous rendering until the effect is reset. */
+  grainParams?: GrainParams | null
   grainSize: number
   grainAmount: number
   grainRoughness: number
   grainSaturation: number
   halation: boolean
+  halationParams?: HalationParams | null
   halationStrength: number
   halationRadius: number
   halationMidtones: number
@@ -33,8 +50,7 @@ export interface FilmSettings {
       Scatter size is an exponential decay length; halation size is a Gaussian sigma.
       Scatter strength is the fraction of the scattered light in the
       wide tail; halation strength is the fraction of light that halates.
-      `halationRadius` and `halationStrength` scale the halation pair. The editor
-      keeps each at its default ratio to red. B&W film uses the first channel. */
+      Used only by recipes without halationParams. B&W film uses the first channel. */
   scatterSizeRgb: Rgb
   scatterStrengthRgb: Rgb
   halationSizeRgb: Rgb
@@ -98,11 +114,18 @@ export const DEFAULT_FILM: FilmSettings = {
   couplers: 0.25,
   couplersRadius: 0.0015,
   grain: true,
+  grainParams: { rmsGranularity: [4.5, 4.5, 4.5], blur: 0.89, multUsmAmount: 1.5 },
   grainSize: 1,
   grainAmount: 1,
   grainRoughness: 0,
   grainSaturation: 1,
   halation: false,
+  halationParams: {
+    scatterAmount: 1,
+    scatterSpatialScale: 1,
+    halationAmount: 1,
+    halationSpatialScale: 1
+  },
   halationStrength: 0.35,
   halationRadius: 0.0015,
   halationMidtones: 0,
@@ -128,6 +151,20 @@ export function filmHalationDefaults(
         ? [0.08, 0.02, 0]
         : [0.015, 0.005, 0]
   return { halationSizeRgb: [size, size, size], halationStrengthRgb: strength }
+}
+/** RMS values from the bundled Spektrafilm grain presets. */
+export function filmGrainDefaults(film: number): GrainParams {
+  const stock = stocks.find((item) => !item.isPaper && item.index === film)
+  const rms = (grainRms as Record<string, number[]>)[stock?.key ?? ''] ?? [6, 8, 10]
+  return { rmsGranularity: [...rms] as Rgb, blur: 0.89, multUsmAmount: 1.5 }
+}
+export function grainRmsBase(grain: GrainParams, monochrome = false): number {
+  return (
+    grain.rmsBase ??
+    (monochrome
+      ? grain.rmsGranularity[0]
+      : grain.rmsGranularity.reduce((sum, value) => sum + value, 0) / 3)
+  )
 }
 export function defaultRecipe(): EditRecipe {
   const line = (): CurvePoint[] => [
@@ -158,7 +195,7 @@ export function defaultRecipe(): EditRecipe {
     straighten: 0,
     pitch: 0,
     yaw: 0,
-    film: { ...DEFAULT_FILM },
+    film: structuredClone(DEFAULT_FILM),
     monochrome: null,
     seed: 0
   }

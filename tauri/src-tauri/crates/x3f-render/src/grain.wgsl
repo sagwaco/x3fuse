@@ -69,6 +69,10 @@ fn grain_layer(@builtin(global_invocation_id) id:vec3<u32>) {
     var result=vec3<f32>(0);
     for (var c=0u;c<3u;c++) {
         let floor=spectral.v[offset+c];let maximum=spectral.v[offset+3u+c];
+        if spectral.v[offset+6u+c]==0.0 {
+            result[c]=grain_layer_density(source.v[i][c],c,layer)+floor;
+            continue;
+        }
         let particles=max(1e-8,p.v[55].x*spectral.v[offset+6u+c]*clump);
         let density=grain_layer_density(source.v[i][c],c,layer)+floor;
         let probability=clamp(density/max(maximum,1e-8),1e-6,1.0-1e-6);

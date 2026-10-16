@@ -260,24 +260,68 @@ fn fit_neutral(cal: &WhiteBalanceCalibration, target: [f64; 3]) -> (f32, f32) {
     }
     (best.0.exp().round() as f32, best.1.round() as f32)
 }
-fn eval(points: &[Point], x: f32) -> f32 {
+fn curve_slopes(points: &[Point]) -> Vec<f64> {
+    // Use f64 because valid f32 points can have very small x intervals.
+    let segments: Vec<_> = points
+        .windows(2)
+        .map(|p| {
+            let width = f64::from(p[1].x) - f64::from(p[0].x);
+            (width, (f64::from(p[1].y) - f64::from(p[0].y)) / width)
+        })
+        .collect();
+    let mut slopes = vec![segments[0].1; points.len()];
+    if points.len() == 2 {
+        return slopes;
+    }
+    let endpoint = |(h0, d0): (f64, f64), (h1, d1): (f64, f64)| {
+        let slope = ((2. * h0 + h1) * d0 - h0 * d1) / (h0 + h1);
+        if slope * d0 <= 0. {
+            0.
+        } else {
+            slope.signum() * slope.abs().min(3. * d0.abs())
+        }
+    };
+    slopes[0] = endpoint(segments[0], segments[1]);
+    slopes[points.len() - 1] = endpoint(segments[segments.len() - 1], segments[segments.len() - 2]);
+    for i in 1..points.len() - 1 {
+        let (h0, d0) = segments[i - 1];
+        let (h1, d1) = segments[i];
+        let w1 = 2. * h1 + h0;
+        let w2 = h1 + 2. * h0;
+        // The weighted harmonic mean prevents overshoot between unequal intervals.
+        slopes[i] = if d0 * d1 <= 0. {
+            0.
+        } else {
+            (w1 + w2) / (w1 / d0 + w2 / d1)
+        };
+    }
+    slopes
+}
+
+fn eval(points: &[Point], slopes: &[f64], x: f32) -> f32 {
     let next = points
         .partition_point(|p| p.x < x)
         .clamp(1, points.len() - 1);
     let a = points[next - 1];
     let b = points[next];
-    a.y + (b.y - a.y) * (x - a.x) / (b.x - a.x)
+    let width = f64::from(b.x) - f64::from(a.x);
+    let t = ((f64::from(x) - f64::from(a.x)) / width).clamp(0., 1.);
+    let u = 1. - t;
+    let c1 = f64::from(a.y) + width * slopes[next - 1] / 3.;
+    let c2 = f64::from(b.y) - width * slopes[next] / 3.;
+    (u * u * u * f64::from(a.y)
+        + 3. * u * u * t * c1
+        + 3. * u * t * t * c2
+        + t * t * t * f64::from(b.y))
+    .clamp(f64::from(a.y.min(b.y)), f64::from(a.y.max(b.y))) as f32
 }
 pub(crate) fn curve_table(c: &Curves) -> Vec<[f32; 4]> {
+    let channels = [&c.red[..], &c.green[..], &c.blue[..], &c.master[..]];
+    let slopes = channels.map(curve_slopes);
     (0..1024)
         .map(|i| {
             let x = i as f32 / 1023.;
-            [
-                eval(&c.red, x),
-                eval(&c.green, x),
-                eval(&c.blue, x),
-                eval(&c.master, x),
-            ]
+            std::array::from_fn(|channel| eval(channels[channel], &slopes[channel], x))
         })
         .collect()
 }
@@ -285,6 +329,70 @@ pub(crate) fn curve_table(c: &Curves) -> Vec<[f32; 4]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn curves_keep_identity_and_two_point_lines() {
+        let table = curve_table(&Curves::default());
+        for (i, row) in table.iter().enumerate() {
+            assert_eq!(*row, [i as f32 / 1023.; 4]);
+        }
+        let points = [Point { x: 0., y: 0.9 }, Point { x: 1., y: 0.1 }];
+        let slopes = curve_slopes(&points);
+        for i in 0..=100 {
+            let x = i as f32 / 100.;
+            assert!((eval(&points, &slopes, x) - (0.9 - 0.8 * x)).abs() < 1e-7);
+        }
+    }
+
+    #[test]
+    fn curves_match_frontend_values_and_have_continuous_slopes() {
+        let points = [
+            Point { x: 0., y: 0. },
+            Point { x: 0.125, y: 0.375 },
+            Point { x: 0.625, y: 0.75 },
+            Point { x: 1., y: 1. },
+        ];
+        let slopes = curve_slopes(&points);
+        assert!((eval(&points, &slopes, 0.0625) - 0.22009943).abs() < 1e-7);
+        for p in &points {
+            assert_eq!(eval(&points, &slopes, p.x), p.y);
+        }
+        for p in &points[1..points.len() - 1] {
+            let h = 1e-4;
+            let left = (p.y - eval(&points, &slopes, p.x - h)) / h;
+            let right = (eval(&points, &slopes, p.x + h) - p.y) / h;
+            assert!((left - right).abs() < 0.005);
+        }
+    }
+
+    #[test]
+    fn curves_preserve_segment_bounds_and_stay_finite() {
+        for values in [
+            [(0., 1.), (0.125, 0.75), (0.625, 0.5), (1., 0.)],
+            [(0., 0.), (0.25, 1.), (0.75, 0.), (1., 1.)],
+            [(0., 0.2), (0.125, 0.2), (0.625, 0.8), (1., 0.8)],
+            [(0., 0.), (f32::from_bits(1), 1.), (0.5, 0.), (1., 1.)],
+        ] {
+            let points = values.map(|(x, y)| Point { x, y });
+            let slopes = curve_slopes(&points);
+            for p in &points {
+                assert_eq!(eval(&points, &slopes, p.x), p.y);
+            }
+            for pair in points.windows(2) {
+                let a = pair[0];
+                let b = pair[1];
+                let mut previous = a.y;
+                for i in 0..=100 {
+                    let x = a.x + (b.x - a.x) * (i as f32 / 100.);
+                    let y = eval(&points, &slopes, x);
+                    assert!(y.is_finite() && (a.y.min(b.y)..=a.y.max(b.y)).contains(&y));
+                    assert!((y - previous) * (b.y - a.y).signum() >= 0.);
+                    previous = y;
+                }
+            }
+        }
+    }
+
     #[test]
     fn extended_range_reaches_full_spectrum_neutrals_and_joins_the_normal_range() {
         // A full-spectrum DP2 Merrill. The target is the camera neutral of

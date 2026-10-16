@@ -52,9 +52,9 @@ export function Slider({
     ((Math.max(min, Math.min(max, v)) - min) / (max - min)) * 100
   const origin = percent(min < 0 && max > 0 ? 0 : min)
   const current = percent(value)
-  // Every 10% of the range (zero on symmetric scales), rounded onto the step grid.
-  const detents = Array.from({ length: 11 }, (_, i) =>
-    Number((min + Math.round(((max - min) / 10 / step) * i) * step).toFixed(10))
+  // Haptic detents every 5% of the range (zero on symmetric scales), rounded onto the step grid.
+  const detents = Array.from({ length: 21 }, (_, i) =>
+    Number((min + Math.round(((max - min) / 20 / step) * i) * step).toFixed(10))
   )
   const root = useRef<HTMLSpanElement>(null)
   const drag = useRef<{ last: number; tolerance: number } | null>(null)
@@ -101,14 +101,6 @@ export function Slider({
         className={cn('relative w-full grow', track ? 'h-1 rounded-full' : 'h-0.5 bg-white/15')}
         style={track ? { background: track } : undefined}
       >
-        {detents.map((d, i) => (
-          <div
-            key={i}
-            aria-hidden="true"
-            className="absolute top-1/2 h-1.5 w-px -translate-x-1/2 -translate-y-1/2 bg-white/20"
-            style={{ left: `${percent(d)}%` }}
-          />
-        ))}
         {!track && (
           <div
             className="absolute h-full bg-white/45"
@@ -134,11 +126,19 @@ export function Slider({
           event.preventDefault()
           onReset()
         }}
-        className={cn(
-          'block h-3.5 w-[3px] rounded-[1px] bg-white shadow-[0_0_0_2px_rgb(0_0_0/0.85)]',
-          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60'
-        )}
-      />
+        // Radix keeps the thumb in the track by its size, so the thumb keeps one size.
+        // The knob in it grows about its center on hover.
+        className="slider-thumb group relative block h-3.5 w-[3px] focus-visible:outline-none"
+      >
+        <span
+          className={cn(
+            'slider-knob absolute left-1/2 top-1/2 h-3.5 w-[3px] -translate-x-1/2 -translate-y-1/2',
+            'rounded-[1px] bg-white shadow-[0_0_0_2px_rgb(0_0_0/0.85)]',
+            // An outline, as the glass hover rules replace the box shadow.
+            'group-focus-visible:outline group-focus-visible:outline-2 group-focus-visible:outline-white/60'
+          )}
+        />
+      </SliderPrimitive.Thumb>
     </SliderPrimitive.Root>
   )
 }

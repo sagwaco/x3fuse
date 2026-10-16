@@ -49,7 +49,6 @@ pub struct Info {
     pub film_type: String,
     #[serde(rename = "use")]
     pub use_kind: String,
-    #[cfg(test)]
     pub antihalation: String,
     #[serde(default)]
     pub reference_illuminant: String,

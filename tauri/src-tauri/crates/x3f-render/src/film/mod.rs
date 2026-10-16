@@ -179,7 +179,18 @@ pub struct FilmPair {
 /// Identifies a prepared pair. Floats are compared by bits so a cached pair is
 /// only reused for the exact same settings.
 #[derive(PartialEq, Eq, Clone, Copy)]
-pub struct Key(u32, u32, bool, u32, u32, u32, u32, u32, u32);
+pub struct Key(
+    u32,
+    u32,
+    bool,
+    u32,
+    u32,
+    u32,
+    u32,
+    u32,
+    u32,
+    Option<[u32; 3]>,
+);
 impl Key {
     /// Every setting [`FilmPair::build`] reads. Anything consumed there and
     /// missing here silently serves a stale pair;
@@ -198,6 +209,9 @@ impl Key {
             s.gamma_film.to_bits(),
             s.gamma_paper.to_bits(),
             s.couplers.to_bits(),
+            s.grain_params
+                .as_ref()
+                .map(|p| p.rms_granularity.map(f32::to_bits)),
         )
     }
 }
@@ -242,7 +256,7 @@ impl FilmPair {
         let mut paper = profile::load(profile::FILM_COUNT + settings.paper as usize)?;
         film.apply_gamma(settings.gamma_film as f64)?;
         paper.apply_gamma(settings.gamma_paper as f64)?;
-        let grain = grain::Grain::build(&film)?;
+        let grain = grain::Grain::build_with_params(&film, settings.grain_params.as_ref())?;
         let scan = if settings.negative { &film } else { &paper };
         let rgb_to_adapted_xyz = lut.rgb_to_adapted_xyz;
 
@@ -646,6 +660,7 @@ pub struct Spatial {
     pub scatter_core: [f32; 3],
     pub scatter_tail: [f32; 3],
     pub halation: [[f32; 3]; HALATION_BOUNCES],
+    pub scatter_amount: f32,
     pub coupler: f32,
     pub coupler_tail: f32,
 }
@@ -656,25 +671,49 @@ impl Spatial {
         let pixel_um = pixel_size_um(long_edge);
         let px = |um: f64| (um / pixel_um) as f32;
         let rgb = |um: [f64; 3]| channels(um, monochrome).map(px);
-        let scatter = settings.scatter_size_rgb.map(f64::from);
+        let native = settings.halation_params.as_ref();
+        let scatter = native.map_or(settings.scatter_size_rgb.map(f64::from), |p| {
+            SCATTER_TAIL_UM.map(|v| v * p.scatter_spatial_scale as f64)
+        });
+        let scatter_amount = native.map_or(1., |p| p.scatter_amount);
+        let core = native.map_or_else(
+            || std::array::from_fn(|c| scatter[c] * SCATTER_CORE_UM[c] / SCATTER_TAIL_UM[c]),
+            |p| SCATTER_CORE_UM.map(|v| v * p.scatter_spatial_scale as f64),
+        );
         let halation_scale = settings.halation_radius as f64 / HALATION_RADIUS_DEFAULT;
         // With no halation light to add, the bounces change nothing; zero
         // sigmas skip them and their tile margin.
-        let halates = settings.halation_strength > 0.
-            && widest(channels(settings.halation_strength_rgb, monochrome)) > 0.;
-        let first = settings.halation_size_rgb.map(|um| {
-            if halates {
-                um as f64 * halation_scale
-            } else {
-                0.
-            }
-        });
+        let halates = native.map_or_else(
+            || {
+                settings.halation_strength > 0.
+                    && widest(channels(settings.halation_strength_rgb, monochrome)) > 0.
+            },
+            |p| p.halation_amount > 0.,
+        );
+        let first = native
+            .map_or(settings.halation_size_rgb.map(f64::from), |_| {
+                halation_preset(settings.film).0
+            })
+            .map(|um| {
+                if halates {
+                    um * native.map_or(halation_scale, |p| p.halation_spatial_scale as f64)
+                } else {
+                    0.
+                }
+            });
         Self {
             // The scatter size sets the tail; the core keeps its ratio to it.
-            scatter_core: rgb(std::array::from_fn(|c| {
-                scatter[c] * SCATTER_CORE_UM[c] / SCATTER_TAIL_UM[c]
-            })),
-            scatter_tail: rgb(scatter),
+            scatter_core: if scatter_amount > 0. {
+                rgb(core)
+            } else {
+                [0.; 3]
+            },
+            scatter_tail: if scatter_amount > 0. {
+                rgb(scatter)
+            } else {
+                [0.; 3]
+            },
+            scatter_amount,
             halation: std::array::from_fn(|k| rgb(first.map(|um| um * (k as f64 + 1.).sqrt()))),
             // `couplers_radius` is a fraction of the frame, so its µm size
             // divided by the µm pixel pitch collapses to the long edge.
@@ -686,6 +725,31 @@ impl Spatial {
             },
         }
     }
+}
+
+/// Stock baselines from spektrafilm experimental 28bf883 `params_builder.py`.
+pub fn halation_preset(film: u32) -> ([f64; 3], [f64; 3]) {
+    static PRESETS: std::sync::LazyLock<Vec<([f64; 3], [f64; 3])>> =
+        std::sync::LazyLock::new(|| {
+            (0..profile::FILM_COUNT)
+                .map(|index| {
+                    let film = profile::load(index).expect("Bundled film profile must be valid");
+                    let sigma = if film.info.use_kind == "cine" {
+                        50.
+                    } else {
+                        65.
+                    };
+                    let strength = match film.info.antihalation.as_str() {
+                        "strong" => HALATION_STRENGTH,
+                        "weak" => [0.08, 0.02, 0.],
+                        "no" => [0.30, 0.10, 0.015],
+                        _ => [0.05, 0.015, 0.],
+                    };
+                    ([sigma; 3], strength)
+                })
+                .collect()
+        });
+    PRESETS[film as usize]
 }
 /// spektrafilm's `pixel_size_um`, over the whole 35 mm frame.
 fn pixel_size_um(long_edge: f32) -> f64 {

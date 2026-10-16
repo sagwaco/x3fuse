@@ -153,12 +153,17 @@ pub struct FilmSettings {
     pub couplers: f32,
     pub couplers_radius: f32,
     pub grain: bool,
+    /// Missing native parameters keep saved recipes on the legacy path.
+    #[serde(default)]
+    pub grain_params: Option<GrainParams>,
     pub grain_size: f32,
     pub grain_amount: f32,
     /// Clumps the grain unevenly (0..1). Zero is spektrafilm's even grain.
     pub grain_roughness: f32,
     pub grain_saturation: f32,
     pub halation: bool,
+    #[serde(default)]
+    pub halation_params: Option<HalationParams>,
     pub halation_strength: f32,
     pub halation_radius: f32,
     pub halation_midtones: f32,
@@ -190,11 +195,13 @@ impl Default for FilmSettings {
             couplers: 0.25,
             couplers_radius: 0.0015,
             grain: true,
+            grain_params: Some(GrainParams::default()),
             grain_size: 1.,
             grain_amount: 1.,
             grain_roughness: 0.,
             grain_saturation: 1.,
             halation: false,
+            halation_params: Some(HalationParams::default()),
             halation_strength: 0.35,
             halation_radius: 0.0015,
             halation_midtones: 0.,
@@ -207,6 +214,77 @@ impl Default for FilmSettings {
             tune_m: 0.,
             tune_y: 0.,
         }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
+pub struct GrainParams {
+    pub rms_granularity: [f32; 3],
+    /// Main slider value. Rendering uses the absolute channel values.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rms_base: Option<f32>,
+    pub blur: f32,
+    pub mult_usm_amount: f32,
+}
+impl Default for GrainParams {
+    fn default() -> Self {
+        Self {
+            rms_granularity: [4.5; 3],
+            rms_base: None,
+            blur: 0.89,
+            mult_usm_amount: 1.5,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
+pub struct HalationParams {
+    pub scatter_amount: f32,
+    pub scatter_spatial_scale: f32,
+    pub halation_amount: f32,
+    pub halation_spatial_scale: f32,
+}
+impl Default for HalationParams {
+    fn default() -> Self {
+        Self {
+            scatter_amount: 1.,
+            scatter_spatial_scale: 1.,
+            halation_amount: 1.,
+            halation_spatial_scale: 1.,
+        }
+    }
+}
+
+impl GrainParams {
+    pub fn validate(&self) -> Result<(), String> {
+        for value in self.rms_granularity {
+            range("RMS granularity", value, 0., 100.)?;
+        }
+        if let Some(value) = self.rms_base {
+            range("RMS base", value, 0., 100.)?;
+        }
+        for (name, value, hi) in [
+            ("grain blur", self.blur, 4.),
+            ("grain USM amount", self.mult_usm_amount, 4.),
+        ] {
+            range(name, value, 0., hi)?;
+        }
+        Ok(())
+    }
+}
+impl HalationParams {
+    pub fn validate(&self) -> Result<(), String> {
+        for (name, value, hi) in [
+            ("scatter amount", self.scatter_amount, 1.),
+            ("scatter spatial scale", self.scatter_spatial_scale, 4.),
+            ("halation amount", self.halation_amount, 4.),
+            ("halation spatial scale", self.halation_spatial_scale, 4.),
+        ] {
+            range(name, value, 0., hi)?;
+        }
+        Ok(())
     }
 }
 fn range(name: &str, value: f32, lo: f32, hi: f32) -> Result<(), String> {
@@ -308,7 +386,16 @@ impl EditRecipe {
     }
 }
 impl FilmSettings {
+    pub(crate) fn grain_active(&self) -> bool {
+        self.grain && (self.grain_params.is_some() || self.grain_amount > 0.)
+    }
     pub fn validate(&self) -> Result<(), String> {
+        if let Some(params) = &self.grain_params {
+            params.validate()?;
+        }
+        if let Some(params) = &self.halation_params {
+            params.validate()?;
+        }
         let (films, profiles) = (
             crate::film::profile::FILM_COUNT,
             crate::film::profile::PROFILE_JSON.len(),
@@ -351,5 +438,47 @@ impl FilmSettings {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::GrainParams;
+
+    #[test]
+    fn grain_rms_base_round_trips_without_changing_channels() {
+        let legacy = r#"{"rmsGranularity":[3,6,9],"blur":0.89,"multUsmAmount":1.5}"#;
+        let mut grain: GrainParams = serde_json::from_str(legacy).unwrap();
+        assert_eq!(grain.rms_base, None);
+        assert!(serde_json::to_value(&grain)
+            .unwrap()
+            .get("rmsBase")
+            .is_none());
+        grain.rms_base = Some(5.);
+        let saved = serde_json::to_value(&grain).unwrap();
+        assert_eq!(saved["rmsBase"], 5.);
+        let restored: GrainParams = serde_json::from_value(saved).unwrap();
+        assert_eq!(restored, grain);
+        assert_eq!(restored.rms_granularity, [3., 6., 9.]);
+    }
+
+    #[test]
+    fn grain_rms_base_requires_a_finite_value_in_range() {
+        for value in [0., 4.5, 100.] {
+            assert!(GrainParams {
+                rms_base: Some(value),
+                ..Default::default()
+            }
+            .validate()
+            .is_ok());
+        }
+        for value in [-0.1, 100.1, f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            assert!(GrainParams {
+                rms_base: Some(value),
+                ..Default::default()
+            }
+            .validate()
+            .is_err());
+        }
     }
 }

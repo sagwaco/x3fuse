@@ -5,6 +5,9 @@ import {
   ChevronDown,
   Cloud,
   House,
+  Film,
+  FlaskConical,
+  Grip,
   Lightbulb,
   RotateCcw,
   Pipette,
@@ -18,7 +21,8 @@ import {
   FILM_MONOCHROME_FILTERS,
   MONOCHROME_FILTERS,
   defaultRecipe,
-  filmHalationDefaults,
+  filmGrainDefaults,
+  grainRmsBase,
   negativePrint,
   type EditRecipe,
   type FilmSettings,
@@ -26,6 +30,7 @@ import {
   type MonochromeFilter
 } from '@shared/editor'
 import stocks from '@shared/film-stocks.json'
+import { curvePath, evaluateCurve } from '@shared/curves'
 import { useEditorStore } from '../stores/editorStore'
 import { DevelopingCloud } from '../lib/developingCloud'
 import { useQueueStore } from '../stores/queueStore'
@@ -33,6 +38,7 @@ import { t } from '../lib/strings'
 import { Button } from './ui/button'
 import { cn } from '../lib/cn'
 import { Slider } from './ui/slider'
+import { Switch } from './ui/switch'
 import { HelpTooltip, ToggleRow } from './ui/settingsLayout'
 import { LookPicker } from './LookPicker'
 
@@ -87,40 +93,18 @@ const filmStock = (film: FilmSettings | null): (typeof stocks)[number] | undefin
   stocks.find((stock) => !stock.isPaper && stock.index === film?.film)
 const monochromeFilm = (film: FilmSettings | null): boolean => !!filmStock(film)?.monochrome
 const positiveFilm = (film: FilmSettings | null): boolean => !!filmStock(film)?.isPositive
+/** For a help icon in a `group/reset` row. It hides while the row's label shows Reset. */
+const HIDE_WHILE_RESETTING = 'group-has-[[data-resetting]]/reset:invisible'
 
-export function Adjustment({
+function ResetLabel({
   label,
-  value,
-  min = -100,
-  max = 100,
-  step = 1,
-  help,
-  track,
-  scale,
-  change,
-  reset,
-  commit
+  disabled,
+  reset
 }: {
   label: string
-  value: number
-  min?: number
-  max?: number
-  step?: number
-  /** Only for controls whose effect the label can't convey on its own. */
-  help?: string
-  track?: string
-  scale?: Scale
-  change: (value: number, commit: boolean) => void
+  disabled: boolean
   reset: () => void
-  commit: () => void
 }): React.JSX.Element {
-  const busy = useQueueStore((state) => state.isProcessing || state.isPreparing)
-  // The controls turn on after the developing cloud leaves. Turning them all
-  // on at once takes a few milliseconds, and the cloud would skip a frame.
-  const cloud = useContext(DevelopingCloud)
-  const inactive = useEditorStore(
-    (state) => cloud || state.before || state.loading || state.closing || !state.preview
-  )
   // Shift-click on the label resets the slider. The label says so while Shift is held.
   const [hover, setHover] = useState(false)
   const [shift, setShift] = useState(false)
@@ -134,8 +118,77 @@ export function Adjustment({
       window.removeEventListener('keyup', track)
     }
   }, [hover])
-  const disabled = busy || inactive
   const resetting = hover && shift && !disabled
+  return (
+    <>
+      {/* Both texts share one cell, so the label keeps its width and the pointer stays on it. */}
+      <span
+        data-resetting={resetting || undefined}
+        className={cn(
+          'control-label grid min-w-0 select-none',
+          resetting && 'cursor-pointer text-neutral-100'
+        )}
+        onPointerEnter={(event) => {
+          setHover(true)
+          setShift(event.shiftKey)
+        }}
+        onPointerMove={(event) => setShift(event.shiftKey)}
+        onPointerLeave={() => setHover(false)}
+        onClick={(event) => {
+          if (event.shiftKey && !disabled) reset()
+        }}
+      >
+        <span className={cn('col-start-1 row-start-1 truncate', resetting && 'invisible')}>
+          {label}
+        </span>
+        <span
+          aria-hidden="true"
+          className={cn('col-start-1 row-start-1', !resetting && 'invisible')}
+        >
+          {t('editor.reset')}
+        </span>
+      </span>
+    </>
+  )
+}
+
+export function Adjustment({
+  label,
+  value,
+  min = -100,
+  max = 100,
+  step = 1,
+  help,
+  unit,
+  track,
+  scale,
+  change,
+  reset,
+  commit
+}: {
+  label: string
+  value: number
+  min?: number
+  max?: number
+  step?: number
+  /** Only for controls whose effect the label can't convey on its own. */
+  help?: string
+  /** Shown after the label, such as EV. */
+  unit?: string
+  track?: string
+  scale?: Scale
+  change: (value: number, commit: boolean) => void
+  reset: () => void
+  commit: () => void
+}): React.JSX.Element {
+  const busy = useQueueStore((state) => state.isProcessing || state.isPreparing)
+  // The controls turn on after the developing cloud leaves. Turning them all
+  // on at once takes a few milliseconds, and the cloud would skip a frame.
+  const cloud = useContext(DevelopingCloud)
+  const inactive = useEditorStore(
+    (state) => cloud || state.before || state.loading || state.closing || !state.preview
+  )
+  const disabled = busy || inactive
   // A drag keeps the range it started with, so the thumb stays under the pointer.
   const [held, setHeld] = useState<{ min: number; max: number; step: number; scale?: Scale }>()
   const range = held ?? { min, max, step, scale }
@@ -149,35 +202,14 @@ export function Adjustment({
       onPointerUp={() => setHeld(undefined)}
       onPointerCancel={() => setHeld(undefined)}
     >
-      <div className="flex items-center justify-between gap-2">
+      <div className="group/reset flex items-center justify-between gap-2">
         <span className="flex min-w-0 items-center gap-1.5">
-          {/* Both texts share one cell, so the label keeps its width and the pointer stays on it. */}
-          <span
-            className={cn(
-              'control-label grid min-w-0 select-none',
-              resetting && 'cursor-pointer text-neutral-100'
-            )}
-            onPointerEnter={(event) => {
-              setHover(true)
-              setShift(event.shiftKey)
-            }}
-            onPointerMove={(event) => setShift(event.shiftKey)}
-            onPointerLeave={() => setHover(false)}
-            onClick={(event) => {
-              if (event.shiftKey && !disabled) reset()
-            }}
-          >
-            <span className={cn('col-start-1 row-start-1 truncate', resetting && 'invisible')}>
-              {label}
-            </span>
-            <span
-              aria-hidden="true"
-              className={cn('col-start-1 row-start-1', !resetting && 'invisible')}
-            >
-              {t('editor.reset')}
-            </span>
-          </span>
-          {help && <HelpTooltip label={label} text={help} />}
+          <ResetLabel
+            label={unit ? `${label} (${unit})` : label}
+            disabled={disabled}
+            reset={reset}
+          />
+          {help && <HelpTooltip label={label} text={help} className={HIDE_WHILE_RESETTING} />}
         </span>
         <input
           aria-label={label}
@@ -291,7 +323,7 @@ export const EditorControls = memo(function EditorControls({
   recipe: EditRecipe
   picking: boolean
   setPicking: (value: boolean) => void
-  onNavigate: (page: 'film' | 'paper') => void
+  onNavigate: (page: 'emulsion') => void
 }): React.JSX.Element {
   const change = useEditorStore((state) => state.change)
   const commit = useEditorStore((state) => state.commit)
@@ -349,11 +381,15 @@ export const EditorControls = memo(function EditorControls({
   )
   return (
     <>
+      <div className="px-4 py-3">
+        <LookPicker kind="film" recipe={recipe} onOpen={() => onNavigate('emulsion')} />
+      </div>
       <Section name={t('editor.light')} open>
         {recipe.film ? (
           <Adjustment
             label={t('editor.exposure')}
             value={recipe.film.evFilm}
+            unit="EV"
             min={-3}
             max={3}
             step={0.05}
@@ -362,43 +398,16 @@ export const EditorControls = memo(function EditorControls({
             commit={commit}
           />
         ) : (
-          control('exposure', { min: -5, max: 5, step: 0.05 })
+          control('exposure', { unit: 'EV', min: -5, max: 5, step: 0.05 })
         )}
         {(['contrast', 'highlights', 'shadows', 'whites', 'blacks'] as const).map((key) =>
           control(key)
         )}
         {control('fillLight', { min: -2, max: 2, step: 0.1, help: t('editor.fillLightHelp') })}
       </Section>
-      <Section name={t('editor.look')} open>
-        <LookPicker kind="film" recipe={recipe} onOpen={() => onNavigate('film')} />
-        {recipe.monochrome && (
-          <p className="control-label flex items-center gap-1.5 pt-2 text-[10px] text-neutral-500">
-            {t('editor.filter')}
-            <HelpTooltip label={t('editor.filter')} text={t('editor.monochromeHelp')} />
-          </p>
-        )}
-        {recipe.monochrome && (
-          <Swatches
-            label={t('editor.filter')}
-            value={recipe.monochrome.filter}
-            options={(monochromeFilm(recipe.film)
-              ? FILM_MONOCHROME_FILTERS
-              : MONOCHROME_FILTERS
-            ).map((filter) => ({
-              value: filter,
-              label: t(`editor.${filter}`),
-              color: FILTER_COLORS[filter]
-            }))}
-            onChange={(filter) => change({ monochrome: { filter } })}
-          />
-        )}
-        {recipe.film && <FilmControls film={recipe.film} recipe={recipe} onNavigate={onNavigate} />}
+      <Section name={t('editor.curves')}>
+        <Curves recipe={recipe} />
       </Section>
-      {recipe.film && (
-        <Section name={t('editor.darkroom')}>
-          <FilmControls film={recipe.film} recipe={recipe} darkroom onNavigate={onNavigate} />
-        </Section>
-      )}
       <Section name={t('editor.whiteBalance')} open>
         <div
           role="radiogroup"
@@ -484,9 +493,6 @@ export const EditorControls = memo(function EditorControls({
         {mixer('saturation', `linear-gradient(to right, ${hsl(hue, 0)}, ${hsl(hue, 100, 50)})`)}
         {mixer('luminance', `linear-gradient(to right, ${hsl(hue, 70, 15)}, ${hsl(hue, 70, 85)})`)}
       </Section>
-      <Section name={t('editor.curves')}>
-        <Curves recipe={recipe} />
-      </Section>
       <Section name={t('editor.detail')}>
         {control('sharpen', { min: 0, max: 100 })}
         {control('denoise', { min: 0, max: 10, help: t('editor.denoiseHelp') })}
@@ -501,6 +507,113 @@ export const EditorControls = memo(function EditorControls({
     </>
   )
 })
+
+const EMULSION_TABS = [
+  ['film', 'filmStock', Film],
+  ['darkroom', 'darkroom', FlaskConical],
+  ['grain', 'grain', Grip],
+  ['halation', 'halation', Sun]
+] as const
+
+export function EmulsionControls({
+  recipe,
+  onNavigate
+}: {
+  recipe: EditRecipe
+  onNavigate: (page: 'paper') => void
+}): React.JSX.Element {
+  const [tab, setTab] = useState<(typeof EMULSION_TABS)[number][0]>('film')
+  const change = useEditorStore((state) => state.change)
+  const active = recipe.film ? tab : 'film'
+  useEffect(() => {
+    if (!recipe.film) setTab('film')
+  }, [recipe.film])
+  return (
+    <>
+      <div role="tablist" aria-label={t('editor.look')} className="grid grid-cols-4 gap-1.5 p-3">
+        {EMULSION_TABS.map(([value, label, Icon], index) => (
+          <button
+            key={value}
+            id={`emulsion-tab-${value}`}
+            type="button"
+            role="tab"
+            aria-selected={active === value}
+            aria-controls={`emulsion-panel-${value}`}
+            tabIndex={active === value ? 0 : -1}
+            disabled={value !== 'film' && !recipe.film}
+            onClick={() => setTab(value)}
+            onKeyDown={(event) => {
+              const count = recipe.film ? EMULSION_TABS.length : 1
+              const next =
+                event.key === 'ArrowRight'
+                  ? (index + 1) % count
+                  : event.key === 'ArrowLeft'
+                    ? (index + count - 1) % count
+                    : event.key === 'Home'
+                      ? 0
+                      : event.key === 'End'
+                        ? count - 1
+                        : -1
+              if (next < 0) return
+              event.preventDefault()
+              setTab(EMULSION_TABS[next][0])
+              document.getElementById(`emulsion-tab-${EMULSION_TABS[next][0]}`)?.focus()
+            }}
+            className="flex flex-col items-center gap-1 rounded-lg border border-transparent px-0.5 py-1.5 text-[10px] leading-none text-neutral-400 hover:bg-white/5 hover:text-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50 aria-selected:border-white/30 aria-selected:bg-white/10 aria-selected:text-white disabled:opacity-40"
+          >
+            <Icon aria-hidden="true" className="h-4 w-4" />
+            <span className="max-w-full truncate">{t(`editor.${label}`)}</span>
+          </button>
+        ))}
+      </div>
+      <div
+        role="tabpanel"
+        id={`emulsion-panel-${active}`}
+        aria-labelledby={`emulsion-tab-${active}`}
+      >
+        {active === 'film' ? (
+          <>
+            <LookPicker kind="film" recipe={recipe} gallery />
+            <div className="px-4">
+              {recipe.monochrome && (
+                <p className="control-label flex items-center gap-1.5 pt-2 text-[10px] text-neutral-500">
+                  {t('editor.filter')}
+                  <HelpTooltip label={t('editor.filter')} text={t('editor.monochromeHelp')} />
+                </p>
+              )}
+              {recipe.monochrome && (
+                <Swatches
+                  label={t('editor.filter')}
+                  value={recipe.monochrome.filter}
+                  options={(monochromeFilm(recipe.film)
+                    ? FILM_MONOCHROME_FILTERS
+                    : MONOCHROME_FILTERS
+                  ).map((filter) => ({
+                    value: filter,
+                    label: t(`editor.${filter}`),
+                    color: FILTER_COLORS[filter]
+                  }))}
+                  onChange={(filter) => change({ monochrome: { filter } })}
+                />
+              )}
+            </div>
+          </>
+        ) : (
+          recipe.film && (
+            <div className="px-4">
+              <FilmControls
+                film={recipe.film}
+                recipe={recipe}
+                section={active}
+                onNavigate={onNavigate}
+              />
+            </div>
+          )
+        )}
+      </div>
+    </>
+  )
+}
 
 const CHANNELS = {
   master: 'conic-gradient(#f87171, #4ade80, #60a5fa, #f87171)',
@@ -579,7 +692,7 @@ function Curves({ recipe }: { recipe: EditRecipe }): React.JSX.Element {
               const gap = gaps.reduce((a, b) => (a.size > b.size ? a : b))
               const point = {
                 x: (points[gap.i].x + points[gap.i + 1].x) / 2,
-                y: (points[gap.i].y + points[gap.i + 1].y) / 2
+                y: evaluateCurve(points, (points[gap.i].x + points[gap.i + 1].x) / 2)
               }
               setPoints([...points.slice(0, gap.i + 1), point, ...points.slice(gap.i + 1)])
               setSelected(gap.i + 1)
@@ -666,8 +779,8 @@ function Curves({ recipe }: { recipe: EditRecipe }): React.JSX.Element {
           <path key={v} d={`M${v} 0V200 M0 ${v}H200`} stroke="white" opacity="0.07" />
         ))}
         <path d="M0 200L200 0" stroke="white" opacity="0.15" strokeDasharray="3 4" />
-        <polyline
-          points={points.map((point) => `${point.x * 200},${(1 - point.y) * 200}`).join(' ')}
+        <path
+          d={curvePath(points)}
           fill="none"
           stroke={channel === 'master' ? '#ddd' : CHANNELS[channel]}
           strokeWidth="2"
@@ -718,17 +831,23 @@ function Curves({ recipe }: { recipe: EditRecipe }): React.JSX.Element {
 export function FilmControls({
   film,
   recipe,
-  darkroom = false,
+  section,
   onNavigate
 }: {
   film: FilmSettings
   recipe: EditRecipe
-  darkroom?: boolean
+  section: 'grain' | 'halation' | 'darkroom'
   onNavigate: (page: 'paper') => void
 }): React.JSX.Element {
   const change = useEditorStore((state) => state.change)
   const commit = useEditorStore((state) => state.commit)
   const negativePreview = useEditorStore((state) => state.negativePreview)
+  const cloud = useContext(DevelopingCloud)
+  const busy = useQueueStore((state) => state.isProcessing || state.isPreparing)
+  const inactive = useEditorStore(
+    (state) => state.before || state.loading || state.closing || !state.preview
+  )
+  const disabled = cloud || busy || inactive
   const update = (patch: Partial<FilmSettings>, save = true): void =>
     change({ film: { ...film, ...patch } }, save)
   /** A friendlier scale over one film setting; `to`/`from` convert between them. */
@@ -760,35 +879,9 @@ export function FilmControls({
       commit={commit}
     />
   )
-  /** One slider for a per-channel setting, shown as `scale` times its red value.
-      Green and blue follow red at their default ratio, so red halation stays
-      strongest, as on real film. B&W film uses the red value only. */
-  const layers = (
-    key: 'scatterSizeRgb' | 'scatterStrengthRgb' | 'halationSizeRgb' | 'halationStrengthRgb',
-    max: number,
-    step: number,
-    scale = 1
-  ): React.JSX.Element => {
-    const defaults = { ...DEFAULT_FILM, ...filmHalationDefaults(film.film) }
-    const ratio = defaults[key].map((value) => value / defaults[key][0])
-    return (
-      <Adjustment
-        key={key}
-        label={t(`editor.${key}`)}
-        help={t(`editor.${key}Help`)}
-        value={Math.round((film[key][0] * scale) / step) * step}
-        min={0}
-        max={max}
-        step={step}
-        change={(value, save) => update({ [key]: ratio.map((r) => (r * value) / scale) }, save)}
-        reset={() => update({ [key]: defaults[key] })}
-        commit={commit}
-      />
-    )
-  }
   // Contrast as stops of gamma: 0 is the stock's own, ±100 halves or doubles it.
   const contrast = { to: (v: number) => 2 ** (v / 100), from: (g: number) => Math.log2(g) * 100 }
-  if (darkroom)
+  if (section === 'darkroom')
     return (
       <>
         {/* A positive (slide) film is viewed directly. Printing it on negative
@@ -849,81 +942,175 @@ export function FilmControls({
           })}
       </>
     )
+  const grainDefaults = filmGrainDefaults(film.film)
+  const grain = film.grainParams
+  const halation = film.halationParams
+  const isGrain = section === 'grain'
+  const effect = isGrain ? grain : halation
+  const resetEffect = (): void => {
+    if (disabled) return
+    update(
+      isGrain
+        ? {
+            grainParams: grainDefaults,
+            grainSize: DEFAULT_FILM.grainSize,
+            grainAmount: DEFAULT_FILM.grainAmount,
+            grainRoughness: DEFAULT_FILM.grainRoughness,
+            grainSaturation: DEFAULT_FILM.grainSaturation
+          }
+        : { halationParams: { ...DEFAULT_FILM.halationParams! } }
+    )
+  }
+  const resetLabel = t(isGrain ? 'editor.resetGrain' : 'editor.resetHalation')
+  const base = grain ? grainRmsBase(grain, monochromeFilm(film)) : 0
+  const offsets =
+    grain && !monochromeFilm(film) ? grain.rmsGranularity.map((value) => value - base) : [0, 0, 0]
+  const offset = (channel: number, value: number, save = true): void => {
+    if (!grain) return
+    update(
+      {
+        grainParams: {
+          ...grain,
+          rmsBase: base,
+          rmsGranularity: grain.rmsGranularity.map((current, index) =>
+            index === channel ? Math.max(0, Math.min(100, base + value)) : current
+          ) as [number, number, number]
+        }
+      },
+      save
+    )
+  }
   return (
     <>
-      <Adjustment
-        label={t('editor.grain')}
-        help={t('editor.grainHelp')}
-        value={film.grain ? Math.cbrt(film.grainAmount) * 50 : 0}
-        min={0}
-        max={100}
-        change={(value, save) => update({ grain: value > 0, grainAmount: (value / 50) ** 3 }, save)}
-        reset={() => update({ grain: DEFAULT_FILM.grain, grainAmount: DEFAULT_FILM.grainAmount })}
-        commit={commit}
-      />
-      {/* Logarithmic, so the stock's natural grain sits in the middle. */}
-      {film.grain &&
-        slider('grainSize', {
-          min: 0,
-          max: 100,
-          to: (v) => 0.25 * 16 ** (v / 100),
-          from: (size) => (Math.log(size / 0.25) / Math.log(16)) * 100,
-          help: t('editor.grainSizeHelp')
-        })}
-      {film.grain &&
-        slider('grainRoughness', {
-          min: 0,
-          max: 100,
-          to: (v) => v / 100,
-          from: (roughness) => roughness * 100,
-          help: t('editor.grainRoughnessHelp')
-        })}
-      <Adjustment
-        label={t('editor.halation')}
-        help={t('editor.halationHelp')}
-        value={film.halation ? film.halationStrength * 50 : 0}
-        min={0}
-        max={100}
-        change={(value, save) => {
-          const strength = value / 50
-          const spread = Math.max(
-            0,
-            (strength - DEFAULT_FILM.halationStrength) / (2 - DEFAULT_FILM.halationStrength)
-          )
-          update(
-            {
-              halation: value > 0,
-              halationStrength: strength,
-              halationRadius:
-                strength <= DEFAULT_FILM.halationStrength
-                  ? 0.0005 +
-                    ((DEFAULT_FILM.halationRadius - 0.0005) * strength) /
-                      DEFAULT_FILM.halationStrength
-                  : DEFAULT_FILM.halationRadius + (0.006 - DEFAULT_FILM.halationRadius) * spread,
-              halationMidtones: spread
-            },
-            save
-          )
-        }}
-        reset={() =>
-          update({
-            halation: DEFAULT_FILM.halation,
-            halationStrength: DEFAULT_FILM.halationStrength,
-            halationRadius: DEFAULT_FILM.halationRadius,
-            halationMidtones: DEFAULT_FILM.halationMidtones
-          })
-        }
-        commit={commit}
-      />
-      {/* spektrafilm's per-channel settings, which the Halation slider scales. */}
-      {film.halation && (
-        <Section name={t('editor.halationDetails')}>
-          {layers('scatterSizeRgb', 50, 0.1)}
-          {layers('scatterStrengthRgb', 100, 1, 100)}
-          {layers('halationSizeRgb', 150, 1)}
-          {layers('halationStrengthRgb', 30, 0.1, 100)}
-        </Section>
+      <div className="group/reset flex items-center justify-between gap-3 py-2">
+        <ResetLabel label={t(`editor.${section}`)} disabled={disabled} reset={resetEffect} />
+        <div className="flex shrink-0 items-center gap-2">
+          <HelpTooltip
+            label={t(`editor.${section}`)}
+            text={t(`editor.${section}Help`)}
+            className={HIDE_WHILE_RESETTING}
+          />
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            aria-label={resetLabel}
+            title={resetLabel}
+            disabled={disabled}
+            onClick={resetEffect}
+          >
+            <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+          </Button>
+          <Switch
+            aria-label={t(`editor.${section}`)}
+            checked={film[section]}
+            disabled={disabled || !effect}
+            onCheckedChange={(enabled) => update({ [section]: enabled })}
+          />
+        </div>
+      </div>
+      {!effect && <p className="text-xs text-neutral-400">{t('editor.legacyFilmEffect')}</p>}
+      {isGrain && grain && film.grain && (
+        <>
+          <Adjustment
+            label={t('editor.grainRmsGranularity')}
+            help={t('editor.grainRmsGranularityHelp')}
+            value={base}
+            min={Math.max(0, -Math.min(...offsets))}
+            max={Math.min(100, 100 - Math.max(...offsets))}
+            step={0.5}
+            change={(value, save) =>
+              update(
+                {
+                  grainParams: {
+                    ...grain,
+                    rmsBase: value,
+                    rmsGranularity: offsets.map((offset) =>
+                      Math.max(0, Math.min(100, value + offset))
+                    ) as [number, number, number]
+                  }
+                },
+                save
+              )
+            }
+            reset={() =>
+              update({
+                grainParams: {
+                  ...grain,
+                  rmsBase: undefined,
+                  rmsGranularity: grainDefaults.rmsGranularity
+                }
+              })
+            }
+            commit={commit}
+          />
+          {!monochromeFilm(film) && (
+            <Section name={t('editor.grainChannelOffsets')}>
+              {(['red', 'green', 'blue'] as const).map((channel, index) => (
+                <Adjustment
+                  key={channel}
+                  label={t(`editor.${channel}`)}
+                  help={t('editor.grainChannelOffsetHelp')}
+                  value={offsets[index]}
+                  min={-base}
+                  max={100 - base}
+                  step={0.5}
+                  change={(value, save) => offset(index, value, save)}
+                  reset={() => offset(index, 0)}
+                  commit={commit}
+                />
+              ))}
+            </Section>
+          )}
+          {(
+            [
+              ['blur', 'grainBlur', 4, 0.01],
+              ['multUsmAmount', 'grainSharpen', 4, 0.1]
+            ] as const
+          ).map(([key, label, max, step]) => (
+            <Adjustment
+              key={key}
+              label={t(`editor.${label}`)}
+              help={t(`editor.${label}Help`)}
+              value={grain[key]}
+              min={0}
+              max={max}
+              step={step}
+              change={(value, save) => update({ grainParams: { ...grain, [key]: value } }, save)}
+              reset={() => update({ grainParams: { ...grain, [key]: grainDefaults[key] } })}
+              commit={commit}
+            />
+          ))}
+        </>
       )}
+      {!isGrain &&
+        halation &&
+        film.halation &&
+        (
+          [
+            ['scatterAmount', 1, 0.05],
+            ['scatterSpatialScale', 4, 0.1],
+            ['halationAmount', 4, 0.05],
+            ['halationSpatialScale', 4, 0.1]
+          ] as const
+        ).map(([key, max, step]) => (
+          <Adjustment
+            key={key}
+            label={t(`editor.${key}`)}
+            help={t(`editor.${key}Help`)}
+            value={halation[key]}
+            min={0}
+            max={max}
+            step={step}
+            change={(value, save) =>
+              update({ halationParams: { ...halation, [key]: value } }, save)
+            }
+            reset={() =>
+              update({ halationParams: { ...halation, [key]: DEFAULT_FILM.halationParams![key] } })
+            }
+            commit={commit}
+          />
+        ))}
     </>
   )
 }

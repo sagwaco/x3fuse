@@ -9,7 +9,8 @@ mod stocks;
 pub use camera::{read_camera_profiles, CameraProfile, CameraProfiles};
 pub use color::{as_shot_white_balance, pick_white_balance};
 pub use recipe::{
-    Crop, Curves, EditRecipe, FilmSettings, HslBand, MonochromeFilter, MonochromeSettings, Point,
+    Crop, Curves, EditRecipe, FilmSettings, GrainParams, HalationParams, HslBand, MonochromeFilter,
+    MonochromeSettings, Point,
 };
 pub use stocks::STOCKS_JSON;
 
@@ -22,7 +23,9 @@ pub use stocks::STOCKS_JSON;
 /// Version 3 adds CAMF camera picture modes. Version 5 blurs scatter and
 /// halation with a sigma per channel. Version 6 ports the experimental models.
 /// Version 7 applies native camera looks before film exposure.
-pub const RENDER_VERSION: u32 = 7;
+/// Version 8 adds native grain and halation controls with stock baselines.
+/// Version 9 uses smooth tone curves.
+pub const RENDER_VERSION: u32 = 9;
 
 use image::ImageEncoder;
 use serde::{Deserialize, Serialize};
@@ -444,7 +447,14 @@ impl Chain {
             self.release(current);
         }
         current = blurred;
-        let reference = self.blur(current, [spatial.usm_sigma; 3]);
+        let reference = self.blur(
+            current,
+            [if spatial.usm_amount > 0. {
+                spatial.usm_sigma
+            } else {
+                0.
+            }; 3],
+        );
         if reference != current {
             let sharp = self.two("grain_usm", current, reference);
             self.release(reference);
@@ -488,15 +498,27 @@ impl Chain {
     /// Scatter mix plus the multi-bounce halation add, on linear film raw.
     fn halation(&mut self, raw: usize, spatial: &film::Spatial) -> usize {
         let mut current = raw;
-        if film::widest(spatial.scatter_tail) * film::couplers::EXPONENTIAL_MAX_SIGMA >= MIN_SIGMA {
+        if film::widest(spatial.scatter_tail) * film::couplers::EXPONENTIAL_MAX_SIGMA >= MIN_SIGMA
+            || film::widest(spatial.scatter_core) >= MIN_SIGMA
+        {
             let core = self.blur(current, spatial.scatter_core);
             let tail = self.exponential(current, spatial.scatter_tail);
-            let scattered = self.two("scatter_mix", core, tail);
+            let mut scattered = self.two("scatter_mix", core, tail);
             if core != current {
                 self.release(core);
             }
             if tail != current {
                 self.release(tail);
+            }
+            if spatial.scatter_amount != 1. {
+                let mixed = self.scaled(
+                    current,
+                    scattered,
+                    1. - spatial.scatter_amount,
+                    spatial.scatter_amount,
+                );
+                self.release(scattered);
+                scattered = mixed;
             }
             self.release(current);
             current = scattered;
@@ -504,9 +526,8 @@ impl Chain {
         if film::widest(spatial.halation[0]) < MIN_SIGMA {
             return current;
         }
-        let weights = film::bounce_weights();
         let mut accumulated: Option<usize> = None;
-        for (k, &weight) in weights.iter().enumerate() {
+        for (k, &weight) in film::bounce_weights().iter().enumerate() {
             let bounce = self.blur(current, spatial.halation[k]);
             accumulated = Some(match accumulated {
                 None => self.scaled(bounce, bounce, weight, 0.),
@@ -729,7 +750,7 @@ fn build_passes(
             chain.release(current);
             density
         };
-        if settings.grain && settings.grain_amount > 0. {
+        if settings.grain_active() {
             current = chain.grain(current, grain);
         }
         if !settings.negative {
@@ -1227,7 +1248,7 @@ impl Renderer {
             .film
             .as_ref()
             .zip(prepared)
-            .map(|(f, (_, pair, _))| pair.grain.spatial(geom.long_edge(), f.grain_size));
+            .map(|(f, (_, pair, _))| pair.grain.spatial_for(geom.long_edge(), f));
         let stage_sigma =
             |pick: fn(&film::Spatial, &FilmSettings) -> f32| match (&spatial, &recipe.film) {
                 (Some(s), Some(f)) => pick(s, f),
@@ -1244,7 +1265,8 @@ impl Renderer {
         // Scatter and the widest bounce are applied in series, so their halos add.
         let halation_sigma = stage_sigma(|s, f| {
             if f.halation {
-                film::widest(s.scatter_tail) * film::couplers::EXPONENTIAL_MAX_SIGMA
+                (film::widest(s.scatter_tail) * film::couplers::EXPONENTIAL_MAX_SIGMA)
+                    .max(film::widest(s.scatter_core))
                     + film::widest(s.halation[film::HALATION_BOUNCES - 1])
             } else {
                 0.
@@ -1254,7 +1276,7 @@ impl Renderer {
             .film
             .as_ref()
             .zip(grain_spatial.as_ref())
-            .filter(|(f, _)| f.grain && f.grain_amount > 0.)
+            .filter(|(f, _)| f.grain_active())
             .map_or(0., |(_, grain)| grain.margin());
         let sharpen_sigma = if recipe.sharpen > 0. {
             1.0 / geom.scale
@@ -1365,7 +1387,7 @@ impl Renderer {
             choose_tiling(width, height, margin, self.buffer_limit(), &candidates).ok_or_else(
                 || {
                     RenderError::Gpu(
-                    "Effect radius exceeds this GPU's tile memory limit. Reduce the halation size or the Halation amount."
+                    "Effect radius exceeds this GPU's tile memory limit. Reduce the grain blur, scatter size, or halation size."
                         .into(),
                 )
                 },
@@ -1619,12 +1641,18 @@ impl Renderer {
         }
         if let (Some(f), Some(pair), Some(_)) = (&r.film, pair, spatial) {
             let channels = |values| film::channels(values, pair.monochrome);
-            let grain = pair.grain.spatial(g.long_edge(), f.grain_size);
-            let scatter_strength = channels(f.scatter_strength_rgb);
+            let grain = pair.grain.spatial_for(g.long_edge(), f);
+            let native = f.halation_params.as_ref();
+            let scatter_strength = channels(native.map_or(f.scatter_strength_rgb, |_| {
+                film::SCATTER_TAIL_WEIGHT.map(|v| v as f32)
+            }));
             // The recipe's halation strength scales the per-channel strength,
             // as spektrafilm's `halation_amount` does. The default scale is one.
-            let strength = f.halation_strength / recipe::FilmSettings::default().halation_strength;
-            let halation_strength = channels(f.halation_strength_rgb).map(|v| v * strength);
+            let strength = native.map_or(f.halation_strength / 0.35, |p| p.halation_amount);
+            let halation_strength = channels(native.map_or(f.halation_strength_rgb, |_| {
+                film::halation_preset(f.film).1.map(|v| v as f32)
+            }))
+            .map(|v| v * strength);
             // The camera's metered gray exposes the film as its mid-gray. The
             // scanner correction keeps it there after the white and black
             // remap.
@@ -1651,8 +1679,16 @@ impl Renderer {
             p[17] = [
                 pair.print_normalization * print_correction,
                 pair.scan_normalization,
-                f.grain_amount,
-                f.grain_saturation,
+                if f.grain_params.is_some() {
+                    1.
+                } else {
+                    f.grain_amount
+                },
+                if f.grain_params.is_some() {
+                    1.
+                } else {
+                    f.grain_saturation
+                },
             ];
             for i in 0..3 {
                 p[18 + i][..3].copy_from_slice(&pair.rgb_to_adapted_xyz[i]);
@@ -1681,12 +1717,24 @@ impl Renderer {
                 0.,
             ];
             p[53][3] = grain.micro_sigma;
-            p[54][3] = 1.5;
+            p[54][3] = grain.usm_amount;
             p[55][0] = grain.pixel_area;
             p[34][3] = f32::from_bits(r.seed);
-            p[35][3] = f.grain_roughness;
-            p[36][3] = film::grain_clump_cell(f, g.native_width.max(g.native_height) as f32);
-            p[38][3] = f.halation_midtones;
+            p[35][3] = if f.grain_params.is_some() {
+                0.
+            } else {
+                f.grain_roughness
+            };
+            p[36][3] = if f.grain_params.is_some() {
+                1.
+            } else {
+                film::grain_clump_cell(f, g.native_width.max(g.native_height) as f32)
+            };
+            p[38][3] = if native.is_some() {
+                0.
+            } else {
+                f.halation_midtones
+            };
         }
         let grain = g.grain_transform();
         p[22] = grain[0];

@@ -1,6 +1,6 @@
 //! Stock RMS calibration and sublayer grain from spektrafilm experimental 28bf883.
 use super::profile::Profile;
-use crate::RenderError;
+use crate::{FilmSettings, GrainParams, RenderError};
 
 const APERTURE_AREA: f64 = std::f64::consts::PI * 24. * 24.;
 pub const MAX_TABLE_FLOATS: usize = 3 * 9 + super::CURVE_SAMPLES * (3 + 3 * 3);
@@ -87,6 +87,7 @@ pub struct Spatial {
     pub pixel_area: f32,
     pub blur: f32,
     pub usm_sigma: f32,
+    pub usm_amount: f32,
     pub micro_sigma: f32,
     pub micro_blur: f32,
 }
@@ -112,13 +113,27 @@ impl Spatial {
         } else {
             0.
         };
-        radius(clouds).max(radius(micro)) + radius(self.blur) + 3. * radius(self.usm_sigma)
+        radius(clouds).max(radius(micro))
+            + radius(self.blur)
+            + if self.usm_amount > 0. {
+                3. * radius(self.usm_sigma)
+            } else {
+                0.
+            }
     }
 }
 
 impl Grain {
-    /// The profile must contain the selected development and chemistry before this call.
+    #[cfg(test)]
     pub fn build(profile: &Profile) -> Result<Self, RenderError> {
+        Self::build_with_params(profile, None)
+    }
+
+    /// Apply the selected development and chemistry to the profile before this call.
+    pub fn build_with_params(
+        profile: &Profile,
+        params: Option<&GrainParams>,
+    ) -> Result<Self, RenderError> {
         let curves = profile.model_layers()?;
         let count = curves.first().map_or(0, Vec::len);
         if count == 0 || count > 3 {
@@ -126,7 +141,12 @@ impl Grain {
                 "Unsupported grain sublayer count".into(),
             ));
         }
-        let preset = Preset::for_profile(profile);
+        let mut preset = Preset::for_profile(profile);
+        if let Some(params) = params {
+            params.validate().map_err(RenderError::Invalid)?;
+            preset.rms =
+                super::channels(params.rms_granularity, profile.is_monochrome()).map(f64::from);
+        }
         let maximum: Vec<[f64; 3]> = (0..count)
             .map(|layer| {
                 std::array::from_fn(|c| curves.iter().map(|row| row[layer][c]).fold(0., f64::max))
@@ -172,7 +192,12 @@ impl Grain {
                 floor: floor[sl],
                 maximum: absolute[sl],
                 particles_per_um2: std::array::from_fn(|c| {
-                    fractions[sl][c] / (area[c] * preset.scales[sl])
+                    if area[c] > 0. {
+                        // Bound particle counts so very small RMS stays finite on the GPU.
+                        (fractions[sl][c] / (area[c] * preset.scales[sl])).min(1e12)
+                    } else {
+                        0.
+                    }
                 }),
             })
             .collect();
@@ -205,9 +230,31 @@ impl Grain {
         offset
     }
 
+    #[cfg(test)]
     pub fn spatial(&self, long_edge: f32, grain_size: f32) -> Spatial {
+        self.spatial_params(long_edge, grain_size, None)
+    }
+
+    pub fn spatial_for(&self, long_edge: f32, settings: &FilmSettings) -> Spatial {
+        self.spatial_params(
+            long_edge,
+            settings.grain_size,
+            settings.grain_params.as_ref(),
+        )
+    }
+
+    fn spatial_params(
+        &self,
+        long_edge: f32,
+        grain_size: f32,
+        params: Option<&GrainParams>,
+    ) -> Spatial {
         let pixel_um = 35_000. / long_edge.max(1.) as f64;
-        let size = grain_size as f64;
+        let size = if params.is_some() {
+            1.
+        } else {
+            grain_size as f64
+        };
         let pixel_area = (pixel_um / size).powi(2);
         Spatial {
             dye_clouds: self
@@ -215,14 +262,19 @@ impl Grain {
                 .iter()
                 .map(|layer| {
                     std::array::from_fn(|c| {
-                        (2. * (layer.maximum[c] / (pixel_area * layer.particles_per_um2[c])).sqrt())
-                            as f32
+                        if layer.particles_per_um2[c] > 0. {
+                            (2. * (layer.maximum[c] / (pixel_area * layer.particles_per_um2[c]))
+                                .sqrt()) as f32
+                        } else {
+                            0.
+                        }
                     })
                 })
                 .collect(),
             pixel_area: pixel_area as f32,
-            blur: 0.89 * grain_size,
-            usm_sigma: 0.7 * grain_size,
+            blur: params.map_or(0.89 * grain_size, |p| p.blur),
+            usm_sigma: 0.7 * size as f32,
+            usm_amount: params.map_or(1.5, |p| p.mult_usm_amount),
             micro_sigma: (0.03 / pixel_um) as f32,
             micro_blur: (0.2 / pixel_um) as f32,
         }

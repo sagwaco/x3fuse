@@ -1,4 +1,5 @@
 import { Tooltip } from './tooltip'
+import { cn } from '../../lib/cn'
 import { Info } from 'lucide-react'
 import { Switch } from './switch'
 
@@ -68,7 +69,15 @@ export function Divider(): React.JSX.Element {
   return <div className="h-px bg-white/10" />
 }
 
-export function HelpTooltip({ label, text }: { label: string; text: string }): React.JSX.Element {
+export function HelpTooltip({
+  label,
+  text,
+  className
+}: {
+  label: string
+  text: string
+  className?: string
+}): React.JSX.Element {
   return (
     <Tooltip
       text={text}
@@ -78,7 +87,11 @@ export function HelpTooltip({ label, text }: { label: string; text: string }): R
       <button
         type="button"
         aria-label={label}
-        className="rounded text-neutral-400 hover:text-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50"
+        // The icon only shows help, so it keeps the default pointer.
+        className={cn(
+          'cursor-default rounded text-neutral-400 hover:text-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50',
+          className
+        )}
       >
         <Info className="h-3.5 w-3.5" aria-hidden="true" />
       </button>

@@ -27,8 +27,9 @@ import { FileFilmstrip } from './FileFilmstrip'
 import { ColorScope } from './ColorScope'
 import { ScopeMenu } from './ScopeMenu'
 import { BatchProgress } from './BatchProgress'
-import { EditorControls } from './EditorControls'
+import { EditorControls, EmulsionControls } from './EditorControls'
 import { LookPicker } from './LookPicker'
+import { PhotoInfo } from './PhotoInfo'
 import { CropControls } from './CropControls'
 import { CropPreview } from './CropPreview'
 import { FULL, matchAspect } from '../lib/cropGeometry'
@@ -39,7 +40,7 @@ import { FilterBar } from './FilterBar'
 import { cn } from '../lib/cn'
 import { withShortcut } from '../lib/shortcut'
 
-type SidebarPage = 'edit' | 'film' | 'paper'
+type SidebarPage = 'edit' | 'emulsion' | 'paper'
 
 export function EditorScreen(): React.JSX.Element {
   const editor = useEditorStore()
@@ -53,33 +54,35 @@ export function EditorScreen(): React.JSX.Element {
   const [sidebarPage, setSidebarPage] = useState<SidebarPage>('edit')
   const sidebarBody = useRef<HTMLDivElement>(null)
   const sidebarBack = useRef<HTMLButtonElement>(null)
-  const sidebarOrigin = useRef<SidebarPage>('edit')
-  const sidebarScroll = useRef(0)
-  const navigateSidebar = useCallback((page: SidebarPage): void => {
-    setPicking(false)
-    if (page !== 'edit') {
-      if (sidebarOrigin.current === 'edit')
-        sidebarScroll.current = sidebarBody.current?.scrollTop ?? 0
-      sidebarOrigin.current = page
-    }
-    setSidebarPage(page)
-  }, [])
+  const previousSidebar = useRef<SidebarPage>('edit')
+  const sidebarScroll = useRef<Record<SidebarPage, number>>({ edit: 0, emulsion: 0, paper: 0 })
+  const navigateSidebar = useCallback(
+    (page: SidebarPage): void => {
+      setPicking(false)
+      sidebarScroll.current[sidebarPage] = sidebarBody.current?.scrollTop ?? 0
+      setSidebarPage(page)
+    },
+    [sidebarPage]
+  )
   useLayoutEffect(() => {
     const body = sidebarBody.current
-    if (!body) return
-    body.scrollTop = sidebarPage === 'edit' ? sidebarScroll.current : 0
-    if (sidebarPage !== 'edit') sidebarBack.current?.focus()
-    else if (sidebarOrigin.current !== 'edit') {
-      const origin =
-        body.querySelector<HTMLElement>(`[data-sidebar-page="${sidebarOrigin.current}"]`) ??
-        body.querySelector<HTMLElement>('[data-sidebar-page="film"]')
-      origin?.focus({ preventScroll: true })
-      sidebarOrigin.current = 'edit'
-    } else return
+    const previous = previousSidebar.current
+    previousSidebar.current = sidebarPage
+    if (!body || previous === sidebarPage) return
+    const returning = sidebarPage === 'edit' || previous === 'paper'
+    body.scrollTop = returning ? sidebarScroll.current[sidebarPage] : 0
+    if (returning) {
+      const origin = body.querySelector<HTMLElement>(
+        `[data-sidebar-page="${sidebarPage === 'edit' ? 'emulsion' : previous}"]`
+      )
+      const fallback = body.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')
+      const focus = origin ?? fallback ?? sidebarBack.current
+      focus?.focus({ preventScroll: true })
+    } else sidebarBack.current?.focus()
     if (!body.animate || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return
     const animation = body.animate(
       [
-        { opacity: 0, transform: `translateX(${sidebarPage === 'edit' ? -20 : 20}px)` },
+        { opacity: 0, transform: `translateX(${returning ? -20 : 20}px)` },
         { opacity: 1, transform: 'translateX(0)' }
       ],
       { duration: 220, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' }
@@ -93,7 +96,7 @@ export function EditorScreen(): React.JSX.Element {
   const currentFile = active ?? file
   const doc = editor.session ? editor.documents[editor.session.path] : undefined
   useEffect(() => {
-    if (!doc?.recipe.film && sidebarPage === 'paper') navigateSidebar('edit')
+    if (!doc?.recipe.film && sidebarPage === 'paper') navigateSidebar('emulsion')
   }, [doc?.recipe.film, sidebarPage, navigateSidebar])
   // The photo's geometry when crop mode opened; Cancel puts it back.
   const entry = useRef<{ path: string; geometry: Partial<EditRecipe> }>()
@@ -161,8 +164,9 @@ export function EditorScreen(): React.JSX.Element {
   }, [active, busy, editor])
   useEffect(() => {
     setPicking(false)
-    sidebarOrigin.current = 'edit'
-    sidebarScroll.current = 0
+    previousSidebar.current = 'edit'
+    sidebarScroll.current = { edit: 0, emulsion: 0, paper: 0 }
+    if (sidebarBody.current) sidebarBody.current.scrollTop = 0
     setSidebarPage('edit')
   }, [editor.session?.sessionId])
   useEffect(() => {
@@ -174,7 +178,7 @@ export function EditorScreen(): React.JSX.Element {
       if (event.key !== 'Escape') return
       event.preventDefault()
       event.stopPropagation()
-      if (!event.repeat) navigateSidebar('edit')
+      if (!event.repeat) navigateSidebar(sidebarPage === 'paper' ? 'emulsion' : 'edit')
     }
     window.addEventListener('keydown', back, true)
     return () => window.removeEventListener('keydown', back, true)
@@ -347,15 +351,8 @@ export function EditorScreen(): React.JSX.Element {
         className="window-toolbar flex h-12 shrink-0 items-center justify-between gap-2 border-b border-white/10 px-3"
       >
         <div className="flex min-w-0 items-center gap-2">
-          <span
-            className="max-w-40 truncate font-mono text-xs uppercase tracking-[0.12em] text-neutral-400"
-            title={currentFile?.fileName}
-          >
-            {currentFile?.fileName}
-          </span>
           {!swap.shown && (
             <div data-swap className="contents" {...inert}>
-              <div role="separator" aria-orientation="vertical" className="h-5 w-px bg-white/15" />
               <FilterButton />
               <CullError />
               <div role="separator" aria-orientation="vertical" className="h-5 w-px bg-white/15" />
@@ -600,11 +597,13 @@ export function EditorScreen(): React.JSX.Element {
         {/* Crop mode keeps the panel open for its controls. */}
         {sidebarShown && (
           <ResizablePanel kind="editor">
-            <div className="z-10 flex h-8 shrink-0 items-center justify-between border-b border-white/10 px-3 font-mono text-xs uppercase tracking-[0.12em] text-neutral-400">
+            <div className="z-10 flex h-8 shrink-0 items-center justify-between gap-2 border-b border-white/10 px-3 font-mono text-xs uppercase tracking-[0.12em] text-neutral-400">
               {sidebarPage === 'edit' ? (
                 <>
-                  <span className="ml-0.5">{t('editor.adjustments')}</span>
-                  <div className="flex min-w-0 items-center gap-2">
+                  <div className="ml-0.5 flex min-w-0 items-center gap-1.5">
+                    {currentFile && <PhotoInfo file={currentFile} />}
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
                     {scopeHidden && <ColorScope {...scopeProps} compact />}
                     <ScopeMenu />
                   </div>
@@ -617,13 +616,17 @@ export function EditorScreen(): React.JSX.Element {
                     variant="ghost"
                     size="icon"
                     className="-ml-1 h-6 w-6"
-                    aria-label={t('editor.backToAdjustments')}
-                    title={t('editor.backToAdjustments')}
-                    onClick={() => navigateSidebar('edit')}
+                    aria-label={t(
+                      sidebarPage === 'paper' ? 'editor.backToEmulsion' : 'editor.backToAdjustments'
+                    )}
+                    title={t(
+                      sidebarPage === 'paper' ? 'editor.backToEmulsion' : 'editor.backToAdjustments'
+                    )}
+                    onClick={() => navigateSidebar(sidebarPage === 'paper' ? 'emulsion' : 'edit')}
                   >
                     <ArrowLeft className="h-4 w-4" aria-hidden="true" />
                   </Button>
-                  <h2>{t(sidebarPage === 'film' ? 'editor.filmStock' : 'editor.paperStock')}</h2>
+                  <h2>{t(sidebarPage === 'emulsion' ? 'editor.look' : 'editor.paperStock')}</h2>
                 </div>
               )}
             </div>
@@ -631,13 +634,27 @@ export function EditorScreen(): React.JSX.Element {
               ref={sidebarBody}
               className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto pb-3"
             >
-              {sidebarPage !== 'edit' && doc && (
+              {sidebarPage === 'paper' && doc && (
                 <fieldset
                   disabled={unavailable || editor.before || !!cloudFile}
                   className="contents"
                 >
-                  <LookPicker kind={sidebarPage} recipe={doc.recipe} gallery />
+                  <LookPicker kind="paper" recipe={doc.recipe} gallery />
                 </fieldset>
+              )}
+              {sidebarPage !== 'edit' && doc && (
+                <div hidden={sidebarPage !== 'emulsion'}>
+                  <fieldset
+                    disabled={unavailable || editor.before || !!cloudFile}
+                    className="contents"
+                  >
+                    <EmulsionControls
+                      key={editor.session?.sessionId}
+                      recipe={doc.recipe}
+                      onNavigate={navigateSidebar}
+                    />
+                  </fieldset>
+                </div>
               )}
               <div hidden={sidebarPage !== 'edit'}>
                 <div ref={scopeBox} className="p-3">

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { DEFAULT_FILM, defaultRecipe } from '@shared/editor'
 import { displayPreviewUrl, previewUrl } from '@shared/preview'
@@ -77,24 +77,25 @@ vi.mock('../src/renderer/src/components/ColorScope', () => ({
 vi.mock('../src/renderer/src/components/EditorControls', async () => {
   const { useContext } = await import('react')
   const { DevelopingCloud } = await import('../src/renderer/src/lib/developingCloud')
+  const { EmulsionControls } = await vi.importActual<
+    typeof import('../src/renderer/src/components/EditorControls')
+  >('../src/renderer/src/components/EditorControls')
   return {
+    EmulsionControls,
     EditorControls: function MockEditorControls({
       setPicking,
       onNavigate
     }: {
       setPicking: (value: boolean) => void
-      onNavigate: (page: 'film' | 'paper') => void
+      onNavigate: (page: 'emulsion') => void
     }) {
       return (
         <>
           <button data-cloud={useContext(DevelopingCloud)} onClick={() => setPicking(true)}>
             Pick white balance
           </button>
-          <button data-sidebar-page="film" onClick={() => onNavigate('film')}>
-            Choose film
-          </button>
-          <button data-sidebar-page="paper" onClick={() => onNavigate('paper')}>
-            Choose paper
+          <button data-sidebar-page="emulsion" onClick={() => onNavigate('emulsion')}>
+            Choose emulsion
           </button>
         </>
       )
@@ -139,6 +140,14 @@ const frame = {
 }
 
 beforeEach(() => {
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    }
+  )
   editor.setState({ ...initialEditor, loading: true, open: vi.fn(async () => {}) }, true)
   queue.setState({
     files: [file],
@@ -154,6 +163,7 @@ afterEach(() => {
   editor.setState(initialEditor, true)
   queue.setState(initialQueue, true)
   useSettingsStore.setState(initialSettings, true)
+  vi.unstubAllGlobals()
 })
 
 it('shows the saved thumbnail during RAW preparation and enables editing only for the live frame', () => {
@@ -575,6 +585,32 @@ it('puts a divider before Done, then the Export menu and the panel toggle', asyn
   expect(view.container.querySelector('[data-crop-controls]')).not.toBeNull()
 })
 
+it('names the photo in the panel header and shows its capture details from the info icon', async () => {
+  vi.stubGlobal('PointerEvent', MouseEvent)
+  const exif = [
+    { label: 'Camera', value: 'SIGMA sd Quattro H' },
+    { label: 'Shutter', value: '1/250' },
+    { label: 'Aperture', value: 'f/2.8' },
+    { label: 'Exposure comp.', value: '-1/3' },
+    { label: 'Captured', value: '2024-05-12 14:22:01' }
+  ]
+  queue.setState({ files: [{ ...file, exif }] })
+  editor.setState({ session, documents: { [file.path]: doc }, loading: false, preview: frame })
+  const view = render(<EditorScreen />)
+  // The toolbar starts at the filter button; the name moved to the panel header.
+  expect(screen.getByRole('button', { name: t('filter.toggle') }).previousElementSibling).toBeNull()
+  const header = view.container.querySelector('aside')!.firstElementChild as HTMLElement
+  expect(within(header).getByText(file.fileName)).toBeTruthy()
+  expect(within(header).queryByText(t('editor.adjustments'))).toBeNull()
+  fireEvent.pointerMove(within(header).getByRole('button', { name: t('editor.photoInfo') }), {
+    pointerType: 'mouse'
+  })
+  const card = (await screen.findByRole('tooltip')).textContent
+  for (const text of ['SIGMA sd Quattro H', '1/250', 'f/2.8', '-1/3 EV', '2024-05-12', 'X3F'])
+    expect(card).toContain(text)
+  expect(card).not.toContain('14:22')
+})
+
 it('inverts a negative print on request and shows a tiny scope while the scope is scrolled away', () => {
   let report: (entries: Array<{ isIntersecting: boolean }>) => void = () => {}
   vi.stubGlobal(
@@ -612,7 +648,13 @@ it('inverts a negative print on request and shows a tiny scope while the scope i
   vi.unstubAllGlobals()
 })
 
-it('navigates stock and darkroom pages in the sidebar and returns focus without closing the editor', () => {
+function openPaper(): void {
+  fireEvent.click(screen.getByRole('button', { name: 'Choose emulsion' }))
+  fireEvent.click(screen.getByRole('tab', { name: t('editor.darkroom') }))
+  fireEvent.click(screen.getByText(t('editor.paperStock'), { selector: '[data-sidebar-page] *' }))
+}
+
+it('returns through the Emulsion stack with focus, tab and scroll restored', () => {
   const close = vi.fn(async () => true)
   editor.setState({
     session,
@@ -625,7 +667,7 @@ it('navigates stock and darkroom pages in the sidebar and returns focus without 
   const view = render(<EditorScreen />)
   const body = view.container.querySelector('aside .overflow-y-auto')!
   body.scrollTop = 120
-  fireEvent.click(screen.getByRole('button', { name: 'Choose film' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Choose emulsion' }))
   expect(screen.queryByRole('dialog')).toBeNull()
   expect(screen.queryByRole('button', { name: 'Pick white balance' })).toBeNull()
   expect(screen.getByRole('heading', { name: t('editor.cameraMatching') })).toBeTruthy()
@@ -633,15 +675,35 @@ it('navigates stock and darkroom pages in the sidebar and returns focus without 
   expect(document.activeElement).toBe(back)
   expect(back.closest('.overflow-y-auto')).toBeNull()
   expect(body.scrollTop).toBe(0)
+  fireEvent.click(screen.getByRole('tab', { name: t('editor.darkroom') }))
+  body.scrollTop = 64
+  const paper = screen
+    .getByText(t('editor.paperStock'), { selector: '[data-sidebar-page] *' })
+    .closest('button')!
+  fireEvent.click(paper)
+  expect(screen.getByRole('heading', { name: t('editor.paperStock') })).toBeTruthy()
+  expect(body.scrollTop).toBe(0)
   fireEvent.keyDown(document.body, { key: 'Escape' })
   expect(close).not.toHaveBeenCalled()
-  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Choose film' }))
-  expect(body.scrollTop).toBe(120)
-  fireEvent.click(screen.getByRole('button', { name: 'Choose paper' }))
-  expect(screen.getByRole('heading', { name: t('editor.paperStock') })).toBeTruthy()
+  expect(
+    screen.getByRole('tab', { name: t('editor.darkroom') }).getAttribute('aria-selected')
+  ).toBe('true')
+  expect(document.activeElement).toBe(paper)
+  expect(body.scrollTop).toBe(64)
+  fireEvent.click(paper)
+  fireEvent.click(screen.getByRole('button', { name: t('editor.backToEmulsion') }))
+  expect(document.activeElement).toBe(paper)
   fireEvent.click(screen.getByRole('button', { name: t('editor.backToAdjustments') }))
   expect(screen.getByRole('button', { name: 'Pick white balance' })).toBeTruthy()
-  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Choose paper' }))
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Choose emulsion' }))
+  expect(body.scrollTop).toBe(120)
+  fireEvent.click(screen.getByRole('button', { name: 'Choose emulsion' }))
+  expect(body.scrollTop).toBe(0)
+  expect(
+    screen.getByRole('tab', { name: t('editor.filmStock') }).getAttribute('aria-selected')
+  ).toBe('true')
+  fireEvent.keyDown(document.body, { key: 'Escape' })
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Choose emulsion' }))
   fireEvent.keyDown(document.body, { key: 'Escape', repeat: true })
   expect(close).not.toHaveBeenCalled()
 })
@@ -655,22 +717,35 @@ it('returns to adjustments when crop opens or the photo changes', () => {
     renderThumbnail: vi.fn(async () => null)
   })
   render(<EditorScreen />)
-  fireEvent.click(screen.getByRole('button', { name: 'Choose film' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Choose emulsion' }))
   act(() => editor.setState({ cropping: true }))
   expect(screen.queryByRole('button', { name: t('editor.backToAdjustments') })).toBeNull()
   act(() => editor.setState({ cropping: false }))
-  fireEvent.click(screen.getByRole('button', { name: 'Choose paper' }))
+  openPaper()
   act(() => editor.setState({ session: { ...session, sessionId: 'new-session' } }))
+  expect(screen.queryByRole('button', { name: t('editor.backToEmulsion') })).toBeNull()
   expect(screen.queryByRole('button', { name: t('editor.backToAdjustments') })).toBeNull()
 })
 
-it('returns to adjustments when undo removes the film from the paper page', () => {
-  editor.setState({ session, documents: { [file.path]: doc }, loading: false, preview: frame })
+it('returns to Emulsion film stocks when undo removes the film from the paper page', () => {
+  editor.setState({
+    session,
+    documents: { [file.path]: doc },
+    loading: false,
+    preview: frame,
+    renderThumbnail: vi.fn(async () => null)
+  })
   render(<EditorScreen />)
-  fireEvent.click(screen.getByRole('button', { name: 'Choose paper' }))
+  openPaper()
   act(() =>
     editor.setState({ documents: { [file.path]: { ...doc, recipe: { ...recipe, film: null } } } })
   )
   expect(screen.queryByRole('heading', { name: t('editor.paperStock') })).toBeNull()
-  expect(screen.getByRole('button', { name: 'Choose film' })).toBeTruthy()
+  expect(
+    screen.getByRole('tab', { name: t('editor.filmStock') }).getAttribute('aria-selected')
+  ).toBe('true')
+  expect(
+    (screen.getByRole('tab', { name: t('editor.darkroom') }) as HTMLButtonElement).disabled
+  ).toBe(true)
+  expect(document.activeElement).toBe(screen.getByRole('tab', { name: t('editor.filmStock') }))
 })

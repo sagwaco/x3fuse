@@ -232,7 +232,8 @@ describe('renderer smoke', () => {
         activeId: 'a'
       })
     )
-    expect(viewControls.previousElementSibling).toBe(screen.getByText('1 file'))
+    // The toolbar shows no file count.
+    expect(viewControls.previousElementSibling).toBeNull()
     for (const title of [
       'List view',
       'Grid view',

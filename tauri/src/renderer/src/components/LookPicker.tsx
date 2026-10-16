@@ -3,6 +3,7 @@ import { ChevronRight } from 'lucide-react'
 import {
   DEFAULT_FILM,
   FILM_MONOCHROME_FILTERS,
+  filmGrainDefaults,
   filmHalationDefaults,
   type EditRecipe
 } from '@shared/editor'
@@ -152,7 +153,16 @@ export function LookPicker({
                 ...base,
                 ...(recipe.film && base.film === stock.index
                   ? {}
-                  : filmHalationDefaults(stock.index)),
+                  : {
+                      ...(!base.halationParams && filmHalationDefaults(stock.index)),
+                      ...(base.grainParams && {
+                        grainParams: {
+                          ...base.grainParams,
+                          rmsBase: undefined,
+                          rmsGranularity: filmGrainDefaults(stock.index).rmsGranularity
+                        }
+                      })
+                    }),
                 film: stock.index,
                 paper: paper(stock),
                 negative: stock.isPositive
@@ -174,10 +184,18 @@ export function LookPicker({
               ...(!aerochrome && { temperature: 1170, tint: -263 }),
               film: {
                 ...base,
-                ...(!aerochrome && { grain: true, grainAmount: 2, grainSize: 1.5 }),
                 ...(recipe.film && base.film === AEROCHROME_FILM.index
                   ? {}
-                  : filmHalationDefaults(AEROCHROME_FILM.index)),
+                  : {
+                      ...(!base.halationParams && filmHalationDefaults(AEROCHROME_FILM.index)),
+                      ...(base.grainParams && {
+                        grainParams: {
+                          ...base.grainParams,
+                          rmsBase: undefined,
+                          rmsGranularity: filmGrainDefaults(AEROCHROME_FILM.index).rmsGranularity
+                        }
+                      })
+                    }),
                 film: AEROCHROME_FILM.index,
                 paper: paper(AEROCHROME_FILM),
                 negative: true
@@ -218,7 +236,9 @@ export function LookPicker({
             ? cameraProfile
             : 'Standard'
   const [thumbnails, forget] = useThumbnails(gallery ? looks : [])
-  const caption = t(kind === 'film' ? 'editor.filmStock' : 'editor.paperStock')
+  const caption = t(
+    kind === 'film' ? (gallery ? 'editor.filmStock' : 'editor.look') : 'editor.paperStock'
+  )
   if (gallery)
     return (
       <div role="group" aria-label={caption} className="grid grid-cols-3 gap-x-2 gap-y-3 p-4">
@@ -276,7 +296,7 @@ export function LookPicker({
       {/* The button's ::after covers the box, so all of it opens the picker. */}
       <button
         type="button"
-        data-sidebar-page={kind}
+        data-sidebar-page={kind === 'film' ? 'emulsion' : 'paper'}
         onClick={onOpen}
         className="min-w-0 flex-1 text-left after:absolute after:inset-0 after:rounded-xl focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-white/50"
       >

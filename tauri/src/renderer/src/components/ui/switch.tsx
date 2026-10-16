@@ -29,7 +29,7 @@ export function Switch({
         const release = (): void => {
           window.removeEventListener('pointerup', release)
           window.removeEventListener('pointercancel', release)
-          setTimeout(() => setPressed(false), 200)
+          setTimeout(() => setPressed(false), 100)
         }
         window.addEventListener('pointerup', release)
         window.addEventListener('pointercancel', release)

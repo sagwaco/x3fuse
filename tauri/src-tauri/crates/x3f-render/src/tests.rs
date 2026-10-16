@@ -143,6 +143,293 @@ fn recipes_validate_and_round_trip() {
 }
 
 #[test]
+fn native_film_parameters_preserve_legacy_recipes_and_validate() {
+    let defaults = FilmSettings::default();
+    assert!(defaults.grain && !defaults.halation);
+    assert_eq!(defaults.grain_params, Some(GrainParams::default()));
+    assert_eq!(defaults.halation_params, Some(HalationParams::default()));
+    for json in [r#"{}"#, r#"{"grain":false,"halation":true,"grainSize":2}"#] {
+        let legacy: FilmSettings = serde_json::from_str(json).unwrap();
+        assert!(legacy.grain_params.is_none() && legacy.halation_params.is_none());
+        let saved = serde_json::to_string(&legacy).unwrap();
+        assert_eq!(legacy, serde_json::from_str(&saved).unwrap());
+    }
+    let native: FilmSettings = serde_json::from_str(
+        r#"{"grain":false,"halation":false,"grainParams":{},"halationParams":{}}"#,
+    )
+    .unwrap();
+    assert!(!native.grain && !native.halation);
+    assert_eq!(native.grain_params, defaults.grain_params);
+    assert_eq!(native.halation_params, defaults.halation_params);
+    for (group, field, high) in [
+        ("grainParams", "blur", 4.),
+        ("grainParams", "multUsmAmount", 4.),
+        ("halationParams", "scatterAmount", 1.),
+        ("halationParams", "scatterSpatialScale", 4.),
+        ("halationParams", "halationAmount", 4.),
+        ("halationParams", "halationSpatialScale", 4.),
+    ] {
+        for (value, valid) in [(0., true), (high, true), (-0.1, false), (high + 0.1, false)] {
+            let mut json = serde_json::to_value(&defaults).unwrap();
+            json[group][field] = value.into();
+            let film: FilmSettings = serde_json::from_value(json).unwrap();
+            assert_eq!(film.validate().is_ok(), valid, "{field}: {value}");
+        }
+    }
+    for value in [-1., 100.1, f32::NAN, f32::INFINITY] {
+        assert!(GrainParams {
+            rms_granularity: [value; 3],
+            ..Default::default()
+        }
+        .validate()
+        .is_err());
+    }
+    for json in [
+        r#"{"grainParams":{"microSublayers":2}}"#,
+        r#"{"halationParams":{"boostEv":1}}"#,
+    ] {
+        assert!(serde_json::from_str::<FilmSettings>(json).is_err());
+    }
+    assert_eq!(
+        defaults,
+        serde_json::from_str(&serde_json::to_string(&defaults).unwrap()).unwrap()
+    );
+}
+
+#[test]
+fn native_stock_baselines_and_zero_effects_are_preserved() {
+    for index in 0..film::profile::FILM_COUNT {
+        let profile = film::profile::load(index).unwrap();
+        let stock = film::grain::Preset::for_profile(&profile);
+        let stock_defaults = GrainParams {
+            rms_granularity: stock.rms.map(|v| v as f32),
+            ..Default::default()
+        };
+        stock_defaults.validate().unwrap();
+        HalationParams::default().validate().unwrap();
+        let (sigma, strength) = film::halation_preset(index as u32);
+        assert_eq!(
+            sigma,
+            [if profile.info.use_kind == "cine" {
+                50.
+            } else {
+                65.
+            }; 3]
+        );
+        assert_eq!(
+            strength,
+            if profile.info.antihalation == "weak" {
+                [0.08, 0.02, 0.]
+            } else {
+                [0.015, 0.005, 0.]
+            }
+        );
+        let settings = FilmSettings {
+            film: index as u32,
+            halation: true,
+            grain_params: Some(stock_defaults),
+            ..Default::default()
+        };
+        let grain = film::grain::Grain::build_with_params(&profile, settings.grain_params.as_ref())
+            .unwrap();
+        assert_eq!(grain.preset.floor, stock.floor);
+        assert_eq!(grain.preset.uniformity, stock.uniformity);
+        assert_eq!(grain.preset.scales, stock.scales);
+        assert_eq!(
+            grain.preset.rms,
+            film::channels(stock.rms, profile.is_monochrome())
+        );
+        let mut table = Vec::new();
+        grain.append_to(&mut table);
+        assert!(
+            table.iter().all(|v| v.is_finite()),
+            "{} native grain table",
+            profile.info.stock
+        );
+        let grain_spatial = grain.spatial_for(7000., &settings);
+        assert!(grain_spatial
+            .dye_clouds
+            .iter()
+            .flatten()
+            .all(|v| v.is_finite()));
+        let spatial = film::Spatial::new(&settings, 3500., profile.is_monochrome());
+        assert_eq!(spatial.halation[0], [sigma[0] as f32 / 10.; 3]);
+    }
+    let settings = FilmSettings {
+        halation: true,
+        grain_params: Some(GrainParams {
+            mult_usm_amount: 0.,
+            ..Default::default()
+        }),
+        halation_params: Some(HalationParams {
+            scatter_amount: 0.,
+            halation_amount: 0.,
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let grain = film::grain::Grain::build_with_params(
+        &film::profile::load(2).unwrap(),
+        settings.grain_params.as_ref(),
+    )
+    .unwrap();
+    let spatial = film::Spatial::new(&settings, 3500., false);
+    let mut chain = Chain::new([[0.; 4]; PARAMETER_SLOTS]);
+    let raw = chain.alloc();
+    assert_eq!(chain.halation(raw, &spatial), raw);
+    assert!(chain.passes.is_empty());
+    let (passes, _) = build_passes(
+        [[0.; 4]; PARAMETER_SLOTS],
+        Some((&settings, &spatial, &grain.spatial_for(3500., &settings))),
+        0.,
+    );
+    assert!(passes
+        .iter()
+        .all(|p| !matches!(p.entry, "grain_usm" | "grain_ratio")));
+}
+
+#[test]
+#[ignore = "requires hardware GPU"]
+fn gpu_native_film_controls() {
+    let renderer = Renderer::new().unwrap();
+    let cancel = AtomicBool::new(false);
+    let source = split_scene(1024, 24);
+    let base = FilmSettings {
+        halation: true,
+        couplers: 0.,
+        ..Default::default()
+    };
+    let render = |film: FilmSettings, tiling| {
+        renderer
+            .render_tiled(
+                &source,
+                &EditRecipe {
+                    film: Some(film),
+                    seed: 17,
+                    ..Default::default()
+                },
+                RenderOptions::default(),
+                &cancel,
+                tiling,
+            )
+            .unwrap()
+            .data
+    };
+    let reference = render(base.clone(), (1024, 0));
+    let mut legacy_changes = base.clone();
+    legacy_changes.grain_size = 4.;
+    legacy_changes.grain_amount = 0.;
+    legacy_changes.grain_roughness = 1.;
+    legacy_changes.grain_saturation = 0.;
+    legacy_changes.halation_strength = 0.;
+    legacy_changes.halation_radius = 0.006;
+    legacy_changes.halation_midtones = 1.;
+    legacy_changes.scatter_size_rgb = [0.; 3];
+    legacy_changes.scatter_strength_rgb = [0.; 3];
+    legacy_changes.halation_size_rgb = [0.; 3];
+    legacy_changes.halation_strength_rgb = [0.; 3];
+    assert_eq!(
+        reference,
+        render(legacy_changes, (1024, 0)),
+        "Native parameters must ignore legacy macros"
+    );
+    let edits: [(&str, fn(&mut FilmSettings)); 7] = [
+        ("RMS", |f| {
+            f.grain_params.as_mut().unwrap().rms_granularity = [16., 12., 8.]
+        }),
+        ("blur", |f| f.grain_params.as_mut().unwrap().blur = 0.),
+        ("USM", |f| {
+            f.grain_params.as_mut().unwrap().mult_usm_amount = 0.
+        }),
+        ("scatter amount", |f| {
+            f.halation_params.as_mut().unwrap().scatter_amount = 0.
+        }),
+        ("scatter scale", |f| {
+            f.halation_params.as_mut().unwrap().scatter_spatial_scale = 4.
+        }),
+        ("halation amount", |f| {
+            f.halation_params.as_mut().unwrap().halation_amount = 4.
+        }),
+        ("halation scale", |f| {
+            f.halation_params.as_mut().unwrap().halation_spatial_scale = 4.
+        }),
+    ];
+    for (name, edit) in edits {
+        let mut settings = base.clone();
+        edit(&mut settings);
+        assert_ne!(
+            reference,
+            render(settings, (1024, 0)),
+            "{name} must change pixels with a warm cache"
+        );
+        assert_eq!(
+            reference,
+            render(base.clone(), (1024, 0)),
+            "{name} must not leave stale tables"
+        );
+    }
+    let disabled = FilmSettings {
+        grain: false,
+        halation: false,
+        ..base.clone()
+    };
+    let clean = render(disabled.clone(), (1024, 0));
+    let mut changed = disabled;
+    for (_, edit) in edits {
+        edit(&mut changed);
+    }
+    assert_eq!(
+        clean,
+        render(changed, (1024, 0)),
+        "Disabled stages must be identity"
+    );
+    let strong = FilmSettings {
+        grain_params: Some(GrainParams {
+            rms_granularity: [14., 10., 6.],
+            blur: 4.,
+            mult_usm_amount: 4.,
+            ..Default::default()
+        }),
+        halation_params: Some(HalationParams {
+            scatter_amount: 0.5,
+            scatter_spatial_scale: 4.,
+            halation_amount: 4.,
+            halation_spatial_scale: 4.,
+        }),
+        ..base.clone()
+    };
+    assert_eq!(
+        render(strong.clone(), (1024, 0)),
+        render(strong, (128, 0)),
+        "Native stages must not seam tiles"
+    );
+    let bw = FilmSettings {
+        film: 20,
+        paper: 8,
+        grain_params: Some(GrainParams {
+            rms_granularity: [14., 1., 100.],
+            ..Default::default()
+        }),
+        ..base.clone()
+    };
+    let mut equal = bw.clone();
+    equal.grain_params.as_mut().unwrap().rms_granularity = [14.; 3];
+    assert_eq!(
+        render(bw, (1024, 0)),
+        render(equal, (1024, 0)),
+        "B&W grain uses the first emulsion channel"
+    );
+    let zero = FilmSettings {
+        grain_params: Some(GrainParams {
+            rms_granularity: [0., f32::MIN_POSITIVE, 100.],
+            ..Default::default()
+        }),
+        ..base
+    };
+    assert!(!render(zero, (1024, 0)).is_empty());
+}
+
+#[test]
 #[ignore = "requires a hardware GPU; run with --ignored"]
 fn gpu_grain_intensity_has_headroom() {
     let renderer = Renderer::new().unwrap();
@@ -158,6 +445,7 @@ fn gpu_grain_intensity_has_headroom() {
                         film: 15,
                         negative: true,
                         grain_amount: amount,
+                        grain_params: None,
                         grain_size: 1.5,
                         halation: false,
                         couplers: 0.,
@@ -303,6 +591,9 @@ fn geometry_obeys_exif_crop_rotation_and_native_regions() {
 }
 #[test]
 fn bundled_spektrafilm_assets_cover_every_stock() {
+    let grain_defaults: std::collections::HashMap<String, [f64; 3]> =
+        serde_json::from_str(include_str!("../../../../src/shared/film-grain.json")).unwrap();
+    assert_eq!(grain_defaults.len(), film::profile::FILM_COUNT);
     let stocks: Vec<serde_json::Value> = serde_json::from_str(STOCKS_JSON).unwrap();
     assert_eq!(stocks.len(), film::profile::PROFILE_JSON.len());
     assert_eq!(
@@ -341,6 +632,12 @@ fn bundled_spektrafilm_assets_cover_every_stock() {
         let monochrome = stock["monochrome"].as_bool().unwrap_or(false);
         assert_eq!(profile.is_monochrome(), monochrome, "{index} channel model");
         if index < film::profile::FILM_COUNT {
+            assert_eq!(
+                grain_defaults[&profile.info.stock],
+                film::grain::Preset::for_profile(&profile).rms,
+                "{} grain RMS",
+                profile.info.stock
+            );
             assert!(matches!(
                 profile.info.reference_illuminant.as_str(),
                 "D50" | "D55" | "T"
@@ -530,7 +827,7 @@ fn prepared_pairs_are_keyed_on_every_setting_they_read() {
         f(&mut s);
         s
     };
-    let cases: [(&str, FilmSettings); 24] = [
+    let cases = [
         ("film", variant(|s| s.film = 7)),
         ("paper", variant(|s| s.paper = 5)),
         ("negative", variant(|s| s.negative = true)),
@@ -543,6 +840,36 @@ fn prepared_pairs_are_keyed_on_every_setting_they_read() {
         ("grain_amount", variant(|s| s.grain_amount = 0.5)),
         ("grain_roughness", variant(|s| s.grain_roughness = 0.5)),
         ("grain_saturation", variant(|s| s.grain_saturation = 0.25)),
+        ("grain_params", variant(|s| s.grain_params = None)),
+        (
+            "native_grain_rms",
+            variant(|s| s.grain_params.as_mut().unwrap().rms_granularity = [10., 5., 2.]),
+        ),
+        (
+            "native_grain_blur",
+            variant(|s| s.grain_params.as_mut().unwrap().blur = 2.),
+        ),
+        (
+            "native_grain_usm",
+            variant(|s| s.grain_params.as_mut().unwrap().mult_usm_amount = 0.),
+        ),
+        ("halation_params", variant(|s| s.halation_params = None)),
+        (
+            "native_scatter_amount",
+            variant(|s| s.halation_params.as_mut().unwrap().scatter_amount = 0.5),
+        ),
+        (
+            "native_scatter_scale",
+            variant(|s| s.halation_params.as_mut().unwrap().scatter_spatial_scale = 2.),
+        ),
+        (
+            "native_halation_amount",
+            variant(|s| s.halation_params.as_mut().unwrap().halation_amount = 0.5),
+        ),
+        (
+            "native_halation_scale",
+            variant(|s| s.halation_params.as_mut().unwrap().halation_spatial_scale = 2.),
+        ),
         ("halation", variant(|s| s.halation = true)),
         ("halation_strength", variant(|s| s.halation_strength = 1.)),
         ("halation_radius", variant(|s| s.halation_radius = 0.004)),
@@ -605,6 +932,7 @@ fn prepared_pairs_are_keyed_on_every_setting_they_read() {
 #[test]
 fn halation_sigmas_follow_each_channel() {
     let film = FilmSettings {
+        halation_params: None,
         halation: true,
         scatter_size_rgb: [40., 20., 10.],
         halation_size_rgb: [150., 100., 50.],
@@ -679,7 +1007,7 @@ fn spektrafilm_license_ships_unmodified() {
         ),
         (
             include_bytes!("grain.wgsl").as_slice(),
-            "e333d122de0ccded56e2cc330b5c846128cf4f3292f15059b2d725db6beede9d",
+            "a6751867b681204ebfce6d6382a781fa2d7fe536e2fdfdeb6c944662ce1403d2",
         ),
     ] {
         assert_eq!(
@@ -1397,6 +1725,7 @@ fn gpu_film_scanner_levels(renderer: &Renderer) {
 /// frame, which needs the grain blur in the tile overlap.
 fn gpu_grain_blur_tiles(renderer: &Renderer) {
     let film = FilmSettings {
+        grain_params: None,
         grain_size: 4.,
         grain_roughness: 1.,
         ..Default::default()
@@ -1602,6 +1931,8 @@ fn gpu_bw_film(renderer: &Renderer) {
     };
     // No couplers or grain: their blurs would mix these one-pixel patches.
     let doublex = FilmSettings {
+        grain_params: None,
+        halation_params: None,
         film: 20,
         paper: 8,
         couplers: 0.,
@@ -1963,6 +2294,7 @@ fn gpu_pipeline() {
     assert_eq!(&jpg[..2], b"\xff\xd8");
     assert!(image::load_from_memory(&jpg).is_ok());
     let mut film = FilmSettings {
+        halation_params: None,
         grain: false,
         halation: true,
         couplers_radius: 0.02,

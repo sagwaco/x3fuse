@@ -13,6 +13,7 @@ The irradiance table also matches that source, named
 These data files retain the CC BY-SA 4.0 terms in the unmodified
 [license](../licenses/SPEKTRAFILM_LICENSE.txt). No data file was modified.
 `assets/stocks.json` is X3Fuse's index and matches `src/shared/film-stocks.json`.
+`src/shared/film-grain.json` copies each stock's RMS values from the grain presets.
 
 `src/film/data.rs` samples D65, Incandescent and Kinoton 75P from Colour 0.4.7
 on spektrafilm's 380..780 nm grid at 5 nm intervals. The output transforms
@@ -54,7 +55,7 @@ X3Fuse metering and scanner workflow.
 
 - `licenses/COLOUR_LICENSE.txt`: cd9efcd4b6ac5218189d90ffc25f9766f8411e62c5526c452145e1cc8b19baf7
 - `src/gamut.wgsl`: 28e03614fc6efe2895b5c5161f04ab62d045171f9324d342df77f167f88b4158
-- `src/grain.wgsl`: e333d122de0ccded56e2cc330b5c846128cf4f3292f15059b2d725db6beede9d
+- `src/grain.wgsl`: a6751867b681204ebfce6d6382a781fa2d7fe536e2fdfdeb6c944662ce1403d2
 - `assets/presets/grain.toml`: e3537e9c987b3d9e5f916d697c3726014da4f6387d3f5aae57edc88ba54c9de6
 - `licenses/NUMPY_LICENSE.txt`: 1be1df33863f97a7bc1c4d67980bd6c69c9a6fef0a5ee76e6ad6cb91e56e8491
 

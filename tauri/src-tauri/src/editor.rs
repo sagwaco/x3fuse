@@ -1501,6 +1501,11 @@ fn matches_defaults(recipe: &EditRecipe, defaults: &EditRecipe, legacy: bool) ->
         || legacy
             && *recipe
                 == EditRecipe {
+                    film: Some(x3f_render::FilmSettings {
+                        grain_params: None,
+                        halation_params: None,
+                        ..Default::default()
+                    }),
                     crop: defaults.crop,
                     seed: defaults.seed,
                     ..Default::default()
@@ -1646,7 +1651,7 @@ mod tests {
         let earlier = EditRecipe {
             crop,
             seed: defaults.seed,
-            ..Default::default()
+            ..serde_json::from_str(r#"{"version":1,"film":{}}"#).unwrap()
         };
         let exposed = EditRecipe {
             exposure: 0.5,

@@ -10,14 +10,12 @@ import { cn } from '../lib/cn'
 import { NativeMenuButton } from './ui/nativeMenuButton'
 import { useEditorStore } from '../stores/editorStore'
 import { useToolbarSwap } from '../hooks/useToolbarSwap'
-import { isFiltering, shownCount } from '../lib/culling'
+import { isFiltering } from '../lib/culling'
 import { withShortcut } from '../lib/shortcut'
 
 /** Browsing controls, export status, and the split Export button. */
 export function Toolbar(): React.JSX.Element {
   const fileCount = useQueueStore((s) => s.files.length)
-  const shown = useQueueStore((s) => shownCount(s.files, s.filter))
-  const filtering = useQueueStore((s) => isFiltering(s.filter))
   const isProcessing = useQueueStore((s) => s.isProcessing)
   const files = useQueueStore((s) => s.files)
   const selectedIds = useQueueStore((s) => s.selectedIds)
@@ -46,11 +44,6 @@ export function Toolbar(): React.JSX.Element {
       className="window-toolbar flex h-12 shrink-0 items-center justify-between border-b border-white/10 px-3"
     >
       <div data-swap className="flex items-center gap-2">
-        {fileCount > 0 && (
-          <span className="font-mono text-xs uppercase tabular-nums tracking-[0.12em] text-neutral-500">
-            {`${filtering ? `${shown} / ` : ''}${fileCount} ${fileCount === 1 ? 'file' : 'files'}`}
-          </span>
-        )}
         <ViewControls disabled={fileCount === 0} />
         <div role="separator" aria-orientation="vertical" className="h-5 w-px bg-white/15" />
         <FilterButton disabled={fileCount === 0} shortcut />

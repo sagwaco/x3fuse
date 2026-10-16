@@ -84,7 +84,7 @@ export function CullControls(): React.JSX.Element | null {
             >
               <Icon
                 aria-hidden="true"
-                className={cn('h-4 w-4', value === 'pick' && flag === value && 'fill-current')}
+                className={cn('h-3.5 w-3.5', value === 'pick' && flag === value && 'fill-current')}
               />
             </Button>
           )

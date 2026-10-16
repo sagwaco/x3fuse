@@ -1,5 +1,5 @@
 import * as RadixTooltip from '@radix-ui/react-tooltip'
-import type { ReactElement } from 'react'
+import type { ReactElement, ReactNode } from 'react'
 import { cn } from '../../lib/cn'
 
 export function Tooltip({
@@ -8,7 +8,7 @@ export function Tooltip({
   side = 'top',
   className
 }: {
-  text?: string
+  text?: ReactNode
   children: ReactElement
   side?: 'top' | 'right' | 'bottom' | 'left'
   className?: string
