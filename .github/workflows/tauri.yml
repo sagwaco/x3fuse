@@ -2,11 +2,11 @@ name: Tauri desktop checks and artifacts
 
 on:
   pull_request:
-    paths: ["tauri/**", "X3Fuse/opcodes/**", ".github/workflows/tauri.yml"]
+    paths: ["src/**", "src-tauri/**", "scripts/**", "package*.json", ".github/workflows/tauri.yml"]
   push:
     branches: ["**"]
     tags: ["x3fuse-alpha-*"]
-    paths: ["tauri/**", "X3Fuse/opcodes/**", ".github/workflows/tauri.yml"]
+    paths: ["src/**", "src-tauri/**", "scripts/**", "package*.json", ".github/workflows/tauri.yml"]
   workflow_dispatch:
 
 permissions:
@@ -40,17 +40,14 @@ jobs:
     runs-on: ${{ matrix.runner }}
     defaults:
       run:
-        working-directory: app/tauri
         shell: bash
     steps:
       - uses: actions/checkout@v5
-        with:
-          path: app
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: app/tauri/package-lock.json
+          cache-dependency-path: package-lock.json
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -114,7 +111,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: x3fuse-alpha-${{ matrix.platform }}-${{ matrix.arch }}
-          path: app/tauri/artifacts/*.zip
+          path: artifacts/*.zip
           if-no-files-found: error
           compression-level: 0
 
@@ -163,4 +160,4 @@ jobs:
             macOS requires macOS 14 or newer and system Perl. Windows requires Microsoft WebView2 Runtime.
             Linux requires WebKitGTK 4.1, GTK 3, and Perl.
 
-            [Launch instructions and testing checklist](https://github.com/${{ github.repository }}/blob/${{ github.sha }}/tauri/README.md#checks-and-builds)
+            [Launch instructions and testing checklist](https://github.com/${{ github.repository }}/blob/${{ github.sha }}/DEVELOPMENT.md#checks-and-builds)

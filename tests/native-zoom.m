@@ -1,6 +1,6 @@
 // Run from the repo root (requires a logged-in macOS desktop):
 // clang -fobjc-arc -mmacosx-version-min=14.0 -framework AppKit -framework WebKit \
-//   -framework QuartzCore tauri/tests/native-zoom.m -o /tmp/x3fuse-native-zoom && /tmp/x3fuse-native-zoom
+//   -framework QuartzCore tests/native-zoom.m -o /tmp/x3fuse-native-zoom && /tmp/x3fuse-native-zoom
 #import <WebKit/WebKit.h>
 #include "../src-tauri/src/macos_zoom.m"
 

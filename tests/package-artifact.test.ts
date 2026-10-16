@@ -28,7 +28,7 @@ it('creates fresh ZIPs with complete native layouts, launch instructions, and Un
       await writeFile(join(workspace, 'tar.exe'), 'not an executable')
       process.env.PATH = `${workspace}${delimiter}${previousPath ?? ''}`
     }
-    await writeFile(join(workspace, 'LICENSE'), 'license fixture')
+    await file('LICENSE', 'license fixture')
     await file(
       'src-tauri/tauri.conf.json',
       JSON.stringify({ productName: 'X3Fuse Tauri', version: '0.1.0' })

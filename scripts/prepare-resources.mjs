@@ -20,13 +20,12 @@ const sha256 = windows
 const marker = `${process.platform}:${version}:${sha256}`
 const destination = join(resources, 'exiftool')
 await mkdir(resources, { recursive: true })
-await cp(join(root, '../X3Fuse/opcodes'), join(resources, 'opcodes'), { recursive: true })
 const coreNotices = join(resources, 'licenses/x3fuse-core')
 await mkdir(coreNotices, { recursive: true })
 for (const name of ['LICENSE', 'NOTICE']) {
   await cp(join(root, 'licenses/x3fuse-core', name), join(coreNotices, name))
 }
-await cp(join(root, '../LICENSE'), join(resources, 'licenses/X3Fuse-LICENSE'))
+await cp(join(root, 'LICENSE'), join(resources, 'licenses/X3Fuse-LICENSE'))
 const renderer = resolve(root, 'src-tauri/crates/x3f-render')
 // Replace rather than merge: a licence that stops applying must stop shipping.
 await rm(join(resources, 'licenses/x3f-render'), { recursive: true, force: true })

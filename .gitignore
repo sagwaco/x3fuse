@@ -38,3 +38,11 @@ docs/Support/appcast-test.xml
 __pycache__/
 *.pyc
 _local/
+dist/
+src-tauri/target/
+src-tauri/gen/
+src-tauri/resources/exiftool/
+src-tauri/resources/licenses/
+.cache/
+artifacts/
+src-tauri/.cargo/config.toml

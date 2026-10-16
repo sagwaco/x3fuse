@@ -60,7 +60,7 @@ export async function packageArtifact(
       await cp(join(release, executable), join(binaryDir, executable))
       await cp(resources, join(resourceDir, 'resources'), { recursive: true, verbatimSymlinks: true })
     }
-    await cp(join(root, '../LICENSE'), join(stage, 'LICENSE'))
+    await cp(join(root, 'LICENSE'), join(stage, 'LICENSE'))
     const launch =
       platform === 'darwin'
         ? `Open ${config.productName}.app. macOS 14 or newer and system Perl are required.\nApple Silicon (M-series): x3fuse-alpha-macos-arm64.zip\nIntel Mac: x3fuse-alpha-macos-x64.zip\nCheck Apple menu > About This Mac: Chip identifies Apple Silicon; Processor identifies Intel.`
@@ -69,7 +69,7 @@ export async function packageArtifact(
           : 'Run ./bin/x3fuse-tauri. WebKitGTK 4.1, GTK 3, and Perl must be installed.'
     await writeFile(
       join(stage, 'README.txt'),
-      `X3Fuse alpha ${config.version}\n${launch}\nKeep the complete extracted directory together.\nPublished macOS alpha releases are signed and notarized; development builds are not notarized. Windows and Linux builds are unsigned.\nNo automatic updates.\nSource and build instructions: https://github.com/sagwaco/x3fuse/tree/main/tauri\n`
+      `X3Fuse alpha ${config.version}\n${launch}\nKeep the complete extracted directory together.\nPublished macOS alpha releases are signed and notarized; development builds are not notarized. Windows and Linux builds are unsigned.\nNo automatic updates.\nSource and build instructions: https://github.com/sagwaco/x3fuse/tree/main\n`
     )
     await mkdir(dirname(output), { recursive: true })
     await rm(output, { force: true })
