@@ -18,6 +18,49 @@ enum DenoiseBackend: String, CaseIterable {
   case gpu
 }
 
+/// Camera color mode for -color-mode. The raw value is the x3f_extract argument.
+enum CameraColorMode: String, CaseIterable {
+  case off
+  case asShot = "as-shot"
+  case standard = "Standard"
+  case vivid = "Vivid"
+  case neutral = "Neutral"
+  case portrait = "Portrait"
+  case landscape = "Landscape"
+  case fovClassicBlue = "FCBlue"
+  case sunsetRed = "SunsetRed"
+  case forestGreen = "ForestGreen"
+  case fovClassicYellow = "FCYellow"
+  case cinema = "Cinema"
+  case tealAndOrange = "TealAndOrange"
+
+  /// Modes that only dp Quattro cameras support.
+  static let dpQuattroOnly: [CameraColorMode] = [
+    .sunsetRed, .forestGreen, .fovClassicYellow, .cinema, .tealAndOrange,
+  ]
+
+  /// Sigma camera labels. DNG profile names use the same labels.
+  var displayName: String {
+    switch self {
+    case .off: return LocalizationService.settingsDenoiseOff
+    case .asShot: return LocalizationService.settingsColorModeAsShot
+    case .fovClassicBlue: return "FOV Classic Blue"
+    case .sunsetRed: return "Sunset Red"
+    case .forestGreen: return "Forest Green"
+    case .fovClassicYellow: return "FOV Classic Yellow"
+    case .tealAndOrange: return "Teal and Orange"
+    default: return rawValue
+    }
+  }
+
+  /// Returns true if x3f_extract can apply this mode to the file.
+  /// Other cameras make x3f_extract fail, so they convert without a mode.
+  func isSupported(by file: X3FFile) -> Bool {
+    if self == .off { return false }
+    return file.isDpQuattro || (file.isMerrill && !Self.dpQuattroOnly.contains(self))
+  }
+}
+
 @Observable
 class ConversionSettings {
   static let shared = ConversionSettings()
@@ -39,6 +82,9 @@ class ConversionSettings {
   var colorProfile: ColorProfile = .sRGB
   var dngHighlightRecovery: Bool = false  // Merrill-generation DNG highlight recovery (-dng-highlight-recovery)
   var cineon: Bool = false  // Cineon-style flat tone curve for TIFF (-cineon)
+  var colorMode: CameraColorMode = .off  // Camera color mode for TIFF and DNG (-color-mode)
+  var sppPipeline: Bool = false  // Merrill SPP processing for TIFF (-spp-pipeline)
+  var rgbHighlightRecovery: Bool = true  // Chroma LUT highlight recovery for TIFF (-no-chroma-lut when off)
   var outputDirectory: String? = nil  // nil = use input file directory, string = custom path
   var debugLoggingEnabled: Bool = false
   var onlyProcessNewItems: Bool = true  // Only process files that are queued, not already converted
@@ -113,6 +159,9 @@ class ConversionSettings {
     colorProfile = ColorProfile(rawValue: defaults.integer(forKey: "colorProfile")) ?? .sRGB
     dngHighlightRecovery = defaults.bool(forKey: "dngHighlightRecovery")
     cineon = defaults.bool(forKey: "cineon")
+    colorMode = CameraColorMode(rawValue: defaults.string(forKey: "colorMode") ?? "") ?? .off
+    sppPipeline = defaults.bool(forKey: "sppPipeline")
+    rgbHighlightRecovery = defaults.object(forKey: "rgbHighlightRecovery") as? Bool ?? true
     outputDirectory = defaults.string(forKey: "outputDirectory")
     debugLoggingEnabled = defaults.bool(forKey: "debugLoggingEnabled")
     onlyProcessNewItems = defaults.object(forKey: "onlyProcessNewItems") as? Bool ?? true
@@ -141,6 +190,9 @@ class ConversionSettings {
     defaults.set(colorProfile.rawValue, forKey: "colorProfile")
     defaults.set(dngHighlightRecovery, forKey: "dngHighlightRecovery")
     defaults.set(cineon, forKey: "cineon")
+    defaults.set(colorMode.rawValue, forKey: "colorMode")
+    defaults.set(sppPipeline, forKey: "sppPipeline")
+    defaults.set(rgbHighlightRecovery, forKey: "rgbHighlightRecovery")
     defaults.set(outputDirectory, forKey: "outputDirectory")
     defaults.set(debugLoggingEnabled, forKey: "debugLoggingEnabled")
     defaults.set(onlyProcessNewItems, forKey: "onlyProcessNewItems")
@@ -166,6 +218,19 @@ class ConversionSettings {
   // Helper to determine if the Cineon tone curve option should be shown
   var shouldShowCineonOption: Bool {
     return outputFormat == .tiff
+  }
+
+  /// Returns true for TIFF with rendered RGB. Color modes, SPP, and the chroma LUT need it.
+  func rendersRgbTiff(_ format: OutputFormat, _ profile: ColorProfile) -> Bool {
+    return format == .tiff && !cineon && profile != .none
+  }
+
+  var shouldShowRgbTiffOptions: Bool {
+    return rendersRgbTiff(outputFormat, colorProfile)
+  }
+
+  var shouldShowColorModeOption: Bool {
+    return outputFormat == .dng || shouldShowRgbTiffOptions
   }
 
   // Output directory helpers

@@ -83,6 +83,13 @@
 "settings.dng_highlight_recovery.warning" = "ハイライト復元により、一部のアプリでDNGが正しく表示されない場合があります。問題が発生した場合は、復元を無効にしてください。";
 "settings.cineon" = "Cineon風トーンカーブを使用";
 "settings.cineon.help" = "TIFF出力にCineon風のフラットなトーンカーブを使用します";
+"settings.color_mode" = "カラーモード（実験的）";
+"settings.color_mode.as_shot" = "撮影時の設定";
+"settings.color_mode.help" = "Merrill と dp Quattro のファイルにシグマのカラーモードを適用します。Sunset Red、Forest Green、FOV Classic Yellow、Cinema、Teal and Orange は dp Quattro 専用です。その他のファイルはカラーモードなしで変換されます。DNG では RAW データを保持し、各モードを選択可能なカメラプロファイルとして埋め込みます。";
+"settings.spp_pipeline" = "Sigma Photo Pro 処理（Merrill）";
+"settings.spp_pipeline.help" = "フル解像度（HI）の Merrill ファイルに、Sigma Photo Pro のハイライト復元、ノイズ除去、シャープネスを適用します。CPU で処理され、ノイズ除去の設定は使用されません。その他のファイルは標準の処理で変換されます。";
+"settings.rgb_highlight_recovery" = "ハイライト復元";
+"settings.rgb_highlight_recovery.help" = "シーンから生成したカラーテーブルで、TIFF の白飛びしたハイライトを復元します。オフにすると、従来の基本的な復元を使用します。";
 
 "settings.debug_logging" = "デバッグログ";
 "settings.debug_logging.help" = "トラブルシューティング用の詳細なデバッグログを有効にする";

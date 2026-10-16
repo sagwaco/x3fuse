@@ -160,6 +160,15 @@ struct SettingsView: View {
             }
           }
 
+          // Chroma LUT highlight recovery (only shown for rendered RGB TIFF)
+          if settings.shouldShowRgbTiffOptions {
+            Toggle(
+              LocalizationService.settingsRgbHighlightRecovery,
+              isOn: $settings.rgbHighlightRecovery
+            )
+            .help(LocalizationService.settingsRgbHighlightRecoveryHelp)
+          }
+
           // Cineon-style flat tone curve (only shown for TIFF)
           if settings.shouldShowCineonOption {
             Toggle(LocalizationService.settingsCineon, isOn: $settings.cineon)
@@ -173,6 +182,18 @@ struct SettingsView: View {
               }
             }
             .pickerStyle(MenuPickerStyle())
+          }
+          if settings.shouldShowColorModeOption {
+            colorModeControls
+          }
+          if settings.shouldShowRgbTiffOptions {
+            VStack(alignment: .leading, spacing: 4) {
+              Toggle(LocalizationService.settingsSppPipeline, isOn: $settings.sppPipeline)
+              Text(LocalizationService.settingsSppPipelineHelp)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
           }
           if settings.outputFormat != .embeddedJpg {
             denoiseControls
@@ -322,6 +343,24 @@ struct SettingsView: View {
     .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) {
       _ in
       settings.saveSettings()
+    }
+  }
+
+  private var colorModeControls: some View {
+    VStack(alignment: .leading, spacing: 4) {
+      Picker(LocalizationService.settingsColorMode, selection: $settings.colorMode) {
+        ForEach(CameraColorMode.allCases, id: \.self) { mode in
+          // Group Off and As shot, the shared modes, and the dp Quattro modes
+          if mode == .standard || mode == CameraColorMode.dpQuattroOnly.first {
+            Divider()
+          }
+          Text(mode.displayName).tag(mode)
+        }
+      }
+      Text(LocalizationService.settingsColorModeHelp)
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
     }
   }
 

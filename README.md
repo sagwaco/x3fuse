@@ -150,6 +150,21 @@ color noise reduction on, luminance noise reduction off, strength 1.0, patch siz
 search size 11, and Automatic processing. Core 0.2.0 changes the default NLM luminance
 handling, so denoised output can differ from previous versions.
 
+Core 0.3.0 adds these settings:
+
+- **Color mode (experimental)**, for DNG and RGB TIFF: applies a Sigma camera color mode,
+  or the mode recorded in the file, to Merrill and dp Quattro files. Sunset Red,
+  Forest Green, FOV Classic Yellow, Cinema, and Teal and Orange are dp Quattro only.
+  TIFF applies the look to the pixels. DNG keeps the RAW data and embeds the modes as
+  selectable camera profiles. Other cameras convert without a color mode.
+- **Sigma Photo Pro processing (Merrill)**, for RGB TIFF: uses the SPP highlight recovery,
+  noise reduction, and sharpening on full-resolution (HI) Merrill files. It runs on the CPU
+  and replaces the denoise settings. Other cameras use the standard processing.
+- **Highlight recovery**, for RGB TIFF: on by default. Turn it off to use the earlier basic
+  recovery instead of the scene-derived color table.
+
+Cineon TIFF and TIFF without a color profile do not use these settings.
+
 ### Converting a classic-camera library
 
 Keep the original X3F files as your archive. A DNG contains converted image data, not a

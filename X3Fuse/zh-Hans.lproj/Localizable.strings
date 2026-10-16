@@ -83,6 +83,13 @@
 "settings.dng_highlight_recovery.warning" = "高光恢复可能导致 DNG 在某些应用中无法正确显示。如果遇到问题，请禁用恢复。";
 "settings.cineon" = "使用 Cineon 风格色调曲线";
 "settings.cineon.help" = "为 TIFF 输出使用 Cineon 风格的平坦色调曲线";
+"settings.color_mode" = "色彩模式（实验性）";
+"settings.color_mode.as_shot" = "拍摄时设置";
+"settings.color_mode.help" = "为 Merrill 和 dp Quattro 文件应用适马相机色彩模式。Sunset Red、Forest Green、FOV Classic Yellow、Cinema 和 Teal and Orange 仅适用于 dp Quattro。其他文件将不使用色彩模式进行转换。DNG 会保留 RAW 数据，并将各模式嵌入为可选的相机配置文件。";
+"settings.spp_pipeline" = "Sigma Photo Pro 处理（Merrill）";
+"settings.spp_pipeline.help" = "为全分辨率（HI）Merrill 文件应用 Sigma Photo Pro 的高光恢复、降噪和锐化。此处理在 CPU 上运行，并取代降噪设置。其他文件使用标准处理。";
+"settings.rgb_highlight_recovery" = "高光恢复";
+"settings.rgb_highlight_recovery.help" = "使用根据场景生成的色彩表恢复 TIFF 输出中过曝的高光。关闭后将使用以前的基本恢复。";
 
 "settings.debug_logging" = "调试日志记录";
 "settings.debug_logging.help" = "启用详细的调试日志以进行故障排除";

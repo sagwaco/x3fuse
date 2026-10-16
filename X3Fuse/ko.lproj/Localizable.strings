@@ -83,6 +83,13 @@
 "settings.dng_highlight_recovery.warning" = "하이라이트 복구로 인해 일부 앱에서 DNG가 올바르게 표시되지 않을 수 있습니다. 문제가 발생하면 복구를 비활성화하십시오.";
 "settings.cineon" = "Cineon 스타일 톤 커브 사용";
 "settings.cineon.help" = "TIFF 출력에 Cineon 스타일의 평탄한 톤 커브를 사용합니다";
+"settings.color_mode" = "컬러 모드 (실험적)";
+"settings.color_mode.as_shot" = "촬영 시 설정";
+"settings.color_mode.help" = "Merrill 및 dp Quattro 파일에 시그마 컬러 모드를 적용합니다. Sunset Red, Forest Green, FOV Classic Yellow, Cinema, Teal and Orange는 dp Quattro 전용입니다. 그 외 파일은 컬러 모드 없이 변환됩니다. DNG는 RAW 데이터를 유지하고 각 모드를 선택 가능한 카메라 프로필로 포함합니다.";
+"settings.spp_pipeline" = "Sigma Photo Pro 처리 (Merrill)";
+"settings.spp_pipeline.help" = "전체 해상도(HI) Merrill 파일에 Sigma Photo Pro의 하이라이트 복구, 노이즈 감소, 샤프닝을 적용합니다. CPU에서 처리되며 노이즈 감소 설정을 대신합니다. 그 외 파일은 표준 처리로 변환됩니다.";
+"settings.rgb_highlight_recovery" = "하이라이트 복구";
+"settings.rgb_highlight_recovery.help" = "장면에서 생성한 색상 테이블로 TIFF 출력의 날아간 하이라이트를 복구합니다. 끄면 이전의 기본 복구를 사용합니다.";
 
 "settings.debug_logging" = "디버그 로깅";
 "settings.debug_logging.help" = "문제 해결을 위한 자세한 디버그 로그를 활성화합니다";

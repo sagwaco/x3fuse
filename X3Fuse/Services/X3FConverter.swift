@@ -142,6 +142,20 @@ class X3FConverter {
     let colorProfile = file.colorProfile ?? settings.colorProfile
     let dngHighlightRecovery = settings.dngHighlightRecovery
     let cineon = settings.cineon
+    // Color modes and the SPP pipeline need rendered RGB and a supported camera.
+    // Other files convert without them, because x3f_extract fails on them.
+    let renderedTiff = settings.rendersRgbTiff(outputFormat, colorProfile)
+    let sppPipeline = settings.sppPipeline && renderedTiff && file.isMerrill
+    let colorMode = settings.colorMode
+    let colorModeOutput = outputFormat == .dng || renderedTiff
+    let applyColorMode = colorModeOutput && colorMode.isSupported(by: file)
+    if (colorModeOutput && colorMode != .off && !applyColorMode)
+      || (settings.sppPipeline && renderedTiff && !sppPipeline)
+    {
+      logger.logConversion(
+        "Camera \(file.cameraModel ?? "unknown") does not support the selected color mode or SPP processing. Converting without it.",
+        file: file.fileName)
+    }
 
     // Specify output directory - use custom directory if set, otherwise use input file directory
     let outputDirectory = settings.effectiveOutputDirectory(for: file.url)
@@ -150,7 +164,12 @@ class X3FConverter {
 
     args.append("-v")
 
-    args += settings.buildDenoiseArguments(intensity: denoiseIntensity)
+    // The SPP pipeline uses its own noise reduction and rejects denoise options.
+    if sppPipeline {
+      args.append("-spp-pipeline")
+    } else {
+      args += settings.buildDenoiseArguments(intensity: denoiseIntensity)
+    }
 
     // Compression (only for DNG and TIFF)
     if compress && (outputFormat == .dng || outputFormat == .tiff) {
@@ -188,10 +207,20 @@ class X3FConverter {
       args.append("-cineon")
     }
 
+    // Chroma LUT highlight recovery is on by default for rendered TIFF
+    if !settings.rgbHighlightRecovery && renderedTiff {
+      args.append("-no-chroma-lut")
+    }
+
     // Color profile
     if let colorArg = colorProfile.x3fArgument {
       args.append("-color")
       args.append(colorArg)
+    }
+
+    // Camera color mode (DNG and rendered TIFF, supported cameras only)
+    if applyColorMode {
+      args += ["-color-mode", colorMode.rawValue]
     }
 
     return args

@@ -174,4 +174,96 @@ final class ConversionSettingsTests {
     #expect(!standard.contains("-dng-highlight-recovery"))
     #expect(standard.contains("-opcodes-dir") == (OpcodeManager.shared.opcodesDirectoryPath != nil))
   }
+
+  @Test func coreRenderingSettingsRoundTrip() {
+    let settings = ConversionSettings(defaults: defaults)
+    #expect(settings.colorMode == .off && !settings.sppPipeline && settings.rgbHighlightRecovery)
+    settings.colorMode = .tealAndOrange
+    settings.sppPipeline = true
+    settings.rgbHighlightRecovery = false
+    settings.saveSettings()
+
+    let restored = ConversionSettings(defaults: defaults)
+    #expect(restored.colorMode == .tealAndOrange)
+    #expect(restored.sppPipeline)
+    #expect(!restored.rgbHighlightRecovery)
+  }
+
+  @Test func colorModeAndSppApplyOnlyToSupportedCameras() {
+    let settings = ConversionSettings(defaults: defaults)
+    settings.outputFormat = .tiff
+    settings.colorMode = .vivid
+    settings.sppPipeline = true
+    settings.denoiseBackend = .gpu
+    let converter = X3FConverter(settings: settings)
+    let file = X3FFile(url: URL(fileURLWithPath: "/tmp/source.X3F"))
+
+    file.cameraModel = "SIGMA DP1 Merrill"
+    #expect(
+      converter.buildX3FArguments(for: file) == [
+        "-o", "/tmp", "-v", "-spp-pipeline", "-tiff", "-color-mode", "Vivid",
+      ])
+
+    // dp Quattro gets the color mode but not SPP, and keeps the denoise settings.
+    file.cameraModel = "SIGMA dp0 Quattro"
+    #expect(
+      converter.buildX3FArguments(for: file) == [
+        "-o", "/tmp", "-v", "-denoise-backend", "gpu", "-tiff", "-color-mode", "Vivid",
+      ])
+
+    // dp Quattro-only modes skip Merrill files.
+    settings.colorMode = .cinema
+    #expect(converter.buildX3FArguments(for: file).suffix(2) == ["-color-mode", "Cinema"])
+    file.cameraModel = "SIGMA DP1 Merrill"
+    #expect(!converter.buildX3FArguments(for: file).contains("-color-mode"))
+
+    // sd Quattro, classic, and unknown cameras get neither option.
+    for model in ["sd Quattro H", "SIGMA SD14", nil] {
+      file.cameraModel = model
+      let arguments = converter.buildX3FArguments(for: file)
+      #expect(!arguments.contains("-color-mode"))
+      #expect(!arguments.contains("-spp-pipeline"))
+    }
+  }
+
+  @Test func colorModeAndSppRequireRenderedOutput() {
+    let settings = ConversionSettings(defaults: defaults)
+    settings.colorMode = .asShot
+    settings.sppPipeline = true
+    let converter = X3FConverter(settings: settings)
+    let file = X3FFile(url: URL(fileURLWithPath: "/tmp/source.X3F"))
+    file.cameraModel = "SIGMA SD1 Merrill"
+
+    // DNG takes the color mode as its default profile; SPP is TIFF only.
+    let dng = converter.buildX3FArguments(for: file)
+    #expect(dng.suffix(2) == ["-color-mode", "as-shot"])
+    #expect(!dng.contains("-spp-pipeline"))
+
+    file.outputFormat = .embeddedJpg
+    #expect(!converter.buildX3FArguments(for: file).contains("-color-mode"))
+
+    // x3f_extract rejects both options for Cineon and unrendered TIFF.
+    file.outputFormat = .tiff
+    for (cineon, profile) in [(true, ColorProfile.sRGB), (false, .none)] {
+      settings.cineon = cineon
+      file.colorProfile = profile
+      let arguments = converter.buildX3FArguments(for: file)
+      #expect(!arguments.contains("-color-mode"))
+      #expect(!arguments.contains("-spp-pipeline"))
+      #expect(arguments.contains("-v"))
+    }
+  }
+
+  @Test func rgbHighlightRecoveryDisablesChromaLutForTiffOnly() {
+    let settings = ConversionSettings(defaults: defaults)
+    settings.rgbHighlightRecovery = false
+    let converter = X3FConverter(settings: settings)
+    let file = X3FFile(url: URL(fileURLWithPath: "/tmp/source.X3F"))
+    #expect(!converter.buildX3FArguments(for: file).contains("-no-chroma-lut"))
+    file.outputFormat = .tiff
+    #expect(converter.buildX3FArguments(for: file).contains("-no-chroma-lut"))
+    settings.rgbHighlightRecovery = true
+    #expect(!converter.buildX3FArguments(for: file).contains("-chroma-lut"))
+    #expect(!converter.buildX3FArguments(for: file).contains("-no-chroma-lut"))
+  }
 }

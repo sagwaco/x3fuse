@@ -137,6 +137,13 @@ When cancellation is requested:
   sizes, and execution backend. `ConversionSettings.buildDenoiseArguments` builds these flags
   for `X3FConverter`. NLM windows must be odd: patch sizes 1 to 9 and search sizes 1 to 31.
   Strength must be 0.1 to 3.0. Forced GPU mode fails if acceleration is unavailable.
+- Core 0.3.0 settings: color mode (`-color-mode`, DNG and RGB TIFF), Merrill SPP processing
+  (`-spp-pipeline`, RGB TIFF), and TIFF highlight recovery (`-no-chroma-lut` when off).
+  x3f_extract fails when a camera does not support a color mode or SPP. `X3FConverter` uses
+  `X3FFile.isMerrill` and `isDpQuattro` (from the ExifTool model) to send these flags only to
+  supported files, and logs each skip. `ConversionSettings.rendersRgbTiff` gates both the UI and
+  the arguments. SPP replaces the denoise flags. The app cannot detect MED/LOW Merrill files
+  or as-shot Monochrome/Sepia, so x3f_extract still fails on those.
 
 #### CLI compatibility notes (x3fuse-core)
 
