@@ -128,8 +128,9 @@ When cancellation is requested:
 - Executable permissions (0o755) set on app launch (Services/BinaryManager.swift:36)
 - The Xcode build embeds and code-signs the checked-in `X3Fuse/x3f_extract`; the binary is
   not rebuilt during the app build.
-- The bundled core is **v0.2.1** (commit `ca51a110d6cc553bca45029def116db4c1bd21b1`).
-  This release includes the classic-camera calibration decoding fix and its regression test.
+- The bundled core is **v0.3.0** (commit `0df46ff733b345bdb4186bc7433619e3b0b05ae5`).
+  This release changes default Merrill TIFF rendering, embeds ICC profiles for named RGB spaces,
+  and records camera orientation in TIFF metadata.
   Use a clean checkout of this tag to rebuild from source. The build script enables the `gpu` feature
   for both architectures. Automatic denoising uses Metal when available and falls back to CPU.
 - Denoise settings include NLM/BM3D, luminance and chroma, intensity, strength, NLM window

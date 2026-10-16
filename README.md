@@ -97,11 +97,13 @@ ExifTool, check out the required release tag in `Vendor/ExifTool`, then commit
 the submodule pointer. Update the version in `README.md`, `AGENTS.md`, and
 `X3FuseTests/ExifToolBundleTests.swift` in the same commit.
 
-The app bundles [x3fuse-core **0.2.1**](https://github.com/sagwaco/x3fuse-core/releases/tag/v0.2.1)
-(commit `ca51a110d6cc553bca45029def116db4c1bd21b1`). This release includes the SD9, SD10,
-and SD14 calibration decoding fix. The universal converter combines the release's Intel
-and Apple Silicon binaries, with GPU denoising enabled.
-To rebuild from source, use a clean core checkout at `v0.2.1`, then run this command
+The app bundles [x3fuse-core **0.3.0**](https://github.com/sagwaco/x3fuse-core/releases/tag/v0.3.0)
+(commit `0df46ff733b345bdb4186bc7433619e3b0b05ae5`). This release updates default Merrill
+TIFF rendering, embeds ICC profiles in sRGB, Adobe RGB, and ProPhoto RGB TIFFs,
+and records camera orientation.
+The universal converter combines the release's Intel and Apple Silicon binaries, with
+GPU denoising enabled.
+To rebuild from source, use a clean core checkout at `v0.3.0`, then run this command
 from the X3Fuse app repository:
 
 ```bash
