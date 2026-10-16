@@ -184,6 +184,7 @@ export type IpcResult<C extends IpcRequestChannel> = IpcRequestMap[C]['result']
 
 /** Main -> renderer event channels: channel -> payload. */
 export interface IpcEventMap {
+  'settings:changed': null
   'editor:closing': { quit: boolean }
   /** `outputPath` is set on the terminal `completed` status (used for reveal). */
   'batch:started': { batchId: string; settings: BatchConversionSettings }
@@ -240,6 +241,7 @@ export const IPC_REQUEST_CHANNELS: IpcRequestChannel[] = [
 ]
 
 export const IPC_EVENT_CHANNELS: IpcEventChannel[] = [
+  'settings:changed',
   'editor:closing',
   'batch:started',
   'file:status',

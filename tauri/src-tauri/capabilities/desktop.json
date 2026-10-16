@@ -7,6 +7,8 @@
     "core:event:allow-listen", "core:event:allow-unlisten",
     "core:window:allow-start-dragging",
     "core:window:allow-internal-toggle-maximize",
+    "core:window:allow-set-theme",
+    "core:window:allow-set-background-color",
     "core:menu:allow-new", "core:menu:allow-popup",
     "core:resources:allow-close",
     {

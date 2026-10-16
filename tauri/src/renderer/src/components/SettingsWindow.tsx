@@ -24,9 +24,13 @@ export function SettingsWindow(): React.JSX.Element {
     const refresh = (): void => void useSettingsStore.getState().load()
     refresh()
     window.addEventListener('focus', refresh)
+    const off = ipc.on('settings:changed', refresh)
     void ipc.invoke('app:info').then((info) => setVersion(info.version))
     refreshLogSizes()
-    return () => window.removeEventListener('focus', refresh)
+    return () => {
+      window.removeEventListener('focus', refresh)
+      off()
+    }
   }, [])
 
   if (!loaded) {

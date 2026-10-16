@@ -5,9 +5,13 @@ import App from './App'
 import './index.css'
 import { initializeIpc, ipc } from './lib/ipc'
 import { appInfo } from './lib/appInfo'
+import { applyTheme } from './lib/theme'
+import { useSettingsStore } from './stores/settingsStore'
 
 async function start(): Promise<void> {
   const [, info] = await Promise.all([initializeIpc(), ipc.invoke('app:info')])
+  await useSettingsStore.getState().load()
+  applyTheme(useSettingsStore.getState().settings)
   Object.assign(appInfo, info)
   document.documentElement.dataset.platform = info.platform
   ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(

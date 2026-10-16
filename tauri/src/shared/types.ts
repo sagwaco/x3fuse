@@ -56,6 +56,11 @@ export const OUTPUT_EXTENSION: Record<OutputFormat, string> = {
   tiff: '.tif'
 }
 
+/** Follow the system appearance, or use the light or dark appearance. */
+export type AppearanceMode = 'auto' | 'light' | 'dark'
+/** A color theme. Each one can serve the light or the dark appearance. */
+export type ThemeName = 'dark' | 'light' | 'gray'
+
 /** Application preferences persisted and validated by the Rust backend. */
 export interface ConversionSettings {
   rendering: 'original' | 'rendered'
@@ -97,6 +102,11 @@ export interface ConversionSettings {
   inspectorScopeMode: ScopeMode
   /** Last directory confirmed in the X3F import dialog. */
   lastImportDirectory: string | null
+  appearanceMode: AppearanceMode
+  /** Theme used while the appearance is light. */
+  lightTheme: ThemeName
+  /** Theme used while the appearance is dark. */
+  darkTheme: ThemeName
 }
 
 export const DEFAULT_SETTINGS: ConversionSettings = {
@@ -126,7 +136,10 @@ export const DEFAULT_SETTINGS: ConversionSettings = {
   exportPanelWidth: 380,
   listColumnWidths: { name: 0, date: 220, size: 110 },
   inspectorScopeMode: 'rgbParade',
-  lastImportDirectory: null
+  lastImportDirectory: null,
+  appearanceMode: 'auto',
+  lightTheme: 'light',
+  darkTheme: 'dark'
 }
 
 /**

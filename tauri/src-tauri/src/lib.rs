@@ -18,7 +18,7 @@ use std::{
         Arc, OnceLock,
     },
 };
-use tauri::{Emitter, Manager};
+use tauri::{Emitter, Manager, WebviewWindow};
 
 pub struct AppState {
     pub preferences: storage::Preferences,
@@ -42,6 +42,55 @@ impl AppState {
 }
 
 static CORE_LOGS: OnceLock<Arc<storage::Logs>> = OnceLock::new();
+
+/// True when the system appearance is dark. Auto mode never pins the
+/// application appearance, so the effective appearance is the system one.
+#[cfg(target_os = "macos")]
+pub(crate) fn system_dark() -> bool {
+    use objc2::{class, msg_send, runtime::AnyObject};
+    unsafe {
+        let app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
+        let appearance: *mut AnyObject = msg_send![app, effectiveAppearance];
+        if appearance.is_null() {
+            return false;
+        }
+        let name: *mut AnyObject = msg_send![appearance, name];
+        let utf8: *const std::ffi::c_char = msg_send![name, UTF8String];
+        !utf8.is_null()
+            && std::ffi::CStr::from_ptr(utf8)
+                .to_string_lossy()
+                .contains("Dark")
+    }
+}
+
+// ponytail: other platforms assume a dark system until a system-appearance
+// read exists there; applyTheme in the page corrects the content after load.
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn system_dark() -> bool {
+    true
+}
+
+/// Builds the main window from its config, themed before its first frame.
+fn build_main_window(app: &tauri::AppHandle, settings: &model::Settings) -> Option<WebviewWindow> {
+    let config = app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|w| w.label == "main")
+        .cloned()?;
+    let (pinned, theme, color) = settings.window_theme(system_dark());
+    tauri::WebviewWindowBuilder::from_config(app, &config)
+        .and_then(|builder| {
+            builder
+                .theme(pinned)
+                .background_color(color)
+                .initialization_script(model::theme_script(theme))
+                .build()
+        })
+        .map_err(|error| eprintln!("Could not create the main window: {error}"))
+        .ok()
+}
 
 pub fn finish_shutdown(app: &tauri::AppHandle, state: &AppState) {
     match state.shutdown.swap(0, Ordering::SeqCst) {
@@ -163,6 +212,11 @@ pub fn run() {
                 shutdown: AtomicU8::new(0),
             }));
             menu::install(app.handle())?;
+            // The page's first IPC call needs the managed state, so the window is built last.
+            let settings = app.state::<Arc<AppState>>().preferences.get();
+            if build_main_window(app.handle(), &settings).is_none() {
+                return Err(std::io::Error::other("Could not create the main window").into());
+            }
             Ok(())
         })
         .register_asynchronous_uri_scheme_protocol("x3f-preview", |context, request, responder| {
@@ -343,10 +397,7 @@ pub fn run() {
         #[cfg(target_os = "macos")]
         tauri::RunEvent::Reopen { .. } if app.get_webview_window("main").is_none() => {
             app.state::<Arc<AppState>>().editor.reopen();
-            if let Some(config) = app.config().app.windows.iter().find(|w| w.label == "main") {
-                let _ = tauri::WebviewWindowBuilder::from_config(app, config)
-                    .and_then(|builder| builder.build());
-            }
+            let _ = build_main_window(app, &app.state::<Arc<AppState>>().preferences.get());
         }
         _ => {}
     });

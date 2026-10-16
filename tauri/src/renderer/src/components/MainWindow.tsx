@@ -36,7 +36,11 @@ export function MainWindow(): React.JSX.Element {
     void useSettingsStore.getState().load()
     const refresh = (): void => void useSettingsStore.getState().load()
     window.addEventListener('focus', refresh)
-    return () => window.removeEventListener('focus', refresh)
+    const off = ipc.on('settings:changed', refresh)
+    return () => {
+      window.removeEventListener('focus', refresh)
+      off()
+    }
   }, [])
 
   // Copy and paste adjustments between selected photos. The editor has its own shortcuts.

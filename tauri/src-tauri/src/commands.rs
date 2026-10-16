@@ -30,10 +30,17 @@ pub async fn settings_get(state: State<'_, Arc<AppState>>) -> Result<Settings, S
 
 #[tauri::command]
 pub async fn settings_set(
+    window: WebviewWindow,
     state: State<'_, Arc<AppState>>,
     payload: Value,
 ) -> Result<Settings, String> {
-    write_settings(state.inner().clone(), payload).await
+    let settings = write_settings(state.inner().clone(), payload).await?;
+    for (label, other) in window.app_handle().webview_windows() {
+        if label != window.label() {
+            let _ = other.emit_to(label, "settings:changed", ());
+        }
+    }
+    Ok(settings)
 }
 
 async fn write_settings(state: Arc<AppState>, payload: Value) -> Result<Settings, String> {
@@ -322,6 +329,8 @@ pub fn open_settings(app: &AppHandle) -> Result<(), String> {
         window.show().map_err(|e| e.to_string())?;
         return window.set_focus().map_err(|e| e.to_string());
     }
+    let settings = app.state::<Arc<AppState>>().preferences.get();
+    let (pinned, theme, color) = settings.window_theme(crate::system_dark());
     tauri::WebviewWindowBuilder::new(
         app,
         "settings",
@@ -330,7 +339,9 @@ pub fn open_settings(app: &AppHandle) -> Result<(), String> {
     .title(crate::menu::translate("menu.file.settings"))
     .inner_size(540.0, 640.0)
     .min_inner_size(460.0, 420.0)
-    .background_color(tauri::window::Color(10, 10, 10, 255))
+    .theme(pinned)
+    .background_color(color)
+    .initialization_script(crate::model::theme_script(theme))
     .disable_drag_drop_handler()
     .on_navigation(|url| {
         matches!(url.scheme(), "tauri" | "http" | "https")

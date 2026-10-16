@@ -174,6 +174,24 @@ pub struct Settings {
     pub list_column_widths: ListColumnWidths,
     pub inspector_scope_mode: String,
     pub last_import_directory: Option<PathBuf>,
+    #[serde(default = "default_appearance_mode")]
+    pub appearance_mode: String,
+    #[serde(default = "default_light_theme")]
+    pub light_theme: String,
+    #[serde(default = "default_dark_theme")]
+    pub dark_theme: String,
+}
+
+fn default_appearance_mode() -> String {
+    "auto".into()
+}
+
+fn default_light_theme() -> String {
+    "light".into()
+}
+
+fn default_dark_theme() -> String {
+    "dark".into()
 }
 
 impl Default for Settings {
@@ -199,6 +217,9 @@ impl Default for Settings {
             },
             inspector_scope_mode: "rgbParade".into(),
             last_import_directory: None,
+            appearance_mode: default_appearance_mode(),
+            light_theme: default_light_theme(),
+            dark_theme: default_dark_theme(),
         }
     }
 }
@@ -218,6 +239,9 @@ impl Settings {
         }
         if !["File Name", "Date", "Size"].contains(&self.sort_field.as_str())
             || !["list", "grid", "filmstrip", "survey"].contains(&self.queue_view_mode.as_str())
+            || !["auto", "light", "dark"].contains(&self.appearance_mode.as_str())
+            || !["dark", "light", "gray"].contains(&self.light_theme.as_str())
+            || !["dark", "light", "gray"].contains(&self.dark_theme.as_str())
             || !["histogram", "rgbParade", "waveform", "vectorscope"]
                 .contains(&self.inspector_scope_mode.as_str())
             || self
@@ -229,6 +253,46 @@ impl Settings {
         }
         Ok(())
     }
+
+    /// Returns the pinned appearance (None follows the system), the theme that
+    /// applies, and its surface color.
+    pub fn window_theme(
+        &self,
+        system_dark: bool,
+    ) -> (Option<tauri::Theme>, &str, tauri::window::Color) {
+        let (pinned, dark) = match self.appearance_mode.as_str() {
+            "light" => (Some(tauri::Theme::Light), false),
+            "dark" => (Some(tauri::Theme::Dark), true),
+            _ => (None, system_dark),
+        };
+        let theme = if dark {
+            self.dark_theme.as_str()
+        } else {
+            self.light_theme.as_str()
+        };
+        let value = match theme {
+            "light" => 250,
+            "gray" => 119,
+            _ => 10,
+        };
+        (
+            pinned,
+            theme,
+            tauri::window::Color(value, value, value, 255),
+        )
+    }
+}
+
+/// Script that sets the theme attribute before the first style pass, so the
+/// page paints in its theme without a dark frame.
+pub fn theme_script(theme: &str) -> String {
+    let name = serde_json::to_string(theme).unwrap_or_else(|_| "\"dark\"".into());
+    format!(
+        "(function () {{ var theme = {name}; var root = document.documentElement; \
+         if (root) root.dataset.theme = theme; \
+         else document.addEventListener('DOMContentLoaded', function () {{ \
+         document.documentElement.dataset.theme = theme; }}); }})()"
+    )
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -363,6 +427,57 @@ pub fn concurrency(setting: u8) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn appearance_settings_migrate_and_validate() {
+        let mut wire = serde_json::to_value(Settings::default()).unwrap();
+        let fields = wire.as_object_mut().unwrap();
+        fields.remove("appearanceMode");
+        fields.remove("lightTheme");
+        fields.remove("darkTheme");
+        let mut settings: Settings = serde_json::from_value(wire).unwrap();
+        assert_eq!(settings.appearance_mode, "auto");
+        assert_eq!(settings.light_theme, "light");
+        assert_eq!(settings.dark_theme, "dark");
+        assert!(settings.validate().is_ok());
+        settings.light_theme = "neon".into();
+        assert!(settings.validate().is_err());
+        settings.light_theme = "light".into();
+        settings.dark_theme = "neon".into();
+        assert!(settings.validate().is_err());
+        settings.dark_theme = "dark".into();
+        settings.appearance_mode = "night".into();
+        assert!(settings.validate().is_err());
+    }
+
+    #[test]
+    fn window_theme_follows_or_pins_appearance() {
+        let gray = tauri::window::Color(119, 119, 119, 255);
+        let light = tauri::window::Color(250, 250, 250, 255);
+        let mut settings = Settings {
+            dark_theme: "gray".into(),
+            ..Settings::default()
+        };
+        assert_eq!(settings.window_theme(true), (None, "gray", gray));
+        assert_eq!(settings.window_theme(false), (None, "light", light));
+        settings.appearance_mode = "light".into();
+        assert_eq!(
+            settings.window_theme(true),
+            (Some(tauri::Theme::Light), "light", light)
+        );
+        settings.appearance_mode = "dark".into();
+        assert_eq!(
+            settings.window_theme(false),
+            (Some(tauri::Theme::Dark), "gray", gray)
+        );
+        settings.dark_theme = "dark".into();
+        assert_eq!(
+            settings.window_theme(false).2,
+            tauri::window::Color(10, 10, 10, 255)
+        );
+        assert!(theme_script("gray").contains("var theme = \"gray\";"));
+    }
+
     #[test]
     fn output_names_and_wire_defaults_match_frontend() {
         let input = std::env::temp_dir().join("Photo.X3F");
