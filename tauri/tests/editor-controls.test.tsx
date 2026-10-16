@@ -518,32 +518,47 @@ it('identifies saved Aerochrome edits and explains the fallback on a camera with
   )
 })
 
-it('starts white balance from the camera reading so leaving As shot does not jump', () => {
+const whiteBalance = (): HTMLElement =>
+  screen.getByRole('button', { name: t('editor.whiteBalancePreset') })
+
+it('starts white balance from the camera reading so leaving As shot does not jump', async () => {
   render(<Controls />)
   expect(
     screen.getByRole('slider', { name: t('editor.temperature') }).getAttribute('aria-valuenow')
   ).toBe('5150')
-  expect(swatch(t('editor.whiteBalancePreset'), t('editor.asShot')).ariaChecked).toBe('true')
+  expect(whiteBalance().textContent).toBe(t('editor.asShot'))
   adjust(t('editor.temperature'), 5600)
   expect(change).toHaveBeenLastCalledWith({ temperature: 5600, tint: 7 }, true)
   adjust(t('editor.temperature'), 6000)
   expect(change).toHaveBeenLastCalledWith({ temperature: 6000 }, true)
-  fireEvent.click(swatch(t('editor.whiteBalancePreset'), t('editor.asShot')))
-  expect(change).toHaveBeenLastCalledWith({ temperature: null, tint: 0 })
+  invoke.mockResolvedValueOnce('asShot')
+  fireEvent.click(whiteBalance())
+  await waitFor(() => expect(change).toHaveBeenLastCalledWith({ temperature: null, tint: 0 }))
 })
 
-it('offers common white balance presets beside the camera reading', () => {
+it('offers white balance presets in a menu with the neutral picker icon beside it', async () => {
   render(<Controls />)
-  const preset = (name: string): HTMLElement => swatch(t('editor.whiteBalancePreset'), name)
-  fireEvent.click(preset(t('editor.tungsten')))
-  expect(change).toHaveBeenLastCalledWith({ temperature: 2850, tint: 0 })
+  invoke.mockResolvedValueOnce('tungsten')
+  fireEvent.click(whiteBalance())
+  await waitFor(() => expect(change).toHaveBeenLastCalledWith({ temperature: 2850, tint: 0 }))
   act(() => setRecipe({ ...defaultRecipe(), temperature: 7500 }))
-  expect(preset(t('editor.shade')).ariaChecked).toBe('true')
-  expect(preset(t('editor.asShot')).ariaChecked).toBe('false')
-  // A tint makes it a custom balance.
+  expect(whiteBalance().textContent).toBe(t('editor.shade'))
+  // A tint makes it a custom balance. The menu names it but cannot select it.
   act(() => setRecipe({ ...defaultRecipe(), temperature: 7500, tint: 4 }))
-  const group = screen.getByRole('radiogroup', { name: t('editor.whiteBalancePreset') })
-  expect(within(group).queryByRole('radio', { checked: true })).toBeNull()
+  expect(whiteBalance().textContent).toBe(t('editor.customWhiteBalance'))
+  fireEvent.click(whiteBalance())
+  const menu = invoke.mock.calls.filter(([channel]) => channel === 'menu:popup').at(-1)![1]
+  expect(menu.items.at(-1)).toEqual({
+    value: 'custom',
+    label: t('editor.customWhiteBalance'),
+    disabled: true,
+    checked: true
+  })
+  await waitFor(() => expect(whiteBalance().getAttribute('aria-expanded')).toBe('false'))
+  const picker = screen.getByRole('button', { name: t('editor.picker') })
+  expect(picker.textContent).toBe('')
+  expect(picker.getAttribute('aria-keyshortcuts')).toBe('W')
+  expect(picker.previousElementSibling).toBe(whiteBalance())
 })
 
 it('extends the white balance range for infrared and full-spectrum photos', () => {

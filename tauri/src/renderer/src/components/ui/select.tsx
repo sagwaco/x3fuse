@@ -5,6 +5,7 @@ import { cn } from '../../lib/cn'
 export interface SelectOption<T extends string> {
   value: T
   label: string
+  disabled?: boolean
 }
 
 export interface SelectProps<T extends string> {

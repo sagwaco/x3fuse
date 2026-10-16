@@ -1,20 +1,15 @@
 import { memo, useContext, useEffect, useRef, useState } from 'react'
 import { DenoiseControls } from './DenoiseControls'
 import {
-  Camera,
   ChevronDown,
-  Cloud,
-  House,
   Film,
   FlaskConical,
   Grip,
-  Lightbulb,
   RotateCcw,
   Pipette,
   Plus,
   Sun,
-  Trash2,
-  Zap
+  Trash2
 } from 'lucide-react'
 import {
   DEFAULT_FILM,
@@ -35,8 +30,10 @@ import { useEditorStore } from '../stores/editorStore'
 import { DevelopingCloud } from '../lib/developingCloud'
 import { useQueueStore } from '../stores/queueStore'
 import { t } from '../lib/strings'
+import { withShortcut } from '../lib/shortcut'
 import { Button } from './ui/button'
 import { cn } from '../lib/cn'
+import { Select } from './ui/select'
 import { Slider } from './ui/slider'
 import { Switch } from './ui/switch'
 import { HelpTooltip, ToggleRow } from './ui/settingsLayout'
@@ -47,12 +44,12 @@ const TEMPERATURE = 'linear-gradient(to right, #4f7cff, #d4d4d4, #ffb43d)'
 const TINT = 'linear-gradient(to right, #3fbf5a, #d4d4d4, #e14fd0)'
 /** White balance presets in kelvin at zero tint. As shot is the camera's own. */
 const WHITE_BALANCE = [
-  ['asShot', Camera, null],
-  ['daylight', Sun, 5500],
-  ['cloudy', Cloud, 6500],
-  ['shade', House, 7500],
-  ['tungsten', Lightbulb, 2850],
-  ['flash', Zap, 6000]
+  ['asShot', null],
+  ['daylight', 5500],
+  ['cloudy', 6500],
+  ['shade', 7500],
+  ['tungsten', 2850],
+  ['flash', 6000]
 ] as const
 /** Maps values onto slider positions, for a slider that is not linear. */
 interface Scale {
@@ -335,6 +332,9 @@ export const EditorControls = memo(function EditorControls({
   const [band, setBand] = useState(0)
   const [extended, setExtended] = useState(false)
   const hue = BANDS[band][1]
+  const preset =
+    WHITE_BALANCE.find(([, kelvin]) => recipe.temperature === kelvin && recipe.tint === 0)?.[0] ??
+    'custom'
   const temperature = recipe.temperature ?? Math.round(asShotTemperature ?? 6500)
   // A value past the normal range enables the extended controls.
   const wideTemperature =
@@ -409,34 +409,33 @@ export const EditorControls = memo(function EditorControls({
         <Curves recipe={recipe} />
       </Section>
       <Section name={t('editor.whiteBalance')} open>
-        <div
-          role="radiogroup"
-          aria-label={t('editor.whiteBalancePreset')}
-          className="grid grid-cols-3 gap-1.5"
-        >
-          {WHITE_BALANCE.map(([key, Icon, kelvin]) => (
-            <button
-              key={key}
-              type="button"
-              role="radio"
-              aria-checked={recipe.temperature === kelvin && recipe.tint === 0}
-              onClick={() => change({ temperature: kelvin, tint: 0 })}
-              className="flex flex-col items-center gap-1 rounded-lg border border-transparent px-0.5 py-1.5 text-[10px] leading-none text-neutral-400 hover:bg-white/5 hover:text-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50 aria-checked:border-white/30 aria-checked:bg-white/10 aria-checked:text-white"
-            >
-              <Icon aria-hidden="true" className="h-4 w-4" />
-              <span className="max-w-full truncate">{t(`editor.${key}`)}</span>
-            </button>
-          ))}
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex items-center gap-1.5">
+          <Select
+            aria-label={t('editor.whiteBalancePreset')}
+            className="flex-1"
+            value={preset}
+            options={[
+              ...WHITE_BALANCE.map(([key]) => ({ value: key, label: t(`editor.${key}`) })),
+              // Custom only names a balance that is not a preset.
+              ...(preset === 'custom'
+                ? [{ value: preset, label: t('editor.customWhiteBalance'), disabled: true }]
+                : [])
+            ]}
+            onValueChange={(key) => {
+              const kelvin = WHITE_BALANCE.find(([name]) => name === key)?.[1]
+              if (kelvin !== undefined) change({ temperature: kelvin, tint: 0 })
+            }}
+          />
           <Button
-            size="sm"
-            variant="bordered"
+            size="icon"
+            className="h-7 w-7 shrink-0"
+            aria-label={t('editor.picker')}
+            title={withShortcut(t('editor.picker'), 'W')}
+            aria-keyshortcuts="W"
             aria-pressed={picking}
             onClick={() => setPicking(!picking)}
           >
             <Pipette aria-hidden="true" className="h-3.5 w-3.5" />
-            {t('editor.picker')}
           </Button>
         </div>
         {picking && (

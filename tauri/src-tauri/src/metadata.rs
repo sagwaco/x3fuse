@@ -335,6 +335,7 @@ const INSPECTOR: &[(&str, &str)] = &[
     ("ExposureCompensation", "Exposure comp."),
     ("ExposureProgram", "Program"),
     ("MeteringMode", "Metering"),
+    ("Flash", "Flash"),
     ("WhiteBalance", "White balance"),
     ("ImageSize", "Dimensions"),
     ("DateTimeOriginal", "Captured"),

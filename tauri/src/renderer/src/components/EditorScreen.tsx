@@ -51,6 +51,8 @@ export function EditorScreen(): React.JSX.Element {
   const panelOpen = useSettingsStore((state) => state.settings.editorPanelOpen)
   const filterOpen = useQueueStore((state) => state.filterOpen)
   const [picking, setPicking] = useState(false)
+  // W arms the picker only while its controls are enabled. It can always turn it off.
+  const canPick = useRef(false)
   const [sidebarPage, setSidebarPage] = useState<SidebarPage>('edit')
   const sidebarBody = useRef<HTMLDivElement>(null)
   const sidebarBack = useRef<HTMLButtonElement>(null)
@@ -211,6 +213,13 @@ export function EditorScreen(): React.JSX.Element {
       } else if (!modifier && event.key === '\\') {
         event.preventDefault()
         if (!event.repeat) editor.compare(!editor.before)
+      } else if (
+        !modifier &&
+        event.key.toLowerCase() === 'w' &&
+        !document.querySelector('[role="dialog"][data-state="open"]')
+      ) {
+        event.preventDefault()
+        if (!event.repeat && (picking || canPick.current)) setPicking(!picking)
       }
     }
     document.addEventListener('keydown', keydown)
@@ -261,6 +270,7 @@ export function EditorScreen(): React.JSX.Element {
     return () => clearTimeout(timer)
   }, [previewShown])
   const unavailable = !doc || !displayFile || editor.loading || busy
+  canPick.current = !unavailable && !editor.before && !cloudFile
   // The toolbar lags behind crop mode while its buttons animate out and in.
   const swap = useToolbarSwap(editor.cropping)
   const inert = swap.leaving ? { inert: '' } : {}

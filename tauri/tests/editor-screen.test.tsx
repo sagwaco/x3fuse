@@ -589,12 +589,16 @@ it('names the photo in the panel header and shows its capture details from the i
   vi.stubGlobal('PointerEvent', MouseEvent)
   const exif = [
     { label: 'Camera', value: 'SIGMA sd Quattro H' },
+    { label: 'Focal length', value: '30.0 mm' },
+    { label: 'Aperture', value: 'f/4.0' },
     { label: 'Shutter', value: '1/250' },
-    { label: 'Aperture', value: 'f/2.8' },
+    { label: 'ISO', value: '100' },
     { label: 'Exposure comp.', value: '-1/3' },
-    { label: 'Captured', value: '2024-05-12 14:22:01' }
+    { label: 'Metering', value: 'Multi-segment' },
+    { label: 'Flash', value: 'On, Return detected' },
+    { label: 'Dimensions', value: '6192 × 4128' }
   ]
-  queue.setState({ files: [{ ...file, exif }] })
+  queue.setState({ files: [{ ...file, exif, fileSize: 52_400_000 }] })
   editor.setState({ session, documents: { [file.path]: doc }, loading: false, preview: frame })
   const view = render(<EditorScreen />)
   // The toolbar starts at the filter button; the name moved to the panel header.
@@ -605,10 +609,58 @@ it('names the photo in the panel header and shows its capture details from the i
   fireEvent.pointerMove(within(header).getByRole('button', { name: t('editor.photoInfo') }), {
     pointerType: 'mouse'
   })
-  const card = (await screen.findByRole('tooltip')).textContent
-  for (const text of ['SIGMA sd Quattro H', '1/250', 'f/2.8', '-1/3 EV', '2024-05-12', 'X3F'])
-    expect(card).toContain(text)
-  expect(card).not.toContain('14:22')
+  const card = await screen.findByRole('tooltip')
+  for (const text of [
+    'SIGMA sd Quattro H',
+    t('editor.noLens'),
+    '26 MP',
+    '6192 × 4128',
+    '52.4 MB',
+    'X3F',
+    'ISO 100',
+    '30 mm',
+    '-1/3 ev',
+    'ƒ4',
+    '1/250 s'
+  ])
+    expect(card.textContent).toContain(text)
+  expect(within(card).getByRole('img', { name: 'Multi-segment' })).toBeTruthy()
+  // ExifTool writes On for some flashes that fired, and Off with red-eye for one that did not.
+  const flash = (): string | null =>
+    within(card).getByRole('img', { name: /^O/ }).firstElementChild!.getAttribute('class')
+  expect(flash()).toContain('text-neutral-100')
+  act(() =>
+    queue.setState({
+      files: [{ ...file, exif: [...exif, { label: 'Flash', value: 'Off, Red-eye reduction' }] }]
+    })
+  )
+  expect(flash()).not.toContain('text-neutral-100')
+})
+
+it('toggles the neutral picker with W', () => {
+  editor.setState({ session, documents: { [file.path]: doc }, loading: false, preview: frame })
+  const view = render(<EditorScreen />)
+  const picking = (): string | null | undefined =>
+    view.container.querySelector('[data-editor-frame]')?.getAttribute('data-picking')
+  fireEvent.keyDown(document, { key: 'w' })
+  expect(picking()).toBe('true')
+  fireEvent.keyDown(document, { key: 'w', repeat: true })
+  expect(picking()).toBe('true')
+  fireEvent.keyDown(document, { key: 'W' })
+  expect(picking()).not.toBe('true')
+  // W waits while the picker's controls are disabled, as in Compare, or a dialog is open.
+  act(() => editor.setState({ before: true }))
+  fireEvent.keyDown(document, { key: 'w' })
+  expect(picking()).not.toBe('true')
+  act(() => editor.setState({ before: false }))
+  const dialog = document.body.appendChild(document.createElement('div'))
+  dialog.setAttribute('role', 'dialog')
+  dialog.dataset.state = 'open'
+  fireEvent.keyDown(dialog, { key: 'w' })
+  expect(picking()).not.toBe('true')
+  dialog.remove()
+  fireEvent.keyDown(document, { key: 'w' })
+  expect(picking()).toBe('true')
 })
 
 it('inverts a negative print on request and shows a tiny scope while the scope is scrolled away', () => {

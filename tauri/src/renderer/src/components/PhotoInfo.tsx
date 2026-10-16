@@ -1,7 +1,8 @@
-import { Info } from 'lucide-react'
+import { Info, Zap } from 'lucide-react'
 import type { X3FFileDTO } from '@shared/types'
 import { useExif } from '../hooks/useExif'
 import { cn } from '../lib/cn'
+import { formatBytes } from '../lib/format'
 import { t } from '../lib/strings'
 import { Tooltip } from './ui/tooltip'
 
@@ -25,63 +26,100 @@ export function PhotoInfo({ file }: { file: X3FFileDTO }): React.JSX.Element {
   )
 }
 
+/** The capture details, in the layout of the Photos app info card. */
 function PhotoCard({ file }: { file: X3FFileDTO }): React.JSX.Element {
   const rows = useExif(file.path, file.id, file.exif, file.pending)
   // The labels are the inspector rows from src-tauri/src/metadata.rs.
   const exif = new Map(Array.isArray(rows) ? rows.map((row) => [row.label, row.value]) : [])
-  const value = (label: string): string => exif.get(label) ?? '-'
-  const exposure = exif.get('Exposure comp.')
-  const grid = [
-    [
-      ['Tv', value('Shutter')],
-      ['Av', value('Aperture')]
-    ],
-    [
-      ['ISO', value('ISO')],
-      [t('editor.infoFocal'), value('Focal length')],
-      [t('editor.infoExposure'), exposure ? `${exposure} EV` : '-']
-    ],
-    [
-      ['WB', value('White balance')],
-      [t('editor.infoSize'), value('Dimensions')],
-      // The date only, as the time does not fit.
-      [t('editor.infoDate'), exif.get('Captured')?.slice(0, 10) ?? '-']
-    ]
-  ]
+  // ExifTool writes 4.0 for f/4 and 30.0 mm for 30 mm. Show 4 and 30.
+  const number = (label: string): number | undefined => {
+    const value = parseFloat(exif.get(label)?.replace('f/', '') ?? '')
+    return Number.isFinite(value) ? value : undefined
+  }
+  const [width, height] = (exif.get('Dimensions') ?? '').split(' × ').map(Number)
+  const flash = exif.get('Flash')
+  const metering = exif.get('Metering')
+  const focal = number('Focal length')
+  const aperture = number('Aperture')
+  const capture = [
+    exif.has('ISO') && `ISO ${exif.get('ISO')}`,
+    focal !== undefined && `${focal} mm`,
+    exif.has('Exposure comp.') && `${exif.get('Exposure comp.')} ev`,
+    aperture !== undefined && `ƒ${aperture}`,
+    exif.has('Shutter') && `${exif.get('Shutter')} s`
+  ].filter(Boolean)
   return (
-    <div className="w-80 font-mono text-xs">
-      <div className="space-y-1.5 p-3">
-        <p className="truncate text-neutral-500">{file.fileName}</p>
+    <div className="w-80 text-[13px] text-neutral-100">
+      <div className="space-y-1 p-3">
         <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0 space-y-1 font-sans text-[13px] font-semibold text-neutral-100">
-            <p className="truncate">{value('Camera')}</p>
-            <p className="truncate">{value('Lens')}</p>
+          <div className="min-w-0">
+            <p className="truncate">{exif.get('Camera') ?? '-'}</p>
+            <p className="truncate">
+              {exif.get('Lens') ?? (rows === 'loading' ? '-' : t('editor.noLens'))}
+            </p>
           </div>
-          <span className="shrink-0 rounded bg-neutral-300 px-1.5 py-0.5 text-[10px] font-medium text-neutral-900">
+          <div className="flex shrink-0 items-center gap-2">
+            {flash && (
+              <span role="img" aria-label={flash} title={flash}>
+                <Zap
+                  aria-hidden="true"
+                  className={cn(
+                    'h-4 w-4',
+                    flashFired(flash) ? 'text-neutral-100' : 'text-neutral-600'
+                  )}
+                />
+              </span>
+            )}
+            {metering && <MeteringIcon mode={metering} />}
+          </div>
+        </div>
+        <div className="flex items-center justify-between gap-3 tabular-nums">
+          {width > 0 && height > 0 && (
+            <>
+              <span>{Math.round((width * height) / 1e6)} MP</span>
+              <span>
+                {width} × {height}
+              </span>
+            </>
+          )}
+          {file.fileSize != null && <span>{formatBytes(file.fileSize)}</span>}
+          <span className="rounded bg-neutral-500 px-1 text-[10px] font-bold leading-4 text-neutral-900">
             {file.fileName.split('.').pop()?.toUpperCase()}
           </span>
         </div>
       </div>
-      {grid.map((cells, row) => (
-        <dl
-          key={row}
-          className={cn(
-            'grid divide-x divide-white/15 border-t border-white/15',
-            row ? 'grid-cols-3' : 'grid-cols-2'
-          )}
-        >
-          {cells.map(([label, text]) => (
-            <div key={label} className="min-w-0 px-3 py-2">
-              <dt
-                className={cn('text-[10px] tracking-[0.12em] text-neutral-500', row && 'uppercase')}
-              >
-                {label}
-              </dt>
-              <dd className={cn('mt-1 truncate text-neutral-100', !row && 'text-2xl')}>{text}</dd>
-            </div>
+      {capture.length > 0 && (
+        <div className="flex justify-between gap-3 border-t border-white/15 px-3 py-2 tabular-nums">
+          {capture.map((text) => (
+            <span key={String(text)}>{text}</span>
           ))}
-        </dl>
-      ))}
+        </div>
+      )}
     </div>
+  )
+}
+
+/** ExifTool writes "Fired" or "On" for a flash that fired, as in "On, Return detected". */
+const flashFired = (flash: string): boolean => /Fired|^On(?!, Did not fire)/.test(flash)
+
+/** A frame with marks for the metering area, as on a camera display. */
+function MeteringIcon({ mode }: { mode: string }): React.JSX.Element {
+  const spot = /spot|partial/i.test(mode)
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      role="img"
+      aria-label={mode}
+      className="h-5 w-5 text-neutral-400"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.5}
+    >
+      <title>{mode}</title>
+      <rect x="2" y="4" width="20" height="16" rx="3" />
+      {mode === 'Multi-segment' && <rect x="5.5" y="7.5" width="13" height="9" rx="1.5" />}
+      {!spot && <circle cx="12" cy="12" r="2.75" />}
+      <circle cx="12" cy="12" r="1" fill="currentColor" />
+    </svg>
   )
 }
