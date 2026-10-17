@@ -33,6 +33,27 @@ def release_step(name):
 
 with tempfile.TemporaryDirectory() as directory:
     workspace = Path(directory)
+    (workspace / "new_version").write_text("1.2.3\n")
+    remote = textwrap.dedent('''\
+        git() {
+          [ "$*" = 'ls-remote --tags origin refs/tags/v1.2.3' ] || return 99
+          case "$TEST_REMOTE_STATE" in
+            published) printf '%s\\n' 'abcdef refs/tags/v1.2.3' ;;
+            unavailable) return 128 ;;
+          esac
+        }
+        ''')
+    for state, expected in [("absent", 0), ("published", 1), ("unavailable", 128)]:
+        result = subprocess.run(
+            ["bash", "-eo", "pipefail", "-c", remote + release_step("Reject published release versions")],
+            cwd=workspace, env={**os.environ, "TEST_REMOTE_STATE": state}, capture_output=True,
+        )
+        assert result.returncode == expected, (state, result.returncode)
+print("Published release guard passed")
+
+
+with tempfile.TemporaryDirectory() as directory:
+    workspace = Path(directory)
     files = (
         "package.json", "package-lock.json", "src-tauri/tauri.conf.json",
         "src-tauri/Cargo.toml", "src-tauri/Cargo.lock",

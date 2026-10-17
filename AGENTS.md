@@ -139,9 +139,10 @@ local-path lockfile changes. CI and release builds cannot access local checkouts
 - macOS updates use `tauri-plugin-updater` and
   `https://sagwaco.github.io/x3fuse/Support/latest.json`. Windows and Linux portable
   alphas have no updater.
-- The 0.2.0 release adds the final Sparkle appcast item so older installs can update
-  to the Tauri app. `docs/Support/appcast.xml` is frozen after 0.2.0. Keep it available
-  for installs that have not updated. Verify the bridge before publishing.
+- The Sparkle setup, appcast generation, and note injection steps run only for
+  0.2.0. They write `docs/Support/appcast.xml` once more for the bridge from older
+  installations; it stays frozen afterwards. Keep it available for installs that
+  have not updated. Verify the bridge before publishing.
 - `Release_Notes.md` is the single source of truth. Each release starts with
   `# <version> - <title>`, followed by `-` bullets. Put the newest release first.
   Keep notes user-facing. Check parsing with `bash Configuration/release.sh | head`.

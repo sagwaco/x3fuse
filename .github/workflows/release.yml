@@ -4,6 +4,9 @@ on:
   issue_comment:
     types: [created]
 
+env:
+  MACOSX_DEPLOYMENT_TARGET: "14.0"
+
 permissions:
   contents: write
   pull-requests: write
@@ -83,6 +86,15 @@ jobs:
           echo "Latest Version: $LATEST_VERSION"
           echo "Latest Title: $LATEST_TITLE"
           echo "Previous Version: $PREVIOUS_VERSION"
+
+      - name: Reject published release versions
+        run: |
+          LATEST_VERSION=$(cat new_version)
+          existing_tag=$(git ls-remote --tags origin "refs/tags/v$LATEST_VERSION")
+          if [ -n "$existing_tag" ]; then
+            echo "ERROR: Release v$LATEST_VERSION already exists on origin."
+            exit 1
+          fi
 
       - name: Save generated info
         uses: actions/upload-artifact@v4
@@ -291,12 +303,14 @@ jobs:
           ls -la Release/
 
       - name: Setup Sparkle
+        if: steps.info.outputs.new_version == '0.2.0'
         run: |
           # Download Sparkle
           curl -L -o Sparkle.tar.xz https://github.com/sparkle-project/Sparkle/releases/download/2.7.1/Sparkle-2.7.1.tar.xz
           tar -xf Sparkle.tar.xz
 
       - name: Update appcast
+        if: steps.info.outputs.new_version == '0.2.0'
         env:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
         run: |
@@ -311,6 +325,7 @@ jobs:
           rm -rf appcast_temp
 
       - name: Embed release notes in appcast
+        if: steps.info.outputs.new_version == '0.2.0'
         run: |
           # generate_appcast omits release notes, so the Sparkle update window's
           # notes pane would be blank. Backfill each item's <description> from

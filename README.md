@@ -331,8 +331,9 @@ table above or the included `README.txt`. Report the alpha tag and OS with resul
 Stable macOS releases start with a `/release` PR comment. The workflow builds a
 universal signed and notarized app, publishes `X3Fuse-App.zip`,
 `X3Fuse.app.tar.gz`, and `X3Fuse.app.tar.gz.sig`, writes `docs/Support/latest.json`,
-and bumps the Homebrew cask. Release 0.2.0 also writes the final Sparkle appcast
-item to update older installations. The appcast stays frozen after 0.2.0; later
+and bumps the Homebrew cask. The Sparkle setup, appcast generation, and note
+injection steps run only for 0.2.0. They write `docs/Support/appcast.xml` once more
+for the bridge from older installations; it stays frozen afterwards. Later
 updates use `tauri-plugin-updater`. Release notes use `# <version> - <title>`
 followed by `-` bullets in `Release_Notes.md`.
 
