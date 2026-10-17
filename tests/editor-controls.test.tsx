@@ -536,7 +536,7 @@ it('starts white balance from the camera reading so leaving As shot does not jum
   await waitFor(() => expect(change).toHaveBeenLastCalledWith({ temperature: null, tint: 0 }))
 })
 
-it('offers white balance presets in a menu with the neutral picker icon beside it', async () => {
+it('offers white balance presets in a menu between the picker and reset icons', async () => {
   render(<Controls />)
   invoke.mockResolvedValueOnce('tungsten')
   fireEvent.click(whiteBalance())
@@ -558,7 +558,13 @@ it('offers white balance presets in a menu with the neutral picker icon beside i
   const picker = screen.getByRole('button', { name: t('editor.picker') })
   expect(picker.textContent).toBe('')
   expect(picker.getAttribute('aria-keyshortcuts')).toBe('W')
-  expect(picker.previousElementSibling).toBe(whiteBalance())
+  expect(picker.nextElementSibling).toBe(whiteBalance())
+  const reset = screen.getByRole('button', { name: t('editor.resetWhiteBalance') })
+  expect(whiteBalance().nextElementSibling).toBe(reset)
+  fireEvent.click(reset)
+  expect(change).toHaveBeenLastCalledWith({ temperature: null, tint: 0 })
+  act(() => setRecipe(defaultRecipe()))
+  expect((reset as HTMLButtonElement).disabled).toBe(true)
 })
 
 it('extends the white balance range for infrared and full-spectrum photos', () => {

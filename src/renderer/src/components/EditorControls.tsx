@@ -410,6 +410,17 @@ export const EditorControls = memo(function EditorControls({
       </Section>
       <Section name={t('editor.whiteBalance')} open>
         <div className="flex items-center gap-1.5">
+          <Button
+            size="icon"
+            className="h-7 w-7 shrink-0"
+            aria-label={t('editor.picker')}
+            title={withShortcut(t('editor.picker'), 'W')}
+            aria-keyshortcuts="W"
+            aria-pressed={picking}
+            onClick={() => setPicking(!picking)}
+          >
+            <Pipette aria-hidden="true" className="h-3.5 w-3.5" />
+          </Button>
           <Select
             aria-label={t('editor.whiteBalancePreset')}
             className="flex-1"
@@ -429,13 +440,12 @@ export const EditorControls = memo(function EditorControls({
           <Button
             size="icon"
             className="h-7 w-7 shrink-0"
-            aria-label={t('editor.picker')}
-            title={withShortcut(t('editor.picker'), 'W')}
-            aria-keyshortcuts="W"
-            aria-pressed={picking}
-            onClick={() => setPicking(!picking)}
+            aria-label={t('editor.resetWhiteBalance')}
+            title={t('editor.resetWhiteBalance')}
+            disabled={preset === 'asShot'}
+            onClick={() => change({ temperature: null, tint: 0 })}
           >
-            <Pipette aria-hidden="true" className="h-3.5 w-3.5" />
+            <RotateCcw aria-hidden="true" className="h-3.5 w-3.5" />
           </Button>
         </div>
         {picking && (

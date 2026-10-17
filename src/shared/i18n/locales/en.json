@@ -374,6 +374,7 @@
   "editor.halationSpatialScale": "Halation size",
   "editor.resetGrain": "Reset grain",
   "editor.resetHalation": "Reset halation",
+  "editor.resetWhiteBalance": "Reset white balance",
   "editor.legacyFilmEffect": "This photo uses previous effect controls. Reset this effect to use Spektrafilm controls.",
   "editor.grainRmsGranularityHelp": "Film density variation measured through a 48 µm aperture (RMS × 1000). Higher values produce coarser grain. Moves all RGB channels together and keeps their offsets. The range stops when a channel reaches 0 or 100.",
   "editor.grainBlurHelp": "Gaussian blur of the sampled grain, in output pixels (sigma). The default is 0.89. Higher values also soften image detail.",

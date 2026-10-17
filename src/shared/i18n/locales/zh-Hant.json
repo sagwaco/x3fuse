@@ -374,6 +374,7 @@
   "editor.halationSpatialScale": "光暈大小",
   "editor.resetGrain": "重設顆粒",
   "editor.resetHalation": "重設光暈",
+  "editor.resetWhiteBalance": "重設白平衡",
   "editor.legacyFilmEffect": "此照片使用舊的效果設定。重設此效果後，即可使用Spektrafilm調整項目。",
   "editor.grainRmsGranularityHelp": "透過48 µm孔徑測量的底片密度變化（RMS × 1000）。數值越高，顆粒越粗。同時調整RGB通道並保留各通道的偏移量。當任一通道達到0或100時，滑桿到達範圍邊界。",
   "editor.grainBlurHelp": "對顆粒套用高斯模糊，以輸出像素為單位表示標準差。預設值為0.89。增大也會使影像細節變柔和。",

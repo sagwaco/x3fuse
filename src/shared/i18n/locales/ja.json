@@ -374,6 +374,7 @@
   "editor.halationSpatialScale": "ハレーションサイズ",
   "editor.resetGrain": "粒子をリセット",
   "editor.resetHalation": "ハレーションをリセット",
+  "editor.resetWhiteBalance": "ホワイトバランスをリセット",
   "editor.legacyFilmEffect": "この写真は以前の効果設定を使用しています。Spektrafilmの調整項目を使うには、この効果をリセットしてください。",
   "editor.grainRmsGranularityHelp": "48 µmの開口で測定したフィルム濃度の変動（RMS × 1000）。値を上げると粒子が粗くなります。RGBの差を保ちながら全チャンネルを調整します。いずれかが0または100に達すると範囲の端になります。",
   "editor.grainBlurHelp": "粒子に適用するガウスぼかしの標準偏差。出力ピクセル単位で、初期値は0.89です。大きくすると画像の細部も柔らかくなります。",
