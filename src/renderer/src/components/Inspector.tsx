@@ -15,6 +15,7 @@ import { PreviewMinimap } from './PreviewMinimap'
 import { OrientedImage } from './OrientedImage'
 import { PanelSection as Section } from './ui/panelSection'
 import { CullControls } from './CullControls'
+import { PhotoCard } from './PhotoCard'
 
 /** Selection previews, scopes for a single image, and shared EXIF metadata. */
 export function Inspector(): React.JSX.Element {
@@ -69,7 +70,7 @@ export function Inspector(): React.JSX.Element {
           </Section>
 
           <Section title={t('inspector.metadata')}>
-            <ExifTable files={selected} />
+            <ExifCard files={selected} />
           </Section>
         </div>
       )}
@@ -113,7 +114,7 @@ function PreviewStack({
   )
 }
 
-function ExifTable({ files }: { files: X3FFileDTO[] }): React.JSX.Element {
+function ExifCard({ files }: { files: X3FFileDTO[] }): React.JSX.Element {
   const data = useSelectionExif(files)
   const showLoading = useDelayedLoading(
     data === 'loading',
@@ -133,32 +134,21 @@ function ExifTable({ files }: { files: X3FFileDTO[] }): React.JSX.Element {
 
   const values = data.map((rows) => new Map(rows.map(({ label, value }) => [label, value])))
   const labels = [...new Set(data.flatMap((rows) => rows.map((row) => row.label)))]
-  const rows = labels.map((label) => {
-    const value = values[0].get(label)
-    const common = value !== undefined && values.every((entry) => entry.get(label) === value)
-    return {
-      label,
-      value: common ? value : t('inspector.multiple_values'),
-      common
-    }
-  })
+  const rows = labels.map((label) => ({
+    label,
+    value: values[0].get(label) ?? '',
+    mixed: values.some((entry) => entry.get(label) !== values[0].get(label))
+  }))
   if (rows.length === 0) {
     return <p className="text-xs text-tone-600">{t('inspector.no_metadata')}</p>
   }
 
   return (
-    <dl className="space-y-1.5">
-      {rows.map((row) => (
-        <div key={row.label} className="flex items-baseline justify-between gap-3 text-xs">
-          <dt className="shrink-0 text-tone-500">{row.label}</dt>
-          <dd
-            className={`truncate text-right ${row.common ? 'text-tone-200' : 'text-tone-500'}`}
-            title={row.value}
-          >
-            {row.value}
-          </dd>
-        </div>
-      ))}
-    </dl>
+    <PhotoCard
+      rows={rows}
+      files={files}
+      details
+      className="rounded-xl border border-ink/15 bg-ink/[0.03] text-xs"
+    />
   )
 }

@@ -69,16 +69,20 @@ describe('inspector metadata loading', () => {
     expect(screen.getByText('Scopes not available for multiple images')).toBeTruthy()
     expect(screen.queryByTestId('scope')).toBeNull()
     expect(screen.queryByRole('button', { name: 'Scope view' })).toBeNull()
-    expect(screen.getByText('Camera').nextElementSibling?.textContent).toBe('SIGMA')
-    expect(
-      screen.getByText('Camera').nextElementSibling?.classList.contains('text-tone-200')
-    ).toBe(true)
-    for (const label of ['ISO', 'Lens', 'Copyright']) {
+    // The card shows the common camera and a mixed lens. Other mixed rows come below it.
+    expect(screen.getByText('SIGMA').getAttribute('title')).toBe('SIGMA')
+    expect(screen.getByText('Multiple values', { selector: 'p > span' })).toBeTruthy()
+    expect(screen.queryByText('Camera')).toBeNull()
+    expect(screen.queryByText('Lens')).toBeNull()
+    for (const label of ['ISO', 'Copyright']) {
       expect(screen.getByText(label).nextElementSibling?.textContent).toBe('Multiple values')
-      expect(
-        screen.getByText(label).nextElementSibling?.classList.contains('text-tone-500')
-      ).toBe(true)
+      expect(screen.getByText(label).nextElementSibling?.classList.contains('text-tone-500')).toBe(
+        true
+      )
     }
+    // A selection has no single file size.
+    expect(screen.queryByText(/ MB$/)).toBeNull()
+    expect(screen.getByText('X3F')).toBeTruthy()
     expect(invoke).not.toHaveBeenCalled()
 
     act(() => useQueueStore.getState().setSelection(new Set([files[0].id]), files[0].id))
@@ -87,10 +91,35 @@ describe('inspector metadata loading', () => {
     expect(screen.getByAltText('a.X3F')).toBeTruthy()
     expect(screen.getByTestId('scope')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Scope view' })).toBeTruthy()
-    expect(screen.getByText('ISO').nextElementSibling?.textContent).toBe('100')
+    expect(screen.getByText('ISO 100')).toBeTruthy()
+    expect(screen.getByText('50mm')).toBeTruthy()
+    expect(screen.queryByText('ISO')).toBeNull()
     act(() => useQueueStore.getState().deselectAll())
     expect(screen.getByText('Info')).toBeTruthy()
     expect(screen.getByText('Select a file to see its details')).toBeTruthy()
+  })
+
+  it('lists the rows that the card does not show below it, with the file size', () => {
+    files = [
+      {
+        ...files[0],
+        fileSize: 52_400_000,
+        exif: [
+          { label: 'Camera', value: 'SIGMA sd Quattro H' },
+          { label: 'Dimensions', value: '6192 × 4128' },
+          { label: 'Captured', value: '2024-05-01 10:00:00' },
+          { label: 'Program', value: 'Aperture-priority AE' }
+        ]
+      }
+    ]
+    useQueueStore.setState({ files, selectedIds: new Set([files[0].id]), activeId: files[0].id })
+    render(<Inspector />)
+    for (const text of ['SIGMA sd Quattro H', 'No lens information', '26 MP', '52.4 MB', 'X3F'])
+      expect(screen.getByText(text)).toBeTruthy()
+    expect(screen.getByText('6192 × 4128', { exact: false })).toBeTruthy()
+    expect(screen.queryByText('Dimensions')).toBeNull()
+    expect(screen.getByText('Captured').nextElementSibling?.textContent).toBe('2024-05-01 10:00:00')
+    expect(screen.getByText('Program').nextElementSibling?.textContent).toBe('Aperture-priority AE')
   })
 
   it('bounds the preview stack while retaining the full selection count and active image', () => {

@@ -157,7 +157,8 @@ html[data-platform='darwin'] .window-toolbar {
    dark theme in a light window keeps the solid tone-800 tooltip. */
 @supports (-apple-visual-effect: -apple-system-glass-material) {
   @media (prefers-color-scheme: dark) {
-    html[data-platform='darwin']:where([data-theme='dark']) .export-help-tooltip {
+    html[data-platform='darwin']:where([data-theme='dark'])
+      :is(.export-help-tooltip, .photo-info-tooltip) {
       background-color: transparent;
       -apple-visual-effect: -apple-system-glass-material;
       border-color: transparent;
@@ -166,7 +167,8 @@ html[data-platform='darwin'] .window-toolbar {
   }
 
   @media (prefers-color-scheme: light) {
-    html[data-platform='darwin']:where(:not([data-theme='dark'])) .export-help-tooltip {
+    html[data-platform='darwin']:where(:not([data-theme='dark']))
+      :is(.export-help-tooltip, .photo-info-tooltip) {
       background-color: transparent;
       -apple-visual-effect: -apple-system-glass-material;
       border-color: transparent;
@@ -177,6 +179,15 @@ html[data-platform='darwin'] .window-toolbar {
 
 @media (prefers-reduced-transparency: reduce) {
   html[data-platform='darwin'] .export-help-tooltip {
+    -apple-visual-effect: none;
+    background-color: rgb(var(--tone-800));
+    border-color: rgb(var(--ink) / 0.15);
+  }
+}
+
+/* The photo info card is also solid for more contrast, as the status overlays are. */
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  html[data-platform='darwin'] .photo-info-tooltip {
     -apple-visual-effect: none;
     background-color: rgb(var(--tone-800));
     border-color: rgb(var(--ink) / 0.15);
