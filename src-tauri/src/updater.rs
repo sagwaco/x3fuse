@@ -1,4 +1,4 @@
-use crate::{menu::translate, AppState};
+use crate::{menu::translate, storage::Logs, AppState};
 use std::{
     path::Path,
     sync::{
@@ -42,9 +42,15 @@ fn release_notes(body: &str) -> String {
 fn checked_update(
     result: tauri_plugin_updater::Result<Option<Update>>,
     manual: bool,
+    logs: &Logs,
 ) -> Result<Option<Update>, String> {
     match result {
-        Err(tauri_plugin_updater::Error::ReleaseNotFound) if manual => Ok(None),
+        Err(error @ tauri_plugin_updater::Error::ReleaseNotFound) => {
+            if !manual {
+                logs.write("debug", format!("Update check: {error}"));
+            }
+            Ok(None)
+        }
         result => result.map_err(|error| error.to_string()),
     }
 }
@@ -90,7 +96,8 @@ async fn check(app: &tauri::AppHandle, manual: bool) -> Result<(), String> {
         return Ok(());
     }
     let updater = app.updater().map_err(|error| error.to_string())?;
-    let Some(update) = checked_update(updater.check().await, manual)? else {
+    let state = app.state::<Arc<AppState>>();
+    let Some(update) = checked_update(updater.check().await, manual, &state.logs)? else {
         if manual {
             dialog(
                 app,
@@ -101,11 +108,7 @@ async fn check(app: &tauri::AppHandle, manual: bool) -> Result<(), String> {
         }
         return Ok(());
     };
-    let automatic_download = app
-        .state::<Arc<AppState>>()
-        .preferences
-        .get()
-        .auto_download_updates;
+    let automatic_download = state.preferences.get().auto_download_updates;
     let downloaded = if automatic_download {
         Some(
             update
@@ -206,19 +209,32 @@ mod tests {
     }
 
     #[test]
-    fn missing_releases_are_current_only_for_manual_checks_and_other_errors_survive() {
+    fn missing_releases_use_debug_logs_for_automatic_checks_and_other_errors_survive() {
         use tauri_plugin_updater::Error;
+        let temporary = tempfile::tempdir().unwrap();
+        let logs = Logs::new(temporary.path().to_owned());
+        logs.debug.store(true, Ordering::Relaxed);
         assert!(matches!(
-            checked_update(Err(Error::ReleaseNotFound), true),
+            checked_update(Err(Error::ReleaseNotFound), true, &logs),
             Ok(None)
         ));
-        assert_eq!(
-            checked_update(Err(Error::ReleaseNotFound), false).err(),
-            Some(Error::ReleaseNotFound.to_string())
-        );
+        assert!(!logs.dir.join("debug.log").exists());
+        assert!(matches!(
+            checked_update(Err(Error::ReleaseNotFound), false, &logs),
+            Ok(None)
+        ));
+        assert!(std::fs::read_to_string(logs.dir.join("debug.log"))
+            .unwrap()
+            .contains(&Error::ReleaseNotFound.to_string()));
+        assert!(!logs.dir.join("error.log").exists());
         for manual in [false, true] {
             assert_eq!(
-                checked_update(Err(Error::Network("connection failed".into())), manual).err(),
+                checked_update(
+                    Err(Error::Network("connection failed".into())),
+                    manual,
+                    &logs
+                )
+                .err(),
                 Some("`connection failed`".into())
             );
         }
