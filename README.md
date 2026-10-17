@@ -308,7 +308,12 @@ builds do not use Developer ID signing or notarization credentials.
 Tags matching `x3fuse-alpha-<version>-<sequence>` run the four-platform checks and
 builds, then publish a GitHub prerelease after all jobs succeed. A new commit
 needs a new alpha tag; reruns update assets on the same prerelease. Alpha tags do
-not replace the stable latest release or change the app's internal version.
+not replace the stable latest release. macOS alpha builds use bundle identifier
+`com.sagwa.X3Fuse.alpha` and version `0.2.0-alpha.<run number>`, derived from the
+configured app version and the CI run number. They keep their own application
+data and offer the stable release through the updater when it is newer.
+By design, an `.alpha` build does not migrate data from `com.sagwa.X3Fuse.tauri`;
+only the stable app migrates that data.
 
 Download from the [Releases](https://github.com/sagwaco/x3fuse/releases) page:
 

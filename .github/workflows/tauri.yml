@@ -69,7 +69,7 @@ jobs:
       - run: cargo test --manifest-path src-tauri/Cargo.toml --locked --workspace
       - name: Build macOS application bundle
         if: runner.os == 'macOS' && !(github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'x3fuse-alpha-'))
-        run: npm run tauri -- build --bundles app --config '{"identifier":"com.sagwa.X3Fuse.alpha","version":"0.2.0-alpha.'"$GITHUB_RUN_NUMBER"'"}'
+        run: npm run tauri -- build --bundles app --config '{"identifier":"com.sagwa.X3Fuse.alpha","version":"'"$(node -p "require('./src-tauri/tauri.conf.json').version")"'-alpha.'"$GITHUB_RUN_NUMBER"'"}'
       - name: Build, sign, and notarize macOS alpha
         if: runner.os == 'macOS' && github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'x3fuse-alpha-')
         env:
@@ -88,7 +88,7 @@ jobs:
           export APPLE_API_KEY_PATH="$RUNNER_TEMP/x3fuse-notary.p8"
           trap 'rm -f "$APPLE_API_KEY_PATH"' EXIT
           (umask 077; printf '%s' "$APPLE_API_KEY_BASE64" | base64 --decode > "$APPLE_API_KEY_PATH")
-          npm run tauri -- build --bundles app --config '{"identifier":"com.sagwa.X3Fuse.alpha","version":"0.2.0-alpha.'"$GITHUB_RUN_NUMBER"'"}'
+          npm run tauri -- build --bundles app --config '{"identifier":"com.sagwa.X3Fuse.alpha","version":"'"$(node -p "require('./src-tauri/tauri.conf.json').version")"'-alpha.'"$GITHUB_RUN_NUMBER"'"}'
       - name: Build Windows or Linux native executable
         if: runner.os != 'macOS'
         run: npm run tauri -- build --no-bundle

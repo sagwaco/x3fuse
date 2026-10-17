@@ -120,8 +120,9 @@ reuse the Debug probe executable. Release builds omit the probe.
   `~/Library/Application Support/com.sagwa.X3Fuse`, and logs are under
   `~/Library/Logs/com.sagwa.X3Fuse`.
 - Settings from the previous macOS app are not migrated. Users select output and
-  denoise preferences once. The old Tauri alpha identifier's data and logs move
-  to the new identifier at startup when the destination does not exist.
+  denoise preferences once. Only the stable app migrates data and logs from
+  `com.sagwa.X3Fuse.tauri` when the destination does not exist. By design, an
+  `.alpha` build does not migrate that data.
 
 ## Dependencies
 
@@ -154,7 +155,11 @@ local-path lockfile changes. CI and release builds cannot access local checkouts
   workflow uses it for the 0.2.0 bridge only. Later releases use `latest.json` and
   leave the appcast frozen.
 - `.github/workflows/tauri.yml` publishes portable alpha ZIPs for tags matching
-  `x3fuse-alpha-*`. See the README for artifact names and runtime acceptance.
+  `x3fuse-alpha-*`. macOS alpha builds use bundle identifier
+  `com.sagwa.X3Fuse.alpha` and version `0.2.0-alpha.<run number>`, derived from the
+  configured app version and the CI run number. They keep their own application
+  data and offer the stable release through the updater when it is newer.
+  See the README for artifact names and runtime acceptance.
 
 ## Localization
 
