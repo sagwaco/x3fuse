@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { detectLanguage, LOCALES } from '@shared/i18n/detect'
 import en from '@shared/i18n/locales/en.json'
+import es from '@shared/i18n/locales/es.json'
 import ja from '@shared/i18n/locales/ja.json'
 import ko from '@shared/i18n/locales/ko.json'
 import zhHans from '@shared/i18n/locales/zh-Hans.json'
@@ -8,6 +9,7 @@ import zhHant from '@shared/i18n/locales/zh-Hant.json'
 
 const bundles: Record<string, Record<string, string>> = {
   en,
+  es,
   ja,
   ko,
   'zh-Hans': zhHans,
@@ -54,6 +56,7 @@ describe('locale bundles', () => {
 
   it('carries real translations (spot check)', () => {
     expect(en['button.convert']).toBe('Export')
+    expect(es['button.convert']).toBe('Exportar')
     expect(ja['button.convert']).toBe('書き出し')
     expect(ko['button.convert']).toBe('내보내기')
     expect(zhHans['button.convert']).toBe('导出')

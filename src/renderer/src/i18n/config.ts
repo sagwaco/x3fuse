@@ -2,6 +2,7 @@ import i18n from 'i18next'
 import { initReactI18next } from 'react-i18next'
 import { detectLanguage, type Locale } from '@shared/i18n/detect'
 import en from '@shared/i18n/locales/en.json'
+import es from '@shared/i18n/locales/es.json'
 import ja from '@shared/i18n/locales/ja.json'
 import ko from '@shared/i18n/locales/ko.json'
 import zhHans from '@shared/i18n/locales/zh-Hans.json'
@@ -15,6 +16,7 @@ import zhHant from '@shared/i18n/locales/zh-Hant.json'
  */
 const resources = {
   en: { translation: en },
+  es: { translation: es },
   ja: { translation: ja },
   ko: { translation: ko },
   'zh-Hans': { translation: zhHans },

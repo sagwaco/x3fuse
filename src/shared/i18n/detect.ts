@@ -1,5 +1,5 @@
 /** Supported UI locales (match the Swift app's .lproj set). */
-export const LOCALES = ['en', 'ja', 'ko', 'zh-Hans', 'zh-Hant'] as const
+export const LOCALES = ['en', 'es', 'ja', 'ko', 'zh-Hans', 'zh-Hant'] as const
 export type Locale = (typeof LOCALES)[number]
 
 /**
@@ -8,6 +8,7 @@ export type Locale = (typeof LOCALES)[number]
  */
 export function detectLanguage(input: string | undefined | null): Locale {
   const tag = (input ?? '').toLowerCase()
+  if (tag.startsWith('es')) return 'es'
   if (tag.startsWith('ja')) return 'ja'
   if (tag.startsWith('ko')) return 'ko'
   if (tag.startsWith('zh')) {

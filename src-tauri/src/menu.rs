@@ -11,7 +11,9 @@ pub fn translate(key: &str) -> String {
     let (local, en) = STRINGS.get_or_init(|| {
         let locale = sys_locale::get_locale().unwrap_or_default().to_lowercase();
         let en = include_str!("../../src/shared/i18n/locales/en.json");
-        let text = if locale.starts_with("ja") {
+        let text = if locale.starts_with("es") {
+            include_str!("../../src/shared/i18n/locales/es.json")
+        } else if locale.starts_with("ja") {
             include_str!("../../src/shared/i18n/locales/ja.json")
         } else if locale.starts_with("ko") {
             include_str!("../../src/shared/i18n/locales/ko.json")
