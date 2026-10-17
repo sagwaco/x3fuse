@@ -3,18 +3,18 @@
 import datetime
 import json
 import os
+import re
 import subprocess
 import tempfile
 import textwrap
-import tomllib
 from pathlib import Path
 
 script = Path(__file__).with_name("release.sh").resolve()
 with tempfile.TemporaryDirectory() as directory:
-    Path(directory, "Release_Notes.md").write_text(
+    Path(directory, "Release_Notes.md").write_bytes((
         "# 1.2.3 - Test release\n\n- First bullet.\n- Last bullet.\n\n"
         "# 1.2.2 - Previous release\n\n- Old bullet.\n"
-    )
+    ).encode("utf-8"))
     output = subprocess.check_output(["bash", str(script)], cwd=directory, text=True)
     assert output == (
         "Latest Version: 1.2.3\nLatest Title: Test release\n"
@@ -23,7 +23,7 @@ with tempfile.TemporaryDirectory() as directory:
 print("Release note extraction passed")
 
 root = script.parent.parent
-workflow = (root / ".github/workflows/release.yml").read_text()
+workflow = (root / ".github/workflows/release.yml").read_text(encoding="utf-8")
 
 
 def release_step(name):
@@ -33,7 +33,7 @@ def release_step(name):
 
 with tempfile.TemporaryDirectory() as directory:
     workspace = Path(directory)
-    (workspace / "new_version").write_text("1.2.3\n")
+    (workspace / "new_version").write_bytes(b"1.2.3\n")
     remote = textwrap.dedent('''\
         git() {
           [ "$*" = 'ls-remote --tags origin refs/tags/v1.2.3' ] || return 99
@@ -58,11 +58,11 @@ with tempfile.TemporaryDirectory() as directory:
         "package.json", "package-lock.json", "src-tauri/tauri.conf.json",
         "src-tauri/Cargo.toml", "src-tauri/Cargo.lock",
     )
-    original = {name: (root / name).read_text() for name in files}
+    original = {name: (root / name).read_text(encoding="utf-8") for name in files}
     for name, content in original.items():
         path = workspace / name
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content)
+        path.write_bytes(content.encode("utf-8"))
 
     version_step = release_step("Set release version")
     result = subprocess.run(
@@ -70,20 +70,20 @@ with tempfile.TemporaryDirectory() as directory:
         env={**os.environ, "VERSION": "1.2.3\ninjected=true"}, capture_output=True,
     )
     assert result.returncode != 0
-    assert all((workspace / name).read_text() == content for name, content in original.items())
+    assert all((workspace / name).read_text(encoding="utf-8") == content for name, content in original.items())
     subprocess.run(
         ["bash", "-eo", "pipefail", "-c", version_step], cwd=workspace,
         env={**os.environ, "VERSION": "1.2.3"}, check=True,
     )
     for name in files[:3]:
-        assert json.loads((workspace / name).read_text())["version"] == "1.2.3", name
-    lock = json.loads((workspace / "package-lock.json").read_text())
+        assert json.loads((workspace / name).read_text(encoding="utf-8"))["version"] == "1.2.3", name
+    lock = json.loads((workspace / "package-lock.json").read_text(encoding="utf-8"))
     assert lock["packages"][""]["version"] == "1.2.3"
-    manifest = tomllib.loads((workspace / "src-tauri/Cargo.toml").read_text())
-    assert manifest["package"]["version"] == "1.2.3"
-    lock = tomllib.loads((workspace / "src-tauri/Cargo.lock").read_text())
-    app = next(package for package in lock["package"] if package["name"] == "x3fuse-tauri")
-    assert app["version"] == "1.2.3"
+    for filename, pattern in (
+        ("Cargo.toml", r'\[package\]\s+name = "x3fuse-tauri"\s+version = "([^"]+)"'),
+        ("Cargo.lock", r'name = "x3fuse-tauri"\s+version = "([^"]+)"'),
+    ):
+        assert re.findall(pattern, (workspace / "src-tauri" / filename).read_text(encoding="utf-8")) == ["1.2.3"], filename
 print("Release version updates passed")
 
 with tempfile.TemporaryDirectory() as directory:
@@ -91,8 +91,8 @@ with tempfile.TemporaryDirectory() as directory:
     (workspace / "Release").mkdir()
     (workspace / "docs/Support").mkdir(parents=True)
     notes = '- Keep "quotes", backslashes \\, and Unicode: 사진.\n- Keep the last bullet.\n'
-    (workspace / "latest_changes").write_text(notes)
-    (workspace / "Release/X3Fuse.app.tar.gz.sig").write_text("fake-signature\n")
+    (workspace / "latest_changes").write_bytes(notes.encode("utf-8"))
+    (workspace / "Release/X3Fuse.app.tar.gz.sig").write_bytes(b"fake-signature\n")
     subprocess.run(
         ["bash", "-eo", "pipefail", "-c", release_step("Write Tauri updater metadata")],
         cwd=workspace, env={**os.environ, "VERSION": "1.2.3", "REPOSITORY": "test/x3fuse"},
@@ -100,7 +100,7 @@ with tempfile.TemporaryDirectory() as directory:
     )
     output = workspace / "docs/Support/latest.json"
     subprocess.run(["python3", "-m", "json.tool", str(output)], check=True, stdout=subprocess.DEVNULL)
-    metadata = json.loads(output.read_text())
+    metadata = json.loads(output.read_text(encoding="utf-8"))
     assert metadata["version"] == "1.2.3"
     assert metadata["notes"] == notes
     datetime.datetime.strptime(metadata["pub_date"], "%Y-%m-%dT%H:%M:%SZ")
