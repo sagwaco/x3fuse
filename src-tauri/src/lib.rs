@@ -44,14 +44,24 @@ impl AppState {
 
 static CORE_LOGS: OnceLock<Arc<storage::Logs>> = OnceLock::new();
 
-fn migrate_directory(old: &Path, new: &Path) -> std::io::Result<()> {
-    if old.is_dir() && !new.exists() {
+fn migrate_directory(old: &Path, new: &Path) -> std::io::Result<Option<String>> {
+    if old.is_dir() {
+        if new.exists() {
+            return Ok(Some(format!(
+                "Alpha application data remains at {} because {} already exists",
+                old.display(),
+                new.display()
+            )));
+        }
+        if let Some(parent) = new.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
         std::fs::rename(old, new)?;
     }
-    Ok(())
+    Ok(None)
 }
 
-fn migrate_alpha_directories(app: &tauri::AppHandle) -> Vec<String> {
+fn migrate_alpha_directories(app: &tauri::AppHandle) -> Vec<(&'static str, String)> {
     let identifier = &app.config().identifier;
     let old_identifier = format!("{identifier}.tauri");
     [
@@ -74,11 +84,15 @@ fn migrate_alpha_directories(app: &tauri::AppHandle) -> Vec<String> {
                 .collect();
             migrate_directory(&old, &new)
         });
-        result.err().map(|error| {
-            let message = format!("Could not migrate alpha application directory: {error}");
-            eprintln!("{message}");
-            message
-        })
+        match result {
+            Ok(Some(message)) => Some(("info", message)),
+            Ok(None) => None,
+            Err(error) => {
+                let message = format!("Could not migrate alpha application directory: {error}");
+                eprintln!("{message}");
+                Some(("error", message))
+            }
+        }
     })
     .collect()
 }
@@ -208,10 +222,10 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
-            let migration_errors = migrate_alpha_directories(app.handle());
+            let migration_logs = migrate_alpha_directories(app.handle());
             let logs = Arc::new(storage::Logs::new(app.path().app_log_dir()?));
-            for error in migration_errors {
-                logs.write("error", error);
+            for (kind, message) in migration_logs {
+                logs.write(kind, message);
             }
             let preferences =
                 storage::Preferences::load(app.path().app_config_dir()?.join("settings.json"));
@@ -468,7 +482,12 @@ mod migration_tests {
                 std::fs::create_dir(&new).unwrap();
                 std::fs::write(new.join("settings.json"), b"current settings").unwrap();
             }
-            migrate_directory(&old, &new).unwrap();
+            let message = migrate_directory(&old, &new).unwrap();
+            assert_eq!(message.is_some(), old_exists && new_exists);
+            if let Some(message) = message {
+                assert!(message.contains(old.to_str().unwrap()));
+                assert!(message.contains(new.to_str().unwrap()));
+            }
             assert_eq!(old.exists(), old_exists && new_exists);
             assert_eq!(new.exists(), old_exists || new_exists);
             if new_exists {
@@ -483,5 +502,18 @@ mod migration_tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn alpha_logs_move_when_the_local_data_parent_does_not_exist() {
+        let root = tempfile::tempdir().unwrap();
+        let old = root.path().join("Local/com.sagwa.X3Fuse.tauri/logs");
+        let new = root.path().join("Local/com.sagwa.X3Fuse/logs");
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::write(old.join("error.log"), b"alpha log").unwrap();
+        assert!(!new.parent().unwrap().exists());
+        assert!(migrate_directory(&old, &new).unwrap().is_none());
+        assert!(!old.exists());
+        assert_eq!(std::fs::read(new.join("error.log")).unwrap(), b"alpha log");
     }
 }

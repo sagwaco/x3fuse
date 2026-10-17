@@ -84,7 +84,7 @@ async fn report_failure(app: &tauri::AppHandle, manual: bool, error: String) {
 async fn check(app: &tauri::AppHandle, manual: bool) -> Result<(), String> {
     let executable = std::env::current_exe().map_err(|error| error.to_string())?;
     if let Some(key) = installation_notice(cfg!(debug_assertions), &executable) {
-        if manual {
+        if manual || key == "updates.move_to_applications" {
             dialog(app, translate(key), MessageDialogButtons::Ok).await?;
         }
         return Ok(());
