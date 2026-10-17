@@ -32,7 +32,6 @@
     "@tanstack/react-table": "^8.21.3",
     "@tanstack/react-virtual": "^3.14.2",
     "@tauri-apps/api": "^2.10.1",
-    "@tauri-apps/plugin-process": "~2.3.1",
     "clsx": "^2.1.1",
     "i18next": "^23.16.8",
     "lucide-react": "^0.460.0",

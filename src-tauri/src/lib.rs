@@ -220,7 +220,6 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             let migration_logs = migrate_alpha_directories(app.handle());
             let logs = Arc::new(storage::Logs::new(app.path().app_log_dir()?));
