@@ -27,28 +27,27 @@ X3Fuse converts Sigma X3F files to DNG and TIFF and extracts embedded JPEG previ
 
 X3Fuse supports X3F files from the following Sigma cameras.
 
-| Camera Model           | Tested | Notes    |
-| ---------------------- | ------ | -------- |
-| **Classic Generation** |        |          |
-| Sigma SD9              | ✅     | DNG and TIFF; no embedded JPEG |
-| Sigma SD10             | ✅     | DNG and TIFF; no embedded JPEG |
-| Sigma SD14             | ✅     | DNG, TIFF, and embedded JPEG |
-| **Merrill Generation** |        |          |
-| Sigma DP1 Merrill      | ✅     |          |
-| Sigma DP2 Merrill      | ✅     |          |
-| Sigma DP3 Merrill      | ✅     |          |
-| Sigma SD1 Merrill      | ✅     |          |
-| **Quattro Generation** |        |          |
-| Sigma DP0 Quattro      | ✅     |          |
-| Sigma DP1 Quattro      | ✅     |          |
-| Sigma DP2 Quattro      | ✅     |          |
-| Sigma DP3 Quattro      | ✅     |          |
-| Sigma SD Quattro       | ✅     |          |
-| Sigma SD Quattro H     | ✅     |          |
+| Camera Model | Tested | Untested | Notes |
+| ---------------------- | ------ | -------- | ----- |
+| **Classic Generation** |  |  |  |
+| Sigma SD9 |  | ✅ | DNG and TIFF; no embedded JPEG |
+| Sigma SD10 |  | ✅ | DNG and TIFF; no embedded JPEG |
+| Sigma SD14 |  | ✅ | DNG, TIFF, and embedded JPEG |
+| **Merrill Generation** |  |  |  |
+| Sigma DP1 Merrill | ✅ |  |  |
+| Sigma DP2 Merrill | ✅ |  |  |
+| Sigma DP3 Merrill | ✅ |  |  |
+| Sigma SD1 Merrill | ✅ |  |  |
+| **Quattro Generation** |  |  |  |
+| Sigma DP0 Quattro | ✅ |  |  |
+| Sigma DP1 Quattro | ✅ |  |  |
+| Sigma DP2 Quattro | ✅ |  |  |
+| Sigma DP3 Quattro | ✅ |  |  |
+| Sigma SD Quattro | ✅ |  |  |
+| Sigma SD Quattro H | ✅ |  |  |
 
-Classic-camera checks use one public sample per model from [raw.pixls.us](https://raw.pixls.us/).
-They verify conversion and metadata, not every camera setting or editor. Other classic bodies
-are not yet tested. If your camera is not listed, please open an issue with a sample X3F.
+Classic Foveon support comes from x3f-core 0.3.0 and has not yet been verified in this app.
+If your camera is not listed, please open an issue with a sample X3F.
 
 ## System Requirements
 
@@ -114,20 +113,13 @@ directory, format, and denoise preferences again. New settings use the core defa
 color noise reduction on, luminance noise reduction off, strength 1.0, patch size 3,
 search size 11, and Automatic processing. Denoised output can differ from earlier releases.
 
-Core 0.3.0 adds these settings:
+The conversion settings also include:
 
-- **Color mode (experimental)**, for DNG and RGB TIFF: applies a Sigma camera color mode,
-  or the mode recorded in the file, to Merrill and dp Quattro files. Sunset Red,
-  Forest Green, FOV Classic Yellow, Cinema, and Teal and Orange are dp Quattro only.
-  TIFF applies the look to the pixels. DNG keeps the RAW data and embeds the modes as
-  selectable camera profiles. Other cameras convert without a color mode.
-- **Sigma Photo Pro processing (Merrill)**, for RGB TIFF: uses the SPP highlight recovery,
-  noise reduction, and sharpening on full-resolution (HI) Merrill files. It runs on the CPU
-  and replaces the denoise settings. Other cameras use the standard processing.
-- **Highlight recovery**, for RGB TIFF: on by default. Turn it off to use the earlier basic
-  recovery instead of the scene-derived color table.
-
-Cineon TIFF and TIFF without a color profile do not use these settings.
+- **Color mode (experimental)**, for TIFF output with a color profile and Cineon off:
+  applies a Sigma camera color mode, or the mode recorded in the file, to Merrill
+  and dp Quattro files. Sunset Red, Forest Green, FOV Classic Yellow, Cinema, and
+  Teal and Orange are dp Quattro only. The look is applied to the TIFF pixels.
+- **Merrill highlight recovery**, for DNG output: enables highlight recovery during conversion.
 
 ### Converting a classic-camera library
 
@@ -148,8 +140,9 @@ reversible or guarantee a file smaller than the X3F. TIFF also supports lossless
 but stores rendered RGB data and can be much larger. Embedded JPG extracts an existing
 preview; it does not render a new JPEG with your conversion settings.
 
-These sample sizes use default noise reduction on the CPU, before the app copies additional
-EXIF tags. Sizes are rounded decimal MB. Results depend on the image and settings.
+These historical sample sizes use default noise reduction on the CPU, before additional
+EXIF tags are copied. They do not verify classic-camera conversion in this app. Sizes are
+rounded decimal MB. Results depend on the image and settings.
 
 | Sample | Original X3F | DNG | Compressed DNG |
 | ------ | -----------: | --: | -------------: |
@@ -269,8 +262,8 @@ npm run lint
 npm test
 npm run build:frontend
 cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
-cargo clippy --manifest-path src-tauri/Cargo.toml --locked --all-targets -- -D warnings
-cargo test --manifest-path src-tauri/Cargo.toml --locked
+cargo clippy --manifest-path src-tauri/Cargo.toml --locked --workspace --all-targets -- -D warnings
+cargo test --manifest-path src-tauri/Cargo.toml --locked --workspace
 ```
 
 Frontend tests cover browsing, scopes, zoom, import, batches, Tauri commands and

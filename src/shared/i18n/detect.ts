@@ -1,4 +1,4 @@
-/** Supported UI locales (match the Swift app's .lproj set). */
+/** Six bundled UI locales. */
 export const LOCALES = ['en', 'es', 'ja', 'ko', 'zh-Hans', 'zh-Hant'] as const
 export type Locale = (typeof LOCALES)[number]
 

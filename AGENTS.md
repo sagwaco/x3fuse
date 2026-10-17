@@ -25,7 +25,8 @@ Intel and Apple Silicon support. Windows and Linux x64 builds are portable alpha
 - `tests/`: frontend, artifact, and native-window tests.
 - `scripts/`: resource preparation, artifact packaging, and native smoke checks.
 - `Configuration/`: release version parsing and legacy appcast note injection.
-- `docs/Support/`: updater feed `latest.json` and the legacy `appcast.xml`.
+- `docs/Support/`: legacy `appcast.xml`. The first release creates updater feed
+  `latest.json`; the updater endpoint returns HTTP 404 until then.
 
 ## Commands
 
@@ -41,8 +42,8 @@ npm run lint
 npm test
 npm run build:frontend
 cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
-cargo clippy --manifest-path src-tauri/Cargo.toml --locked --all-targets -- -D warnings
-cargo test --manifest-path src-tauri/Cargo.toml --locked
+cargo clippy --manifest-path src-tauri/Cargo.toml --locked --workspace --all-targets -- -D warnings
+cargo test --manifest-path src-tauri/Cargo.toml --locked --workspace
 ```
 
 ### Acceptance tests
@@ -167,7 +168,7 @@ Strings live in `src/shared/i18n/locales/`; locale detection is in
 - X3I files from Quattro SFD mode are not supported. Use exposure-bracketed X3Fs.
 - Compressed Foveon DNG support varies by destination editor. Check sample output
   before converting a library. Quick Look can render Foveon DNGs incorrectly.
-- Classic Foveon conversion needs real-file parity checks. SD9, SD10, and SD14
-  samples do not establish support for every classic camera or setting.
+- Classic Foveon support comes from x3f-core 0.3.0. SD9, SD10, and SD14 conversion
+  has not yet been verified in this app.
 - Windows and Linux builds are alphas. Compilation does not establish GPU or
   native-webview behavior on those systems.
