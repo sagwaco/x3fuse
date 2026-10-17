@@ -18,6 +18,22 @@ const sha256 = windows
   ? '44b512b25af500724ba579d0a53c8fc5851628b692dd5e5d94ae4a15c2cba9ec'
   : '668ea3acececb7235fbd0f4900e72d5f12c9b07e5c778fd36cb1e9b5828fd65a'
 const marker = `${process.platform}:${version}:${sha256}`
+
+/** Fetch with three attempts. SourceForge redirects to a mirror that sometimes times out; a retry gets another one. */
+async function download(url) {
+  let last
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      const response = await fetch(url, { signal: AbortSignal.timeout(60_000) })
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      return Buffer.from(await response.arrayBuffer())
+    } catch (error) {
+      last = error
+      console.warn(`ExifTool download failed (attempt ${attempt}): ${error.message}`)
+    }
+  }
+  throw new Error(`ExifTool download: ${last.message}`)
+}
 const destination = join(resources, 'exiftool')
 await mkdir(resources, { recursive: true })
 const coreNotices = join(resources, 'licenses/x3fuse-core')
@@ -32,7 +48,7 @@ await rm(join(resources, 'licenses/x3f-render'), { recursive: true, force: true 
 await cp(join(renderer, 'licenses'), join(resources, 'licenses/x3f-render'), { recursive: true })
 await cp(join(renderer, 'NOTICE'), join(resources, 'licenses/x3f-render/NOTICE'))
 
-if (await readFile(join(destination, '.version'), 'utf8').catch(() => '') !== marker) {
+if ((await readFile(join(destination, '.version'), 'utf8').catch(() => '')) !== marker) {
   const cache = join(root, '.cache')
   await mkdir(cache, { recursive: true })
   const archivePath = join(cache, archive)
@@ -40,9 +56,7 @@ if (await readFile(join(destination, '.version'), 'utf8').catch(() => '') !== ma
   const hash = (data) => createHash('sha256').update(data).digest('hex')
   if (!bytes || hash(bytes) !== sha256) {
     console.log(`Downloading ExifTool ${version} (${process.platform})`)
-    const response = await fetch(`https://downloads.sourceforge.net/project/exiftool/${archive}`)
-    if (!response.ok) throw new Error(`ExifTool download: HTTP ${response.status}`)
-    bytes = Buffer.from(await response.arrayBuffer())
+    bytes = await download(`https://downloads.sourceforge.net/project/exiftool/${archive}`)
     if (hash(bytes) !== sha256) throw new Error('ExifTool checksum mismatch')
     await writeFile(archivePath, bytes)
   }
@@ -51,7 +65,9 @@ if (await readFile(join(destination, '.version'), 'utf8').catch(() => '') !== ma
     execFileSync(tar, ['-xf', archivePath, '-C', temporary], { stdio: 'inherit' })
     async function findLauncher(dir) {
       const entries = await readdir(dir, { withFileTypes: true })
-      const launcher = entries.find((e) => e.isFile() && ['exiftool', 'exiftool(-k).exe', 'exiftool.exe'].includes(e.name))
+      const launcher = entries.find(
+        (e) => e.isFile() && ['exiftool', 'exiftool(-k).exe', 'exiftool.exe'].includes(e.name)
+      )
       if (launcher) return { directory: dir, launcher: launcher.name }
       for (const entry of entries.filter((e) => e.isDirectory())) {
         const found = await findLauncher(join(dir, entry.name))
@@ -63,8 +79,10 @@ if (await readFile(join(destination, '.version'), 'utf8').catch(() => '') !== ma
     if (!found) throw new Error('ExifTool archive does not contain its launcher')
     await rm(destination, { recursive: true, force: true })
     await cp(found.directory, destination, { recursive: true })
-    if (windows && found.launcher !== 'exiftool.exe') await rename(join(destination, found.launcher), join(destination, 'exiftool.exe'))
-    if (windows && !existsSync(join(destination, 'exiftool_files'))) throw new Error('Missing Windows ExifTool runtime')
+    if (windows && found.launcher !== 'exiftool.exe')
+      await rename(join(destination, found.launcher), join(destination, 'exiftool.exe'))
+    if (windows && !existsSync(join(destination, 'exiftool_files')))
+      throw new Error('Missing Windows ExifTool runtime')
     await writeFile(join(destination, '.version'), marker)
   } finally {
     await rm(temporary, { recursive: true, force: true })
