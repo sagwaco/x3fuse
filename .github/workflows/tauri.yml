@@ -160,4 +160,4 @@ jobs:
             macOS requires macOS 14 or newer and system Perl. Windows requires Microsoft WebView2 Runtime.
             Linux requires WebKitGTK 4.1, GTK 3, and Perl.
 
-            [Launch instructions and testing checklist](https://github.com/${{ github.repository }}/blob/${{ github.sha }}/DEVELOPMENT.md#checks-and-builds)
+            [Launch instructions and testing checklist](https://github.com/${{ github.repository }}/blob/${{ github.sha }}/README.md#checks-and-builds)
