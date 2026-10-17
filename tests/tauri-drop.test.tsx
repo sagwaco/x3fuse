@@ -28,10 +28,15 @@ it('imports a native drop once, filters extensions, and ignores export drafts', 
   act(() => handler({ payload: { type: 'over' } }))
   expect(view.result.current.isDragOver).toBe(true)
   act(() =>
-    handler({ payload: { type: 'drop', paths: ['C:\\A.X3F', '/photos/b.x3f', '/photos/a.jpg'] } })
+    handler({
+      payload: {
+        type: 'drop',
+        paths: ['C:\\A.X3F', '/photos/b.x3f', '/photos/sfd.X3I', '/photos/a.jpg']
+      }
+    })
   )
   expect(native.addFiles).toHaveBeenCalledOnce()
-  expect(native.addFiles).toHaveBeenCalledWith(['C:\\A.X3F', '/photos/b.x3f'])
+  expect(native.addFiles).toHaveBeenCalledWith(['C:\\A.X3F', '/photos/b.x3f', '/photos/sfd.X3I'])
   expect(view.result.current.isDragOver).toBe(false)
   native.draft = { files: [] }
   act(() => handler({ payload: { type: 'drop', paths: ['/photos/c.X3F'] } }))

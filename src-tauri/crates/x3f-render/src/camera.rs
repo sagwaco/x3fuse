@@ -263,8 +263,14 @@ impl Drop for Metadata {
 }
 impl Metadata {
     fn open(path: &Path, cancel: &AtomicBool) -> Result<Self, RenderError> {
-        let control = sys::Control::new(cancel);
+        let mut control = sys::Control::new(cancel);
         control.check().map_err(raw_error)?;
+        // An X3I holds complete X3F frames. Frame 0 has the camera metadata.
+        let core_error = |e: x3f_core::Error| RenderError::Invalid(e.to_string());
+        if x3f_core::is_x3i(path).map_err(core_error)? {
+            let frame = x3f_core::X3iContainer::open(path).map_err(core_error)?.frames()[0];
+            control = control.with_window(frame.offset, frame.length);
+        }
         #[cfg(not(windows))]
         let stream = {
             use std::os::unix::ffi::OsStrExt;

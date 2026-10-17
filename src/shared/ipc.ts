@@ -8,7 +8,7 @@ import type {
   Flag,
   X3FFileDTO
 } from './types'
-import type { EditRecipe, EditRecord, EditorSession, RenderedPreview } from './editor'
+import type { EditRecipe, EditRecord, EditorSession, RenderedPreview, X3iStatus } from './editor'
 
 /** A file the renderer asks main to act on (convert / existing-output check). */
 export interface ConvertFile {
@@ -128,6 +128,11 @@ export interface IpcRequestMap {
     payload: { sessionId: string; x: number; y: number; recipe?: EditRecipe }
     result: { temperature: number; tint: number }
   }
+  /** Null for a photo that is not an X3I. The recipe selects the denoise. */
+  'editor:x3iStatus': { payload: { path: string; recipe: EditRecipe }; result: X3iStatus | null }
+  /** Resolves when the merge ends. */
+  'editor:x3iProcess': { payload: { path: string; recipe: EditRecipe }; result: void }
+  'editor:x3iCancel': { payload: { path: string }; result: void }
   'settings:get': { payload: void; result: ConversionSettings }
   'settings:set': { payload: Partial<ConversionSettings>; result: ConversionSettings }
 
@@ -219,6 +224,9 @@ export const IPC_REQUEST_CHANNELS: IpcRequestChannel[] = [
   'editor:load',
   'editor:close',
   'editor:pickWhiteBalance',
+  'editor:x3iStatus',
+  'editor:x3iProcess',
+  'editor:x3iCancel',
   'settings:get',
   'settings:set',
   'queue:add',

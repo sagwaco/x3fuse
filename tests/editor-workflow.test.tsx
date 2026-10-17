@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { act, cleanup, renderHook } from '@testing-library/react'
-import { defaultRecipe, pasteRecipe, type EditRecipe } from '@shared/editor'
+import { act, cleanup, fireEvent, render, renderHook, screen } from '@testing-library/react'
+import { defaultRecipe, pasteRecipe, type EditRecipe, type X3iStatus } from '@shared/editor'
 import { DEFAULT_SETTINGS, type X3FFileDTO } from '@shared/types'
 import { useEditorStore as editor, isTextEditing } from '../src/renderer/src/stores/editorStore'
 import { useQueueStore as queue } from '../src/renderer/src/stores/queueStore'
@@ -10,6 +10,8 @@ import { useNavStore } from '../src/renderer/src/stores/navStore'
 import { useIpcEvents } from '../src/renderer/src/hooks/useIpcEvents'
 import { displayPreviewUrl } from '@shared/preview'
 import { nextPrefetch } from '../src/renderer/src/lib/previewTiles'
+import { X3iDialog } from '../src/renderer/src/components/X3iDialog'
+import { t } from '../src/renderer/src/lib/strings'
 
 const file: X3FFileDTO = { id: 'a', path: '/photos/a.X3F', fileName: 'a.X3F' }
 const invoke = vi.fn()
@@ -1339,4 +1341,74 @@ it('refreshes a stale base after an edit while zoomed, even when the view is too
   editor.getState().setViewport({ ...region, x: 0.2 })
   await vi.advanceTimersByTimeAsync(2000)
   expect(renderRequests()).toHaveLength(1)
+})
+
+it('renders an X3I only after the user merges its frames, and can cancel the merge', async () => {
+  let status: X3iStatus = { frames: 7, processed: false }
+  let finish!: () => void
+  const base = invoke.getMockImplementation()!
+  invoke.mockImplementation(async (command: string, payload: Record<string, unknown>) => {
+    if (command === 'editor:open') return { ...session(), x3i: status }
+    if (command === 'editor:x3iStatus') return status
+    if (command === 'editor:x3iCancel') return undefined
+    if (command === 'editor:x3iProcess') {
+      status = { frames: 7, processed: false, progress: 0.5 }
+      return new Promise<void>((resolve) => {
+        finish = () => {
+          status = { frames: 7, processed: true }
+          resolve()
+        }
+      })
+    }
+    return base(command, payload)
+  })
+  const renders = (): number =>
+    invoke.mock.calls.filter(([command]) => command === 'editor:render').length
+  await editor.getState().open(file)
+  await vi.advanceTimersByTimeAsync(500)
+  expect(renders()).toBe(0)
+  render(<X3iDialog />)
+  fireEvent.click(screen.getByRole('button', { name: t('editor.x3iProcess') }))
+  expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBe('0')
+  await act(() => vi.advanceTimersByTimeAsync(400))
+  expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBe('50')
+  expect(screen.getByRole('button', { name: t('button.cancel') })).toBeTruthy()
+  expect(renders()).toBe(0)
+  await act(async () => {
+    finish()
+    await vi.advanceTimersByTimeAsync(10)
+  })
+  expect(editor.getState().x3i?.processed).toBe(true)
+  expect(screen.queryByRole('dialog')).toBeNull()
+  expect(renders()).toBeGreaterThan(0)
+  editor.setState({ x3i: { frames: 7, processed: false, progress: 0.2 } })
+  await act(() => vi.advanceTimersByTimeAsync(0))
+  fireEvent.click(screen.getByRole('button', { name: t('button.cancel') }))
+  expect(invoke).toHaveBeenCalledWith('editor:x3iCancel', { path: file.path })
+})
+
+it('shows a failed X3I merge request when a late poll and the final status read disagree', async () => {
+  const base = invoke.getMockImplementation()!
+  let statusCalls = 0
+  let poll!: (status: X3iStatus) => void
+  let fail!: (error: string) => void
+  invoke.mockImplementation(async (command: string, payload: Record<string, unknown>) => {
+    if (command === 'editor:open') return { ...session(), x3i: { frames: 7, processed: false } }
+    if (command === 'editor:x3iStatus') {
+      // The first read is a poll in flight; the final read after the request fails.
+      if (++statusCalls === 1) return new Promise((resolve) => (poll = resolve))
+      throw new Error('status unavailable')
+    }
+    if (command === 'editor:x3iProcess') return new Promise((_, reject) => (fail = reject))
+    return base(command, payload)
+  })
+  await editor.getState().open(file)
+  editor.getState().processX3i()
+  void editor.getState().refreshX3i(true)
+  fail('Source missing')
+  await tick()
+  poll({ frames: 7, processed: false, progress: 0.5 })
+  await vi.advanceTimersByTimeAsync(10)
+  expect(editor.getState().x3i).toMatchObject({ processed: false, error: 'Source missing' })
+  expect(editor.getState().x3i?.progress).toBeUndefined()
 })

@@ -19,7 +19,7 @@ export function useFileDrop(): { isDragOver: boolean; dropHandlers: Record<strin
         }
         setDragOver(payload.type === 'enter' || payload.type === 'over')
         if (payload.type === 'drop') {
-          const paths = payload.paths.filter((path) => path.toLowerCase().endsWith('.x3f'))
+          const paths = payload.paths.filter((path) => /\.x3[fi]$/i.test(path))
           if (paths.length) void useQueueStore.getState().addFiles(paths)
         }
       })

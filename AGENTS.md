@@ -67,6 +67,12 @@ X3FUSE_TEST_EDITED_A=/absolute/path/edited-a.X3F \
 X3FUSE_TEST_EDITED_B=/absolute/path/edited-b.X3F \
 cargo test --manifest-path src-tauri/Cargo.toml --test edited_thumbnail_acceptance -- --ignored --nocapture
 
+X3FUSE_TEST_X3I=/absolute/path/sfd.X3I \
+cargo test --manifest-path src-tauri/Cargo.toml --release --test x3i_acceptance -- --ignored --nocapture
+
+X3FUSE_TEST_X3I=/absolute/path/sfd.X3I \
+cargo test --manifest-path src-tauri/Cargo.toml --release --lib x3i_converts -- --ignored
+
 X3FUSE_SMOKE_FILE=/absolute/path/sample.X3F npm run test:native -- --build
 
 X3FUSE_EDITOR_SMOKE=1 X3FUSE_SMOKE_FILE=/absolute/path/photo.X3F \
@@ -105,6 +111,14 @@ reuse the Debug probe executable. Release builds omit the probe.
   16-bit TIFF exports use the saved recipe. Original DNG and Embedded JPG do not bake edits.
 - Bump `x3f_render::RENDER_VERSION` when a change alters rendered pixels. Persistent
   preview caches use this value to reject older renders.
+- X3I (Quattro SFD) files contain complete X3F frames; `src-tauri/src/x3i.rs`
+  detects them by their `FOVi` magic. ExifTool reads a cached copy of frame 0.
+  The editor never merges on its own: it shows the embedded preview and a dialog,
+  and `editor:x3iProcess` merges after the user confirms (progress and cancel via
+  `editor:x3iStatus` and `editor:x3iCancel`). Edited exports merge when needed.
+  Merged scenes are cached in app-data `edits/x3i-v1/` within a 3 GiB budget.
+  Bump `x3i::CACHE_VERSION` when x3f-core changes merged pixels. One merge runs at
+  a time in conversion and the editor.
 
 ### Edits, culling, settings, and logs
 
@@ -170,7 +184,9 @@ Strings live in `src/shared/i18n/locales/`; locale detection is in
 
 ## Known issues
 
-- X3I files from Quattro SFD mode are not supported. Use exposure-bracketed X3Fs.
+- X3I support uses unreleased x3f-core APIs from the x3fuse-core `feat/x3i-sfd`
+  branch. Until a core release, local builds need a temporary `[patch.crates-io]`,
+  and CI and release builds fail. The first X3I merge takes about 30 s and 3 GB.
 - Compressed Foveon DNG support varies by destination editor. Check sample output
   before converting a library. Quick Look can render Foveon DNGs incorrectly.
 - Classic Foveon support comes from x3f-core 0.3.0. SD9, SD10, and SD14 conversion

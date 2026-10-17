@@ -348,8 +348,8 @@ export const useQueueStore = create<QueueState>((set, get) => {
     async addFiles(paths) {
       if (useEditorStore.getState().closing) return
       // Match main's filter so placeholders line up positionally with the DTOs
-      // it returns (it builds them from the same .x3f subset, in the same order).
-      const x3f = paths.filter((p) => p.toLowerCase().endsWith('.x3f'))
+      // it returns (it builds them from the same .x3f/.x3i subset, in the same order).
+      const x3f = paths.filter((p) => /\.x3[fi]$/i.test(p))
       if (x3f.length === 0) return
 
       // Show rows the instant files are dropped: the filename is known from the
@@ -423,6 +423,7 @@ export const useQueueStore = create<QueueState>((set, get) => {
                 exif: dto.exif,
                 edit: dto.edit,
                 editError: dto.editError,
+                frames: dto.frames,
                 flag: dto.flag,
                 rating: dto.rating,
                 pending: false

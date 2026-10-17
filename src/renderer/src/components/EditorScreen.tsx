@@ -30,6 +30,7 @@ import { BatchProgress } from './BatchProgress'
 import { EditorControls, EmulsionControls } from './EditorControls'
 import { LookPicker } from './LookPicker'
 import { PhotoInfo } from './PhotoInfo'
+import { X3iDialog } from './X3iDialog'
 import { CropControls } from './CropControls'
 import { CropPreview } from './CropPreview'
 import { FULL, matchAspect } from '../lib/cropGeometry'
@@ -314,7 +315,8 @@ export function EditorScreen(): React.JSX.Element {
     mode: scope
   }
   // A tiny scope shows in the header while the full one is scrolled away.
-  const sidebarShown = panelOpen || editor.cropping
+  // An X3I that has not merged shows the panel for its merge dialog.
+  const sidebarShown = panelOpen || editor.cropping || (!!editor.x3i && !editor.x3i.processed)
   const scopeBox = useRef<HTMLDivElement>(null)
   const [scopeHidden, setScopeHidden] = useState(false)
   useEffect(() => {
@@ -706,6 +708,7 @@ export function EditorScreen(): React.JSX.Element {
                 )}
               </div>
             </div>
+            <X3iDialog />
           </ResizablePanel>
         )}
       </div>

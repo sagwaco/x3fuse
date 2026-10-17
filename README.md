@@ -175,9 +175,14 @@ Foveon cameras do not have a color filter array (CFA) like most other cameras, s
 
 ## Known Issues
 
-#### X3I files not supported
+#### X3I files are slow to process the first time
 
-X3I files generated in Quattro Super fine detail (SFD) mode are not supported. A workaround is to shoot several exposure bracketed images as X3Fs and then use X3Fuse to convert them to DNG. In a photo editing application like Lightroom, you can then merge the DNG files into an HDR image.
+X3I files from Quattro Super Fine Detail (SFD) mode merge all of their frames
+into one image. The editor asks before it merges a file. The first merge takes
+about 30 seconds and up to 3 GB of memory, and you can leave the photo or cancel
+while it runs. The editor keeps the merged image in its cache, so the file opens
+quickly after that. DNG and TIFF exports merge the frames again, one X3I at a time.
+Embedded JPG exports use the first frame.
 
 The RAW editor requires a supported GPU. Film rendering is experimental, and
 Windows/Linux builds need runtime testing on their target systems. Culling flags

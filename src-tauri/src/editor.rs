@@ -12,11 +12,11 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering},
         Arc, Condvar, Mutex,
     },
 };
-use x3f_core::{prepare_scene_linear, SceneLinearImage, SceneLinearOptions};
+use x3f_core::{SceneLinearImage, SceneLinearOptions};
 use x3f_render::{Crop, EditRecipe, PreparedImage, RenderOptions, Renderer};
 
 /// Runs RAW preparation. On macOS it runs in a pool at utility QoS. At the
@@ -58,11 +58,14 @@ struct Prepared {
     source_revision: String,
     denoise: u8,
     denoise_options: x3f_core::DenoiseOptions,
+    /// Denoise settings do not change this source, as for a merged X3I.
+    denoise_free: bool,
     image: PreparedImage,
 }
 impl Prepared {
     fn matches_denoise(&self, recipe: &EditRecipe) -> bool {
-        self.denoise == recipe.denoise && self.denoise_options == recipe.denoise_options
+        self.denoise_free
+            || (self.denoise == recipe.denoise && self.denoise_options == recipe.denoise_options)
     }
     fn matches_source(&self, path: &Path, source_revision: &str) -> bool {
         self.path == path && self.source_revision == source_revision
@@ -163,6 +166,10 @@ pub struct Editor {
     image_requests: Mutex<HashMap<String, Arc<AtomicBool>>>,
     thumbnails: PathBuf,
     mediums: PathBuf,
+    /// Cached X3I frame copies and merged scenes.
+    x3i: PathBuf,
+    /// The last merge that `x3i_process` started for each X3I.
+    x3i_jobs: Mutex<HashMap<PathBuf, Arc<X3iJob>>>,
     pub paused: AtomicBool,
     close_allowed: AtomicBool,
     close_gate: Mutex<()>,
@@ -186,6 +193,65 @@ pub struct EditorSession {
     pub storage_path: Option<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub preview_url: Option<String>,
+    /// For an X3I photo, whether it can render yet.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub x3i: Option<X3iStatus>,
+}
+
+/// The merge state of an X3I. The editor renders it only after a merge.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct X3iStatus {
+    pub frames: u32,
+    /// The merged scene is in the cache.
+    pub processed: bool,
+    /// 0 through 1 while a merge runs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress: Option<f32>,
+    /// Why the last merge failed. A cancelled merge has no error.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// A registered X3I merge. See `Editor::x3i_begin`.
+pub struct X3iMerge {
+    path: PathBuf,
+    job: Arc<X3iJob>,
+}
+
+/// A merge that `Editor::x3i_process` runs.
+#[derive(Default)]
+struct X3iJob {
+    cancel: AtomicBool,
+    /// Core stage events so far, of `stages`.
+    done: AtomicU32,
+    stages: u32,
+    /// None while the merge runs.
+    result: Mutex<Option<Result<(), String>>>,
+}
+impl X3iJob {
+    /// The progress, while the merge runs.
+    fn progress(&self) -> Option<f32> {
+        let running = self.result.lock().is_ok_and(|result| result.is_none());
+        let done = self.done.load(Ordering::Relaxed) as f32 / self.stages.max(1) as f32;
+        running.then_some(done.min(0.99))
+    }
+    fn error(&self) -> Option<String> {
+        if self.cancel.load(Ordering::SeqCst) {
+            return None;
+        }
+        self.result.lock().ok()?.clone()?.err()
+    }
+}
+
+/// Sensor preparation for a recipe. The editor always recovers highlights.
+fn scene_options(recipe: &EditRecipe) -> SceneLinearOptions {
+    SceneLinearOptions {
+        denoise_intensity: recipe.denoise,
+        denoise_options: recipe.denoise_options,
+        highlight_recovery: true,
+        ..Default::default()
+    }
 }
 
 #[derive(Deserialize)]
@@ -235,8 +301,11 @@ pub struct RenderedPreview {
 
 impl Editor {
     pub fn new(directory: PathBuf) -> Self {
+        crate::x3i::prune(&directory.join(crate::x3i::DIRECTORY));
         Self {
             thumbnails: directory.join("thumbnails-v1"),
+            x3i: directory.join(crate::x3i::DIRECTORY),
+            x3i_jobs: Mutex::new(HashMap::new()),
             mediums: directory.join("mediums-v1"),
             edits: Edits::new(directory),
             session: Mutex::new(None),
@@ -401,6 +470,10 @@ impl Editor {
         {
             return Err("Source changed while opening; reopen the photo".into());
         }
+        let recipe = saved.as_ref().map(|r| r.recipe.clone()).unwrap_or_else(|| {
+            as_shot_recipe(as_shot_crop, &camera_profiles.as_shot, &source_revision)
+        });
+        let x3i = self.x3i_status(&path, &recipe)?;
         let session = Session {
             id: uuid::Uuid::new_v4().to_string(),
             path: path.clone(),
@@ -422,9 +495,6 @@ impl Editor {
             return Err("Photo opening superseded".into());
         }
         *active = Some(session.clone());
-        let recipe = saved.as_ref().map(|r| r.recipe.clone()).unwrap_or_else(|| {
-            as_shot_recipe(as_shot_crop, &camera_profiles.as_shot, &source_revision)
-        });
         Ok(EditorSession {
             session_id: session.id,
             path: requested_path,
@@ -440,14 +510,137 @@ impl Editor {
                 .map_or_else(|| "none".into(), |s| s.storage.clone()),
             storage_path: saved.as_ref().map(|s| s.storage_path.clone()),
             preview_url: saved.and_then(|s| s.preview_url),
+            x3i,
         })
+    }
+
+    /// The merge state of an X3I for `recipe`, else None.
+    pub fn x3i_status(
+        &self,
+        path: &Path,
+        recipe: &EditRecipe,
+    ) -> Result<Option<X3iStatus>, String> {
+        source_path(path)?;
+        let path = path.canonicalize().map_err(|e| e.to_string())?;
+        let Some(frames) = crate::x3i::frames(&path) else {
+            return Ok(None);
+        };
+        let job = self
+            .x3i_jobs
+            .lock()
+            .map_err(|_| "Editor unavailable")?
+            .get(&path)
+            .cloned();
+        let source_revision = self.edits.source_revision(&path)?;
+        let options = scene_options(recipe);
+        Ok(Some(X3iStatus {
+            frames,
+            processed: crate::x3i::processed(&self.x3i, &path, &source_revision, &options),
+            progress: job.as_ref().and_then(|job| job.progress()),
+            error: job.and_then(|job| job.error()),
+        }))
+    }
+
+    /// Merges an X3I into the scene cache for `recipe`, and reports progress
+    /// to `x3i_status`. It returns when the merge ends. A call while the same
+    /// photo merges returns at once.
+    pub fn x3i_process(&self, path: &Path, recipe: &EditRecipe) -> Result<(), String> {
+        match self.x3i_begin(path)? {
+            Some(merge) => self.x3i_run(merge, recipe),
+            None => Ok(()),
+        }
+    }
+
+    /// Registers the merge of an X3I, so that `x3i_cancel` can stop it before
+    /// `x3i_run` starts. None when the photo merges already.
+    pub fn x3i_begin(&self, path: &Path) -> Result<Option<X3iMerge>, String> {
+        source_path(path)?;
+        let path = path.canonicalize().map_err(|e| e.to_string())?;
+        let frames = crate::x3i::frames(&path).ok_or("The photo is not an X3I")?;
+        let mut jobs = self.x3i_jobs.lock().map_err(|_| "Editor unavailable")?;
+        if self.close_allowed.load(Ordering::SeqCst) {
+            return Err("The window is closing".into());
+        }
+        if let Some(job) = jobs.get(&path).filter(|job| job.progress().is_some()) {
+            if job.cancel.load(Ordering::SeqCst) {
+                return Err("The cancelled merge is stopping. Try again.".into());
+            }
+            return Ok(None);
+        }
+        let job = Arc::new(X3iJob {
+            // Core reports Read, then Decode for each frame, then Process
+            // for each frame in the second merge pass.
+            stages: 2 * frames + 1,
+            ..Default::default()
+        });
+        jobs.insert(path.clone(), job.clone());
+        Ok(Some(X3iMerge { path, job }))
+    }
+
+    /// Runs a merge that `x3i_begin` registered. It returns when the merge ends.
+    pub fn x3i_run(&self, merge: X3iMerge, recipe: &EditRecipe) -> Result<(), String> {
+        let X3iMerge { path, job } = merge;
+        let options = scene_options(recipe);
+        let result = (|| {
+            let source_revision = self.edits.source_revision(&path)?;
+            if crate::x3i::processed(&self.x3i, &path, &source_revision, &options) {
+                return Ok(());
+            }
+            prepare_in_background(|| {
+                crate::x3i::prepare_scene(
+                    &self.x3i,
+                    &path,
+                    &source_revision,
+                    &options,
+                    &job.cancel,
+                    Some(|| self.edits.source_revision(&path).as_ref() == Ok(&source_revision)),
+                    |_| {
+                        job.done.fetch_add(1, Ordering::Relaxed);
+                    },
+                )
+            })?;
+            // A merge without its cached scene would ask for a merge again.
+            if self.edits.source_revision(&path)? != source_revision {
+                return Err("Source contents changed during the merge; try again".into());
+            }
+            if !crate::x3i::processed(&self.x3i, &path, &source_revision, &options) {
+                return Err(
+                    "Cannot keep the merged image. Check the free disk space and try again.".into(),
+                );
+            }
+            Ok(())
+        })();
+        if let Ok(mut finished) = job.result.lock() {
+            *finished = Some(result.clone());
+        }
+        result
+    }
+
+    /// Stops the merge of an X3I. `x3i_status` then reports no error.
+    pub fn x3i_cancel(&self, path: &Path) -> Result<(), String> {
+        let path = path.canonicalize().map_err(|e| e.to_string())?;
+        if let Some(job) = self
+            .x3i_jobs
+            .lock()
+            .map_err(|_| "Editor unavailable")?
+            .get(&path)
+        {
+            job.cancel.store(true, Ordering::SeqCst);
+        }
+        Ok(())
     }
 
     /// Stops editor work when the main window closes. Warm-ups that start
     /// later fail. `reopen` allows work again.
     pub fn close_window(&self) {
         let _gate = self.close_gate.lock();
+        // Under the job lock, so that no X3I merge starts after the cancellation.
+        let jobs = self.x3i_jobs.lock();
         self.close_allowed.store(true, Ordering::SeqCst);
+        for job in jobs.iter().flat_map(|jobs| jobs.values()) {
+            job.cancel.store(true, Ordering::SeqCst);
+        }
+        drop(jobs);
         self.cancel_preview();
     }
 
@@ -697,7 +890,7 @@ impl Editor {
         // and medium PNGs would otherwise keep showing the old pixels beside
         // freshly rendered exports. Superseded entries fall out of the caches
         // through the existing size/count eviction in `store_image`.
-        let key = serde_json::to_vec(&(
+        let mut key = serde_json::to_vec(&(
             &canonical,
             source_revision,
             recipe,
@@ -706,6 +899,10 @@ impl Editor {
             x3f_render::RENDER_VERSION,
         ))
         .map_err(|e| e.to_string())?;
+        // An X3I renders differently after its merge changes. X3F keys stay as they were.
+        if let Some(identity) = crate::x3i::identity(&canonical) {
+            key.extend(identity.as_bytes());
+        }
         let id = format!("{:x}", Sha256::digest(key));
         let mut assets = self
             .assets
@@ -733,11 +930,14 @@ impl Editor {
         Ok(asset_url(&id))
     }
 
+    /// Prepares the RAW of `asset`. Only with `merge` can an X3I without a
+    /// cached scene merge here; else it fails with `x3i::UNPROCESSED`.
     fn prepare<'a>(
         &self,
         worker: &'a mut Worker,
         asset: &Asset,
         cancel: &AtomicBool,
+        merge: bool,
     ) -> Result<&'a SceneLinearImage, String> {
         check_cancel(cancel)?;
         if self.edits.source_revision(&asset.path)? != asset.source_revision {
@@ -758,16 +958,21 @@ impl Editor {
             if !same_source {
                 worker.prepared = None;
             }
-            let options = SceneLinearOptions {
-                denoise_intensity: asset.recipe.denoise,
-                denoise_options: asset.recipe.denoise_options,
-                highlight_recovery: true,
-                ..Default::default()
-            };
-            let image = prepare_in_background(|| {
-                prepare_scene_linear(&asset.path, &options, cancel, |_| ())
-            })
-            .map_err(|e| e.to_string())?;
+            let options = scene_options(&asset.recipe);
+            let (image, denoise_free) = prepare_in_background(|| {
+                crate::x3i::prepare_scene(
+                    &self.x3i,
+                    &asset.path,
+                    &asset.source_revision,
+                    &options,
+                    cancel,
+                    merge.then_some(|| {
+                        self.edits.source_revision(&asset.path).as_ref()
+                            == Ok(&asset.source_revision)
+                    }),
+                    |_| (),
+                )
+            })?;
             let profiles =
                 x3f_render::read_camera_profiles(&asset.path, cancel).map_err(|e| e.to_string())?;
             check_cancel(cancel)?;
@@ -779,6 +984,7 @@ impl Editor {
                 source_revision: asset.source_revision.clone(),
                 denoise: asset.recipe.denoise,
                 denoise_options: asset.recipe.denoise_options,
+                denoise_free,
                 image: PreparedImage::new(image, cancel)
                     .map_err(|e| e.to_string())?
                     .with_camera_profiles(profiles),
@@ -844,8 +1050,10 @@ impl Editor {
                 .as_ref()
                 .filter(|p| p.matches_source(&session.path, &session.source_revision))
             {
-                recipe.denoise = prepared.denoise;
-                recipe.denoise_options = prepared.denoise_options;
+                if !prepared.denoise_free {
+                    recipe.denoise = prepared.denoise;
+                    recipe.denoise_options = prepared.denoise_options;
+                }
             } else if recipe.denoise_options.algorithm == x3f_core::DenoiseAlgorithm::Bm3d {
                 recipe.denoise = 0;
             }
@@ -959,7 +1167,7 @@ impl Editor {
         if worker.renderer.is_none() {
             worker.renderer = Some(Renderer::new().map_err(|e| e.to_string())?);
         }
-        self.prepare(worker, asset, cancel)?;
+        self.prepare(worker, asset, cancel, false)?;
         Ok(())
     }
 
@@ -1380,7 +1588,7 @@ impl Editor {
         if self.paused.load(Ordering::SeqCst) {
             return Err("White balance sampling pauses during export".into());
         }
-        let image = self.prepare(&mut worker, &asset, &cancel)?;
+        let image = self.prepare(&mut worker, &asset, &cancel, false)?;
         let result = x3f_render::pick_white_balance(image, &asset.recipe, x, y)
             .map_err(|e| e.to_string())?;
         check_cancel(&cancel)?;
@@ -1415,7 +1623,8 @@ impl Editor {
         if worker.renderer.is_none() {
             worker.renderer = Some(Renderer::new().map_err(|e| e.to_string())?);
         }
-        self.prepare(&mut worker, &asset, cancel)?;
+        // An export merges an unprocessed X3I: the user asked for its pixels.
+        self.prepare(&mut worker, &asset, cancel, true)?;
         let color_profile = match settings.color_profile {
             ColorProfile::Srgb => x3f_render::ColorProfile::Srgb,
             ColorProfile::AdobeRgb => x3f_render::ColorProfile::AdobeRgb,
@@ -1726,6 +1935,7 @@ mod tests {
             source_revision: "a".repeat(64),
             denoise: 0,
             denoise_options: Default::default(),
+            denoise_free: false,
             image: PreparedImage::new(
                 SceneLinearImage {
                     width: 1,
@@ -1759,6 +1969,7 @@ mod tests {
                 source_revision: source_revision.clone(),
                 denoise: 0,
                 denoise_options: Default::default(),
+                denoise_free: false,
                 image: PreparedImage::new(
                     SceneLinearImage {
                         width: 1,
@@ -1785,7 +1996,7 @@ mod tests {
             region: None,
         };
         asset.recipe.denoise = 0;
-        assert!(editor.prepare(&mut worker, &asset, &cancel).is_ok());
+        assert!(editor.prepare(&mut worker, &asset, &cancel, false).is_ok());
         for options in [
             x3f_core::DenoiseOptions {
                 algorithm: x3f_core::DenoiseAlgorithm::Bm3d,
@@ -1801,14 +2012,14 @@ mod tests {
             },
         ] {
             asset.recipe.denoise_options = options;
-            assert!(editor.prepare(&mut worker, &asset, &cancel).is_err());
+            assert!(editor.prepare(&mut worker, &asset, &cancel, false).is_err());
             assert_eq!(
                 worker.prepared.as_ref().unwrap().denoise_options,
                 x3f_core::DenoiseOptions::default()
             );
         }
         asset.recipe = EditRecipe::default();
-        assert!(editor.prepare(&mut worker, &asset, &cancel).is_err());
+        assert!(editor.prepare(&mut worker, &asset, &cancel, false).is_err());
         assert_eq!(worker.prepared.as_ref().unwrap().denoise, 0);
         assert_eq!(
             worker.prepared.as_ref().unwrap().image.image().data,
@@ -1817,7 +2028,7 @@ mod tests {
         asset.path = temporary.path().join("next.X3F");
         fs::write(&asset.path, b"another invalid RAW").unwrap();
         asset.source_revision = editor.edits.source_revision(&asset.path).unwrap();
-        assert!(editor.prepare(&mut worker, &asset, &cancel).is_err());
+        assert!(editor.prepare(&mut worker, &asset, &cancel, false).is_err());
         assert!(worker.prepared.is_none());
     }
 
@@ -2055,6 +2266,7 @@ mod tests {
             source_revision: "a".repeat(64),
             denoise: recipe.denoise,
             denoise_options: recipe.denoise_options,
+            denoise_free: false,
             image: PreparedImage::new(
                 SceneLinearImage {
                     width: 1,

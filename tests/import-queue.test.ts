@@ -17,7 +17,8 @@ function metadata(paths: string[]): X3FFileDTO[] {
     fileSize: 1234,
     orientation: 6,
     aspectRatio: 1.5,
-    exif: [{ label: 'Camera', value: 'Sigma' }]
+    exif: [{ label: 'Camera', value: 'Sigma' }],
+    frames: 7
   }))
 }
 
@@ -74,7 +75,8 @@ describe('progressive file import', () => {
         fileSize: 1234,
         orientation: 6,
         aspectRatio: 1.5,
-        exif: [{ label: 'Camera', value: 'Sigma' }]
+        exif: [{ label: 'Camera', value: 'Sigma' }],
+        frames: 7
       })
       expect(firstPaths).toContain(file.path)
     }

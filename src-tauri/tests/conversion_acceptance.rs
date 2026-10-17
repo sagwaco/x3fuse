@@ -37,6 +37,7 @@ fn real_conversion_metadata_previews_and_cancelled_publication() {
     let resources = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources");
     let exif = ExifTool::new(
         resources.join("exiftool"),
+        temporary.path().join("x3i"),
         Arc::new(Logs::new(temporary.path().join("logs"))),
     );
     let runtime = tauri::async_runtime::handle();

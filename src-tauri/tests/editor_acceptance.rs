@@ -124,6 +124,7 @@ fn real_editor_preview_persistence_exports_and_cancellation() {
     let editor = Editor::new(temporary.path().join("edits"));
     let exif = ExifTool::new(
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/exiftool"),
+        temporary.path().join("x3i"),
         Arc::new(Logs::new(temporary.path().join("logs"))),
     );
     let runtime = tauri::async_runtime::handle();

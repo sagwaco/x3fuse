@@ -50,7 +50,7 @@ struct Document {
 }
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct SourceStamp {
+pub(crate) struct SourceStamp {
     size: u64,
     modified: SystemTime,
     created: Option<SystemTime>,
@@ -60,7 +60,7 @@ struct SourceStamp {
 }
 
 impl SourceStamp {
-    fn new(metadata: &fs::Metadata) -> Result<Self, String> {
+    pub(crate) fn new(metadata: &fs::Metadata) -> Result<Self, String> {
         #[cfg(unix)]
         use std::os::unix::fs::MetadataExt;
         Ok(Self {

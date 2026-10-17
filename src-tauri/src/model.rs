@@ -369,6 +369,9 @@ pub struct FileDto {
     pub edit: Option<crate::editor::EditRecord>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub edit_error: Option<String>,
+    /// The number of frames in an X3I (Super Fine Detail) photo.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frames: Option<u32>,
     #[serde(flatten)]
     pub cull: crate::culling::Cull,
 }
@@ -380,14 +383,15 @@ pub struct ExifPair {
 }
 
 pub fn validate_source_path(path: &Path) -> Result<(), String> {
-    if !path.is_absolute()
-        || !path
-            .extension()
-            .is_some_and(|e| e.eq_ignore_ascii_case("x3f"))
-    {
-        return Err("Expected an absolute X3F path".into());
+    if !path.is_absolute() || !path.extension().is_some_and(is_source_extension) {
+        return Err("Expected an absolute X3F or X3I path".into());
     }
     Ok(())
+}
+
+/// X3F photos and Quattro SFD X3I containers.
+pub fn is_source_extension(extension: &std::ffi::OsStr) -> bool {
+    extension.eq_ignore_ascii_case("x3f") || extension.eq_ignore_ascii_case("x3i")
 }
 
 pub fn source_path(path: &Path) -> Result<(), String> {

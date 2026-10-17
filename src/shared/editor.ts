@@ -220,6 +220,18 @@ export interface EditorSession extends EditRecord {
   width?: number
   height?: number
   stocks?: Array<{ id: string; name: string }>
+  /** For an X3I photo: the editor renders it only after its frames merge. */
+  x3i?: X3iStatus
+}
+/** The merge state of an X3I (Super Fine Detail) photo. */
+export interface X3iStatus {
+  frames: number
+  /** The merged image is cached, so the photo renders. */
+  processed: boolean
+  /** 0 to 1 while a merge runs. */
+  progress?: number
+  /** Why the last merge failed. A cancelled merge has no error. */
+  error?: string
 }
 export interface RenderedPreview {
   sessionId: string

@@ -6213,6 +6213,7 @@ name = "x3fuse-tauri"
 version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
+ "bytemuck",
  "cc",
  "chrono",
  "objc2",
@@ -6233,6 +6234,7 @@ dependencies = [
  "uuid",
  "x3f-core",
  "x3f-render",
+ "x3f-sys",
 ]
 
 [[package]]

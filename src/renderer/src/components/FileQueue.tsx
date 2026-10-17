@@ -17,6 +17,7 @@ import { QueueContextMenu } from './QueueContextMenu'
 import { Thumbnail } from './Thumbnail'
 import { EditedBadge } from './EditedBadge'
 import { CullBadge } from './CullBadge'
+import { StackBadge } from './StackBadge'
 import { ResizeHandle } from './ui/resizeHandle'
 
 const ROW_HEIGHT = 30
@@ -247,6 +248,7 @@ const Row = memo(function Row({
         </span>
         <CullBadge file={file} />
         <EditedBadge edit={file.edit} />
+        <StackBadge file={file} />
       </div>
       <span className="truncate pl-2 text-tone-400">
         {file.pending ? (

@@ -171,6 +171,8 @@ export interface X3FFileDTO {
   capturedDate?: string
   /** Source file size in bytes. */
   fileSize?: number
+  /** The number of frames in an X3I (Super Fine Detail) photo. */
+  frames?: number
   /** Curated inspector rows extracted alongside import metadata. */
   exif?: ExifPair[]
   /**
@@ -258,7 +260,9 @@ export function batchSettings(settings: BatchConversionSettings): BatchConversio
   }
 }
 
-/** The converter preserves .X3F in JPEG/TIFF names; DNG drops it. */
+/** The converter preserves .X3F and .X3I in JPEG/TIFF names; DNG drops it. */
 export function outputName(fileName: string, format: OutputFormat): string {
-  return (format === 'dng' ? fileName.replace(/\.x3f$/i, '') : fileName) + OUTPUT_EXTENSION[format]
+  return (
+    (format === 'dng' ? fileName.replace(/\.x3[fi]$/i, '') : fileName) + OUTPUT_EXTENSION[format]
+  )
 }

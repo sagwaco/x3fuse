@@ -12,6 +12,7 @@ import { cn } from '../lib/cn'
 import { Thumbnail } from './Thumbnail'
 import { EditedBadge } from './EditedBadge'
 import { CullBadge } from './CullBadge'
+import { StackBadge } from './StackBadge'
 import { ZoomablePreview } from './ZoomablePreview'
 import { QueueContextMenu } from './QueueContextMenu'
 import { DevelopingCloud } from '../lib/developingCloud'
@@ -196,6 +197,7 @@ const FilmstripCell = memo(function FilmstripCell({
       />
       <CullBadge file={file} overlay />
       <EditedBadge edit={file.edit} overlay />
+      <StackBadge file={file} overlay />
     </div>
   )
 })

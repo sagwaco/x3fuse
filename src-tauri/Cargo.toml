@@ -33,8 +33,10 @@ url = "2"
 tempfile = "3"
 sys-locale = "0.3"
 x3f-core = { version = "0.3.0", features = ["gpu", "serde"] }
+x3f-sys = "0.3.0"
 x3f-render = { path = "crates/x3f-render" }
 sha2 = "0.10"
+bytemuck = "1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"

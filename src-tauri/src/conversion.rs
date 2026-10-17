@@ -188,9 +188,34 @@ pub fn process_options(settings: &BatchSettings, opcodes: PathBuf) -> x3f_core::
     }
 }
 
+/// Core reports X3I merge statistics, and a hint about an environment
+/// variable, with its warnings. They are diagnostics for the log only.
+fn x3i_diagnostic(line: &str) -> bool {
+    const FRAME: [&str; 5] = [
+        "shutter_us=",
+        "statistics ",
+        "aligned-ratio-bin ",
+        "ghost-bin ",
+        "alignment ",
+    ];
+    [
+        "X3I saturation: ",
+        "X3I merge: ",
+        "X3I noise: ",
+        "X3I denoise is off;",
+    ]
+    .iter()
+    .any(|prefix| line.starts_with(prefix))
+        || line
+            .strip_prefix("X3I frame ")
+            .and_then(|rest| rest.split_once(": "))
+            .is_some_and(|(_, rest)| FRAME.iter().any(|prefix| rest.starts_with(prefix)))
+}
+
 /// Converts with the selected Color Mode. If core cannot use the mode for this
 /// file, such as a Merrill-only mode set or a photo shot in Monochrome, it uses
 /// Standard. If the camera has no Color Modes, it converts without a mode.
+/// Returns warnings for the user, then details for the log only.
 fn convert(
     input: &Path,
     output: &Path,
@@ -198,8 +223,25 @@ fn convert(
     options: &x3f_core::ProcessOptions,
     cancel: &std::sync::atomic::AtomicBool,
     mut on_stage: impl FnMut(x3f_core::ConversionStage),
-) -> Result<Vec<String>, String> {
+) -> Result<(Vec<String>, Vec<String>), String> {
     use x3f_core::ColorMode::{AsShot, Standard};
+    let x3i = crate::x3i::is_x3i(input);
+    // Frame 0 holds the camera metadata and the reference exposure of an X3I.
+    let reader = || {
+        if x3i {
+            x3f_core::X3iContainer::open(input).and_then(|container| container.open_frame(0))
+        } else {
+            x3f_core::Reader::open(input)
+        }
+    };
+    // Core extracts an X3I's embedded JPEG only from one frame.
+    if x3i && format == x3f_core::OutputFormat::Jpeg {
+        on_stage(x3f_core::ConversionStage::Read);
+        let mut frame = reader().map_err(|e| e.to_string())?;
+        frame.load_thumbnail_jpeg().map_err(|e| e.to_string())?;
+        frame.dump_jpeg(output).map_err(|e| e.to_string())?;
+        return Ok((Vec::new(), Vec::new()));
+    }
     let requested = options.color_mode;
     let mut options = options.clone();
     let mut reason = String::new();
@@ -207,7 +249,7 @@ fn convert(
     let mut quiet = false;
     // Read the camera's modes first, so that an unusable mode costs no decode.
     if let Some(mode) = requested {
-        match x3f_core::Reader::open(input).and_then(|mut reader| reader.available_color_modes()) {
+        match reader().and_then(|mut reader| reader.available_color_modes()) {
             Ok(modes) if modes.contains(&Standard) => {
                 if mode != AsShot && !modes.contains(&mode) {
                     options.color_mode = Some(Standard);
@@ -221,6 +263,11 @@ fn convert(
             }
         }
     }
+    // A merge holds about 3 GB, so X3I files convert one at a time.
+    let _merge = x3i
+        .then(|| crate::x3i::MERGE.lock())
+        .transpose()
+        .map_err(|_| "X3I merge unavailable")?;
     let report = loop {
         match x3f_core::convert_file(input, output, format, &options, cancel, &mut on_stage) {
             // Core reports an unusable mode as invalid data. ponytail: an as-shot
@@ -243,7 +290,8 @@ fn convert(
         }
         _ => None,
     };
-    Ok(warning.into_iter().chain(report.warnings).collect())
+    let (details, warnings) = report.warnings.into_iter().partition(|w| x3i_diagnostic(w));
+    Ok((warning.into_iter().chain(warnings).collect(), details))
 }
 
 async fn process_file(
@@ -289,7 +337,7 @@ async fn process_file(
     let source = file.clone();
     let export_state = state.clone();
     let export_settings = settings.clone();
-    let warnings = tauri::async_runtime::spawn_blocking(move || {
+    let (warnings, details) = tauri::async_runtime::spawn_blocking(move || {
         if export_settings.is_rendered() {
             let recipe = match &source.recipe {
                 Some(recipe) => recipe.clone(),
@@ -311,7 +359,7 @@ async fn process_file(
                 &core_path,
                 &cancel,
             )?;
-            return Ok(Vec::new());
+            return Ok((Vec::new(), Vec::new()));
         }
         let format = match export_settings.output_format {
             OutputFormat::Dng => x3f_core::OutputFormat::Dng,
@@ -378,7 +426,7 @@ async fn process_file(
     // After publication the validated file is complete, even if Stop arrives concurrently.
     let warning = !warnings.is_empty();
     let message = warnings.join("\n");
-    for warning in warnings {
+    for warning in warnings.into_iter().chain(details) {
         state.logs.write("conversion", warning);
     }
     progress(app, batch, file, 1.0);
@@ -528,6 +576,52 @@ pub async fn run_batch(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "Set X3FUSE_TEST_X3I to an absolute X3I path"]
+    fn x3i_converts_to_dng_and_its_embedded_jpeg() {
+        let input = PathBuf::from(std::env::var_os("X3FUSE_TEST_X3I").expect("X3FUSE_TEST_X3I"));
+        let directory = tempfile::tempdir().unwrap();
+        let opcodes = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/opcodes");
+        for (format, core) in [
+            (OutputFormat::Jpeg, x3f_core::OutputFormat::Jpeg),
+            (OutputFormat::Dng, x3f_core::OutputFormat::Dng),
+        ] {
+            let settings = BatchSettings {
+                output_format: format,
+                ..Default::default()
+            };
+            let output = directory.path().join(format!("x3i.{}", format.extension()));
+            let warnings = convert(
+                &input,
+                &output,
+                core,
+                &process_options(&settings, opcodes.clone()),
+                &std::sync::atomic::AtomicBool::new(false),
+                |_| (),
+            )
+            .unwrap();
+            assert!(std::fs::metadata(&output).unwrap().len() > 0);
+            // Merge statistics go to the log, not to the user.
+            assert!(!warnings.0.iter().any(|w| x3i_diagnostic(w)));
+            assert_eq!(format == OutputFormat::Dng, !warnings.1.is_empty());
+        }
+    }
+
+    #[test]
+    fn x3i_statistics_are_diagnostics_and_fallbacks_are_warnings() {
+        assert!(x3i_diagnostic(
+            "X3I frame 3: ghost-bin lower=0.05000 upper=0.11875"
+        ));
+        assert!(x3i_diagnostic("X3I merge: frames=7 s=2.78"));
+        assert!(!x3i_diagnostic("X3I safety limit clipped 12 samples"));
+        assert!(!x3i_diagnostic(
+            "X3I ratio warning: frame=5 fit 1.3 exceeds 0.3 EV; keep shutter ratio 0.25"
+        ));
+        assert!(!x3i_diagnostic(
+            "Unknown or empty as-shot Color Mode resolved to Standard"
+        ));
+    }
 
     #[test]
     fn rendered_export_requires_a_reviewed_source_snapshot() {
@@ -746,7 +840,7 @@ mod tests {
                 &cancel,
                 |_| {},
             );
-            let warnings = warnings.unwrap();
+            let (warnings, _) = warnings.unwrap();
             assert!(warnings[0].contains("Standard color mode instead of Sunset Red"));
             assert!(output.is_file());
             let output = dir.path().join("c.dng");

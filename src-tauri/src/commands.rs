@@ -74,7 +74,7 @@ pub async fn queue_add(
     let paths: Vec<_> = payload
         .paths
         .into_iter()
-        .filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("x3f")))
+        .filter(|p| p.extension().is_some_and(crate::model::is_source_extension))
         .collect();
     for path in &paths {
         source_path(path)?;
@@ -261,7 +261,7 @@ pub async fn dialog_pick_files(
             .file()
             .set_parent(&window)
             .set_title(title)
-            .add_filter("X3F RAW", &["x3f", "X3F"]);
+            .add_filter("X3F RAW", &["x3f", "X3F", "x3i", "X3I"]);
         if let Some(last) = last {
             dialog = dialog.set_directory(last);
         }
@@ -621,6 +621,58 @@ pub async fn editor_close(
     tauri::async_runtime::spawn_blocking(move || state.editor.close(&payload.session_id))
         .await
         .map_err(|e| e.to_string())?
+}
+
+#[derive(Deserialize)]
+pub struct X3iRequest {
+    path: PathBuf,
+    recipe: x3f_render::EditRecipe,
+}
+
+#[tauri::command]
+pub async fn editor_x3i_status(
+    window: WebviewWindow,
+    state: State<'_, Arc<AppState>>,
+    payload: X3iRequest,
+) -> Result<Option<crate::editor::X3iStatus>, String> {
+    main_window(&window)?;
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        state.editor.x3i_status(&payload.path, &payload.recipe)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Merges an X3I. It returns when the merge ends; `editor:x3iStatus` reports progress.
+#[tauri::command]
+pub async fn editor_x3i_process(
+    window: WebviewWindow,
+    state: State<'_, Arc<AppState>>,
+    payload: X3iRequest,
+) -> Result<(), String> {
+    main_window(&window)?;
+    if state.running.load(Ordering::SeqCst) {
+        return Err("Wait for conversion to finish before editing".into());
+    }
+    // Register before the blocking task, so that a Cancel sent next finds the merge.
+    let Some(merge) = state.editor.x3i_begin(&payload.path)? else {
+        return Ok(());
+    };
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.editor.x3i_run(merge, &payload.recipe))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn editor_x3i_cancel(
+    window: WebviewWindow,
+    state: State<'_, Arc<AppState>>,
+    payload: PathRequest,
+) -> Result<(), String> {
+    main_window(&window)?;
+    state.editor.x3i_cancel(&payload.path)
 }
 
 #[derive(Deserialize)]

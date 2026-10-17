@@ -166,6 +166,7 @@ mod tests {
         std::fs::write(&path, b"raw").unwrap();
         let previews = Previews::new(Arc::new(ExifTool::new(
             dir.path().into(),
+            dir.path().join("x3i"),
             Arc::new(Logs::new(dir.path().join("logs"))),
         )));
         let occupied = previews.thumbnail_slots.acquire_many(3).await.unwrap();

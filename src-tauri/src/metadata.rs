@@ -21,12 +21,25 @@ use tokio::{io::AsyncReadExt, process::Command};
 
 pub struct ExifTool {
     root: PathBuf,
+    /// Frame copies of X3I files, which ExifTool cannot read.
+    x3i: PathBuf,
     pub logs: Arc<Logs>,
 }
 
 impl ExifTool {
-    pub fn new(root: PathBuf, logs: Arc<Logs>) -> Self {
-        Self { root, logs }
+    pub fn new(root: PathBuf, x3i: PathBuf, logs: Arc<Logs>) -> Self {
+        Self { root, x3i, logs }
+    }
+
+    /// The file that ExifTool reads for `path`. See `x3i::exif_source`.
+    async fn source(&self, path: &Path) -> Result<PathBuf, String> {
+        if !crate::x3i::is_x3i(path) {
+            return Ok(path.to_owned());
+        }
+        let (cache, path) = (self.x3i.clone(), path.to_owned());
+        tauri::async_runtime::spawn_blocking(move || crate::x3i::exif_source(&cache, &path))
+            .await
+            .map_err(|e| e.to_string())?
     }
 
     pub async fn run(
@@ -134,7 +147,7 @@ impl ExifTool {
                 "filename=UTF8".into(),
                 "-overwrite_original".into(),
                 "-tagsFromFile".into(),
-                input.into(),
+                self.source(input).await?.into(),
                 "-all:all".into(),
                 output.into(),
             ],
@@ -145,6 +158,7 @@ impl ExifTool {
     }
 
     pub async fn preview(&self, path: &Path, full: bool) -> Result<Option<Vec<u8>>, String> {
+        let path = &self.source(path).await?;
         let tags: &[&str] = if full {
             &["JpgFromRaw"]
         } else {
@@ -181,7 +195,7 @@ impl ExifTool {
             "filename=UTF8".into(),
             "-overwrite_original".into(),
             "-tagsFromFile".into(),
-            input.into(),
+            self.source(input).await?.into(),
         ];
         // Copy capture/author metadata only. The encoder owns geometry, ICC and previews.
         args.extend(
@@ -228,7 +242,19 @@ impl ExifTool {
         .map(Into::into)
         .collect();
         args.extend(INSPECTOR.iter().map(|(tag, _)| format!("-{tag}").into()));
-        args.extend(paths.iter().map(|p| p.as_os_str().to_owned()));
+        // ExifTool reports an X3I by its frame copy. Map it back.
+        let mut sources = HashMap::new();
+        for path in paths {
+            match self.source(path).await {
+                Ok(source) => {
+                    args.push(source.clone().into());
+                    sources.insert(source, path.clone());
+                }
+                Err(e) => self
+                    .logs
+                    .write("error", format!("Metadata of {}: {e}", path.display())),
+            }
+        }
         let result = async {
             let bytes = self.run(args, None).await?;
             let objects: Vec<Value> = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
@@ -254,8 +280,9 @@ impl ExifTool {
                         .ok()?;
                     is_jpeg(&bytes).then_some(bytes)
                 });
+                let path = PathBuf::from(path);
                 result.insert(
-                    PathBuf::from(path),
+                    sources.get(&path).cloned().unwrap_or(path),
                     DisplayMeta {
                         orientation,
                         aspect_ratio,
@@ -289,7 +316,7 @@ impl ExifTool {
             "-d".into(),
             "%Y-%m-%d %H:%M:%S".into(),
             "-json".into(),
-            path.into(),
+            self.source(path).await?.into(),
         ]);
         let bytes = self.run(args, None).await?;
         let objects: Vec<Value> = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
@@ -355,6 +382,7 @@ pub fn is_jpeg(bytes: &[u8]) -> bool {
 
 pub fn basic_metadata(path: PathBuf) -> Result<FileDto, String> {
     source_path(&path)?;
+    let frames = crate::x3i::frames(&path);
     let info = std::fs::metadata(&path).map_err(|e| e.to_string())?;
     let captured_date = capture_date(&path).or_else(|| {
         info.created()
@@ -373,6 +401,7 @@ pub fn basic_metadata(path: PathBuf) -> Result<FileDto, String> {
         exif: None,
         edit: None,
         edit_error: None,
+        frames,
         cull: Default::default(),
     })
 }

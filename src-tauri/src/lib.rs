@@ -11,6 +11,7 @@ pub mod preview;
 mod smoke;
 pub mod storage;
 mod updater;
+mod x3i;
 
 use std::{
     path::{Path, PathBuf},
@@ -235,8 +236,10 @@ pub fn run() {
             } else {
                 app.path().resource_dir()?.join("resources")
             };
+            let edits = app.path().app_data_dir()?.join("edits");
             let exif = Arc::new(metadata::ExifTool::new(
                 resources.join("exiftool"),
+                edits.join(x3i::DIRECTORY),
                 logs.clone(),
             ));
             tauri::async_runtime::block_on(exif.check()).map_err(std::io::Error::other)?;
@@ -262,7 +265,7 @@ pub fn run() {
                 preferences,
                 logs,
                 previews: preview::Previews::new(exif.clone()),
-                editor: editor::Editor::new(app.path().app_data_dir()?.join("edits")),
+                editor: editor::Editor::new(edits),
                 culling: culling::Culling::load(app.path().app_data_dir()?.join("culling.json")),
                 exif,
                 resources,
@@ -385,6 +388,9 @@ pub fn run() {
             commands::editor_preview,
             commands::editor_pick_white_balance,
             commands::editor_finish_close,
+            commands::editor_x3i_status,
+            commands::editor_x3i_process,
+            commands::editor_x3i_cancel,
             commands::settings_get,
             commands::settings_set,
             commands::queue_add,

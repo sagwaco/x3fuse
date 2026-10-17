@@ -6,7 +6,8 @@ import {
   type EditRecord,
   type EditorSession,
   type RenderedPreview,
-  type PreviewRegion
+  type PreviewRegion,
+  type X3iStatus
 } from '@shared/editor'
 import type { X3FFileDTO } from '@shared/types'
 import { ipc } from '../lib/ipc'
@@ -63,6 +64,14 @@ interface EditorState {
   pickWhiteBalance: (x: number, y: number) => Promise<void>
   /** A small look preview, rendered only while the editor is idle; edits preempt it. */
   renderThumbnail: (recipe: EditRecipe) => Promise<string | null>
+  /** The merge state of an open X3I. It renders only after its frames merge. */
+  x3i: X3iStatus | null
+  /** Starts the merge of the open X3I. The merge continues after the photo closes. */
+  processX3i: () => void
+  cancelX3i: () => void
+  /** Reads the merge state again, and renders when the merge is done. A poll
+      skips while a read is in flight; other reads wait for it. */
+  refreshX3i: (poll?: boolean) => Promise<void>
 }
 
 const same = (a: EditRecipe, b: EditRecipe): boolean => JSON.stringify(a) === JSON.stringify(b)
@@ -88,6 +97,15 @@ let prefetchRunning = false
 let prefetchMisses = { key: '', regions: new Set<string>() }
 let thumbnailsRunning = 0
 let movedAt = -Infinity
+/** The X3I whose merge the user cancelled last; its failure is not an error. */
+let cancelledX3i: string | null = null
+/** X3I files whose merge request is in flight. Their status shows progress before the merge reports it. */
+const merging = new Set<string>()
+/** Status reads run one at a time, in order. */
+let refreshing: Promise<void> = Promise.resolve()
+let refreshBusy = false
+/** An open X3I renders only after its frames merge. */
+const unmerged = (state: EditorState): boolean => !!state.x3i && !state.x3i.processed
 /** The render key of `preview`; while zoomed, prefetch refreshes it when it is stale. */
 let previewKey: string | null = null
 const INTERACTIVE_EDGE = 1024
@@ -216,7 +234,8 @@ export const useEditorStore = create<EditorState>((set, get) => {
   async function runRender(): Promise<void> {
     if (get().closing || renderRunning || (!renderPending && !refinementPending)) return
     const state = get()
-    if (!state.session || state.loading || useQueueStore.getState().isProcessing) return
+    if (!state.session || state.loading || unmerged(state) || useQueueStore.getState().isProcessing)
+      return
     const doc = state.documents[state.session.path]
     if (!doc) return
     // Without a preview on screen, as on open or a crop mode change, a fast
@@ -296,11 +315,14 @@ export const useEditorStore = create<EditorState>((set, get) => {
         }, REFINE_DELAY)
       }
     } catch (error) {
+      // A merged X3I whose cached image is gone shows its merge dialog again.
+      if (get().x3i) await get().refreshX3i()
       if (
         get().session?.sessionId === sessionId &&
         renderRevision === revision &&
         !get().closing &&
-        !get().loading
+        !get().loading &&
+        !unmerged(get())
       )
         set({ error: String(error) })
     } finally {
@@ -362,6 +384,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
       thumbnailsRunning ||
       state.closing ||
       state.loading ||
+      unmerged(state) ||
       state.cropping ||
       !state.viewport ||
       !doc ||
@@ -433,6 +456,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
     tile: null,
     cache: null,
     prefetching: false,
+    x3i: null,
     uncache(url) {
       set(({ cache }) =>
         cache?.renders.some((render) => render.url === url)
@@ -519,6 +543,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
         }
         set((state) => ({
           session,
+          x3i: session.x3i ?? null,
           documents: { ...state.documents, [file.path]: doc },
           loading: false,
           preview: null,
@@ -532,7 +557,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
         get().render()
       } catch (error) {
         if (token === opening)
-          set({ loading: false, session: null, preview: null, error: String(error) })
+          set({ loading: false, session: null, x3i: null, preview: null, error: String(error) })
       }
     },
     change(patch, commit = true) {
@@ -542,6 +567,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
         get().closing ||
         get().loading ||
         get().before ||
+        unmerged(get()) ||
         useQueueStore.getState().isProcessing
       )
         return
@@ -582,7 +608,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
       })
     },
     undo() {
-      if (get().closing || get().loading) return
+      if (get().closing || get().loading || unmerged(get())) return
       get().commit()
       const path = get().session?.path
       if (!path || useQueueStore.getState().isProcessing) return
@@ -599,7 +625,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
         })
     },
     redo() {
-      if (get().closing || get().loading) return
+      if (get().closing || get().loading || unmerged(get())) return
       const path = get().session?.path
       if (!path || useQueueStore.getState().isProcessing) return
       const doc = get().documents[path]
@@ -620,7 +646,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
     },
     compare(before) {
       // Crop mode edits geometry; comparing would block its changes and its Cancel.
-      if (get().closing || get().loading || get().cropping) return
+      if (get().closing || get().loading || get().cropping || unmerged(get())) return
       if (get().before === before) return
       set({ before, tile: null, cache: null })
       get().render()
@@ -635,7 +661,8 @@ export const useEditorStore = create<EditorState>((set, get) => {
     },
     async paste(files) {
       // Crop mode's Cancel restores geometry only, so it could not undo a paste.
-      if (get().closing || get().loading || get().cropping) return
+      // An X3I without its merge shows no result of a paste.
+      if (get().closing || get().loading || get().cropping || unmerged(get())) return
       const source = get().clipboard
       if (!source || useQueueStore.getState().isProcessing) return
       const queue = useQueueStore.getState()
@@ -716,6 +743,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
         if (session) await ipc.invoke('editor:close', { sessionId: session.sessionId })
         set({
           session: null,
+          x3i: null,
           preview: null,
           loading: false,
           rendering: false,
@@ -760,7 +788,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
       }, 0)
     },
     async pickWhiteBalance(x, y) {
-      if (get().closing || get().loading) return
+      if (get().closing || get().loading || unmerged(get())) return
       const session = get().session
       if (!session) return
       try {
@@ -777,7 +805,8 @@ export const useEditorStore = create<EditorState>((set, get) => {
     },
     async renderThumbnail(recipe) {
       const { session, closing, loading } = get()
-      if (!session || closing || loading || renderRunning || renderPending) return null
+      if (!session || closing || loading || unmerged(get()) || renderRunning || renderPending)
+        return null
       // A new render request cancels the one in flight, so prefetch waits for this one.
       ++thumbnailsRunning
       try {
@@ -792,6 +821,69 @@ export const useEditorStore = create<EditorState>((set, get) => {
       } finally {
         if (--thumbnailsRunning === 0) schedulePrefetch()
       }
+    },
+    processX3i() {
+      const { session, x3i, loading } = get()
+      // While another photo opens, the dialog still shows the previous one.
+      if (!session || !x3i || loading || x3i.processed || x3i.progress !== undefined) return
+      const path = session.path
+      if (cancelledX3i === path) cancelledX3i = null
+      merging.add(path)
+      set({ x3i: { ...x3i, progress: 0, error: undefined } })
+      void ipc
+        .invoke('editor:x3iProcess', { path, recipe: get().documents[path].recipe })
+        .then(
+          () => undefined,
+          (error: unknown) => String(error)
+        )
+        .then(async (error) => {
+          merging.delete(path)
+          await get().refreshX3i()
+          const current = get().x3i
+          if (get().session?.path !== path || !current) return
+          // The request has ended, so its merge has too, unless a new one started.
+          // Progress that remains came from an earlier poll or a failed read.
+          const progress = merging.has(path) ? current.progress : undefined
+          // A failure before the merge starts has no status of its own.
+          const failed =
+            error !== undefined &&
+            progress === undefined &&
+            !current.processed &&
+            !current.error &&
+            cancelledX3i !== path
+          set({ x3i: { ...current, progress, ...(failed && { error }) } })
+        })
+    },
+    cancelX3i() {
+      const path = get().session?.path
+      if (!path) return
+      cancelledX3i = path
+      void ipc
+        .invoke('editor:x3iCancel', { path })
+        .then(() => get().refreshX3i())
+        .catch(() => {})
+    },
+    refreshX3i(poll = false) {
+      if (poll && refreshBusy) return Promise.resolve()
+      const read = async (): Promise<void> => {
+        const { session } = get()
+        if (!session?.x3i) return
+        const path = session.path
+        refreshBusy = true
+        const status = await ipc
+          .invoke('editor:x3iStatus', { path, recipe: get().documents[path].recipe })
+          .catch(() => null)
+          .finally(() => (refreshBusy = false))
+        const current = get()
+        if (!status || current.session?.path !== path) return
+        const merged = unmerged(current) && status.processed
+        const waiting = merging.has(path) && !status.processed && status.progress === undefined
+        set({ x3i: waiting ? { ...status, progress: current.x3i?.progress ?? 0 } : status })
+        if (merged) get().render()
+      }
+      const run = refreshing.then(read)
+      refreshing = run.catch(() => {})
+      return run
     }
   }
 })
