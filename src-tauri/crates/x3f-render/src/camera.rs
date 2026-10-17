@@ -217,9 +217,40 @@ pub(crate) fn effective_recipe(recipe: &EditRecipe) -> EditRecipe {
     recipe
 }
 
+/// The camera's Color Mode name. X3F 4.0 and later (Quattro) records it
+/// only in the EXIF of the embedded JPEG. Earlier headers store it directly.
+/// # Safety
+/// `x3f` must be a parsed file that `control` reads.
+unsafe fn recorded_mode(x3f: *mut sys::x3f_t, control: sys::Control<'_>) -> Result<String, RenderError> {
+    let bytes = unsafe {
+        if (*x3f).header.version < 0x0004_0000 {
+            (*x3f).header.color_mode.map(|v| v as u8).to_vec()
+        } else {
+            let jpeg = sys::x3f_get_thumb_jpeg(x3f);
+            if jpeg.is_null() {
+                return Ok(String::new());
+            }
+            sys::load_data(x3f, jpeg, control).map_err(raw_error)?;
+            let image = &(*jpeg).header.data_subsection.image_data;
+            if image.data.is_null() {
+                return Ok(String::new());
+            }
+            let jpeg = std::slice::from_raw_parts(image.data.cast::<u8>(), image.data_size as usize);
+            sys::jpeg_exif::parse_jpeg_exif(jpeg)
+                .and_then(|exif| exif.picture_mode)
+                .unwrap_or_default()
+                .into_bytes()
+        }
+    };
+    let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
+    Ok(String::from_utf8_lossy(&bytes[..end]).trim().to_owned())
+}
+
 struct Metadata {
     file: NonNull<libc::FILE>,
     raw: NonNull<sys::x3f_t>,
+    /// The camera's Color Mode as recorded, or empty.
+    recorded: String,
 }
 impl Drop for Metadata {
     fn drop(&mut self) {
@@ -271,7 +302,11 @@ impl Metadata {
             unsafe { libc::fclose(file.as_ptr()) };
             return Err(RenderError::Invalid("Invalid X3F metadata".into()));
         };
-        let metadata = Self { file, raw };
+        let mut metadata = Self {
+            file,
+            raw,
+            recorded: String::new(),
+        };
         // SAFETY: all sections belong to this unique parsed file.
         unsafe {
             for section in [
@@ -282,6 +317,7 @@ impl Metadata {
                     sys::load_data(raw.as_ptr(), section, control).map_err(raw_error)?;
                 }
             }
+            metadata.recorded = recorded_mode(raw.as_ptr(), control)?;
         }
         Ok(metadata)
     }
@@ -354,22 +390,15 @@ pub fn read_camera_profiles(
     let mut base = [0.; 9];
     let mut xyz_to_rgb = [0.; 9];
     // SAFETY: this reader owns the header, white balance and output matrices.
-    let logged = unsafe {
-        let header = &(*metadata.raw.as_ptr()).header;
-        let bytes: Vec<u8> = header
-            .color_mode
-            .iter()
-            .map(|v| *v as u8)
-            .take_while(|v| *v != 0)
-            .collect();
+    unsafe {
         let wb = sys::x3f_get_wb(metadata.raw.as_ptr());
         sys::x3f_get_bmt_to_xyz(metadata.raw.as_ptr(), wb, base.as_mut_ptr());
         sys::x3f_XYZ_to_sRGB(xyz_to_rgb.as_mut_ptr());
-        String::from_utf8_lossy(&bytes).trim().to_owned()
-    };
+    }
+    let logged = metadata.recorded.as_str();
     let camera_to_rgb = color::multiply(xyz_to_rgb, base);
     let inverse = color::inverse(camera_to_rgb).ok();
-    let profiles = profiles_from_calibration(&logged, |id| {
+    let profiles = profiles_from_calibration(logged, |id| {
         sys::Control::new(cancel).check().map_err(raw_error)?;
         let ccm = metadata.matrix(&format!("CMCM_{id}"));
         if id != "Standard" && ccm.is_none() {
@@ -453,12 +482,14 @@ fn profiles_from_calibration(
             }
         }
     }
-    profiles.as_shot = if profiles.available.iter().any(|p| p.id == logged) {
-        logged
-    } else {
-        "Standard"
-    }
-    .into();
+    // Headers store IDs such as "FCBlue", or names such as "Fov Classic Blue".
+    // Modes without a profile here, such as Sepia, use Standard.
+    profiles.as_shot = profiles
+        .available
+        .iter()
+        .find(|p| logged.eq_ignore_ascii_case(&p.id) || logged.eq_ignore_ascii_case(&p.name))
+        .map_or("Standard", |p| p.id.as_str())
+        .into();
     Ok(profiles)
 }
 
@@ -534,6 +565,13 @@ mod tests {
                 .as_shot,
             "Monochrome"
         );
+        let named = profiles_from_calibration("Fov Classic Blue", |id| {
+            Ok(matches!(id, "Standard" | "FCBlue").then(Calibration::default))
+        })
+        .unwrap();
+        assert_eq!(named.as_shot, "FCBlue");
+        let sepia = profiles_from_calibration("Sepia", |_| Ok(Some(Calibration::default())));
+        assert_eq!(sepia.unwrap().as_shot, "Standard");
     }
     #[test]
     fn calibration_tone_uses_core_reference_and_extended_endpoints() {
