@@ -31,7 +31,7 @@ percent-encoding = "2"
 url = "2"
 tempfile = "3"
 sys-locale = "0.3"
-x3f-core = { version = "0.2.1", features = ["gpu", "serde"] }
+x3f-core = { version = "0.3.0", features = ["gpu", "serde"] }
 x3f-render = { path = "crates/x3f-render" }
 sha2 = "0.10"
 
@@ -66,9 +66,3 @@ opt-level = 3
 [profile.release]
 lto = "thin"
 codegen-units = 1
-
-# Temporary: x3fuse-core feat/merrill-spp-rgb-alignment b6be820 (main merged), for
-# Sigma's native Color Mode curves. Remove once a release includes them.
-[patch.crates-io]
-x3f-core = { path = "/Users/sang/Developer/worktrees/x3fuse-core/editor-tone/crates/x3f-core" }
-x3f-sys = { path = "/Users/sang/Developer/worktrees/x3fuse-core/editor-tone/crates/x3f-sys" }

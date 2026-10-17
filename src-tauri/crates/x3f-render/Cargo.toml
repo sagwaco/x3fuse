@@ -7,8 +7,8 @@ license = "GPL-3.0-only"
 description = "Scene-linear GPU RAW editing and spectral film rendering for X3Fuse"
 
 [dependencies]
-x3f-core = { version = "0.2.1", features = ["serde"] }
-x3f-sys = "0.2.1"
+x3f-core = { version = "0.3.0", features = ["serde"] }
+x3f-sys = "0.3.0"
 wgpu = "27"
 pollster = "0.4"
 bytemuck = { version = "1", features = ["derive"] }
