@@ -31,7 +31,7 @@ it('creates fresh ZIPs with complete native layouts, launch instructions, and Un
     await file('LICENSE', 'license fixture')
     await file(
       'src-tauri/tauri.conf.json',
-      JSON.stringify({ productName: 'X3Fuse Tauri', version: '0.1.0' })
+      JSON.stringify({ productName: 'X3Fuse', version: '0.2.0' })
     )
     await file('src-tauri/resources/exiftool/exiftool')
     await file('src-tauri/resources/exiftool/exiftool.exe')
@@ -41,7 +41,7 @@ it('creates fresh ZIPs with complete native layouts, launch instructions, and Un
     await file(`src-tauri/resources/opcodes/${opcode}`)
     await file('src-tauri/target/release/x3fuse-tauri')
     await file('src-tauri/target/release/x3fuse-tauri.exe')
-    const mac = 'src-tauri/target/release/bundle/macos/X3Fuse Tauri.app/Contents'
+    const mac = 'src-tauri/target/release/bundle/macos/X3Fuse.app/Contents'
     await file(`${mac}/MacOS/x3fuse-tauri`)
     await file(`${mac}/Resources/resources/exiftool/exiftool`)
     await file(`${mac}/Resources/resources/exiftool/lib/Image/ExifTool.pm`)
@@ -68,13 +68,13 @@ it('creates fresh ZIPs with complete native layouts, launch instructions, and Un
       const prefix = `${name}/`
       const binary =
         platform === 'darwin'
-          ? 'X3Fuse Tauri.app/Contents/MacOS/x3fuse-tauri'
+          ? 'X3Fuse.app/Contents/MacOS/x3fuse-tauri'
           : platform === 'win32'
             ? 'x3fuse-tauri.exe'
             : 'bin/x3fuse-tauri'
       const resources =
         platform === 'darwin'
-          ? 'X3Fuse Tauri.app/Contents/Resources/resources/'
+          ? 'X3Fuse.app/Contents/Resources/resources/'
           : platform === 'win32'
             ? 'resources/'
             : 'lib/x3fuse-tauri/resources/'
@@ -102,7 +102,7 @@ it('creates fresh ZIPs with complete native layouts, launch instructions, and Un
         execFileSync('unzip', ['-q', archive, '-d', extracted])
       }
       const readme = await readFile(join(extracted, name, 'README.txt'), 'utf8')
-      expect(readme).toContain('X3Fuse alpha 0.1.0')
+      expect(readme).toContain('X3Fuse alpha 0.2.0')
       expect(readme).toContain('No automatic updates.')
       if (platform === 'darwin') {
         expect(readme).toContain('Apple Silicon (M-series): x3fuse-alpha-macos-arm64.zip')

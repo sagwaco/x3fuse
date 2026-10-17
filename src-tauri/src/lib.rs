@@ -12,7 +12,7 @@ mod smoke;
 pub mod storage;
 
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicU8, Ordering},
         Arc, OnceLock,
@@ -42,6 +42,45 @@ impl AppState {
 }
 
 static CORE_LOGS: OnceLock<Arc<storage::Logs>> = OnceLock::new();
+
+fn migrate_directory(old: &Path, new: &Path) -> std::io::Result<()> {
+    if old.is_dir() && !new.exists() {
+        std::fs::rename(old, new)?;
+    }
+    Ok(())
+}
+
+fn migrate_alpha_directories(app: &tauri::AppHandle) -> Vec<String> {
+    let identifier = &app.config().identifier;
+    let old_identifier = format!("{identifier}.tauri");
+    [
+        app.path().app_config_dir(),
+        app.path().app_data_dir(),
+        app.path().app_log_dir(),
+    ]
+    .into_iter()
+    .filter_map(|directory| {
+        let result = directory.map_err(std::io::Error::other).and_then(|new| {
+            let old: PathBuf = new
+                .iter()
+                .map(|part| {
+                    if part == identifier.as_str() {
+                        std::ffi::OsStr::new(&old_identifier)
+                    } else {
+                        part
+                    }
+                })
+                .collect();
+            migrate_directory(&old, &new)
+        });
+        result.err().map(|error| {
+            let message = format!("Could not migrate alpha application directory: {error}");
+            eprintln!("{message}");
+            message
+        })
+    })
+    .collect()
+}
 
 /// True when the system appearance is dark. Auto mode never pins the
 /// application appearance, so the effective appearance is the system one.
@@ -166,7 +205,11 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            let migration_errors = migrate_alpha_directories(app.handle());
             let logs = Arc::new(storage::Logs::new(app.path().app_log_dir()?));
+            for error in migration_errors {
+                logs.write("error", error);
+            }
             let preferences =
                 storage::Preferences::load(app.path().app_config_dir()?.join("settings.json"));
             logs.debug
@@ -401,4 +444,41 @@ pub fn run() {
         }
         _ => {}
     });
+}
+
+#[cfg(test)]
+mod migration_tests {
+    use super::*;
+
+    #[test]
+    fn alpha_directory_moves_only_when_the_destination_is_absent() {
+        for (old_exists, new_exists) in [(false, false), (false, true), (true, false), (true, true)]
+        {
+            let root = tempfile::tempdir().unwrap();
+            let old = root.path().join("com.sagwa.X3Fuse.tauri");
+            let new = root.path().join("com.sagwa.X3Fuse");
+            if old_exists {
+                std::fs::create_dir(&old).unwrap();
+                std::fs::write(old.join("settings.json"), b"alpha settings").unwrap();
+            }
+            if new_exists {
+                std::fs::create_dir(&new).unwrap();
+                std::fs::write(new.join("settings.json"), b"current settings").unwrap();
+            }
+            migrate_directory(&old, &new).unwrap();
+            assert_eq!(old.exists(), old_exists && new_exists);
+            assert_eq!(new.exists(), old_exists || new_exists);
+            if new_exists {
+                assert_eq!(
+                    std::fs::read(new.join("settings.json")).unwrap(),
+                    b"current settings"
+                );
+            } else if old_exists {
+                assert_eq!(
+                    std::fs::read(new.join("settings.json")).unwrap(),
+                    b"alpha settings"
+                );
+            }
+        }
+    }
 }

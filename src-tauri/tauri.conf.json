@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "X3Fuse Tauri",
-  "version": "0.1.0",
-  "identifier": "com.sagwa.X3Fuse.tauri",
+  "productName": "X3Fuse",
+  "version": "0.2.0",
+  "identifier": "com.sagwa.X3Fuse",
   "build": {
     "beforeDevCommand": "npm run dev:frontend",
     "devUrl": "http://localhost:1420",
