@@ -68,7 +68,7 @@ jobs:
       - run: cargo test --manifest-path src-tauri/Cargo.toml --locked --workspace
       - name: Build macOS application bundle
         if: runner.os == 'macOS' && !(github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'x3fuse-alpha-'))
-        run: npm run tauri -- build --bundles app
+        run: npm run tauri -- build --bundles app --config '{"identifier":"com.sagwa.X3Fuse.alpha","version":"0.2.0-alpha.'"$GITHUB_RUN_NUMBER"'"}'
       - name: Build, sign, and notarize macOS alpha
         if: runner.os == 'macOS' && github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'x3fuse-alpha-')
         env:
@@ -87,7 +87,7 @@ jobs:
           export APPLE_API_KEY_PATH="$RUNNER_TEMP/x3fuse-notary.p8"
           trap 'rm -f "$APPLE_API_KEY_PATH"' EXIT
           (umask 077; printf '%s' "$APPLE_API_KEY_BASE64" | base64 --decode > "$APPLE_API_KEY_PATH")
-          npm run tauri -- build --bundles app
+          npm run tauri -- build --bundles app --config '{"identifier":"com.sagwa.X3Fuse.alpha","version":"0.2.0-alpha.'"$GITHUB_RUN_NUMBER"'"}'
       - name: Build Windows or Linux native executable
         if: runner.os != 'macOS'
         run: npm run tauri -- build --no-bundle
@@ -153,7 +153,7 @@ jobs:
             Extract the ZIP and keep the complete extracted directory together.
             macOS archives contain an app bundle; Windows and Linux archives contain a portable executable and resources.
             macOS release apps are signed with a Developer ID certificate and notarized by Apple. Windows and Linux builds are unsigned.
-            These alpha builds do not support automatic updates.
+            macOS alpha builds use a separate bundle identifier, check for updates, and offer the stable release when it is newer. Windows and Linux alpha builds do not support automatic updates.
 
             macOS requires macOS 14 or newer and system Perl. Windows requires Microsoft WebView2 Runtime.
             Linux requires WebKitGTK 4.1, GTK 3, and Perl.

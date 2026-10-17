@@ -69,7 +69,7 @@ export async function packageArtifact(
           : 'Run ./bin/x3fuse-tauri. WebKitGTK 4.1, GTK 3, and Perl must be installed.'
     await writeFile(
       join(stage, 'README.txt'),
-      `X3Fuse alpha ${config.version}\n${launch}\nKeep the complete extracted directory together.\nPublished macOS alpha releases are signed and notarized; development builds are not notarized. Windows and Linux builds are unsigned.\nAutomatic updates are available on macOS.\nSource and build instructions: https://github.com/sagwaco/x3fuse/tree/main\n`
+      `X3Fuse alpha ${config.version}\n${launch}\nKeep the complete extracted directory together.\nPublished macOS alpha releases are signed and notarized; development builds are not notarized. Windows and Linux builds are unsigned.\nmacOS alpha builds use the separate bundle identifier com.sagwa.X3Fuse.alpha, check for updates, and offer the stable release when it is newer. Windows and Linux alpha builds do not support automatic updates.\nSource and build instructions: https://github.com/sagwaco/x3fuse/tree/main\n`
     )
     await mkdir(dirname(output), { recursive: true })
     await rm(output, { force: true })
