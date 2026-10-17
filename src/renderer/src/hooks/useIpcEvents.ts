@@ -1,6 +1,4 @@
 import { useEffect } from 'react'
-import { invoke } from '@tauri-apps/api/core'
-import { relaunch } from '@tauri-apps/plugin-process'
 import type { MenuCommand } from '@shared/ipc'
 import { ipc } from '../lib/ipc'
 import { appInfo } from '../lib/appInfo'
@@ -13,7 +11,7 @@ import { cull } from './useCulling'
 export async function checkForUpdates(manual = true): Promise<void> {
   if (appInfo.platform !== 'darwin') return
   try {
-    if (await invoke<boolean>('update_check', { manual })) await relaunch()
+    await ipc.invoke('update:check', { manual })
   } catch (error) {
     console.error('Could not check for updates', error)
   }

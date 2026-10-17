@@ -197,10 +197,11 @@ pub fn install(app: &tauri::AppHandle) -> tauri::Result<()> {
             "updates" => {
                 let app = app.clone();
                 tauri::async_runtime::spawn(async move {
-                    if crate::updater::update_check(app.clone(), Some(true)).await {
-                        // Use the plugin-process restart request so pending edits are saved.
-                        app.request_restart();
-                    }
+                    crate::updater::update_check(
+                        app,
+                        crate::updater::CheckRequest { manual: true },
+                    )
+                    .await;
                 });
                 Ok(())
             }

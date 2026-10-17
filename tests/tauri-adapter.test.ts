@@ -26,6 +26,8 @@ it('maps typed domain requests to Rust commands and preserves payloads', async (
   expect(native.invoke).toHaveBeenCalledWith('queue_add', { payload })
   await ipc.invoke('dialog:pickOutputDir')
   expect(native.invoke).toHaveBeenLastCalledWith('dialog_pick_output_dir', {})
+  await ipc.invoke('update:check', { manual: false })
+  expect(native.invoke).toHaveBeenLastCalledWith('update_check', { payload: { manual: false } })
   await ipc.invoke('window:openSettings')
   expect(native.invoke).toHaveBeenLastCalledWith('window_open_settings', {})
 })

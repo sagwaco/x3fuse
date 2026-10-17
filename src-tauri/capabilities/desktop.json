@@ -11,7 +11,7 @@
     "core:window:allow-set-background-color",
     "core:menu:allow-new", "core:menu:allow-popup",
     "core:resources:allow-close",
-    "updater:default", "process:allow-restart",
+    "process:allow-restart",
     {
       "identifier": "opener:allow-open-url",
       "allow": [{ "url": "https://github.com/andreavolpato/spektrafilm" }]

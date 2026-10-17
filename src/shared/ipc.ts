@@ -175,7 +175,7 @@ export interface IpcRequestMap {
   /** Trackpad click as a slider drag reaches a detent (macOS only). */
   'haptics:detent': { payload: void; result: void }
 
-  'update:check': { payload: void; result: void }
+  'update:check': { payload: { manual: boolean }; result: void }
 }
 
 export type IpcRequestChannel = keyof IpcRequestMap
