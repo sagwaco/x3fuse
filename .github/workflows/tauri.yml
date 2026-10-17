@@ -58,11 +58,18 @@ jobs:
         if: runner.os == 'Windows'
         run: printf '%s\n' 'LIBCLANG_PATH=C:\Program Files\LLVM\bin' >> "$GITHUB_ENV"
       - run: npm ci
+      - name: Cache the ExifTool download
+        uses: actions/cache@v4
+        with:
+          path: .cache
+          key: exiftool-13.59-${{ runner.os }}
       - run: npm run sync:resources
       - run: npm run typecheck
       - run: npm run lint
       - run: npm test
       - run: python3 Configuration/test_release.py
+        # The test runs release.sh through `bash`, which Python resolves to the WSL launcher on Windows runners.
+        if: runner.os != 'Windows'
       - run: npm run build:frontend
       - run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml --locked --workspace --all-targets -- -D warnings
