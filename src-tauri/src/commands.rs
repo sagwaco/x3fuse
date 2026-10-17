@@ -424,9 +424,6 @@ pub fn haptics_detent() {
         let _: () = msg_send![performer, performFeedbackPattern: 1isize, performanceTime: 1usize];
     }
 }
-#[tauri::command]
-pub fn update_check() { /* Release/update work remains out of scope, as in Electron. */
-}
 
 #[tauri::command]
 pub async fn editor_open(

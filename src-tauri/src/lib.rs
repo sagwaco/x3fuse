@@ -10,6 +10,7 @@ pub mod preview;
 #[cfg(debug_assertions)]
 mod smoke;
 pub mod storage;
+mod updater;
 
 use std::{
     path::{Path, PathBuf},
@@ -204,6 +205,8 @@ pub fn run() {
     let app = builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             let migration_errors = migrate_alpha_directories(app.handle());
             let logs = Arc::new(storage::Logs::new(app.path().app_log_dir()?));
@@ -387,7 +390,7 @@ pub fn run() {
             commands::logs_sizes,
             commands::app_info,
             commands::haptics_detent,
-            commands::update_check
+            updater::update_check
         ])
         .on_window_event(|window, event| {
             if window.label() == "main" {

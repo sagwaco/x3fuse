@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import type { LogSizes } from '@shared/ipc'
 import { ipc } from '../lib/ipc'
+import { appInfo } from '../lib/appInfo'
+import { checkForUpdates } from '../hooks/useIpcEvents'
 import { useSettingsStore } from '../stores/settingsStore'
 import { formatBytes } from '../lib/format'
 import { t } from '../lib/strings'
@@ -117,14 +119,21 @@ export function SettingsWindow(): React.JSX.Element {
             label={t('updates.automatic_updates')}
             checked={settings.autoCheckUpdates}
             onChange={(v) => void update({ autoCheckUpdates: v })}
+            disabled={appInfo.platform !== 'darwin'}
           />
           <ToggleRow
             label={t('updates.automatic_download')}
             checked={settings.autoDownloadUpdates}
             onChange={(v) => void update({ autoDownloadUpdates: v })}
+            disabled={appInfo.platform !== 'darwin'}
           />
           <div className="flex items-center justify-end">
-            <Button variant="bordered" size="sm" onClick={() => void ipc.invoke('update:check')}>
+            <Button
+              variant="bordered"
+              size="sm"
+              disabled={appInfo.platform !== 'darwin'}
+              onClick={() => void checkForUpdates()}
+            >
               {t('updates.check_for_updates')}
             </Button>
           </div>

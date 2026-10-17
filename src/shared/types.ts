@@ -89,7 +89,7 @@ export interface ConversionSettings {
   concurrency: number
   sortField: SortField
   sortAscending: boolean
-  /** Reserved update preferences; automatic updates are not implemented yet. */
+  /** Check for updates at launch and download available updates. */
   autoCheckUpdates: boolean
   autoDownloadUpdates: boolean
   /** Queue presentation: list / thumbnail grid / filmstrip in the desktop app. */

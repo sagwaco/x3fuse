@@ -103,7 +103,7 @@ it('creates fresh ZIPs with complete native layouts, launch instructions, and Un
       }
       const readme = await readFile(join(extracted, name, 'README.txt'), 'utf8')
       expect(readme).toContain('X3Fuse alpha 0.2.0')
-      expect(readme).toContain('No automatic updates.')
+      expect(readme).toContain('Automatic updates are available on macOS.')
       if (platform === 'darwin') {
         expect(readme).toContain('Apple Silicon (M-series): x3fuse-alpha-macos-arm64.zip')
         expect(readme).toContain('Intel Mac: x3fuse-alpha-macos-x64.zip')

@@ -44,5 +44,13 @@
     "macOS": {
       "minimumSystemVersion": "14.0"
     }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDRCMDIzNjQyMTE3MjQ1QjgKUldTNFJYSVJRallDUzVlL3UyUHBma3JHTzRMN3cvLzBLMWZtN1B6UytkYit1Rzk0TGZpUmdyQzQK",
+      "endpoints": [
+        "https://sagwaco.github.io/x3fuse/Support/latest.json"
+      ]
+    }
   }
 }

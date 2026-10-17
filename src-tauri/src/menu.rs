@@ -58,7 +58,7 @@ pub fn install(app: &tauri::AppHandle) -> tauri::Result<()> {
         app,
         "updates",
         translate("updates.check_for_updates"),
-        false,
+        cfg!(target_os = "macos"),
         None::<&str>,
     )?;
     let menu = MenuBuilder::new(app);
@@ -192,6 +192,16 @@ pub fn install(app: &tauri::AppHandle) -> tauri::Result<()> {
         let result = match event.id().as_ref() {
             "quit" => {
                 app.exit(0);
+                Ok(())
+            }
+            "updates" => {
+                let app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    if crate::updater::update_check(app.clone(), Some(true)).await {
+                        // Use the plugin-process restart request so pending edits are saved.
+                        app.request_restart();
+                    }
+                });
                 Ok(())
             }
             name @ ("settings" | "showLogs" | "clearLogs") => {

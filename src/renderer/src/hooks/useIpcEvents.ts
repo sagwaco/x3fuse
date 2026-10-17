@@ -1,11 +1,23 @@
 import { useEffect } from 'react'
+import { invoke } from '@tauri-apps/api/core'
+import { relaunch } from '@tauri-apps/plugin-process'
 import type { MenuCommand } from '@shared/ipc'
 import { ipc } from '../lib/ipc'
+import { appInfo } from '../lib/appInfo'
 import { cullingSaved, useQueueStore } from '../stores/queueStore'
 import { addFilesViaDialog } from '../lib/addFilesViaDialog'
 import { useEditorStore, isTextEditing } from '../stores/editorStore'
 import { useNavStore } from '../stores/navStore'
 import { cull } from './useCulling'
+
+export async function checkForUpdates(manual = true): Promise<void> {
+  if (appInfo.platform !== 'darwin') return
+  try {
+    if (await invoke<boolean>('update_check', { manual })) await relaunch()
+  } catch (error) {
+    console.error('Could not check for updates', error)
+  }
+}
 
 /**
  * Subscribes the main window to main->renderer events and the native-menu
@@ -13,6 +25,7 @@ import { cull } from './useCulling'
  */
 export function useIpcEvents(): void {
   useEffect(() => {
+    const frame = requestAnimationFrame(() => void checkForUpdates(false))
     const q = useQueueStore.getState
 
     const unsubscribers = [
@@ -39,7 +52,10 @@ export function useIpcEvents(): void {
       ipc.on('menu:command', ({ name }) => handleMenuCommand(name))
     ]
 
-    return () => unsubscribers.forEach((off) => off())
+    return () => {
+      cancelAnimationFrame(frame)
+      unsubscribers.forEach((off) => off())
+    }
   }, [])
 }
 
@@ -99,7 +115,7 @@ function handleMenuCommand(name: MenuCommand): void {
       void ipc.invoke('logs:open')
       break
     case 'checkForUpdates':
-      void ipc.invoke('update:check')
+      void checkForUpdates()
       break
   }
 }
