@@ -1,3 +1,15 @@
+# 0.2.0 - Cross-platform RAW editor
+
+- Replace the SwiftUI app with the new cross-platform X3Fuse app. macOS 14 or newer remains supported on Intel and Apple Silicon.
+- Reset settings once when moving from the previous macOS app. Select your output directory, format, and denoise preferences again.
+- Add a RAW editor with light, white balance, curves, HSL, crop, denoise, and sharpening controls, plus rendered JPEG and 16-bit TIFF export.
+- The RAW editor's film simulation uses the spektrafilm model by Andrea Volpato (https://github.com/andreavolpato/spektrafilm, profiles and data CC BY-SA 4.0), ported from spektrafilm-rs (GPL-3.0). It replaces the previous film model.
+- Existing saved film edits load unchanged, but render differently with the new model. The recipe format is unchanged; no re-save is required.
+- Add photo culling with pick/reject flags, star ratings, and queue filters.
+- Make Windows and Linux portable alpha builds available from the Releases page.
+- Add Spanish to the cross-platform app, alongside English, Japanese, Korean, Simplified Chinese, and Traditional Chinese.
+- Open Settings -> About -> View Licenses to read the bundled third-party notices.
+
 # 0.1.9 - Beta 1.1.9
 
 - Update the converter to x3fuse-core 0.3.0. Default Merrill TIFF rendering now uses calibration, color, and tone corrections derived from Sigma Photo Pro, so TIFF output can differ from earlier releases. TIFFs now embed ICC profiles for sRGB, Adobe RGB, and ProPhoto RGB and record the camera orientation.
