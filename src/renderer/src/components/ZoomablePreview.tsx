@@ -23,6 +23,8 @@ const EASED_REST = 260
 export function ZoomablePreview({
   file,
   onImagePoint,
+  onImageRegion,
+  outline,
   naturalSize,
   tile,
   cache,
@@ -33,7 +35,12 @@ export function ZoomablePreview({
   digitZoom = true
 }: {
   file: X3FFileDTO
+  /** Gets a clicked point, 0 to 1 of the image. */
   onImagePoint?: (x: number, y: number) => void
+  /** Gets a dragged rectangle, 0 to 1 of the image. A drag then selects instead of panning. */
+  onImageRegion?: (region: PreviewRegion) => void
+  /** A rectangle, 0 to 1 of the image, to show as a dashed outline. */
+  outline?: PreviewRegion | null
   naturalSize?: { width: number; height: number }
   tile?: Tile | null
   /**
@@ -57,6 +64,9 @@ export function ZoomablePreview({
   const drag = useRef<{ id: number; x: number; y: number } | null>(null)
   const moved = useRef(false)
   const [dragging, setDragging] = useState(false)
+  // The start point and the current rectangle of a region drag.
+  const select = useRef<{ x: number; y: number; region?: PreviewRegion } | null>(null)
+  const [band, setBand] = useState<PreviewRegion | null>(null)
   const [size, setSize] = useState({ width: 0, height: 0 })
   const [loaded, setLoaded] = useState({ width: 0, height: 0 })
   // Known dimensions apply in the same render as the picture they belong to.
@@ -283,8 +293,18 @@ export function ZoomablePreview({
   const stopDragging = (): void => {
     flushView()
     drag.current = null
+    select.current = null
     setDragging(false)
+    setBand(null)
   }
+
+  /** A client point as a fraction of the displayed image, which can be outside 0 to 1. */
+  const imagePoint = (clientX: number, clientY: number): { x: number; y: number } | null => {
+    const rect = mediaRef.current?.getBoundingClientRect()
+    if (!rect || rect.width <= 0 || rect.height <= 0) return null
+    return { x: (clientX - rect.left) / rect.width, y: (clientY - rect.top) / rect.height }
+  }
+  const clamp = (value: number): number => Math.max(0, Math.min(1, value))
 
   const onDimensions = useCallback(({ width, height }: { width: number; height: number }): void => {
     setLoaded((previous) =>
@@ -301,6 +321,15 @@ export function ZoomablePreview({
     [onDimensions]
   )
   const fullResolution = ready && scale > fit
+  // The rectangle being dragged, else the given one, in image pixels.
+  const shown = band ?? outline
+  const box = shown && {
+    x: shown.x * image.width,
+    y: shown.y * image.height,
+    width: shown.width * image.width,
+    height: shown.height * image.height,
+    fill: 'none'
+  }
   const content = useMemo(
     () => (
       <FilmstripImage
@@ -336,12 +365,9 @@ export function ZoomablePreview({
         }}
         onClick={(event) => {
           if (onImagePoint && !moved.current) {
-            const rect = mediaRef.current?.getBoundingClientRect()
-            if (rect && rect.width > 0 && rect.height > 0) {
-              const x = (event.clientX - rect.left) / rect.width
-              const y = (event.clientY - rect.top) / rect.height
-              if (x >= 0 && x <= 1 && y >= 0 && y <= 1) onImagePoint(x, y)
-            }
+            const point = imagePoint(event.clientX, event.clientY)
+            if (point && point.x >= 0 && point.x <= 1 && point.y >= 0 && point.y <= 1)
+              onImagePoint(point.x, point.y)
             return
           }
           if (!moved.current) {
@@ -368,11 +394,13 @@ export function ZoomablePreview({
           event.currentTarget.focus()
           const presented = interruptZoom()
           if (presented) updateView(constrain(presented))
-          if (!ready || ((presented ?? latestView.current).zoom ?? fit) <= fit) return
+          const start = onImageRegion && imagePoint(event.clientX, event.clientY)
+          if (!ready || (!start && ((presented ?? latestView.current).zoom ?? fit) <= fit)) return
           event.preventDefault()
           event.currentTarget.setPointerCapture(event.pointerId)
           drag.current = { id: event.pointerId, x: event.clientX, y: event.clientY }
-          setDragging(true)
+          if (start) select.current = { x: clamp(start.x), y: clamp(start.y) }
+          else setDragging(true)
         }}
         onPointerMove={(event) => {
           const previous = drag.current
@@ -383,10 +411,28 @@ export function ZoomablePreview({
           )
             return
           moved.current = true
+          const start = select.current
+          if (start) {
+            const end = imagePoint(event.clientX, event.clientY)
+            if (!end) return
+            const [x, y] = [clamp(end.x), clamp(end.y)]
+            const region = {
+              x: Math.min(start.x, x),
+              y: Math.min(start.y, y),
+              width: Math.abs(x - start.x),
+              height: Math.abs(y - start.y)
+            }
+            start.region = region
+            setBand(region)
+            return
+          }
           pan(event.clientX - previous.x, event.clientY - previous.y)
           drag.current = { id: event.pointerId, x: event.clientX, y: event.clientY }
         }}
         onPointerUp={(event) => {
+          // Report before the capture ends, which clears the drag.
+          const region = select.current?.region
+          if (region?.width && region.height) onImageRegion?.(region)
           if (event.currentTarget.hasPointerCapture(event.pointerId)) {
             event.currentTarget.releasePointerCapture(event.pointerId)
           }
@@ -412,6 +458,24 @@ export function ZoomablePreview({
           {content}
           {tile && visibleRegion && <PreviewTile tile={tile} />}
           {cache && visibleRegion && <CacheLayer cache={cache} onMiss={onCacheMiss} />}
+          {/* In image pixels, inside the image transform. The line widths divide by the
+              scale, so the outline stays thin at all zoom levels. */}
+          {ready && box && (
+            <svg
+              data-region-outline
+              aria-hidden="true"
+              className="absolute inset-0 h-full w-full overflow-visible"
+              viewBox={`0 0 ${image.width} ${image.height}`}
+            >
+              <rect {...box} stroke="rgba(0,0,0,0.5)" strokeWidth={3 / scale} />
+              <rect
+                {...box}
+                stroke="white"
+                strokeWidth={1 / scale}
+                strokeDasharray={`${4 / scale} ${3 / scale}`}
+              />
+            </svg>
+          )}
         </div>
       </div>
     </div>

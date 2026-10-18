@@ -38,6 +38,8 @@ interface EditorState {
   negativePreview: boolean
   cropping: boolean
   viewport: PreviewRegion | null
+  /** The render key of `preview`; while zoomed, prefetch refreshes it when it is stale. */
+  previewKey: string | null
   tile: (RenderedPreview & { region: PreviewRegion; viewport: PreviewRegion }) | null
   /** Sharp renders of the current recipe around the viewport; see lib/previewTiles. */
   cache: PreviewCache | null
@@ -127,8 +129,6 @@ const unmerged = needsX3iMerge
 /** Without its SFD RAW, an X3I blocks edits, except a change to its unfused RAW. */
 const blocked = (state: EditorState, recipe: EditRecipe): boolean =>
   unmerged(state) && waitsForMerge(state, recipe)
-/** The render key of `preview`; while zoomed, prefetch refreshes it when it is stale. */
-let previewKey: string | null = null
 const INTERACTIVE_EDGE = 1024
 const REFINE_DELAY = 100
 // Longer than LookPicker's 250 ms wait, so look thumbnails render first.
@@ -182,6 +182,15 @@ function renderRecipe(state: EditorState, doc: Document): EditRecipe {
       denoiseOptions: doc.gesture.denoiseOptions
     }
   return recipe
+}
+
+/**
+ * True when `preview` shows the current recipe. While zoomed, an edit renders the tile
+ * first, and idle prefetch refreshes the whole-image preview later.
+ */
+export function previewCurrent(state: EditorState): boolean {
+  const doc = state.session && state.documents[state.session.path]
+  return !!doc && state.previewKey === renderKey(state.session!.sessionId, renderRecipe(state, doc))
 }
 
 export const useEditorStore = create<EditorState>((set, get) => {
@@ -322,8 +331,12 @@ export const useEditorStore = create<EditorState>((set, get) => {
             switching: false
           })
         else {
-          set({ preview, previewPose: { pitch: recipe.pitch, yaw: recipe.yaw }, switching: false })
-          previewKey = preview.draft ? null : key
+          set({
+            preview,
+            previewKey: preview.draft ? null : key,
+            previewPose: { pitch: recipe.pitch, yaw: recipe.yaw },
+            switching: false
+          })
         }
         set({ error: Object.values(get().documents).find((doc) => doc.error)?.error ?? null })
       }
@@ -432,7 +445,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
     const misses = prefetchMisses.regions
     const region =
       state.cache?.key === key ? nextPrefetch(state.cache, state.viewport, misses) : null
-    if (!region && (previewKey === key || misses.has('base'))) return
+    if (!region && (state.previewKey === key || misses.has('base'))) return
     const miss = region ? JSON.stringify(region) : 'base'
     const revision = renderRevision
     renderRunning = true
@@ -456,8 +469,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
         if (isNative(preview)) cacheRender(key, preview)
         else misses.add(miss)
       } else if (key === currentKey() && get().session?.sessionId === sessionId) {
-        set({ preview, previewPose: { pitch: recipe.pitch, yaw: recipe.yaw } })
-        previewKey = key
+        set({ preview, previewKey: key, previewPose: { pitch: recipe.pitch, yaw: recipe.yaw } })
       }
     } catch {
       // A newer render cancelled this one; try again later unless it failed on its own.
@@ -486,6 +498,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
     clipboard: null,
     cropping: false,
     viewport: null,
+    previewKey: null,
     tile: null,
     cache: null,
     prefetching: false,
@@ -531,8 +544,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
       // Crop mode would replace the SFD RAW section, and could not render to end.
       if (get().closing || get().loading || (cropping && unmerged(get()))) return
       get().commit()
-      set({ cropping, viewport: null, tile: null, cache: null, preview: null })
-      previewKey = null
+      set({ cropping, viewport: null, tile: null, cache: null, preview: null, previewKey: null })
       get().render()
     },
     async open(file) {
@@ -583,13 +595,13 @@ export const useEditorStore = create<EditorState>((set, get) => {
           documents: { ...state.documents, [file.path]: doc },
           loading: false,
           preview: null,
+          previewKey: null,
           before: false,
           cropping: false,
           viewport: null,
           tile: null,
           cache: null
         }))
-        previewKey = null
         get().render()
       } catch (error) {
         if (token === opening)
@@ -783,7 +795,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
       clearTimeout(renderTimer)
       clearTimeout(refinementTimer)
       clearTimeout(prefetchTimer)
-      previewKey = null
+      set({ previewKey: null })
       const session = get().session
       try {
         if (session) await ipc.invoke('editor:close', { sessionId: session.sessionId })

@@ -6,7 +6,8 @@ import { DEFAULT_SETTINGS, type X3FFileDTO } from '@shared/types'
 import {
   useEditorStore as editor,
   isTextEditing,
-  needsX3iMerge
+  needsX3iMerge,
+  previewCurrent
 } from '../src/renderer/src/stores/editorStore'
 import { useQueueStore as queue } from '../src/renderer/src/stores/queueStore'
 import { useSettingsStore } from '../src/renderer/src/stores/settingsStore'
@@ -1142,10 +1143,16 @@ it('prefetches sharp blocks around a zoomed view after an edit, then refreshes t
   await vi.advanceTimersByTimeAsync(0)
   expect(editor.getState().cache?.renders).toHaveLength(1)
   const base = editor.getState().preview
+  expect(previewCurrent(editor.getState())).toBe(true)
   invoke.mockClear()
   editor.getState().change({ exposure: 1 })
   expect(editor.getState().cache).toBeNull()
+  // The whole-image preview shows the old exposure until prefetch refreshes it.
+  await vi.advanceTimersByTimeAsync(0)
+  expect(editor.getState().preview).toBe(base)
+  expect(previewCurrent(editor.getState())).toBe(false)
   await vi.advanceTimersByTimeAsync(5000)
+  expect(previewCurrent(editor.getState())).toBe(true)
   const requests = renderRequests()
   // The visible area (interactive, then refined), four ring blocks, then the base.
   expect(requests.map((request) => [!!request.region, request.maxEdge])).toEqual([
