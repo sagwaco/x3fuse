@@ -132,7 +132,9 @@ export function EditorScreen(): React.JSX.Element {
   const [shownArea, setShownArea] = useState<string | null>(null)
   const qualify = (region: PreviewRegion): void => {
     // A frame of other geometry, as before an undone rotation paints, shows other pixels.
-    if (shownArea !== areaKey) return
+    // The latest render must match too: a point gets its square from that render's size,
+    // which can differ after an undo and a redo before either frame paints.
+    if (shownArea !== areaKey || editor.previewGeometry !== geometry) return
     setQualified({ key: areaKey, region })
     setQualifying(false)
   }
