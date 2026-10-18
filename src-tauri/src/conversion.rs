@@ -184,6 +184,7 @@ pub fn process_options(settings: &BatchSettings, opcodes: PathBuf) -> x3f_core::
         opcodes_dir: (settings.output_format == OutputFormat::Dng
             && !settings.dng_highlight_recovery)
             .then_some(opcodes),
+        x3i_source: settings.x3i_source,
         ..Default::default()
     }
 }
@@ -199,6 +200,7 @@ fn x3i_diagnostic(line: &str) -> bool {
         "alignment ",
     ];
     [
+        "X3I middle exposure: ",
         "X3I saturation: ",
         "X3I merge: ",
         "X3I noise: ",
@@ -234,16 +236,12 @@ fn convert(
             x3f_core::Reader::open(input)
         }
     };
-    // Core extracts an X3I's embedded JPEG only from one frame.
-    if x3i && format == x3f_core::OutputFormat::Jpeg {
-        on_stage(x3f_core::ConversionStage::Read);
-        let mut frame = reader().map_err(|e| e.to_string())?;
-        frame.load_thumbnail_jpeg().map_err(|e| e.to_string())?;
-        frame.dump_jpeg(output).map_err(|e| e.to_string())?;
-        return Ok((Vec::new(), Vec::new()));
-    }
     let requested = options.color_mode;
     let mut options = options.clone();
+    // An X3I has an embedded JPEG in each frame, and no merged one.
+    if format == x3f_core::OutputFormat::Jpeg {
+        options.x3i_source = x3f_core::X3iSource::MiddleExposure;
+    }
     let mut reason = String::new();
     // As shot is the DNG default, so a camera without Color Modes is not a warning.
     let mut quiet = false;
@@ -263,8 +261,8 @@ fn convert(
             }
         }
     }
-    // A merge holds about 3 GB, so X3I files convert one at a time.
-    let _merge = x3i
+    // A merge holds about 3 GB, so X3I files merge one at a time.
+    let _merge = (x3i && options.x3i_source == x3f_core::X3iSource::Merge)
         .then(|| crate::x3i::MERGE.lock())
         .transpose()
         .map_err(|_| "X3I merge unavailable")?;
@@ -383,15 +381,25 @@ async fn process_file(
     .map_err(|e| e.to_string())??;
     check()?;
     progress(app, batch, file, 0.7);
+    // The tags of an X3I come from the frames that the pixels use.
+    let x3i_source = if settings.is_rendered() {
+        file.recipe
+            .as_ref()
+            .map_or(x3f_render::EditRecipe::default().x3i_source, |recipe| {
+                recipe.x3i_source
+            })
+    } else {
+        settings.x3i_source
+    };
     if settings.output_format == OutputFormat::Dng {
         state
             .exif
-            .copy_tags(&file.path, &temp_path, &state.cancel)
+            .copy_tags(&file.path, x3i_source, &temp_path, &state.cancel)
             .await?;
     } else if settings.is_rendered() {
         state
             .exif
-            .copy_rendered_tags(&file.path, &temp_path, &state.cancel)
+            .copy_rendered_tags(&file.path, x3i_source, &temp_path, &state.cancel)
             .await?;
         let input = file.path.clone();
         let expected = file.source_revision.clone();
@@ -580,18 +588,32 @@ mod tests {
     #[test]
     #[ignore = "Set X3FUSE_TEST_X3I to an absolute X3I path"]
     fn x3i_converts_to_dng_and_its_embedded_jpeg() {
+        use x3f_core::X3iSource::{Merge, MiddleExposure};
         let input = PathBuf::from(std::env::var_os("X3FUSE_TEST_X3I").expect("X3FUSE_TEST_X3I"));
         let directory = tempfile::tempdir().unwrap();
         let opcodes = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/opcodes");
-        for (format, core) in [
-            (OutputFormat::Jpeg, x3f_core::OutputFormat::Jpeg),
-            (OutputFormat::Dng, x3f_core::OutputFormat::Dng),
+        for (format, core, source) in [
+            (OutputFormat::Jpeg, x3f_core::OutputFormat::Jpeg, Merge),
+            (
+                OutputFormat::Jpeg,
+                x3f_core::OutputFormat::Jpeg,
+                MiddleExposure,
+            ),
+            (
+                OutputFormat::Dng,
+                x3f_core::OutputFormat::Dng,
+                MiddleExposure,
+            ),
+            (OutputFormat::Dng, x3f_core::OutputFormat::Dng, Merge),
         ] {
             let settings = BatchSettings {
                 output_format: format,
+                x3i_source: source,
                 ..Default::default()
             };
-            let output = directory.path().join(format!("x3i.{}", format.extension()));
+            let output = directory
+                .path()
+                .join(format!("x3i-{source:?}.{}", format.extension()));
             let warnings = convert(
                 &input,
                 &output,
@@ -602,9 +624,19 @@ mod tests {
             )
             .unwrap();
             assert!(std::fs::metadata(&output).unwrap().len() > 0);
-            // Merge statistics go to the log, not to the user.
+            // Merge statistics and the chosen frame go to the log, not to the user.
             assert!(!warnings.0.iter().any(|w| x3i_diagnostic(w)));
-            assert_eq!(format == OutputFormat::Dng, !warnings.1.is_empty());
+            // An embedded JPEG always comes from the middle exposure.
+            let merged = format == OutputFormat::Dng && source == Merge;
+            let prefix = if merged {
+                "X3I merge: "
+            } else {
+                "X3I middle exposure: "
+            };
+            assert!(
+                warnings.1.iter().any(|line| line.starts_with(prefix)),
+                "{warnings:?}"
+            );
         }
     }
 
@@ -614,6 +646,9 @@ mod tests {
             "X3I frame 3: ghost-bin lower=0.05000 upper=0.11875"
         ));
         assert!(x3i_diagnostic("X3I merge: frames=7 s=2.78"));
+        assert!(x3i_diagnostic(
+            "X3I middle exposure: frame 0 shutter_us=4000"
+        ));
         assert!(!x3i_diagnostic("X3I safety limit clipped 12 samples"));
         assert!(!x3i_diagnostic(
             "X3I ratio warning: frame=5 fit 1.3 exceeds 0.3 EV; keep shutter ratio 0.25"

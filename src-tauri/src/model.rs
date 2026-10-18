@@ -72,6 +72,10 @@ pub struct BatchSettings {
     /// None keeps the TIFF without a Color Mode. DNG always embeds every mode.
     #[serde(default)]
     pub color_mode: Option<String>,
+    /// The frames of an X3I for an original export. Embedded JPG always uses
+    /// the middle exposure. Rendered exports use the frames of the recipe.
+    #[serde(default)]
+    pub x3i_source: x3f_core::X3iSource,
     pub output_directory: Option<PathBuf>,
     pub concurrency: u8,
 }
@@ -89,6 +93,7 @@ impl Default for BatchSettings {
             dng_highlight_recovery: false,
             cineon: false,
             color_mode: None,
+            x3i_source: x3f_core::X3iSource::Merge,
             output_directory: None,
             concurrency: 0,
         }

@@ -391,6 +391,7 @@ pub fn run() {
             commands::editor_x3i_status,
             commands::editor_x3i_process,
             commands::editor_x3i_cancel,
+            commands::editor_x3i_delete,
             commands::settings_get,
             commands::settings_set,
             commands::queue_add,

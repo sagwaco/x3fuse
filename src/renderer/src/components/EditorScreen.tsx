@@ -14,7 +14,7 @@ import {
   PanelRight
 } from 'lucide-react'
 import { negativePrint, type EditRecipe } from '@shared/editor'
-import { useEditorStore, isTextEditing } from '../stores/editorStore'
+import { useEditorStore, isTextEditing, needsX3iMerge } from '../stores/editorStore'
 import { useQueueStore } from '../stores/queueStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { t } from '../lib/strings'
@@ -30,7 +30,6 @@ import { BatchProgress } from './BatchProgress'
 import { EditorControls, EmulsionControls } from './EditorControls'
 import { LookPicker } from './LookPicker'
 import { PhotoInfo } from './PhotoInfo'
-import { X3iDialog } from './X3iDialog'
 import { CropControls } from './CropControls'
 import { CropPreview } from './CropPreview'
 import { FULL, matchAspect } from '../lib/cropGeometry'
@@ -98,6 +97,8 @@ export function EditorScreen(): React.JSX.Element {
   const file = files.find((file) => file.path === editor.session?.path)
   const currentFile = active ?? file
   const doc = editor.session ? editor.documents[editor.session.path] : undefined
+  // An X3I whose SFD RAW is not stored yet merges it, and only its SFD RAW section works.
+  const x3iPending = needsX3iMerge(editor)
   useEffect(() => {
     if (!doc?.recipe.film && sidebarPage === 'paper') navigateSidebar('emulsion')
   }, [doc?.recipe.film, sidebarPage, navigateSidebar])
@@ -173,8 +174,13 @@ export function EditorScreen(): React.JSX.Element {
     setSidebarPage('edit')
   }, [editor.session?.sessionId])
   useEffect(() => {
-    if (editor.cropping) navigateSidebar('edit')
-  }, [editor.cropping, navigateSidebar])
+    if (editor.cropping || x3iPending) navigateSidebar('edit')
+    // The SFD RAW section shows near the top of the panel.
+    if (x3iPending) {
+      sidebarScroll.current.edit = 0
+      if (sidebarBody.current) sidebarBody.current.scrollTop = 0
+    }
+  }, [editor.cropping, x3iPending, navigateSidebar])
   useEffect(() => {
     if (sidebarPage === 'edit') return
     const back = (event: KeyboardEvent): void => {
@@ -241,6 +247,9 @@ export function EditorScreen(): React.JSX.Element {
         : undefined,
     [file, currentFile?.path, editor.preview, editor.session?.sessionId]
   )
+  // An X3I that waits for its merge has no render. Its embedded preview can still zoom and pan.
+  const previewFile =
+    displayFile ?? (x3iPending && file?.path === currentFile?.path ? file : undefined)
   const placeholderDoc = currentFile && editor.documents[currentFile.path]
   // The photo's saved previews show its current edit.
   const savedMatches =
@@ -254,7 +263,7 @@ export function EditorScreen(): React.JSX.Element {
             currentFile.edit.sourceRevision === placeholderDoc.sourceRevision &&
             JSON.stringify(currentFile.edit.recipe) === JSON.stringify(placeholderDoc.recipe)
           : placeholderDoc.storage === 'none')))
-  const loadingFile = !displayFile && currentFile && !currentFile.pending ? currentFile : undefined
+  const loadingFile = !previewFile && currentFile && !currentFile.pending ? currentFile : undefined
   // The placeholder stays over the first preview while its cloud condenses.
   const [condensing, setCondensing] = useState<typeof loadingFile>()
   const cloudFile =
@@ -264,6 +273,17 @@ export function EditorScreen(): React.JSX.Element {
   // Each cleared preview, such as a crop mode change, waits for a new paint.
   const [painted, setPainted] = useState(false)
   const previewShown = !!displayFile
+  // A change between the SFD RAW and the unfused RAW of an X3I turns the preview
+  // into particles until the photo renders again.
+  const [morph, setMorph] = useState<string>()
+  // While zoomed, the tile of the current view shows what is on screen.
+  const viewTile =
+    editor.viewport &&
+    editor.tile &&
+    JSON.stringify(editor.tile.viewport) === JSON.stringify(editor.viewport)
+  if (editor.switching && !morph && displayFile)
+    setMorph(viewTile ? editor.tile!.url : displayFile.displayPreviewUrl)
+  if (morph && !displayFile) setMorph(undefined)
   if (!previewShown && painted) setPainted(false)
   useEffect(() => {
     if (!previewShown) return
@@ -315,8 +335,8 @@ export function EditorScreen(): React.JSX.Element {
     mode: scope
   }
   // A tiny scope shows in the header while the full one is scrolled away.
-  // An X3I that has not merged shows the panel for its merge dialog.
-  const sidebarShown = panelOpen || editor.cropping || (!!editor.x3i && !editor.x3i.processed)
+  // An X3I that merges its SFD RAW shows the panel for the merge progress.
+  const sidebarShown = panelOpen || editor.cropping || x3iPending
   const scopeBox = useRef<HTMLDivElement>(null)
   const [scopeHidden, setScopeHidden] = useState(false)
   useEffect(() => {
@@ -474,7 +494,7 @@ export function EditorScreen(): React.JSX.Element {
                 ref={cropButton}
                 variant="ghost"
                 size="md"
-                disabled={unavailable}
+                disabled={unavailable || x3iPending}
                 onClick={enterCrop}
               >
                 <Crop className="h-4 w-4" aria-hidden="true" />
@@ -547,15 +567,17 @@ export function EditorScreen(): React.JSX.Element {
                     onDone={() => setCropping(false)}
                     onPaint={() => setPainted(true)}
                   />
-                ) : displayFile ? (
+                ) : previewFile ? (
                   <ZoomablePreview
                     key={file?.id}
-                    file={displayFile}
+                    file={previewFile}
                     naturalSize={naturalSize}
                     tile={editor.tile}
                     cache={editor.cache}
                     onCacheMiss={editor.uncache}
-                    onViewportChange={editor.setViewport}
+                    // A viewport asks for tiles only. The embedded preview keeps none, so the
+                    // first render after the merge is a full preview.
+                    onViewportChange={displayFile ? editor.setViewport : undefined}
                     onViewportMove={editor.holdPrefetch}
                     onPaint={() => setPainted(true)}
                     // Digits rate the photo, as in Lightroom. Click and +/- still zoom.
@@ -585,6 +607,17 @@ export function EditorScreen(): React.JSX.Element {
                   </div>
                 )}
               </div>
+              {morph && displayFile && (
+                <DevelopingPreview
+                  key={`morph:${morph}`}
+                  file={displayFile}
+                  from={morph}
+                  matching={false}
+                  developing={editor.switching}
+                  ready={!editor.switching}
+                  onDone={() => setMorph(undefined)}
+                />
+              )}
               {cloudFile && (
                 <DevelopingPreview
                   key={`developing:${cloudFile.id}:${savedMatches && !editor.cropping}`}
@@ -689,8 +722,10 @@ export function EditorScreen(): React.JSX.Element {
                         {t('editor.savedBackup')}
                       </p>
                     )}
+                    {/* Without a render, the SFD RAW section of an X3I still works.
+                        EditorControls keeps the other sections inert. */}
                     <fieldset
-                      disabled={unavailable || editor.before || !!cloudFile}
+                      disabled={(unavailable && !x3iPending) || editor.before || !!cloudFile}
                       className="contents"
                     >
                       {editor.cropping ? (
@@ -708,7 +743,6 @@ export function EditorScreen(): React.JSX.Element {
                 )}
               </div>
             </div>
-            <X3iDialog />
           </ResizablePanel>
         )}
       </div>

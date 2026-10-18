@@ -100,7 +100,14 @@ export interface EditRecipe {
   film: FilmSettings | null
   monochrome: { filter: MonochromeFilter } | null
   seed: number
+  /** The frames of an X3I. Absent means the middle exposure, the unfused RAW.
+      X3F files ignore it. */
+  x3iSource?: X3iSource
 }
+/** The frames of an X3I (Super Fine Detail) photo: all merged, or the middle exposure only. */
+export type X3iSource = 'merge' | 'middle_exposure'
+/** True when an X3I uses its SFD RAW, the merge of all its frames. */
+export const usesSfd = (recipe: EditRecipe | undefined): boolean => recipe?.x3iSource === 'merge'
 /** A negative film scanned without a print shows as a negative. */
 export const negativePrint = (film: FilmSettings | null): boolean =>
   !!film?.negative &&
@@ -228,6 +235,9 @@ export interface X3iStatus {
   frames: number
   /** The merged image is cached, so the photo renders. */
   processed: boolean
+  /** The file name and size of the cached merged image. */
+  name?: string
+  bytes?: number
   /** 0 to 1 while a merge runs. */
   progress?: number
   /** Why the last merge failed. A cancelled merge has no error. */
@@ -260,7 +270,8 @@ export function pasteRecipe(source: EditRecipe, target: EditRecipe): EditRecipe 
     straighten: target.straighten,
     pitch: target.pitch,
     yaw: target.yaw,
-    seed: target.seed
+    seed: target.seed,
+    x3iSource: target.x3iSource
   }
 }
 

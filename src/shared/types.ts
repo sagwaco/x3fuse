@@ -1,5 +1,5 @@
 /** Data models serialized by the Rust backend and used by the renderer. */
-import type { EditRecord } from './editor'
+import type { EditRecord, X3iSource } from './editor'
 import { defaultDenoiseOptions, type DenoiseOptions } from './denoise'
 
 export type ConversionStatus = 'queued' | 'processing' | 'completed' | 'failed' | 'warning'
@@ -80,6 +80,8 @@ export interface ConversionSettings {
   cineon: boolean
   /** Sigma Color Mode for TIFF; null exports without one. DNG always embeds every mode. */
   colorMode: ColorMode | null
+  /** The frames of an X3I for original exports. Embedded JPG uses the middle exposure. */
+  x3iSource: X3iSource
   /** null = write next to each input file; string = custom output directory. */
   outputDirectory: string | null
   debugLoggingEnabled: boolean
@@ -122,6 +124,7 @@ export const DEFAULT_SETTINGS: ConversionSettings = {
   dngHighlightRecovery: false,
   cineon: false,
   colorMode: null,
+  x3iSource: 'merge',
   outputDirectory: null,
   debugLoggingEnabled: false,
   hasPreviousConversion: false,
@@ -225,6 +228,7 @@ export type BatchConversionSettings = Pick<
   | 'dngHighlightRecovery'
   | 'cineon'
   | 'colorMode'
+  | 'x3iSource'
   | 'outputDirectory'
   | 'concurrency'
 >
@@ -241,6 +245,7 @@ export function batchSettings(settings: BatchConversionSettings): BatchConversio
     dngHighlightRecovery,
     cineon,
     colorMode,
+    x3iSource,
     outputDirectory,
     concurrency
   } = settings
@@ -255,6 +260,7 @@ export function batchSettings(settings: BatchConversionSettings): BatchConversio
     dngHighlightRecovery,
     cineon,
     colorMode: colorMode ?? null,
+    x3iSource: x3iSource ?? 'merge',
     outputDirectory,
     concurrency
   }

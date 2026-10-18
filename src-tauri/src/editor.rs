@@ -60,6 +60,7 @@ struct Prepared {
     denoise_options: x3f_core::DenoiseOptions,
     /// Denoise settings do not change this source, as for a merged X3I.
     denoise_free: bool,
+    x3i_source: x3f_core::X3iSource,
     image: PreparedImage,
 }
 impl Prepared {
@@ -67,8 +68,10 @@ impl Prepared {
         self.denoise_free
             || (self.denoise == recipe.denoise && self.denoise_options == recipe.denoise_options)
     }
-    fn matches_source(&self, path: &Path, source_revision: &str) -> bool {
-        self.path == path && self.source_revision == source_revision
+    fn matches_source(&self, path: &Path, source_revision: &str, recipe: &EditRecipe) -> bool {
+        self.path == path
+            && self.source_revision == source_revision
+            && self.x3i_source == recipe.x3i_source
     }
 }
 #[derive(Default)]
@@ -205,6 +208,12 @@ pub struct X3iStatus {
     pub frames: u32,
     /// The merged scene is in the cache.
     pub processed: bool,
+    /// The file name of the cached merged scene.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// The size of the cached merged scene.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bytes: Option<u64>,
     /// 0 through 1 while a merge runs.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub progress: Option<f32>,
@@ -250,7 +259,16 @@ fn scene_options(recipe: &EditRecipe) -> SceneLinearOptions {
         denoise_intensity: recipe.denoise,
         denoise_options: recipe.denoise_options,
         highlight_recovery: true,
+        x3i_source: recipe.x3i_source,
         ..Default::default()
+    }
+}
+
+/// The options of the merged scene of an X3I, whichever frames `recipe` uses.
+fn merge_options(recipe: &EditRecipe) -> SceneLinearOptions {
+    SceneLinearOptions {
+        x3i_source: x3f_core::X3iSource::Merge,
+        ..scene_options(recipe)
     }
 }
 
@@ -532,10 +550,13 @@ impl Editor {
             .get(&path)
             .cloned();
         let source_revision = self.edits.source_revision(&path)?;
-        let options = scene_options(recipe);
+        let options = merge_options(recipe);
+        let scene = crate::x3i::scene_info(&self.x3i, &path, &source_revision, &options);
         Ok(Some(X3iStatus {
             frames,
-            processed: crate::x3i::processed(&self.x3i, &path, &source_revision, &options),
+            processed: scene.is_some(),
+            bytes: scene.as_ref().map(|(_, bytes)| *bytes),
+            name: scene.map(|(name, _)| name),
             progress: job.as_ref().and_then(|job| job.progress()),
             error: job.and_then(|job| job.error()),
         }))
@@ -580,7 +601,7 @@ impl Editor {
     /// Runs a merge that `x3i_begin` registered. It returns when the merge ends.
     pub fn x3i_run(&self, merge: X3iMerge, recipe: &EditRecipe) -> Result<(), String> {
         let X3iMerge { path, job } = merge;
-        let options = scene_options(recipe);
+        let options = merge_options(recipe);
         let result = (|| {
             let source_revision = self.edits.source_revision(&path)?;
             if crate::x3i::processed(&self.x3i, &path, &source_revision, &options) {
@@ -614,6 +635,15 @@ impl Editor {
             *finished = Some(result.clone());
         }
         result
+    }
+
+    /// Removes the merged scene of an X3I from the cache. The photo then needs
+    /// a merge again, unless `recipe` uses the middle exposure.
+    pub fn x3i_delete(&self, path: &Path, recipe: &EditRecipe) -> Result<(), String> {
+        source_path(path)?;
+        let path = path.canonicalize().map_err(|e| e.to_string())?;
+        let source_revision = self.edits.source_revision(&path)?;
+        crate::x3i::remove_scene(&self.x3i, &path, &source_revision, &merge_options(recipe))
     }
 
     /// Stops the merge of an X3I. `x3i_status` then reports no error.
@@ -946,7 +976,7 @@ impl Editor {
         let same_source = worker
             .prepared
             .as_ref()
-            .is_some_and(|p| p.matches_source(&asset.path, &asset.source_revision));
+            .is_some_and(|p| p.matches_source(&asset.path, &asset.source_revision, &asset.recipe));
         let reuse = same_source
             && worker
                 .prepared
@@ -985,6 +1015,7 @@ impl Editor {
                 denoise: asset.recipe.denoise,
                 denoise_options: asset.recipe.denoise_options,
                 denoise_free,
+                x3i_source: asset.recipe.x3i_source,
                 image: PreparedImage::new(image, cancel)
                     .map_err(|e| e.to_string())?
                     .with_camera_profiles(profiles),
@@ -1048,7 +1079,7 @@ impl Editor {
             if let Some(prepared) = worker
                 .prepared
                 .as_ref()
-                .filter(|p| p.matches_source(&session.path, &session.source_revision))
+                .filter(|p| p.matches_source(&session.path, &session.source_revision, &recipe))
             {
                 if !prepared.denoise_free {
                     recipe.denoise = prepared.denoise;
@@ -1511,9 +1542,11 @@ impl Editor {
             let active = self.kept_source()?;
             let preserve = worker.prepared.as_ref().is_some_and(|prepared| {
                 active.as_ref() == Some(&prepared.path)
-                    && (prepared.path != asset.path
-                        || prepared.source_revision != asset.source_revision
-                        || !prepared.matches_denoise(&asset.recipe))
+                    && (!prepared.matches_source(
+                        &asset.path,
+                        &asset.source_revision,
+                        &asset.recipe,
+                    ) || !prepared.matches_denoise(&asset.recipe))
             });
             let previous = if preserve {
                 worker.prepared.take()
@@ -1936,6 +1969,7 @@ mod tests {
             denoise: 0,
             denoise_options: Default::default(),
             denoise_free: false,
+            x3i_source: EditRecipe::default().x3i_source,
             image: PreparedImage::new(
                 SceneLinearImage {
                     width: 1,
@@ -1970,6 +2004,7 @@ mod tests {
                 denoise: 0,
                 denoise_options: Default::default(),
                 denoise_free: false,
+                x3i_source: EditRecipe::default().x3i_source,
                 image: PreparedImage::new(
                     SceneLinearImage {
                         width: 1,
@@ -2267,6 +2302,7 @@ mod tests {
             denoise: recipe.denoise,
             denoise_options: recipe.denoise_options,
             denoise_free: false,
+            x3i_source: EditRecipe::default().x3i_source,
             image: PreparedImage::new(
                 SceneLinearImage {
                     width: 1,

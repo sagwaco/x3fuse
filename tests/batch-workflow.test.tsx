@@ -442,7 +442,12 @@ describe('batch workflow', () => {
 
   it('uses saved settings without opening export and cancels conflicts without saving', async () => {
     useSettingsStore.setState({
-      settings: { ...DEFAULT_SETTINGS, hasPreviousConversion: true, outputDirectory: '/saved' }
+      settings: {
+        ...DEFAULT_SETTINGS,
+        hasPreviousConversion: true,
+        outputDirectory: '/saved',
+        x3iSource: 'middle_exposure'
+      }
     })
     invoke.mockResolvedValueOnce([{ id: 'a', outputPath: '/saved/a.dng' }])
     await store.getState().convertPrevious()
@@ -456,7 +461,7 @@ describe('batch workflow', () => {
     expect(invoke).toHaveBeenLastCalledWith(
       'convert:start',
       expect.objectContaining({
-        settings: { ...settings, outputDirectory: '/saved' },
+        settings: { ...settings, outputDirectory: '/saved', x3iSource: 'middle_exposure' },
         replaceExisting: false,
         approvedOutputs: []
       })

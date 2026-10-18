@@ -130,6 +130,38 @@ html.resizing-columns * {
   }
 }
 
+/* A light sweeps across the text of a running task, as on "Fusing SFD RAW". */
+.text-shimmer {
+  background: linear-gradient(
+      90deg,
+      rgb(var(--tone-400)) 35%,
+      rgb(var(--tone-50)) 50%,
+      rgb(var(--tone-400)) 65%
+    )
+    0 0 / 300% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: text-shimmer 2.2s linear infinite;
+}
+
+@keyframes text-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .text-shimmer {
+    animation: none;
+    background: none;
+    color: rgb(var(--tone-200));
+  }
+}
+
 /* Keep the active JPEG on its own layer so first-zoom image preparation does
    not hold up the container's transform animation. */
 .preview-image img {

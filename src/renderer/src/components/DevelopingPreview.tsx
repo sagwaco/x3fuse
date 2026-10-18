@@ -5,6 +5,7 @@ import { cachedSmallPreview, loadSmallPreview } from '../lib/previewImages'
 import { cachedFitPreview } from '../lib/fitPreviews'
 import { FilmstripImage } from './FilmstripImage'
 import { OrientedImage } from './OrientedImage'
+import { program, texture } from '../lib/webgl'
 
 /** A fast preview replaces the empty canvas before the cloud appears. */
 const APPEAR_DELAY = 150
@@ -188,39 +189,6 @@ type Draw = (uniforms: {
   pixel: number
 }) => boolean
 
-function program(
-  gl: WebGL2RenderingContext,
-  vertex: string,
-  fragment: string
-): WebGLProgram | undefined {
-  const program = gl.createProgram()
-  if (!program) return
-  for (const [type, code] of [
-    [gl.VERTEX_SHADER, vertex],
-    [gl.FRAGMENT_SHADER, fragment]
-  ] as const) {
-    const shader = gl.createShader(type)
-    if (!shader) return
-    gl.shaderSource(shader, code)
-    gl.compileShader(shader)
-    gl.attachShader(program, shader)
-  }
-  gl.linkProgram(program)
-  return gl.getProgramParameter(program, gl.LINK_STATUS) ? program : undefined
-}
-
-/** Binds a new texture to texture unit `unit`. */
-function texture(gl: WebGL2RenderingContext, unit: number, min: number): WebGLTexture | null {
-  const texture = gl.createTexture()
-  gl.activeTexture(gl.TEXTURE0 + unit)
-  gl.bindTexture(gl.TEXTURE_2D, texture)
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, min)
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
-  return texture
-}
-
 /**
  * Draws the particles into a frame texture (unit 1), blurs its mipmaps into
  * a glow texture (unit 2), then draws both to the canvas. Unit 0 holds the
@@ -357,24 +325,36 @@ const embedded = (file: X3FFileDTO): X3FFileDTO => ({
  *
  * `matching` tells that the photo's saved previews show the current edit.
  * Remount the component when it changes.
+ *
+ * With `from`, the URL of the preview on screen, the cloud starts as that
+ * preview over it and then rises. Reduced motion then shows no placeholder.
  */
 export function DevelopingPreview({
   file,
   matching,
   developing,
   ready,
-  onDone
+  onDone,
+  from
 }: {
   file: X3FFileDTO
   matching: boolean
   developing: boolean
   ready: boolean
   onDone: () => void
+  from?: string
 }): React.JSX.Element | null {
   // Decide once per photo, so the placeholder does not change while it shows.
-  const [image] = useState(() => matching && !!cachedFitPreview(displayPreviewUrl(file, 'full')))
+  const [morph] = useState(!!from)
+  const [image] = useState(
+    () => !morph && matching && !!cachedFitPreview(displayPreviewUrl(file, 'full'))
+  )
   const [thumbnail] = useState(() =>
-    matching && file.edit && cachedSmallPreview(displayPreviewUrl(file)) ? file : embedded(file)
+    from
+      ? { ...embedded(file), displayPreviewUrl: from }
+      : matching && file.edit && cachedSmallPreview(displayPreviewUrl(file))
+        ? file
+        : embedded(file)
   )
   const [still, setStill] = useState(
     () =>
@@ -382,7 +362,8 @@ export function DevelopingPreview({
       !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
   )
   const [source, setSource] = useState<HTMLCanvasElement>()
-  const [covered] = useState(!ready)
+  // A morph shows the preview below until its first frame draws the same picture.
+  const [covered] = useState(!ready && !morph)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const state = useRef({ developing, ready, onDone })
   state.current = { developing, ready, onDone }
@@ -428,8 +409,8 @@ export function DevelopingPreview({
     canvas.addEventListener('webglcontextlost', lost)
     const start = performance.now()
     let last = start
-    let spread = 1
-    let alpha = 0
+    let spread = morph ? 0 : 1
+    let alpha = morph ? 1 : 0
     // How much of the preview the canvas covers. Its background hides the
     // preview below it.
     let cover = Number(canvas.style.getPropertyValue('--cover'))
@@ -466,7 +447,7 @@ export function DevelopingPreview({
         fade = undefined
       }
       if (!fade) {
-        const shown = !developing || now - start > APPEAR_DELAY
+        const shown = morph || !developing || now - start > APPEAR_DELAY
         spread = approach(spread, developing ? 1 : 0, dt, RISE, SETTLE)
         alpha = approach(alpha, shown ? 1 : 0, dt, FADE_IN, FADE_IN)
         cover = approach(cover, 1, dt, FADE_IN, FADE_IN)
@@ -511,7 +492,7 @@ export function DevelopingPreview({
       canvas.removeEventListener('webglcontextlost', lost)
       gl?.getExtension('WEBGL_lose_context')?.loseContext()
     }
-  }, [cloud, source])
+  }, [cloud, source, morph])
 
   useEffect(() => wake.current?.(), [developing, ready])
 
@@ -527,7 +508,7 @@ export function DevelopingPreview({
       </div>
     )
   if (still)
-    return (
+    return morph ? null : (
       <OrientedImage
         file={thumbnail}
         loading="eager"

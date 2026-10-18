@@ -1,17 +1,19 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { act, cleanup, fireEvent, render, renderHook, screen } from '@testing-library/react'
+import { act, cleanup, renderHook } from '@testing-library/react'
 import { defaultRecipe, pasteRecipe, type EditRecipe, type X3iStatus } from '@shared/editor'
 import { DEFAULT_SETTINGS, type X3FFileDTO } from '@shared/types'
-import { useEditorStore as editor, isTextEditing } from '../src/renderer/src/stores/editorStore'
+import {
+  useEditorStore as editor,
+  isTextEditing,
+  needsX3iMerge
+} from '../src/renderer/src/stores/editorStore'
 import { useQueueStore as queue } from '../src/renderer/src/stores/queueStore'
 import { useSettingsStore } from '../src/renderer/src/stores/settingsStore'
 import { useNavStore } from '../src/renderer/src/stores/navStore'
 import { useIpcEvents } from '../src/renderer/src/hooks/useIpcEvents'
 import { displayPreviewUrl } from '@shared/preview'
 import { nextPrefetch } from '../src/renderer/src/lib/previewTiles'
-import { X3iDialog } from '../src/renderer/src/components/X3iDialog'
-import { t } from '../src/renderer/src/lib/strings'
 
 const file: X3FFileDTO = { id: 'a', path: '/photos/a.X3F', fileName: 'a.X3F' }
 const invoke = vi.fn()
@@ -1343,48 +1345,167 @@ it('refreshes a stale base after an edit while zoomed, even when the view is too
   expect(renderRequests()).toHaveLength(1)
 })
 
-it('renders an X3I only after the user merges its frames, and can cancel the merge', async () => {
-  let status: X3iStatus = { frames: 7, processed: false }
-  let finish!: () => void
+/** Mocks an X3I whose merge waits for `finish`, and returns the test's view of it. */
+function mockX3i(processed = false): {
+  finish: () => void
+  sources: () => Array<string | undefined>
+  recipe: () => EditRecipe
+} {
+  let status: X3iStatus = { frames: 7, processed }
+  let finish = (): void => {}
   const base = invoke.getMockImplementation()!
   invoke.mockImplementation(async (command: string, payload: Record<string, unknown>) => {
     if (command === 'editor:open') return { ...session(), x3i: status }
     if (command === 'editor:x3iStatus') return status
     if (command === 'editor:x3iCancel') return undefined
+    if (command === 'editor:x3iDelete') {
+      status = { frames: 7, processed: false }
+      return undefined
+    }
     if (command === 'editor:x3iProcess') {
       status = { frames: 7, processed: false, progress: 0.5 }
       return new Promise<void>((resolve) => {
         finish = () => {
-          status = { frames: 7, processed: true }
+          status = { frames: 7, processed: true, name: 'a-0123.sfd', bytes: 100 }
           resolve()
         }
       })
     }
     return base(command, payload)
   })
-  const renders = (): number =>
-    invoke.mock.calls.filter(([command]) => command === 'editor:render').length
+  return {
+    finish: () => finish(),
+    sources: () =>
+      invoke.mock.calls
+        .filter(([command]) => command === 'editor:render')
+        .map(([, payload]) => (payload.recipe as EditRecipe).x3iSource),
+    recipe: () => editor.getState().documents[file.path].recipe
+  }
+}
+
+it('opens an X3I with its unfused RAW, edits it during a merge, then uses the SFD RAW', async () => {
+  const x3i = mockX3i()
   await editor.getState().open(file)
   await vi.advanceTimersByTimeAsync(500)
-  expect(renders()).toBe(0)
-  render(<X3iDialog />)
-  fireEvent.click(screen.getByRole('button', { name: t('editor.x3iProcess') }))
-  expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBe('0')
-  await act(() => vi.advanceTimersByTimeAsync(400))
-  expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBe('50')
-  expect(screen.getByRole('button', { name: t('button.cancel') })).toBeTruthy()
-  expect(renders()).toBe(0)
-  await act(async () => {
-    finish()
-    await vi.advanceTimersByTimeAsync(10)
-  })
-  expect(editor.getState().x3i?.processed).toBe(true)
-  expect(screen.queryByRole('dialog')).toBeNull()
-  expect(renders()).toBeGreaterThan(0)
-  editor.setState({ x3i: { frames: 7, processed: false, progress: 0.2 } })
-  await act(() => vi.advanceTimersByTimeAsync(0))
-  fireEvent.click(screen.getByRole('button', { name: t('button.cancel') }))
+  expect(x3i.sources().length).toBeGreaterThan(0)
+  expect(new Set(x3i.sources())).toEqual(new Set([undefined]))
+  editor.getState().processX3i()
+  await vi.advanceTimersByTimeAsync(10)
+  expect(editor.getState().x3i?.progress).toBeDefined()
+  // Edits apply to the unfused RAW while the frames merge.
+  invoke.mockClear()
+  editor.getState().change({ exposure: 1 })
+  await vi.advanceTimersByTimeAsync(500)
+  expect(x3i.sources().length).toBeGreaterThan(0)
+  expect(new Set(x3i.sources())).toEqual(new Set([undefined]))
+  expect(editor.getState().switching).toBe(false)
+  // The photo then changes to the SFD RAW, with the same edits.
+  invoke.mockClear()
+  x3i.finish()
+  await tick()
+  expect(x3i.recipe()).toMatchObject({ x3iSource: 'merge', exposure: 1 })
+  expect(editor.getState().x3i).toMatchObject({ processed: true, name: 'a-0123.sfd', bytes: 100 })
+  expect(editor.getState().switching).toBe(true)
+  await vi.advanceTimersByTimeAsync(500)
+  expect(x3i.sources().at(-1)).toBe('merge')
+  expect(editor.getState().switching).toBe(false)
+})
+
+it('cancels a merge, and keeps the unfused RAW even when the merge ends first', async () => {
+  const x3i = mockX3i()
+  await editor.getState().open(file)
+  editor.getState().processX3i()
+  await vi.advanceTimersByTimeAsync(10)
+  editor.getState().cancelX3i()
   expect(invoke).toHaveBeenCalledWith('editor:x3iCancel', { path: file.path })
+  x3i.finish()
+  await vi.advanceTimersByTimeAsync(10)
+  expect(editor.getState().x3i?.processed).toBe(true)
+  expect(x3i.recipe().x3iSource).toBeUndefined()
+})
+
+it('changes between the SFD RAW and the unfused RAW in history, and deletes the SFD RAW', async () => {
+  const x3i = mockX3i(true)
+  await editor.getState().open(file)
+  await vi.advanceTimersByTimeAsync(500)
+  editor.getState().change({ x3iSource: 'merge' })
+  expect(editor.getState().switching).toBe(true)
+  await vi.advanceTimersByTimeAsync(500)
+  expect(x3i.sources().at(-1)).toBe('merge')
+  expect(editor.getState().switching).toBe(false)
+  act(() => editor.getState().undo())
+  expect(x3i.recipe().x3iSource).toBeUndefined()
+  expect(editor.getState().switching).toBe(true)
+  act(() => editor.getState().redo())
+  await vi.advanceTimersByTimeAsync(500)
+  expect(x3i.recipe().x3iSource).toBe('merge')
+  // An undo before the change renders, to an SFD RAW that is gone, does not switch.
+  editor.getState().change({ x3iSource: undefined })
+  expect(editor.getState().switching).toBe(true)
+  editor.setState({ x3i: { frames: 7, processed: false } })
+  act(() => editor.getState().undo())
+  expect(editor.getState().switching).toBe(false)
+  editor.setState({ x3i: { frames: 7, processed: true } })
+  await vi.advanceTimersByTimeAsync(500)
+  // Delete changes to the unfused RAW first, so the photo does not wait for a merge.
+  editor.getState().deleteX3i()
+  expect(x3i.recipe().x3iSource).toBeUndefined()
+  await vi.advanceTimersByTimeAsync(10)
+  expect(invoke).toHaveBeenCalledWith('editor:x3iDelete', { path: file.path, recipe: x3i.recipe() })
+  expect(editor.getState().x3i?.processed).toBe(false)
+  expect(needsX3iMerge(editor.getState())).toBe(false)
+  // Undo then needs the SFD RAW again. Other edits wait for its merge.
+  act(() => editor.getState().undo())
+  expect(x3i.recipe().x3iSource).toBe('merge')
+  expect(needsX3iMerge(editor.getState())).toBe(true)
+  expect(editor.getState().switching).toBe(false)
+  editor.getState().change({ exposure: 1 })
+  expect(x3i.recipe().exposure).toBe(0)
+  editor.getState().setCropping(true)
+  expect(editor.getState().cropping).toBe(false)
+})
+
+it('switches to the SFD RAW only at the first status that reports it, and not in Before', async () => {
+  let status: X3iStatus = { frames: 7, processed: false }
+  let finish!: () => void
+  const base = invoke.getMockImplementation()!
+  invoke.mockImplementation(async (command: string, payload: Record<string, unknown>) => {
+    if (command === 'editor:open') return { ...session(), x3i: status }
+    if (command === 'editor:x3iStatus') return status
+    if (command === 'editor:x3iDelete') {
+      status = { frames: 7, processed: false }
+      return undefined
+    }
+    if (command === 'editor:x3iProcess') {
+      status = { frames: 7, processed: false, progress: 0.5 }
+      return new Promise<void>((resolve) => (finish = resolve))
+    }
+    return base(command, payload)
+  })
+  const recipe = (): EditRecipe => editor.getState().documents[file.path].recipe
+  await editor.getState().open(file)
+  editor.getState().processX3i()
+  await vi.advanceTimersByTimeAsync(10)
+  // A poll reports the SFD RAW before the merge request returns.
+  status = { frames: 7, processed: true }
+  await editor.getState().refreshX3i(true)
+  expect(recipe().x3iSource).toBe('merge')
+  // The late reply keeps the choice that the user makes next.
+  editor.getState().change({ x3iSource: undefined })
+  finish()
+  await vi.advanceTimersByTimeAsync(10)
+  expect(recipe().x3iSource).toBeUndefined()
+  // Before rejects the switch. The toggle then shows the unfused RAW.
+  editor.getState().deleteX3i()
+  await vi.advanceTimersByTimeAsync(10)
+  editor.getState().processX3i()
+  editor.getState().compare(true)
+  status = { frames: 7, processed: true }
+  finish()
+  await vi.advanceTimersByTimeAsync(10)
+  expect(editor.getState().x3i?.processed).toBe(true)
+  expect(recipe().x3iSource).toBeUndefined()
+  editor.getState().compare(false)
 })
 
 it('shows a failed X3I merge request when a late poll and the final status read disagree', async () => {

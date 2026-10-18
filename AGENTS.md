@@ -112,10 +112,21 @@ reuse the Debug probe executable. Release builds omit the probe.
 - Bump `x3f_render::RENDER_VERSION` when a change alters rendered pixels. Persistent
   preview caches use this value to reject older renders.
 - X3I (Quattro SFD) files contain complete X3F frames; `src-tauri/src/x3i.rs`
-  detects them by their `FOVi` magic. ExifTool reads a cached copy of frame 0.
-  The editor never merges on its own: it shows the embedded preview and a dialog,
-  and `editor:x3iProcess` merges after the user confirms (progress and cancel via
-  `editor:x3iStatus` and `editor:x3iCancel`). Edited exports merge when needed.
+  detects them by their `FOVi` magic. ExifTool reads a cached copy of frame 0,
+  or of the middle exposure for exports of that frame.
+  The editor never merges on its own. A photo opens with its middle exposure, the
+  "unfused RAW": one frame, prepared as an X3F, without a merge or the cache. The
+  recipe's `x3iSource` is written only as `merge`, for the "SFD RAW". The "SFD RAW"
+  section above Light toggles between them. Without a stored SFD RAW, the toggle or
+  the fuse button starts `editor:x3iProcess` (progress via `editor:x3iStatus`, and
+  the cancel button calls `editor:x3iCancel`); the unfused RAW stays editable, and
+  the photo changes to the SFD RAW when the merge ends. A stored SFD RAW shows as
+  "Fused SFD RAW" with its size, and `editor:x3iDelete` removes it. A change between
+  the two morphs the preview into the developing cloud until it renders. A recipe
+  that uses an SFD RAW that is not stored merges it again; its embedded preview can
+  zoom and pan meanwhile.
+  Edited exports merge when needed. Original exports use the `x3iSource`
+  setting; Embedded JPG always uses the middle exposure.
   Merged scenes are cached in app-data `edits/x3i-v1/` within a 3 GiB budget.
   Bump `x3i::CACHE_VERSION` when x3f-core changes merged pixels. One merge runs at
   a time in conversion and the editor.

@@ -48,13 +48,19 @@ vi.mock('../src/renderer/src/components/ZoomablePreview', () => ({
   ZoomablePreview: ({
     file,
     onImagePoint,
-    onPaint
+    onPaint,
+    onViewportChange
   }: {
     file: X3FFileDTO
     onImagePoint?: unknown
     onPaint?: () => void
+    onViewportChange?: unknown
   }) => (
-    <div data-editor-frame={displayPreviewUrl(file, 'full')} data-picking={!!onImagePoint}>
+    <div
+      data-editor-frame={displayPreviewUrl(file, 'full')}
+      data-picking={!!onImagePoint}
+      data-viewport={!!onViewportChange}
+    >
       <button data-paint onClick={onPaint} />
     </div>
   )
@@ -777,6 +783,45 @@ it('returns to adjustments when crop opens or the photo changes', () => {
   act(() => editor.setState({ session: { ...session, sessionId: 'new-session' } }))
   expect(screen.queryByRole('button', { name: t('editor.backToEmulsion') })).toBeNull()
   expect(screen.queryByRole('button', { name: t('editor.backToAdjustments') })).toBeNull()
+})
+
+it('keeps an X3I zoomable and its SFD RAW toggle usable while it merges, and morphs between RAWs', () => {
+  const sfd = { ...doc, recipe: { ...recipe, x3iSource: 'merge' as const } }
+  editor.setState({
+    session,
+    documents: { [file.path]: sfd },
+    loading: false,
+    preview: null,
+    x3i: { frames: 7, processed: false },
+    renderThumbnail: vi.fn(async () => null)
+  })
+  const view = render(<EditorScreen />)
+  const controls = (): HTMLElement => screen.getByRole('button', { name: 'Choose emulsion' })
+  const clouds = (): NodeListOf<Element> =>
+    view.container.querySelectorAll('[data-placeholder], [data-condensing]')
+  // Without a render, the embedded preview still zooms and pans. Its viewport stays
+  // out of the store, so the first render after the merge is a full preview.
+  const viewport = (): string | null | undefined =>
+    view.container.querySelector('[data-editor-frame]')?.getAttribute('data-viewport')
+  expect(viewport()).toBe('false')
+  expect(clouds()).toHaveLength(0)
+  // EditorControls keeps all but the SFD RAW section inert.
+  expect(controls().matches(':disabled')).toBe(false)
+  act(() => editor.setState({ x3i: { frames: 7, processed: true }, preview: frame }))
+  expect(viewport()).toBe('true')
+  // A change of RAW turns the preview into particles until the photo renders.
+  act(() => editor.setState({ switching: true }))
+  expect(clouds()).toHaveLength(1)
+  act(() => editor.setState({ switching: false }))
+  fireEvent.click(view.container.querySelector('[data-condensing]')!)
+  expect(clouds()).toHaveLength(0)
+  // Undo back to a merge leaves the Emulsion page and scrolls to the top.
+  const body = view.container.querySelector('.overflow-y-auto') as HTMLElement
+  body.scrollTop = 400
+  fireEvent.click(controls())
+  act(() => editor.setState({ x3i: { frames: 7, processed: false } }))
+  expect(screen.queryByRole('button', { name: t('editor.backToAdjustments') })).toBeNull()
+  expect(body.scrollTop).toBe(0)
 })
 
 it('returns to Emulsion film stocks when undo removes the film from the paper page', () => {

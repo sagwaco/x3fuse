@@ -83,7 +83,12 @@ fn real_conversion_metadata_previews_and_cancelled_publication() {
             .unwrap();
             if format == OutputFormat::Dng {
                 runtime
-                    .block_on(exif.copy_tags(&input, &output, &AtomicBool::new(false)))
+                    .block_on(exif.copy_tags(
+                        &input,
+                        Default::default(),
+                        &output,
+                        &AtomicBool::new(false),
+                    ))
                     .unwrap();
             }
             let bytes = std::fs::read(&output).unwrap();

@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import {
   defaultRecipe,
   pasteRecipe,
+  usesSfd,
   type EditRecipe,
   type EditRecord,
   type EditorSession,
@@ -64,11 +65,17 @@ interface EditorState {
   pickWhiteBalance: (x: number, y: number) => Promise<void>
   /** A small look preview, rendered only while the editor is idle; edits preempt it. */
   renderThumbnail: (recipe: EditRecipe) => Promise<string | null>
-  /** The merge state of an open X3I. It renders only after its frames merge. */
+  /** The merge state of an open X3I. Its SFD RAW renders only after its frames merge. */
   x3i: X3iStatus | null
-  /** Starts the merge of the open X3I. The merge continues after the photo closes. */
+  /** The open X3I changes between its SFD RAW and its unfused RAW, and the
+      changed photo did not render yet. */
+  switching: boolean
+  /** Starts the merge of the open X3I. The merge continues after the photo closes.
+      A photo that uses its unfused RAW uses the SFD RAW when the merge ends. */
   processX3i: () => void
   cancelX3i: () => void
+  /** Removes the SFD RAW of the open X3I. The photo then uses its unfused RAW. */
+  deleteX3i: () => void
   /** Reads the merge state again, and renders when the merge is done. A poll
       skips while a read is in flight; other reads wait for it. */
   refreshX3i: (poll?: boolean) => Promise<void>
@@ -101,11 +108,25 @@ let movedAt = -Infinity
 let cancelledX3i: string | null = null
 /** X3I files whose merge request is in flight. Their status shows progress before the merge reports it. */
 const merging = new Set<string>()
+/** The X3I whose merge started from its unfused RAW. It uses the SFD RAW once a
+    status read first reports it, unless a change cannot apply then, as in Before. */
+let mergeSwitch: string | null = null
 /** Status reads run one at a time, in order. */
 let refreshing: Promise<void> = Promise.resolve()
 let refreshBusy = false
-/** An open X3I renders only after its frames merge. */
-const unmerged = (state: EditorState): boolean => !!state.x3i && !state.x3i.processed
+/** True when the open X3I cannot render `recipe` before its frames merge. */
+const waitsForMerge = (state: EditorState, recipe: EditRecipe | undefined): boolean =>
+  !!state.x3i && !state.x3i.processed && usesSfd(recipe)
+/** True when `to` changes the frames that the open X3I renders, and it can render them. */
+const switchesFrames = (state: EditorState, from: EditRecipe, to: EditRecipe): boolean =>
+  !!state.x3i && usesSfd(from) !== usesSfd(to) && !waitsForMerge(state, to)
+/** An open X3I that uses its SFD RAW renders only after its frames merge. */
+export const needsX3iMerge = (state: EditorState): boolean =>
+  waitsForMerge(state, state.session ? state.documents[state.session.path]?.recipe : undefined)
+const unmerged = needsX3iMerge
+/** Without its SFD RAW, an X3I blocks edits, except a change to its unfused RAW. */
+const blocked = (state: EditorState, recipe: EditRecipe): boolean =>
+  unmerged(state) && waitsForMerge(state, recipe)
 /** The render key of `preview`; while zoomed, prefetch refreshes it when it is stale. */
 let previewKey: string | null = null
 const INTERACTIVE_EDGE = 1024
@@ -147,7 +168,8 @@ function renderRecipe(state: EditorState, doc: Document): EditRecipe {
         rotation: doc.recipe.rotation,
         straighten: doc.recipe.straighten,
         pitch: doc.recipe.pitch,
-        yaw: doc.recipe.yaw
+        yaw: doc.recipe.yaw,
+        x3iSource: doc.recipe.x3iSource
       }
     : doc.recipe
   if (state.cropping) recipe = { ...recipe, crop: null, rotation: 0, straighten: 0 }
@@ -225,6 +247,12 @@ export const useEditorStore = create<EditorState>((set, get) => {
         error: null,
         before: false,
         cache: null,
+        // A photo that waits for a merge does not render, so it does not switch.
+        switching:
+          state.session?.path !== path
+            ? state.switching
+            : !waitsForMerge(state, doc.recipe) &&
+              (state.switching || switchesFrames(state, state.documents[path].recipe, doc.recipe)),
         ...(geometryChanged ? { viewport: null, tile: null } : state.before ? { tile: null } : {})
       }
     })
@@ -289,9 +317,12 @@ export const useEditorStore = create<EditorState>((set, get) => {
         (renderRevision === revision || progressing)
       ) {
         if (region)
-          set({ tile: { ...preview, region: preview.region ?? region, viewport: region } })
+          set({
+            tile: { ...preview, region: preview.region ?? region, viewport: region },
+            switching: false
+          })
         else {
-          set({ preview, previewPose: { pitch: recipe.pitch, yaw: recipe.yaw } })
+          set({ preview, previewPose: { pitch: recipe.pitch, yaw: recipe.yaw }, switching: false })
           previewKey = preview.draft ? null : key
         }
         set({ error: Object.values(get().documents).find((doc) => doc.error)?.error ?? null })
@@ -315,7 +346,9 @@ export const useEditorStore = create<EditorState>((set, get) => {
         }, REFINE_DELAY)
       }
     } catch (error) {
-      // A merged X3I whose cached image is gone shows its merge dialog again.
+      if (get().session?.sessionId === sessionId && renderRevision === revision)
+        set({ switching: false })
+      // An X3I whose SFD RAW is gone waits for its merge again.
       if (get().x3i) await get().refreshX3i()
       if (
         get().session?.sessionId === sessionId &&
@@ -457,6 +490,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
     cache: null,
     prefetching: false,
     x3i: null,
+    switching: false,
     uncache(url) {
       set(({ cache }) =>
         cache?.renders.some((render) => render.url === url)
@@ -494,7 +528,8 @@ export const useEditorStore = create<EditorState>((set, get) => {
         .catch(() => {})
     },
     setCropping(cropping) {
-      if (get().closing || get().loading) return
+      // Crop mode would replace the SFD RAW section, and could not render to end.
+      if (get().closing || get().loading || (cropping && unmerged(get()))) return
       get().commit()
       set({ cropping, viewport: null, tile: null, cache: null, preview: null })
       previewKey = null
@@ -544,6 +579,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
         set((state) => ({
           session,
           x3i: session.x3i ?? null,
+          switching: false,
           documents: { ...state.documents, [file.path]: doc },
           loading: false,
           preview: null,
@@ -567,16 +603,19 @@ export const useEditorStore = create<EditorState>((set, get) => {
         get().closing ||
         get().loading ||
         get().before ||
-        unmerged(get()) ||
         useQueueStore.getState().isProcessing
       )
         return
       const doc = get().documents[path]
       const recipe = { ...doc.recipe, ...patch }
-      if (same(recipe, doc.recipe)) return
+      // Without its SFD RAW, an X3I can still change to its unfused RAW.
+      if (same(recipe, doc.recipe) || blocked(get(), recipe)) return
       set((state) => ({
         before: false,
         cache: null,
+        switching:
+          !waitsForMerge(state, recipe) &&
+          (state.switching || switchesFrames(state, doc.recipe, recipe)),
         ...(!sameGeometry(doc.recipe, recipe) ? { viewport: null, tile: null } : {}),
         documents: {
           ...state.documents,
@@ -607,14 +646,15 @@ export const useEditorStore = create<EditorState>((set, get) => {
         dirty: true
       })
     },
+    // History can change between the SFD RAW and the unfused RAW of an X3I.
     undo() {
-      if (get().closing || get().loading || unmerged(get())) return
+      if (get().closing || get().loading) return
       get().commit()
       const path = get().session?.path
       if (!path || useQueueStore.getState().isProcessing) return
       const doc = get().documents[path]
       const recipe = doc.past.at(-1)
-      if (recipe)
+      if (recipe && !blocked(get(), recipe))
         publish(path, {
           ...doc,
           recipe,
@@ -625,12 +665,12 @@ export const useEditorStore = create<EditorState>((set, get) => {
         })
     },
     redo() {
-      if (get().closing || get().loading || unmerged(get())) return
+      if (get().closing || get().loading) return
       const path = get().session?.path
       if (!path || useQueueStore.getState().isProcessing) return
       const doc = get().documents[path]
       const recipe = doc.future[0]
-      if (recipe)
+      if (recipe && !blocked(get(), recipe))
         publish(path, {
           ...doc,
           recipe,
@@ -642,7 +682,13 @@ export const useEditorStore = create<EditorState>((set, get) => {
     },
     reset() {
       const path = get().session?.path
-      if (path) get().change(asShotRecipe(get().session, get().documents[path].recipe.seed))
+      // The frames of an X3I are not an adjustment.
+      const recipe = path && get().documents[path].recipe
+      if (recipe)
+        get().change({
+          ...asShotRecipe(get().session, recipe.seed),
+          x3iSource: recipe.x3iSource
+        })
     },
     compare(before) {
       // Crop mode edits geometry; comparing would block its changes and its Cancel.
@@ -744,6 +790,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
         set({
           session: null,
           x3i: null,
+          switching: false,
           preview: null,
           loading: false,
           rendering: false,
@@ -829,6 +876,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
       const path = session.path
       if (cancelledX3i === path) cancelledX3i = null
       merging.add(path)
+      if (!usesSfd(get().documents[path].recipe)) mergeSwitch = path
       set({ x3i: { ...x3i, progress: 0, error: undefined } })
       void ipc
         .invoke('editor:x3iProcess', { path, recipe: get().documents[path].recipe })
@@ -839,6 +887,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
         .then(async (error) => {
           merging.delete(path)
           await get().refreshX3i()
+          if (mergeSwitch === path) mergeSwitch = null
           const current = get().x3i
           if (get().session?.path !== path || !current) return
           // The request has ended, so its merge has too, unless a new one started.
@@ -854,10 +903,22 @@ export const useEditorStore = create<EditorState>((set, get) => {
           set({ x3i: { ...current, progress, ...(failed && { error }) } })
         })
     },
+    deleteX3i() {
+      const { session, x3i } = get()
+      if (!session || !x3i?.processed || x3i.progress !== undefined) return
+      const path = session.path
+      // The photo changes to its unfused RAW first, so it does not wait for a merge.
+      if (usesSfd(get().documents[path].recipe)) get().change({ x3iSource: undefined })
+      void ipc
+        .invoke('editor:x3iDelete', { path, recipe: get().documents[path].recipe })
+        .catch((error: unknown) => set({ error: String(error) }))
+        .then(() => get().refreshX3i())
+    },
     cancelX3i() {
       const path = get().session?.path
       if (!path) return
       cancelledX3i = path
+      if (mergeSwitch === path) mergeSwitch = null
       void ipc
         .invoke('editor:x3iCancel', { path })
         .then(() => get().refreshX3i())
@@ -880,6 +941,11 @@ export const useEditorStore = create<EditorState>((set, get) => {
         const waiting = merging.has(path) && !status.processed && status.progress === undefined
         set({ x3i: waiting ? { ...status, progress: current.x3i?.progress ?? 0 } : status })
         if (merged) get().render()
+        // Only the first read switches, so a later choice of the user stays.
+        if (status.processed && mergeSwitch === path) {
+          mergeSwitch = null
+          if (!usesSfd(get().documents[path]?.recipe)) get().change({ x3iSource: 'merge' })
+        }
       }
       const run = refreshing.then(read)
       refreshing = run.catch(() => {})

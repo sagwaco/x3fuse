@@ -33,13 +33,24 @@ impl ExifTool {
 
     /// The file that ExifTool reads for `path`. See `x3i::exif_source`.
     async fn source(&self, path: &Path) -> Result<PathBuf, String> {
+        self.frame_source(path, Default::default()).await
+    }
+
+    /// The file with the metadata of the X3I frames that `x3i_source` uses.
+    async fn frame_source(
+        &self,
+        path: &Path,
+        x3i_source: x3f_core::X3iSource,
+    ) -> Result<PathBuf, String> {
         if !crate::x3i::is_x3i(path) {
             return Ok(path.to_owned());
         }
         let (cache, path) = (self.x3i.clone(), path.to_owned());
-        tauri::async_runtime::spawn_blocking(move || crate::x3i::exif_source(&cache, &path))
-            .await
-            .map_err(|e| e.to_string())?
+        tauri::async_runtime::spawn_blocking(move || {
+            crate::x3i::exif_source(&cache, &path, x3i_source)
+        })
+        .await
+        .map_err(|e| e.to_string())?
     }
 
     pub async fn run(
@@ -138,6 +149,7 @@ impl ExifTool {
     pub async fn copy_tags(
         &self,
         input: &Path,
+        x3i_source: x3f_core::X3iSource,
         output: &Path,
         cancel: &AtomicBool,
     ) -> Result<(), String> {
@@ -147,7 +159,7 @@ impl ExifTool {
                 "filename=UTF8".into(),
                 "-overwrite_original".into(),
                 "-tagsFromFile".into(),
-                self.source(input).await?.into(),
+                self.frame_source(input, x3i_source).await?.into(),
                 "-all:all".into(),
                 output.into(),
             ],
@@ -187,6 +199,7 @@ impl ExifTool {
     pub async fn copy_rendered_tags(
         &self,
         input: &Path,
+        x3i_source: x3f_core::X3iSource,
         output: &Path,
         cancel: &AtomicBool,
     ) -> Result<(), String> {
@@ -195,7 +208,7 @@ impl ExifTool {
             "filename=UTF8".into(),
             "-overwrite_original".into(),
             "-tagsFromFile".into(),
-            self.source(input).await?.into(),
+            self.frame_source(input, x3i_source).await?.into(),
         ];
         // Copy capture/author metadata only. The encoder owns geometry, ICC and previews.
         args.extend(

@@ -26,7 +26,7 @@ import {
 } from '@shared/editor'
 import stocks from '@shared/film-stocks.json'
 import { curvePath, evaluateCurve } from '@shared/curves'
-import { useEditorStore } from '../stores/editorStore'
+import { needsX3iMerge, useEditorStore } from '../stores/editorStore'
 import { DevelopingCloud } from '../lib/developingCloud'
 import { useQueueStore } from '../stores/queueStore'
 import { t } from '../lib/strings'
@@ -38,6 +38,7 @@ import { Slider } from './ui/slider'
 import { Switch } from './ui/switch'
 import { HelpTooltip, ToggleRow } from './ui/settingsLayout'
 import { LookPicker } from './LookPicker'
+import { SfdRaw, SfdRawInfo } from './SfdRaw'
 
 /** Tracks that show which way a slider moves the picture. */
 const TEMPERATURE = 'linear-gradient(to right, #4f7cff, #d4d4d4, #ffb43d)'
@@ -251,10 +252,13 @@ export function Adjustment({
 
 export function Section({
   name,
+  info,
   open = false,
   children
 }: {
   name: string
+  /** An icon button after the name, such as an info popover. */
+  info?: React.ReactNode
   open?: boolean
   children: React.ReactNode
 }): React.JSX.Element {
@@ -266,11 +270,12 @@ export function Section({
       open={open || undefined}
       className="border-t border-ink/10 px-4 open:bg-gradient-to-b open:from-ink/[0.03] open:to-transparent open:bg-[length:100%_3rem] open:bg-no-repeat [details_&]:-mx-4"
     >
-      <summary className="control-label flex cursor-pointer list-none items-center justify-between rounded py-3 font-bold tracking-[0.16em] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/50 [&::-webkit-details-marker]:hidden">
+      <summary className="control-label flex cursor-pointer list-none items-center gap-1.5 rounded py-3 font-bold tracking-[0.16em] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/50 [&::-webkit-details-marker]:hidden">
         {name}
+        {info}
         <ChevronDown
           aria-hidden="true"
-          className="h-3.5 w-3.5 text-tone-500 transition-transform [details[open]>summary>&]:rotate-180"
+          className="ml-auto h-3.5 w-3.5 text-tone-500 transition-transform [details[open]>summary>&]:rotate-180"
         />
       </summary>
       <div className="space-y-2 pb-3">{children}</div>
@@ -324,6 +329,10 @@ export const EditorControls = memo(function EditorControls({
 }): React.JSX.Element {
   const change = useEditorStore((state) => state.change)
   const commit = useEditorStore((state) => state.commit)
+  const x3i = useEditorStore((state) => state.x3i)
+  // While an X3I merges an SFD RAW that it uses, only the SFD RAW section works.
+  const pending = useEditorStore(needsX3iMerge)
+  const inert = pending ? { inert: '', className: 'opacity-50' } : {}
   const cloud = useContext(DevelopingCloud)
   const asShotTemperature = useEditorStore((state) =>
     cloud ? undefined : state.preview?.asShotTemperature
@@ -381,138 +390,153 @@ export const EditorControls = memo(function EditorControls({
   )
   return (
     <>
-      <div className="px-4 py-3">
-        <LookPicker kind="film" recipe={recipe} onOpen={() => onNavigate('emulsion')} />
-      </div>
-      <Section name={t('editor.light')} open>
-        {recipe.film ? (
-          <Adjustment
-            label={t('editor.exposure')}
-            value={recipe.film.evFilm}
-            unit="EV"
-            min={-3}
-            max={3}
-            step={0.05}
-            change={(evFilm, save) => change({ film: { ...recipe.film!, evFilm } }, save)}
-            reset={() => change({ film: { ...recipe.film!, evFilm: DEFAULT_FILM.evFilm } })}
-            commit={commit}
-          />
-        ) : (
-          control('exposure', { unit: 'EV', min: -5, max: 5, step: 0.05 })
-        )}
-        {(['contrast', 'highlights', 'shadows', 'whites', 'blacks'] as const).map((key) =>
-          control(key)
-        )}
-        {control('fillLight', { min: -2, max: 2, step: 0.1, help: t('editor.fillLightHelp') })}
-      </Section>
-      <Section name={t('editor.curves')}>
-        <Curves recipe={recipe} />
-      </Section>
-      <Section name={t('editor.whiteBalance')} open>
-        <div className="flex items-center gap-1.5">
-          <Button
-            size="icon"
-            className="h-7 w-7 shrink-0"
-            aria-label={t('editor.picker')}
-            title={withShortcut(t('editor.picker'), 'W')}
-            aria-keyshortcuts="W"
-            aria-pressed={picking}
-            onClick={() => setPicking(!picking)}
-          >
-            <Pipette aria-hidden="true" className="h-3.5 w-3.5" />
-          </Button>
-          <Select
-            aria-label={t('editor.whiteBalancePreset')}
-            className="flex-1"
-            value={preset}
-            options={[
-              ...WHITE_BALANCE.map(([key]) => ({ value: key, label: t(`editor.${key}`) })),
-              // Custom only names a balance that is not a preset.
-              ...(preset === 'custom'
-                ? [{ value: preset, label: t('editor.customWhiteBalance'), disabled: true }]
-                : [])
-            ]}
-            onValueChange={(key) => {
-              const kelvin = WHITE_BALANCE.find(([name]) => name === key)?.[1]
-              if (kelvin !== undefined) change({ temperature: kelvin, tint: 0 })
-            }}
-          />
-          <Button
-            size="icon"
-            className="h-7 w-7 shrink-0"
-            aria-label={t('editor.resetWhiteBalance')}
-            title={t('editor.resetWhiteBalance')}
-            disabled={preset === 'asShot'}
-            onClick={() => change({ temperature: null, tint: 0 })}
-          >
-            <RotateCcw aria-hidden="true" className="h-3.5 w-3.5" />
-          </Button>
+      <div {...inert}>
+        <div className="px-4 py-3">
+          <LookPicker kind="film" recipe={recipe} onOpen={() => onNavigate('emulsion')} />
         </div>
-        {picking && (
-          <p role="status" className="control-label text-tone-100">
-            {t('editor.pickNeutral')}
-          </p>
-        )}
-        <Adjustment
-          label={t('editor.temperature')}
-          value={temperature}
-          min={wideTemperature ? 500 : 2000}
-          max={wideTemperature ? 50000 : 12000}
-          step={wideTemperature ? 10 : 50}
-          scale={wideTemperature ? KELVIN : undefined}
-          track={TEMPERATURE}
-          // Leaving As shot starts from the camera's own tint, so nothing jumps.
-          change={(temperature, commit) =>
-            change(
-              recipe.temperature === null && recipe.tint === 0 && asShotTint !== undefined
-                ? { temperature, tint: Math.round(asShotTint) }
-                : { temperature },
-              commit
-            )
-          }
-          reset={() => change({ temperature: null })}
-          commit={commit}
-        />
-        {control('tint', {
-          track: TINT,
-          ...(wideTint && { min: -2000, max: 2000, scale: TINT_SCALE })
-        })}
-        <ToggleRow
-          label={t('editor.extendedRange')}
-          help={t('editor.extendedRangeHelp')}
-          checked={wideTemperature}
-          onChange={setExtended}
-        />
-      </Section>
-      <Section name={t('editor.color')}>
-        {control('saturation')}
-        {control('vibrance', { help: t('editor.vibranceHelp') })}
-        <p className="control-label pt-2 text-[10px] text-tone-500">{t('editor.colorBand')}</p>
-        <Swatches
-          label={t('editor.colorBand')}
-          value={String(band)}
-          options={BANDS.map(([name, hue], index) => ({
-            value: String(index),
-            label: t(`editor.${name}`),
-            color: hsl(hue)
-          }))}
-          onChange={(value) => setBand(Number(value))}
-        />
-        {mixer('hue', `linear-gradient(to right, ${hsl(hue - 30)}, ${hsl(hue)}, ${hsl(hue + 30)})`)}
-        {mixer('saturation', `linear-gradient(to right, ${hsl(hue, 0)}, ${hsl(hue, 100, 50)})`)}
-        {mixer('luminance', `linear-gradient(to right, ${hsl(hue, 70, 15)}, ${hsl(hue, 70, 85)})`)}
-      </Section>
-      <Section name={t('editor.detail')}>
-        {control('sharpen', { min: 0, max: 100 })}
-        {control('denoise', { min: 0, max: 10, help: t('editor.denoiseHelp') })}
-        {recipe.denoise > 0 && (
-          <DenoiseControls
-            value={recipe.denoiseOptions}
-            change={(denoiseOptions, committed) => change({ denoiseOptions }, committed)}
+      </div>
+      {x3i && (
+        <Section name={t('editor.sfdRaw')} info={!x3i.processed && <SfdRawInfo />} open>
+          <SfdRaw recipe={recipe} />
+        </Section>
+      )}
+      <div {...inert}>
+        <Section name={t('editor.light')} open>
+          {recipe.film ? (
+            <Adjustment
+              label={t('editor.exposure')}
+              value={recipe.film.evFilm}
+              unit="EV"
+              min={-3}
+              max={3}
+              step={0.05}
+              change={(evFilm, save) => change({ film: { ...recipe.film!, evFilm } }, save)}
+              reset={() => change({ film: { ...recipe.film!, evFilm: DEFAULT_FILM.evFilm } })}
+              commit={commit}
+            />
+          ) : (
+            control('exposure', { unit: 'EV', min: -5, max: 5, step: 0.05 })
+          )}
+          {(['contrast', 'highlights', 'shadows', 'whites', 'blacks'] as const).map((key) =>
+            control(key)
+          )}
+          {control('fillLight', { min: -2, max: 2, step: 0.1, help: t('editor.fillLightHelp') })}
+        </Section>
+        <Section name={t('editor.curves')}>
+          <Curves recipe={recipe} />
+        </Section>
+        <Section name={t('editor.whiteBalance')} open>
+          <div className="flex items-center gap-1.5">
+            <Button
+              size="icon"
+              className="h-7 w-7 shrink-0"
+              aria-label={t('editor.picker')}
+              title={withShortcut(t('editor.picker'), 'W')}
+              aria-keyshortcuts="W"
+              aria-pressed={picking}
+              onClick={() => setPicking(!picking)}
+            >
+              <Pipette aria-hidden="true" className="h-3.5 w-3.5" />
+            </Button>
+            <Select
+              aria-label={t('editor.whiteBalancePreset')}
+              className="flex-1"
+              value={preset}
+              options={[
+                ...WHITE_BALANCE.map(([key]) => ({ value: key, label: t(`editor.${key}`) })),
+                // Custom only names a balance that is not a preset.
+                ...(preset === 'custom'
+                  ? [{ value: preset, label: t('editor.customWhiteBalance'), disabled: true }]
+                  : [])
+              ]}
+              onValueChange={(key) => {
+                const kelvin = WHITE_BALANCE.find(([name]) => name === key)?.[1]
+                if (kelvin !== undefined) change({ temperature: kelvin, tint: 0 })
+              }}
+            />
+            <Button
+              size="icon"
+              className="h-7 w-7 shrink-0"
+              aria-label={t('editor.resetWhiteBalance')}
+              title={t('editor.resetWhiteBalance')}
+              disabled={preset === 'asShot'}
+              onClick={() => change({ temperature: null, tint: 0 })}
+            >
+              <RotateCcw aria-hidden="true" className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+          {picking && (
+            <p role="status" className="control-label text-tone-100">
+              {t('editor.pickNeutral')}
+            </p>
+          )}
+          <Adjustment
+            label={t('editor.temperature')}
+            value={temperature}
+            min={wideTemperature ? 500 : 2000}
+            max={wideTemperature ? 50000 : 12000}
+            step={wideTemperature ? 10 : 50}
+            scale={wideTemperature ? KELVIN : undefined}
+            track={TEMPERATURE}
+            // Leaving As shot starts from the camera's own tint, so nothing jumps.
+            change={(temperature, commit) =>
+              change(
+                recipe.temperature === null && recipe.tint === 0 && asShotTint !== undefined
+                  ? { temperature, tint: Math.round(asShotTint) }
+                  : { temperature },
+                commit
+              )
+            }
+            reset={() => change({ temperature: null })}
             commit={commit}
           />
-        )}
-      </Section>
+          {control('tint', {
+            track: TINT,
+            ...(wideTint && { min: -2000, max: 2000, scale: TINT_SCALE })
+          })}
+          <ToggleRow
+            label={t('editor.extendedRange')}
+            help={t('editor.extendedRangeHelp')}
+            checked={wideTemperature}
+            onChange={setExtended}
+          />
+        </Section>
+        <Section name={t('editor.color')}>
+          {control('saturation')}
+          {control('vibrance', { help: t('editor.vibranceHelp') })}
+          <p className="control-label pt-2 text-[10px] text-tone-500">{t('editor.colorBand')}</p>
+          <Swatches
+            label={t('editor.colorBand')}
+            value={String(band)}
+            options={BANDS.map(([name, hue], index) => ({
+              value: String(index),
+              label: t(`editor.${name}`),
+              color: hsl(hue)
+            }))}
+            onChange={(value) => setBand(Number(value))}
+          />
+          {mixer(
+            'hue',
+            `linear-gradient(to right, ${hsl(hue - 30)}, ${hsl(hue)}, ${hsl(hue + 30)})`
+          )}
+          {mixer('saturation', `linear-gradient(to right, ${hsl(hue, 0)}, ${hsl(hue, 100, 50)})`)}
+          {mixer(
+            'luminance',
+            `linear-gradient(to right, ${hsl(hue, 70, 15)}, ${hsl(hue, 70, 85)})`
+          )}
+        </Section>
+        <Section name={t('editor.detail')}>
+          {control('sharpen', { min: 0, max: 100 })}
+          {control('denoise', { min: 0, max: 10, help: t('editor.denoiseHelp') })}
+          {recipe.denoise > 0 && (
+            <DenoiseControls
+              value={recipe.denoiseOptions}
+              change={(denoiseOptions, committed) => change({ denoiseOptions }, committed)}
+              commit={commit}
+            />
+          )}
+        </Section>
+      </div>
     </>
   )
 })

@@ -12,6 +12,7 @@ import {
   type OutputFormat
 } from '@shared/types'
 import { MAX_CONCURRENCY } from '@shared/concurrency'
+import type { X3iSource } from '@shared/editor'
 import { appInfo } from '../lib/appInfo'
 import { ipc } from '../lib/ipc'
 import { basename } from '../lib/path'
@@ -223,6 +224,20 @@ export function ConversionSettingsForm({
                   }))
                 ]}
                 onValueChange={(v) => update({ colorMode: v === 'off' ? null : v })}
+              />
+            </Row>
+          )}
+
+          {!rendered && format !== 'embeddedJpg' && (
+            <Row label={t('editor.x3iSource')} help={t('settings.x3i_source.help')}>
+              <Select<X3iSource>
+                aria-label={t('editor.x3iSource')}
+                value={settings.x3iSource ?? 'merge'}
+                options={[
+                  { value: 'merge', label: t('editor.x3iSourceMerge') },
+                  { value: 'middle_exposure', label: t('editor.x3iSourceMiddle') }
+                ]}
+                onValueChange={(x3iSource) => update({ x3iSource })}
               />
             </Row>
           )}

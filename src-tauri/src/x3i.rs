@@ -22,7 +22,7 @@ use crate::edits::SourceStamp;
 pub const DIRECTORY: &str = "x3i-v1";
 /// Bump when x3f-core changes merged pixels or their calibration. The app
 /// version is also part of each key, so a release starts a new cache.
-const CACHE_VERSION: u32 = 1;
+const CACHE_VERSION: u32 = 2;
 /// ponytail: one budget for frame copies and scenes, least recently used out first.
 /// A dp0 Quattro scene is about 240 MB, an sd Quattro H scene about 310 MB.
 const BUDGET: u64 = 3 << 30;
@@ -40,9 +40,14 @@ pub fn is_x3i(path: &Path) -> bool {
     x3f_core::is_x3i(path).unwrap_or(false)
 }
 
-/// Reads ExifTool metadata from `path`: a cached copy of frame 0 for an X3I,
-/// else the file itself.
-pub fn exif_source(cache: &Path, path: &Path) -> Result<PathBuf, String> {
+/// Reads ExifTool metadata from `path`: for an X3I, a cached copy of the frame
+/// that `source` uses, else the file itself. A merge uses the metadata of
+/// frame 0, its reference exposure.
+pub fn exif_source(
+    cache: &Path,
+    path: &Path,
+    source: x3f_core::X3iSource,
+) -> Result<PathBuf, String> {
     if !is_x3i(path) {
         return Ok(path.to_owned());
     }
@@ -54,7 +59,15 @@ pub fn exif_source(cache: &Path, path: &Path) -> Result<PathBuf, String> {
     let _flight = EXTRACT.lock().map_err(|_| "X3I cache unavailable")?;
     let before = stamp()?;
     let canonical = path.canonicalize().map_err(|e| e.to_string())?;
-    let key = format!("{CACHE_VERSION}:{}:{before}", canonical.display());
+    let container = x3f_core::X3iContainer::open(path).map_err(|e| e.to_string())?;
+    let frame = if source == x3f_core::X3iSource::MiddleExposure {
+        container
+            .middle_exposure_frame()
+            .map_err(|e| e.to_string())?
+    } else {
+        0
+    };
+    let key = format!("{CACHE_VERSION}:{}:{before}:{frame}", canonical.display());
     // Windows stamps have no file identity, so there a copy lasts one session,
     // as the fingerprints in `Edits` do.
     #[cfg(not(unix))]
@@ -66,8 +79,8 @@ pub fn exif_source(cache: &Path, path: &Path) -> Result<PathBuf, String> {
     if !hit(&target) {
         fs::create_dir_all(cache).map_err(|e| e.to_string())?;
         let temporary = cache.join(format!("{}.tmp", uuid::Uuid::new_v4()));
-        let result = x3f_core::X3iContainer::open(path)
-            .and_then(|container| container.extract_frame(0, &temporary))
+        let result = container
+            .extract_frame(frame, &temporary)
             .map_err(|e| e.to_string())
             .and_then(|()| {
                 if stamp()? != before {
@@ -111,21 +124,35 @@ pub fn frames(path: &Path) -> Option<u32> {
     u32::try_from(container.frames().len()).ok()
 }
 
-/// The scene cache file of an X3I, and whether no denoise setting changes it.
+/// The scene cache file of a merged X3I, and whether no denoise setting
+/// changes it. None for other files and for one frame, which prepares quickly.
 fn scene_file(
     cache: &Path,
     path: &Path,
     source_revision: &str,
     options: &SceneLinearOptions,
 ) -> Option<(PathBuf, bool)> {
+    if options.x3i_source != x3f_core::X3iSource::Merge {
+        return None;
+    }
     let identity = identity(path)?;
     let (settings, denoise_free) = scene_settings(
         options,
         std::env::var("X3F_X3I_DENOISE_SCALE").ok().as_deref(),
     );
     let key = format!("{identity}:{source_revision}:{settings:?}");
+    // The photo name tells the user which photo a merged image belongs to. At
+    // most 64 bytes of it keep the file name inside the 255-byte limit.
+    let mut stem = String::new();
+    for c in path.file_stem()?.to_string_lossy().chars() {
+        if stem.len() + c.len_utf8() > 64 {
+            break;
+        }
+        stem.push(c);
+    }
+    let hash = format!("{:x}", Sha256::digest(key));
     Some((
-        cache.join(format!("{:x}.scene", Sha256::digest(key))),
+        cache.join(format!("{stem}-{}.sfd", &hash[..16])),
         denoise_free,
     ))
 }
@@ -137,14 +164,43 @@ pub fn processed(
     source_revision: &str,
     options: &SceneLinearOptions,
 ) -> bool {
-    scene_file(cache, path, source_revision, options).is_some_and(|(file, _)| file.is_file())
+    scene_info(cache, path, source_revision, options).is_some()
 }
 
-/// Prepares the editor scene. An X3I comes from the scene cache. Without the
-/// cached scene, it merges only when `merge` is set, else it fails with
+/// The file name and size of the cached merged scene of an X3I, else None.
+pub fn scene_info(
+    cache: &Path,
+    path: &Path,
+    source_revision: &str,
+    options: &SceneLinearOptions,
+) -> Option<(String, u64)> {
+    let (file, _) = scene_file(cache, path, source_revision, options)?;
+    let info = fs::metadata(&file).ok().filter(|info| info.is_file())?;
+    Some((file.file_name()?.to_string_lossy().into_owned(), info.len()))
+}
+
+/// Removes the cached merged scene of an X3I. A missing scene is not an error.
+pub fn remove_scene(
+    cache: &Path,
+    path: &Path,
+    source_revision: &str,
+    options: &SceneLinearOptions,
+) -> Result<(), String> {
+    let Some((file, _)) = scene_file(cache, path, source_revision, options) else {
+        return Ok(());
+    };
+    match fs::remove_file(file) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error.to_string()),
+        _ => Ok(()),
+    }
+}
+
+/// Prepares the editor scene. A merged X3I comes from the scene cache. Without
+/// the cached scene, it merges only when `merge` is set, else it fails with
 /// UNPROCESSED. A merge is cached when `merge` still confirms that the source
-/// is unchanged. Other files prepare as before. Also returns true when no denoise setting can change
-/// the scene, which is true for an X3I without core's experimental denoise.
+/// is unchanged. Other files, and the middle exposure of an X3I, prepare as an
+/// X3F. Also returns true when no denoise setting can change the scene, which
+/// is true for a merged X3I without core's experimental denoise.
 pub fn prepare_scene(
     cache: &Path,
     path: &Path,
@@ -403,6 +459,34 @@ mod tests {
         let (zero, free) = scene_settings(&off, Some("0.3"));
         assert!(!free);
         assert_ne!(zero, scene_settings(&on, Some("0.3")).0);
+    }
+
+    #[test]
+    fn deleted_scenes_are_no_longer_processed() {
+        let cache = tempfile::tempdir().unwrap();
+        let photo = cache.path().join("photo.X3I");
+        fs::write(&photo, b"FOVi").unwrap();
+        let options = SceneLinearOptions::default();
+        assert_eq!(scene_info(cache.path(), &photo, "1", &options), None);
+        let (file, _) = scene_file(cache.path(), &photo, "1", &options).unwrap();
+        fs::write(&file, [0; 5]).unwrap();
+        let (name, bytes) = scene_info(cache.path(), &photo, "1", &options).unwrap();
+        assert!(name.starts_with("photo-") && name.ends_with(".sfd"));
+        assert_eq!(bytes, 5);
+        remove_scene(cache.path(), &photo, "1", &options).unwrap();
+        assert!(!processed(cache.path(), &photo, "1", &options));
+        // A long name keeps the cache file name short.
+        let long = cache.path().join(format!("{}.X3I", "😀".repeat(59)));
+        fs::write(&long, b"FOVi").unwrap();
+        let (file, _) = scene_file(cache.path(), &long, "1", &options).unwrap();
+        assert!(file.file_name().unwrap().len() <= 64 + 1 + 16 + 4);
+        // A second removal, or the middle exposure, has nothing to remove.
+        remove_scene(cache.path(), &photo, "1", &options).unwrap();
+        let middle = SceneLinearOptions {
+            x3i_source: x3f_core::X3iSource::MiddleExposure,
+            ..Default::default()
+        };
+        remove_scene(cache.path(), &photo, "1", &middle).unwrap();
     }
 
     #[test]

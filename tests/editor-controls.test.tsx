@@ -21,6 +21,7 @@ import { useQueueStore as queue } from '../src/renderer/src/stores/queueStore'
 import { t } from '../src/renderer/src/lib/strings'
 import { cropToFrame, frameToCrop } from '../src/renderer/src/lib/cropGeometry'
 import { pictureQuad } from '../src/renderer/src/lib/perspective'
+import { formatBytes } from '../src/renderer/src/lib/format'
 
 const scope = vi.hoisted(() => ({
   image: 'loading' as unknown,
@@ -173,7 +174,8 @@ afterEach(() => {
     commit: originalCommit,
     renderThumbnail: originalThumbnail,
     session: null,
-    preview: null
+    preview: null,
+    x3i: null
   })
   vi.unstubAllGlobals()
 })
@@ -388,6 +390,88 @@ it('offers black-and-white looks with their own filters, papers and darkroom', (
     crop: target.crop,
     seed: 9
   })
+})
+
+it('toggles the SFD RAW of an X3I above Light, and paste keeps the frames of each photo', () => {
+  const processX3i = vi.fn()
+  const cancelX3i = vi.fn()
+  const deleteX3i = vi.fn()
+  const original = editor.getState()
+  editor.setState({ processX3i, cancelX3i, deleteX3i })
+  // jsdom has no canvas, so the cube draws nothing.
+  const canvas = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null)
+  const view = render(<Controls />)
+  const toggle = (): HTMLElement => screen.getByRole('switch', { name: t('editor.sfdUse') })
+  const info = (): HTMLElement | null => screen.queryByRole('button', { name: t('editor.sfdInfo') })
+  expect(screen.queryByText(t('editor.sfdRaw'), { selector: 'summary' })).toBeNull()
+  // Without an SFD RAW: the facts are in a popover by the title.
+  act(() => editor.setState({ x3i: { frames: 7, processed: false } }))
+  const sections = [...view.container.querySelectorAll('summary')].map((node) => node.textContent)
+  expect(sections.slice(0, 2)).toEqual([t('editor.sfdRaw'), t('editor.light')])
+  expect(info()).not.toBeNull()
+  expect(toggle().getAttribute('aria-checked')).toBe('false')
+  expect(screen.getByText(t('editor.x3iSourceMiddle'))).toBeTruthy()
+  fireEvent.click(toggle())
+  expect(processX3i).toHaveBeenCalledTimes(1)
+  // The fuse button beside the unfused RAW merges too.
+  fireEvent.click(screen.getByRole('button', { name: t('editor.sfdFuse') }))
+  expect(processX3i).toHaveBeenCalledTimes(2)
+  // A merge turns the toggle on and holds it. Its button cancels it.
+  act(() => editor.setState({ x3i: { frames: 7, processed: false, progress: 0.4 } }))
+  expect(toggle().getAttribute('aria-checked')).toBe('true')
+  expect((toggle() as HTMLButtonElement).disabled).toBe(true)
+  expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBe('40')
+  expect(screen.getByText(t('editor.x3iMerging')).className).toContain('text-shimmer')
+  expect(screen.queryByRole('button', { name: t('editor.sfdFuse') })).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: t('button.cancel') }))
+  expect(cancelX3i).toHaveBeenCalled()
+  expect(change).not.toHaveBeenCalled()
+  // With an SFD RAW: its file name and size, with a delete button.
+  act(() =>
+    editor.setState({ x3i: { frames: 7, processed: true, name: 'a-0123.sfd', bytes: 306_727_439 } })
+  )
+  expect(info()).toBeNull()
+  expect(screen.getByText(t('editor.sfdFused')).getAttribute('title')).toBe('a-0123.sfd')
+  expect(screen.getByText(formatBytes(306_727_439))).toBeTruthy()
+  fireEvent.click(screen.getByRole('button', { name: t('editor.sfdDelete') }))
+  expect(deleteX3i).toHaveBeenCalled()
+  expect(toggle().getAttribute('aria-checked')).toBe('false')
+  // A change between the two RAWs holds the toggle until it finishes.
+  act(() => editor.setState({ switching: true }))
+  expect((toggle() as HTMLButtonElement).disabled).toBe(true)
+  act(() => editor.setState({ switching: false }))
+  expect((toggle() as HTMLButtonElement).disabled).toBe(false)
+  fireEvent.click(toggle())
+  expect(change).toHaveBeenLastCalledWith({ x3iSource: 'merge' })
+  expect(toggle().getAttribute('aria-checked')).toBe('true')
+  // The unfused RAW is absent from a recipe.
+  fireEvent.click(toggle())
+  expect(change).toHaveBeenLastCalledWith({ x3iSource: undefined })
+  // An SFD RAW that the photo uses but that is not stored merges, and the
+  // other sections wait for it.
+  const sfd: EditRecipe = { ...defaultRecipe(), x3iSource: 'merge' }
+  processX3i.mockClear()
+  act(() => {
+    setRecipe(sfd)
+    editor.setState({
+      x3i: { frames: 7, processed: false },
+      documents: { '/a.X3F': { recipe: sfd } as never }
+    })
+  })
+  expect(processX3i).toHaveBeenCalledTimes(1)
+  expect(
+    screen.getByText(t('editor.light'), { selector: 'summary' }).closest('[inert]')
+  ).not.toBeNull()
+  expect(toggle().closest('[inert]')).toBeNull()
+  editor.setState({
+    processX3i: original.processX3i,
+    cancelX3i: original.cancelX3i,
+    deleteX3i: original.deleteX3i,
+    documents: original.documents
+  })
+  expect(pasteRecipe(sfd, defaultRecipe()).x3iSource).toBeUndefined()
+  expect(pasteRecipe(defaultRecipe(), sfd).x3iSource).toBe('merge')
+  canvas.mockRestore()
 })
 
 it('sets Fill Light on the SIGMA Photo Pro scale, -2 to 2 in steps of 0.1', () => {

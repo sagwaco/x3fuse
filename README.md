@@ -177,12 +177,14 @@ Foveon cameras do not have a color filter array (CFA) like most other cameras, s
 
 #### X3I files are slow to process the first time
 
-X3I files from Quattro Super Fine Detail (SFD) mode merge all of their frames
-into one image. The editor asks before it merges a file. The first merge takes
-about 30 seconds and up to 3 GB of memory, and you can leave the photo or cancel
-while it runs. The editor keeps the merged image in its cache, so the file opens
-quickly after that. DNG and TIFF exports merge the frames again, one X3I at a time.
-Embedded JPG exports use the first frame.
+X3I files from Quattro Super Fine Detail (SFD) mode hold several exposures. The
+editor opens an X3I as its unfused RAW: the middle exposure, which needs no fuse.
+To use the SFD RAW, which fuses all exposures into one image, turn on Use SFD RAW
+or select Fuse in the SFD RAW section. The first fuse takes about 30 seconds and
+up to 3 GB of memory. You can edit, leave the photo, or cancel while it runs. The
+editor keeps the SFD RAW in its cache, so it opens quickly after that. DNG and TIFF
+exports fuse the frames again, one X3I at a time, unless the X3I frames export
+setting is Unfused RAW. Embedded JPG exports use the middle exposure.
 
 The RAW editor requires a supported GPU. Film rendering is experimental, and
 Windows/Linux builds need runtime testing on their target systems. Culling flags

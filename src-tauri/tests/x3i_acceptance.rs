@@ -37,26 +37,46 @@ fn x3i_reads_metadata_and_opens_quickly_after_the_first_merge() {
         .unwrap()
         .is_some());
 
-    let render = |editor: &Editor, session: &x3fuse_app::editor::EditorSession| {
+    let render_recipe = |editor: &Editor,
+                         session: &x3fuse_app::editor::EditorSession,
+                         recipe: x3f_render::EditRecipe| {
         editor.render(RenderRequest {
             session_id: session.session_id.clone(),
-            recipe: session.recipe.clone(),
+            recipe,
             revision: 1,
             max_edge: 512,
             region: None,
             interactive: false,
         })
     };
+    let render = |editor: &Editor, session: &x3fuse_app::editor::EditorSession| {
+        render_recipe(editor, session, session.recipe.clone())
+    };
     let editor = Arc::new(Editor::new(edits.clone()));
     let session = editor.open(input.clone()).unwrap();
     let status = session.x3i.clone().expect("X3I status");
     assert!(status.frames > 1 && !status.processed && status.progress.is_none());
     // The editor does not merge on its own.
+    let merge_recipe = x3f_render::EditRecipe {
+        x3i_source: x3f_core::X3iSource::Merge,
+        ..session.recipe.clone()
+    };
     let started = Instant::now();
-    assert!(render(&editor, &session).is_err());
+    assert!(render_recipe(&editor, &session, merge_recipe.clone()).is_err());
     assert!(started.elapsed() < Duration::from_secs(5));
 
     let status = || editor.x3i_status(&input, &session.recipe).unwrap().unwrap();
+    // A photo opens with its middle exposure, which renders without a merge.
+    assert_eq!(
+        session.recipe.x3i_source,
+        x3f_core::X3iSource::MiddleExposure
+    );
+    let started = Instant::now();
+    let preview = serde_json::to_value(render(&editor, &session).unwrap()).unwrap();
+    assert!(preview["sourceWidth"].as_u64().unwrap() > 512);
+    let single = started.elapsed();
+    eprintln!("Middle exposure: {single:?}");
+    assert!(!status().processed);
     // Starts a merge and waits until it reports progress.
     let merge = || {
         let (editor, input, recipe) = (editor.clone(), input.clone(), session.recipe.clone());
@@ -96,7 +116,12 @@ fn x3i_reads_metadata_and_opens_quickly_after_the_first_merge() {
     let editor = Editor::new(edits.clone());
     let session = editor.open(input.clone()).unwrap();
     assert!(session.x3i.as_ref().unwrap().processed);
-    let preview = serde_json::to_value(render(&editor, &session).unwrap()).unwrap();
+    let merge_recipe = x3f_render::EditRecipe {
+        x3i_source: x3f_core::X3iSource::Merge,
+        ..session.recipe.clone()
+    };
+    let preview =
+        serde_json::to_value(render_recipe(&editor, &session, merge_recipe).unwrap()).unwrap();
     assert!(preview["sourceWidth"].as_u64().unwrap() > 512);
     let second = started.elapsed();
     eprintln!(
@@ -104,4 +129,8 @@ fn x3i_reads_metadata_and_opens_quickly_after_the_first_merge() {
         session.as_shot_camera_profile
     );
     assert!(second * 4 < first, "merge {first:?}, cached {second:?}");
+    assert!(
+        single * 2 < first,
+        "merge {first:?}, middle exposure {single:?}"
+    );
 }

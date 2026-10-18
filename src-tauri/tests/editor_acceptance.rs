@@ -320,7 +320,7 @@ fn real_editor_preview_persistence_exports_and_cancellation() {
                 )
                 .unwrap();
             runtime
-                .block_on(exif.copy_rendered_tags(&input, &output, &cancel))
+                .block_on(exif.copy_rendered_tags(&input, Default::default(), &output, &cancel))
                 .unwrap();
             let output_tags = tags(&output);
             assert_eq!(output_tags["ImageWidth"], edited_preview["fullWidth"]);

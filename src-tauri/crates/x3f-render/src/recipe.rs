@@ -37,6 +37,14 @@ pub struct EditRecipe {
     pub monochrome: Option<MonochromeSettings>,
     pub film: Option<FilmSettings>,
     pub seed: u32,
+    /// The frames of an X3I that the editor uses: by default the middle
+    /// exposure, which needs no merge. X3F files ignore it. The default is not
+    /// written, so other recipes stay as they were.
+    #[serde(skip_serializing_if = "is_middle_exposure")]
+    pub x3i_source: x3f_core::X3iSource,
+}
+fn is_middle_exposure(source: &x3f_core::X3iSource) -> bool {
+    *source == x3f_core::X3iSource::MiddleExposure
 }
 impl Default for EditRecipe {
     fn default() -> Self {
@@ -67,6 +75,7 @@ impl Default for EditRecipe {
             monochrome: None,
             film: Some(FilmSettings::default()),
             seed: 0,
+            x3i_source: x3f_core::X3iSource::MiddleExposure,
         }
     }
 }

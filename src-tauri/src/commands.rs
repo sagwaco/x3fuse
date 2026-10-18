@@ -665,6 +665,22 @@ pub async fn editor_x3i_process(
         .map_err(|e| e.to_string())?
 }
 
+/// Removes the merged image of an X3I from the cache.
+#[tauri::command]
+pub async fn editor_x3i_delete(
+    window: WebviewWindow,
+    state: State<'_, Arc<AppState>>,
+    payload: X3iRequest,
+) -> Result<(), String> {
+    main_window(&window)?;
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        state.editor.x3i_delete(&payload.path, &payload.recipe)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 pub async fn editor_x3i_cancel(
     window: WebviewWindow,

@@ -133,6 +133,8 @@ export interface IpcRequestMap {
   /** Resolves when the merge ends. */
   'editor:x3iProcess': { payload: { path: string; recipe: EditRecipe }; result: void }
   'editor:x3iCancel': { payload: { path: string }; result: void }
+  /** Removes the cached merged image. */
+  'editor:x3iDelete': { payload: { path: string; recipe: EditRecipe }; result: void }
   'settings:get': { payload: void; result: ConversionSettings }
   'settings:set': { payload: Partial<ConversionSettings>; result: ConversionSettings }
 
@@ -227,6 +229,7 @@ export const IPC_REQUEST_CHANNELS: IpcRequestChannel[] = [
   'editor:x3iStatus',
   'editor:x3iProcess',
   'editor:x3iCancel',
+  'editor:x3iDelete',
   'settings:get',
   'settings:set',
   'queue:add',
