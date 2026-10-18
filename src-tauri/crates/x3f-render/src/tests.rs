@@ -526,21 +526,32 @@ fn gpu_color_wheels() {
     for (i, pixel) in source.data.as_chunks_mut::<3>().0.iter_mut().enumerate() {
         pixel.fill([0.0167, 0.105, 0.45][i % 96 / 32]);
     }
-    // The display RGB (0..1) at the center of each patch.
-    let render = |wheels: ColorWheels| -> [[f32; 3]; 3] {
-        let recipe = EditRecipe {
-            film: None,
-            wheels,
-            ..Default::default()
-        };
+    // A ramp from black to white, finer than 0.001 in display value.
+    let mut ramp = image(1024, 2);
+    for (i, pixel) in ramp.data.as_chunks_mut::<3>().0.iter_mut().enumerate() {
+        pixel.fill(0.005 * 200f32.powf((i % 1024) as f32 / 1023.));
+    }
+    // Display RGB (0..1) for every pixel.
+    let pixels = |source: &SceneLinearImage, recipe: &EditRecipe| -> Vec<[f32; 3]> {
         let data = renderer
-            .render(&source, &recipe, RenderOptions::default(), &cancel)
+            .render(source, recipe, RenderOptions::default(), &cancel)
             .unwrap()
             .data;
-        std::array::from_fn(|patch| {
-            let at = (16 * 96 + 16 + 32 * patch) * 3;
-            std::array::from_fn(|c| f32::from(data[at + c]) / 65535.)
-        })
+        data.as_chunks::<3>()
+            .0
+            .iter()
+            .map(|p| p.map(|v| f32::from(v) / 65535.))
+            .collect()
+    };
+    let color = |wheels| EditRecipe {
+        film: None,
+        wheels,
+        ..Default::default()
+    };
+    // The display RGB at the center of each patch.
+    let render = |wheels: ColorWheels| -> [[f32; 3]; 3] {
+        let data = pixels(&source, &color(wheels));
+        std::array::from_fn(|patch| data[16 * 96 + 16 + 32 * patch])
     };
     let luma = |c: [f32; 3]| 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
     let toward_red = |c: [f32; 3], b: [f32; 3]| c[0] > b[0] + 0.005 && c[2] < b[2] - 0.002;
@@ -618,6 +629,80 @@ fn gpu_color_wheels() {
         ..Default::default()
     });
     assert!(luma(brighter[1]) > lumas[1] + 0.05, "{brighter:?} {base:?}");
+    // Blending 0 is a hard split. On the ramp, each pixel gets all of the
+    // zone's tint or none of it, also immediately next to the borders at
+    // display luma 1/3 (shadows, red) and 2/3 (highlights, blue).
+    let base_ramp = pixels(&ramp, &color(ColorWheels::default()));
+    for (border, wheels, c) in [
+        (1. / 3., ColorWheels { shadows: red, ..hard }, 0),
+        (
+            2. / 3.,
+            ColorWheels {
+                highlights: blue,
+                ..hard
+            },
+            2,
+        ),
+    ] {
+        let tinted = pixels(&ramp, &color(wheels));
+        let mut sides = [false; 2];
+        for (b, t) in base_ramp.iter().zip(&tinted).take(1024) {
+            let l = luma(*b);
+            // 16-bit output cannot tell these from the border.
+            if (l - border).abs() < 1e-4 {
+                continue;
+            }
+            let near = (l - border).abs() < 0.003;
+            sides[usize::from(l > border)] |= near;
+            let inside = if c == 0 { l < border } else { l > border };
+            if !inside {
+                assert_eq!(t, b, "luma {l} is outside the zone of {border}");
+            } else if t[c] < 0.999 {
+                assert!((t[c] - b[c] - 0.1).abs() < 0.002, "luma {l}: {t:?} {b:?}");
+            } else {
+                assert!(t[c] > b[c]);
+            }
+        }
+        assert_eq!(sides, [true, true], "no ramp pixels next to {border}");
+    }
+    // A B&W output gets the luminance gains but no tint: its chroma would go
+    // and its change in luminance would stay.
+    let lift = Wheel {
+        luminance: 40.,
+        ..Default::default()
+    };
+    let tint = Wheel { x: 1., ..lift };
+    let bw_film = FilmSettings {
+        grain_params: None,
+        halation_params: None,
+        film: 20,
+        paper: 8,
+        couplers: 0.,
+        grain: false,
+        ..Default::default()
+    };
+    for recipe in [
+        EditRecipe {
+            film: None,
+            monochrome: Some(MonochromeSettings::default()),
+            ..Default::default()
+        },
+        EditRecipe {
+            film: Some(bw_film),
+            ..Default::default()
+        },
+    ] {
+        let graded = |midtones| EditRecipe {
+            wheels: ColorWheels {
+                midtones,
+                ..Default::default()
+            },
+            ..recipe.clone()
+        };
+        let lifted = pixels(&source, &graded(lift));
+        assert_eq!(pixels(&source, &graded(tint)), lifted);
+        assert_ne!(lifted, pixels(&source, &recipe));
+    }
 }
 
 #[test]
@@ -1191,7 +1276,7 @@ fn spektrafilm_license_ships_unmodified() {
     for (shader, expected) in [
         (
             include_bytes!("render.wgsl").as_slice(),
-            "c9d7ceb906d2078c11f41ea6b559cfd4a122a782f764dbeb82dcab2ffb9dabd0",
+            "aeff6798665d3471af2b322ef2ba37282a5475d9d2e346d77389a89666641b2b",
         ),
         (
             include_bytes!("gamut.wgsl").as_slice(),

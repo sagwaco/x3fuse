@@ -1627,11 +1627,12 @@ impl Renderer {
         // only for colour film or no film. Both neutralize the output.
         let silver = r.film.is_some() && pair.is_some_and(|pair| pair.monochrome);
         let sensor_mix = r.monochrome.filter(|_| !silver);
+        let neutral = r.monochrome.is_some() || silver;
         p[1] = [
             g.scale,
             o.color_profile.index(),
             f32::from(r.film.is_some()),
-            f32::from(r.monochrome.is_some() || silver),
+            f32::from(neutral),
         ];
         p[2] = [
             r.exposure,
@@ -1668,25 +1669,29 @@ impl Renderer {
             ];
         }
         // Color wheels: rows 56..58 hold each zone's RGB offset and log2 gain;
-        // row 59 the two zone borders, the ramp half-width and an on flag.
-        // Zero wheels leave the flag off, so `finish` skips the grade.
+        // row 59 the two zone borders, the ramp half-width (zero is a hard
+        // split) and an on flag. Without an offset or gain the flag stays off,
+        // so `finish` skips the grade.
         let w = &r.wheels;
-        let zones = [w.shadows, w.midtones, w.highlights];
-        if zones != [Wheel::default(); 3] {
-            for (row, wheel) in zones.into_iter().enumerate() {
+        for (row, wheel) in [w.shadows, w.midtones, w.highlights].into_iter().enumerate() {
+            // A B&W output loses the tint's chroma but would keep its change
+            // in luminance, so it gets no tint.
+            if !neutral {
                 // The dot on a hue wheel with red at 0°, green at 120° and blue
                 // at 240°. 0.1 at the rim is a strong tint that rarely clips.
                 for (c, hue) in [0f32, 120., 240.].into_iter().enumerate() {
                     let (sin, cos) = hue.to_radians().sin_cos();
                     p[56 + row][c] = 0.1 * (wheel.x * cos + wheel.y * sin);
                 }
-                p[56 + row][3] = wheel.luminance / 100.;
             }
+            p[56 + row][3] = wheel.luminance / 100.;
+        }
+        if p[56..59].iter().flatten().any(|&v| v != 0.) {
             let shift = -0.2 * w.balance / 100.;
             p[59] = [
                 1. / 3. + shift,
                 2. / 3. + shift,
-                0.005 + 0.3 * w.blending / 100.,
+                0.3 * w.blending / 100.,
                 1.,
             ];
         }
