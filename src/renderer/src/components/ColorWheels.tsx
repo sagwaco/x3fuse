@@ -1,5 +1,4 @@
 import { useCallback, useContext, useEffect, useId, useRef, useState } from 'react'
-import { RotateCcw } from 'lucide-react'
 import {
   DEFAULT_WHEELS,
   monochromeFilm,
@@ -16,7 +15,7 @@ import { invalidateNativeMenu, showNativeMenu } from '../lib/nativeMenu'
 import { t } from '../lib/strings'
 import { Slider } from './ui/slider'
 import { cn } from '../lib/cn'
-import { Adjustment } from './EditorControls'
+import { Adjustment, ResetLabel } from './EditorControls'
 
 type Zone = 'shadows' | 'midtones' | 'highlights'
 const ZONE_LABELS: Record<Zone, string> = {
@@ -30,6 +29,8 @@ const DISC = [
   'radial-gradient(closest-side, #fff, rgb(255 255 255 / 0))',
   `conic-gradient(from 90deg, ${[0, 300, 240, 180, 120, 60, 0].map((h) => `hsl(${h} 90% 55%)`).join(', ')})`
 ].join(', ')
+/** The width of a knob box (.wheel-knob in index.css), in pixels. */
+const KNOB_BOX = 28
 /** A wheel that the context menu copied, for this session. */
 let copied: Wheel | null = null
 
@@ -112,9 +113,6 @@ export function ColorWheels({ recipe }: { recipe: EditRecipe }): React.JSX.Eleme
   )
 }
 
-const KNOB =
-  "absolute -translate-x-1/2 -translate-y-1/2 rounded-full before:absolute before:-inset-1.5 before:content-['']"
-
 function WheelControl({
   label,
   value,
@@ -136,6 +134,8 @@ function WheelControl({
 }): React.JSX.Element {
   // The drag of the pointer that pressed first. Other pointers do nothing until it lets go.
   const drag = useRef<WheelDrag | null>(null)
+  // The knob that a drag moves. It stays glass until the drag ends.
+  const [active, setActive] = useState<'inner' | 'outer' | null>(null)
   const [guide, setGuide] = useState<number | null>(null)
   const description = useId()
   const off = disabled || colorless
@@ -173,6 +173,7 @@ function WheelControl({
   }
   const end = useCallback((): void => {
     setGuide(null)
+    setActive(null)
     if (drag.current === null) return
     drag.current = null
     commit()
@@ -182,31 +183,72 @@ function WheelControl({
   }
   // A drag also ends when the wheel turns off or unmounts.
   useEffect(() => end, [off, end])
-  // At high strength the knobs overlap. Then a press outside the rim takes the outer one.
+  // The knob boxes overlap at high strength. Where a press is in both, the nearer knob
+  // takes it, and where the knobs are at the same place, outside the rim is the outer one.
   const knob = (event: React.MouseEvent<HTMLElement>): string | undefined => {
     const pressed = (event.target as Element).closest('[data-knob]')?.getAttribute('data-knob')
-    if (!pressed || saturation < 0.8) return pressed ?? undefined
-    return Math.hypot(...point(event)) >= 1 ? 'outer' : 'inner'
+    if (!pressed) return undefined
+    const p = point(event)
+    const reach = KNOB_BOX / event.currentTarget.getBoundingClientRect().width
+    const away = (r: number): number =>
+      Math.hypot(p[0] - r * Math.cos(hue), p[1] - r * Math.sin(hue))
+    const [inner, outer] = [away(saturation), away(1)]
+    if (inner > reach || outer > reach) return pressed
+    if (Math.abs(inner - outer) > 1e-3) return inner < outer ? 'inner' : 'outer'
+    return Math.hypot(...p) >= 1 ? 'outer' : 'inner'
   }
-  const rim = (r: number, angle: number): React.CSSProperties => ({
-    left: `${(1 + r * Math.cos(angle)) * 50}%`,
-    top: `${(1 - r * Math.sin(angle)) * 50}%`
-  })
   const degrees = Math.round(((hue * 180) / Math.PI + 360) % 360)
+  // A knob at `r` from the center, on the hue. Its face is a dot that turns into liquid
+  // glass on hover and while dragged (see .wheel-knob in index.css).
+  const knobAt = (which: 'inner' | 'outer', r: number, dot?: string): React.JSX.Element => {
+    const kx = (1 + r * Math.cos(hue)) / 2
+    const ky = (1 - r * Math.sin(hue)) / 2
+    return (
+      <span
+        aria-hidden="true"
+        data-knob={which}
+        data-active={active === which || undefined}
+        className={cn('wheel-knob', off && 'pointer-events-none')}
+        style={
+          {
+            left: `${kx * 100}%`,
+            top: `${ky * 100}%`,
+            '--kx': kx,
+            '--ky': ky
+          } as React.CSSProperties
+        }
+      >
+        <span
+          className={cn('wheel-knob-face', which === 'outer' && 'wheel-knob-outer')}
+          style={dot ? ({ '--dot': dot } as React.CSSProperties) : undefined}
+        >
+          <span className="wheel-knob-lens" />
+        </span>
+      </span>
+    )
+  }
   return (
     <div className="space-y-2">
-      <p className={cn('control-label text-center', disabled && 'opacity-40')}>{label}</p>
+      {/* Shift-click on the name resets the wheel: its color and its luminance. */}
+      <p className={cn('group/reset flex justify-center', disabled && 'opacity-40')}>
+        <ResetLabel
+          label={label}
+          disabled={disabled}
+          reset={() => change({ x: 0, y: 0, luminance: 0 }, true)}
+        />
+      </p>
       <div className={cn('flex justify-center', off && 'opacity-40')}>
         <div
           role="application"
           aria-roledescription={t('editor.colorWheel')}
-          tabIndex={off ? -1 : 0}
+          // In a B&W look the wheel keeps focus for its reset keys and its menu.
+          tabIndex={disabled ? -1 : 0}
           aria-label={label}
           aria-describedby={description}
           aria-disabled={off || undefined}
           aria-keyshortcuts="ArrowLeft ArrowRight ArrowUp ArrowDown Delete Shift+Delete"
-          className="relative aspect-square w-full max-w-[80px] touch-none rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/60"
-          style={{ background: DISC }}
+          className="relative aspect-square w-full max-w-[90px] touch-none rounded-full [container-type:inline-size] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/60"
+          style={{ background: DISC, '--disc': DISC } as React.CSSProperties}
           onPointerDown={(event) => {
             // Only a primary press drags. Control-click is a secondary click on macOS.
             if (off || drag.current || event.button !== 0 || (mac && event.ctrlKey)) return
@@ -214,6 +256,7 @@ function WheelControl({
             event.currentTarget.focus()
             const p = point(event)
             const pressed = knob(event)
+            setActive(pressed === 'outer' ? 'outer' : 'inner')
             // A press on a knob grabs it where it is. A press elsewhere moves the inner
             // knob to the pointer. A press on the inner knob keeps its hue until the
             // pointer leaves the hue line, except in fine adjust.
@@ -250,7 +293,7 @@ function WheelControl({
             if (!disabled) menu(event.clientX, event.clientY)
           }}
           onKeyDown={(event) => {
-            if (off) return
+            if (disabled) return
             if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
               event.preventDefault()
               const box = event.currentTarget.getBoundingClientRect()
@@ -267,7 +310,7 @@ function WheelControl({
                 ArrowUp: [0, big ? 0.1 : 0.02],
                 ArrowDown: [0, big ? -0.1 : -0.02]
               }[event.key] ?? []
-            if (turn !== undefined) {
+            if (turn !== undefined && !colorless) {
               event.preventDefault()
               const next = hue + (turn * Math.PI) / 180
               set({ ...polar(Math.max(0, Math.min(1, saturation + more)), next), hue: next }, true)
@@ -289,49 +332,20 @@ function WheelControl({
             />
           )}
           {/* The outer knob shows the hue on the rim, in its color. */}
-          <span
-            aria-hidden="true"
-            data-knob="outer"
-            className={cn(KNOB, 'h-2.5 w-2.5 shadow-[0_0_0_2px_#fff,0_0_0_3px_rgb(0_0_0/0.5)]')}
-            style={{ ...rim(1, hue), background: `hsl(${degrees} 90% 55%)` }}
-          />
-          {/* The inner knob is hollow, so the color under it shows. */}
-          <span
-            aria-hidden="true"
-            data-knob="inner"
-            className={cn(
-              KNOB,
-              'h-3 w-3 border-2 border-white shadow-[0_0_0_1px_rgb(0_0_0/0.6),inset_0_0_0_1px_rgb(0_0_0/0.6)]'
-            )}
-            style={rim(saturation, hue)}
-          />
+          {knobAt('outer', 1, `hsl(${degrees} 90% 55%)`)}
+          {knobAt('inner', saturation)}
         </div>
       </div>
-      {/* The button resets the whole wheel: its color and its luminance. */}
-      <div className="flex items-center gap-1.5">
-        <div className="min-w-0 flex-1">
-          <Slider
-            aria-label={`${label} ${t('editor.luminance')}`}
-            disabled={disabled}
-            value={value.luminance}
-            min={-100}
-            max={100}
-            onValueChange={(luminance) => change({ ...value, luminance }, false)}
-            onValueCommit={commit}
-            onReset={() => change({ ...value, luminance: 0 }, true)}
-          />
-        </div>
-        <button
-          type="button"
-          disabled={disabled}
-          aria-label={`${t('editor.resetWheel')}: ${label}`}
-          title={t('editor.resetWheel')}
-          className="shrink-0 rounded text-tone-500 hover:text-tone-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/60 disabled:opacity-40"
-          onClick={() => change({ x: 0, y: 0, luminance: 0 }, true)}
-        >
-          <RotateCcw aria-hidden="true" className="h-3 w-3" />
-        </button>
-      </div>
+      <Slider
+        aria-label={`${label} ${t('editor.luminance')}`}
+        disabled={disabled}
+        value={value.luminance}
+        min={-100}
+        max={100}
+        onValueChange={(luminance) => change({ ...value, luminance }, false)}
+        onValueCommit={commit}
+        onReset={() => change({ ...value, luminance: 0 }, true)}
+      />
     </div>
   )
 }

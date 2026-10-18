@@ -29,6 +29,9 @@ class TestPointerEvent extends MouseEvent {
   }
 }
 const wheels = (): EditRecipe['wheels'] => change.mock.lastCall?.[0].wheels
+/** The name above a wheel. Shift-click on it resets the wheel. */
+const label = (name: string): HTMLElement =>
+  screen.getByText(t(`editor.${name}`), { selector: '.control-label > span' })
 /** The wheel's disc, laid out as a 100 px square at the origin. */
 function disc(name: string): HTMLElement {
   const element = screen.getByRole('application', { name: t(`editor.${name}`) })
@@ -89,9 +92,7 @@ it('drags the Midtones dot inside the disc, commits on release and resets it', (
   fireEvent.pointerUp(midtones, { pointerId: 1 })
   expect(commit).toHaveBeenCalledTimes(1)
   expect(screen.getByText(/°, 100%$/)).toBeTruthy()
-  fireEvent.click(
-    screen.getByRole('button', { name: `${t('editor.resetWheel')}: ${t('editor.midtones')}` })
-  )
+  fireEvent.click(label('midtones'), { shiftKey: true })
   expect(wheels()!.midtones).toEqual({ x: 0, y: 0, luminance: 0 })
   expect(wheels()!.shadows).toEqual(DEFAULT_WHEELS.shadows)
 })
@@ -114,7 +115,7 @@ it('keeps the hue with Shift, so a drag changes only the strength', () => {
   fireEvent.pointerUp(midtones, { pointerId: 1 })
 })
 
-it('resets the color and the luminance of a wheel with its button', () => {
+it('resets the color and the luminance of a wheel with Shift-click on its name', () => {
   render(<Wheels />)
   fireEvent.pointerDown(disc('shadows'), { clientX: 80, clientY: 30, pointerId: 1, button: 0 })
   fireEvent.pointerUp(disc('shadows'), { pointerId: 1 })
@@ -123,9 +124,11 @@ it('resets the color and the luminance of a wheel with its button', () => {
     { key: 'ArrowRight' }
   )
   expect(wheels()!.shadows.luminance).not.toBe(0)
-  fireEvent.click(
-    screen.getByRole('button', { name: `${t('editor.resetWheel')}: ${t('editor.shadows')}` })
-  )
+  // A click without Shift does nothing.
+  const before = wheels()!.shadows
+  fireEvent.click(label('shadows'))
+  expect(wheels()!.shadows).toEqual(before)
+  fireEvent.click(label('shadows'), { shiftKey: true })
   expect(wheels()!.shadows).toEqual({ x: 0, y: 0, luminance: 0 })
 })
 
@@ -162,7 +165,11 @@ it('turns only the hue with the outer knob, and keeps the hue at zero strength',
   fireEvent.pointerDown(knob('midtones', 'outer'), { clientX: 100, clientY: 50, pointerId: 1 })
   fireEvent.pointerMove(midtones, { clientX: 50, clientY: 0, pointerId: 1 })
   expect(wheels()!.midtones).toMatchObject({ x: 0, y: 0.5 })
+  // The dragged knob stays glass until the drag ends.
+  expect(knob('midtones', 'outer').hasAttribute('data-active')).toBe(true)
+  expect(knob('midtones', 'inner').hasAttribute('data-active')).toBe(false)
   fireEvent.pointerUp(midtones, { pointerId: 1 })
+  expect(knob('midtones', 'outer').hasAttribute('data-active')).toBe(false)
   // A double-click on the inner knob resets the strength, and the hue stays.
   fireEvent.doubleClick(knob('midtones', 'inner'))
   expect(wheels()!.midtones).toMatchObject({ x: 0, y: 0 })
@@ -201,6 +208,21 @@ it('takes the outer knob outside the rim where the knobs overlap', () => {
   fireEvent.pointerDown(knob('midtones', 'outer'), { clientX: 50, clientY: 3, pointerId: 1 })
   fireEvent.pointerMove(midtones, { clientX: 52, clientY: 28, pointerId: 1 })
   expect(wheels()!.midtones).toMatchObject({ x: 0, y: 0.5 })
+  fireEvent.pointerUp(midtones, { pointerId: 1 })
+})
+
+it('gives a press in both knob boxes to the nearer knob', () => {
+  render(<Wheels />)
+  const midtones = disc('midtones')
+  // At 75%, the outer knob is 12.5 px from the inner one, inside its 28 px box.
+  fireEvent.pointerDown(midtones, { clientX: 87.5, clientY: 50, pointerId: 1, button: 0 })
+  fireEvent.pointerUp(midtones, { pointerId: 1 })
+  fireEvent.pointerDown(knob('midtones', 'inner'), { clientX: 99, clientY: 50, pointerId: 1 })
+  // The outer knob turns the hue to about 90° and keeps the strength.
+  fireEvent.pointerMove(midtones, { clientX: 50, clientY: 1, pointerId: 1 })
+  const { x, y } = wheels()!.midtones
+  expect(Math.atan2(y, x)).toBeCloseTo(Math.PI / 2, 1)
+  expect(Math.hypot(x, y)).toBeCloseTo(0.75, 3)
   fireEvent.pointerUp(midtones, { pointerId: 1 })
 })
 
@@ -331,6 +353,8 @@ it('turns off only the hue discs for black-and-white looks', () => {
   ]) {
     const view = render(<Wheels initial={initial} />)
     expect(disc('highlights').getAttribute('aria-disabled')).toBe('true')
+    // The wheel keeps focus for its reset keys.
+    expect(disc('highlights').tabIndex).toBe(0)
     fireEvent.keyDown(disc('highlights'), { key: 'ArrowLeft' })
     fireEvent.pointerDown(disc('highlights'), { clientX: 10, clientY: 10, pointerId: 1 })
     expect(change).not.toHaveBeenCalled()
