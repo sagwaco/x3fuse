@@ -39,6 +39,7 @@
   "settings.cache.limit": "大小上限",
   "settings.cache.used": "已用空间",
   "settings.cache.clear": "清除缓存",
+  "settings.cache.clear_failed": "无法清除缓存。",
   "settings.save_alongside_original": "与原始文件并排保存",
   "settings.save_alongside_original.help": "启用后，导出后的文件将与原始文件保存在一起。",
   "settings.save_alongside_original.description": "禁用以选择自定义输出目录。",

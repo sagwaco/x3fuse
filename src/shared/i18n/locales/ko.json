@@ -39,6 +39,7 @@
   "settings.cache.limit": "크기 제한",
   "settings.cache.used": "사용량",
   "settings.cache.clear": "캐시 지우기",
+  "settings.cache.clear_failed": "캐시를 지울 수 없습니다.",
   "settings.save_alongside_original": "원본 파일과 함께 저장",
   "settings.save_alongside_original.help": "활성화하면 내보낸 파일이 원본 파일과 같은 위치에 저장됩니다.",
   "settings.save_alongside_original.description": "사용자 지정 출력 디렉토리를 선택하려면 비활성화하세요.",

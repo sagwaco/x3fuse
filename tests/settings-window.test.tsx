@@ -146,6 +146,21 @@ describe('Cache tab', () => {
     await screen.findByText('0 bytes')
     expect(invoke).toHaveBeenCalledWith('cache:clear')
     expect(sizeRequests()).toBe(before + 1)
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('shows an error when Clear fails, and hides it on the next try', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const before = sizeRequests()
+    invoke.mockRejectedValueOnce(new Error('Permission denied'))
+    const clear = screen.getByRole('button', { name: t('settings.cache.clear') })
+    fireEvent.click(clear)
+    expect((await screen.findByRole('alert')).textContent).toBe(t('settings.cache.clear_failed'))
+    expect(error).toHaveBeenCalled()
+    await waitFor(() => expect(sizeRequests()).toBe(before + 1))
+    fireEvent.click(clear)
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
+    error.mockRestore()
   })
 
   it('writes the switch and the limit, and refreshes the size after a new limit', async () => {

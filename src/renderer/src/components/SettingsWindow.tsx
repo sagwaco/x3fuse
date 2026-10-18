@@ -296,6 +296,7 @@ function CachePage(): React.JSX.Element {
   const settings = useSettingsStore((s) => s.settings)
   const update = useSettingsStore((s) => s.update)
   const [used, setUsed] = useState<number | null>(null)
+  const [clearFailed, setClearFailed] = useState(false)
   const refresh = (): void => {
     void ipc.invoke('cache:size').then(setUsed, console.error)
   }
@@ -331,11 +332,25 @@ function CachePage(): React.JSX.Element {
         <Button
           variant="bordered"
           size="sm"
-          onClick={() => void ipc.invoke('cache:clear').catch(console.error).then(refresh)}
+          onClick={() => {
+            setClearFailed(false)
+            void ipc
+              .invoke('cache:clear')
+              .catch((error: unknown) => {
+                console.error('Could not clear the preview cache', error)
+                setClearFailed(true)
+              })
+              .then(refresh)
+          }}
         >
           {t('settings.cache.clear')}
         </Button>
       </Row>
+      {clearFailed && (
+        <p role="alert" className="text-xs text-danger">
+          {t('settings.cache.clear_failed')}
+        </p>
+      )}
     </Section>
   )
 }

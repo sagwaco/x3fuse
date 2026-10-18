@@ -39,6 +39,7 @@
   "settings.cache.limit": "Tamaño máximo",
   "settings.cache.used": "En uso",
   "settings.cache.clear": "Vaciar caché",
+  "settings.cache.clear_failed": "No se pudo vaciar la caché.",
   "settings.save_alongside_original": "Guardar junto al archivo original",
   "settings.save_alongside_original.help": "Si está activado, los archivos exportados se guardarán junto a los archivos originales.",
   "settings.save_alongside_original.description": "Desactívalo para elegir un directorio de salida personalizado.",

@@ -39,6 +39,7 @@
   "settings.cache.limit": "Size limit",
   "settings.cache.used": "Used",
   "settings.cache.clear": "Clear cache",
+  "settings.cache.clear_failed": "Could not clear the cache.",
   "settings.save_alongside_original": "Save alongside original file",
   "settings.save_alongside_original.help": "When enabled, exported files will be saved alongside the original files.",
   "settings.save_alongside_original.description": "Disable to choose a custom output directory.",
