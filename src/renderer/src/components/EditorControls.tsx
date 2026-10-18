@@ -561,6 +561,7 @@ export const EditorControls = memo(function EditorControls({
                 {control('denoise', { min: 0, max: 10, help: t('editor.denoiseHelp') })}
                 {recipe.denoise > 0 && (
                   <DenoiseControls
+                    storageId="denoiseAdvanced"
                     value={recipe.denoiseOptions}
                     change={(denoiseOptions, committed) => change({ denoiseOptions }, committed)}
                     commit={commit}

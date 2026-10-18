@@ -11,7 +11,9 @@ import {
   pasteRecipe,
   type EditRecipe
 } from '@shared/editor'
+import { defaultDenoiseOptions } from '@shared/denoise'
 import { EditorControls, EmulsionControls } from '../src/renderer/src/components/EditorControls'
+import { DenoiseControls } from '../src/renderer/src/components/DenoiseControls'
 import { LookPicker } from '../src/renderer/src/components/LookPicker'
 import { CropControls } from '../src/renderer/src/components/CropControls'
 import { CropPreview } from '../src/renderer/src/components/CropPreview'
@@ -246,33 +248,53 @@ it('supports arrow keys between the panel tabs and shows only the film button wi
   expect(change).not.toHaveBeenCalled()
 })
 
-it('opens every section until it is closed, and keeps a closed section closed', async () => {
-  const section = (key: string): HTMLDetailsElement =>
-    screen.getByText(t(`editor.${key}`), { selector: 'summary' }).closest('details')!
-  const raw = ['light', 'curves', 'whiteBalance', 'detail']
+it('opens every section until it is closed, and keeps closed sections closed', async () => {
+  const details = (label: string): HTMLDetailsElement =>
+    screen.getByText(label, { selector: 'summary' }).closest('details')!
+  const advanced = t('denoise.advanced')
+  const raw = [
+    ...['light', 'curves', 'whiteBalance', 'detail'].map((key) => t(`editor.${key}`)),
+    advanced
+  ]
+  const open = (): boolean[] => raw.map((label) => details(label).open)
   render(<Controls />)
-  expect(raw.map((key) => section(key).open)).toEqual([true, true, true, true])
-  fireEvent.click(screen.getByText(t('editor.curves'), { selector: 'summary' }))
-  await waitFor(() => expect(localStorage.getItem('x3fuse.sections')).toBe('{"curves":false}'))
+  expect(open()).toEqual([true, true, true, true, true])
+  // Each write keeps the states that the other sections stored.
+  for (const label of [t('editor.curves'), t('editor.detail'), advanced])
+    fireEvent.click(screen.getByText(label, { selector: 'summary' }))
+  await waitFor(() =>
+    expect(JSON.parse(localStorage.getItem('x3fuse.sections')!)).toEqual({
+      curves: false,
+      detail: false,
+      denoiseAdvanced: false
+    })
+  )
   cleanup()
   render(<Controls />)
-  expect(raw.map((key) => section(key).open)).toEqual([true, false, true, true])
+  expect(open()).toEqual([true, false, true, false, false])
   panelTab('film')
-  expect(section('look').open && section('effects').open).toBe(true)
+  expect(details(t('editor.look')).open && details(t('editor.effects')).open).toBe(true)
   panelTab('raw')
-  expect(section('curves').open).toBe(false)
+  expect(open()).toEqual([true, false, true, false, false])
   // A fresh storage, or one that fails, opens every section.
   cleanup()
   localStorage.clear()
   render(<Controls />)
-  expect(section('curves').open).toBe(true)
+  expect(open()).toEqual([true, true, true, true, true])
   const failing = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
     throw new Error('denied')
   })
   cleanup()
   render(<Controls />)
-  expect(raw.map((key) => section(key).open)).toEqual([true, true, true, true])
+  expect(open()).toEqual([true, true, true, true, true])
   failing.mockRestore()
+  // Without a storage id, as in the conversion form, Advanced starts closed and stores nothing.
+  cleanup()
+  render(<DenoiseControls value={defaultDenoiseOptions()} change={vi.fn()} />)
+  expect(details(advanced).open).toBe(false)
+  fireEvent.click(screen.getByText(advanced, { selector: 'summary' }))
+  await waitFor(() => expect(details(advanced).open).toBe(true))
+  expect(localStorage.getItem('x3fuse.sections')).toBeNull()
 })
 
 it('binds Exposure to the film when a stock is chosen and to the digital pipeline for Standard', () => {

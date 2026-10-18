@@ -12,14 +12,19 @@ function stored(): Record<string, boolean> {
   }
 }
 
-/** The open state of a section. It is read at mount and is open when nothing is stored. */
-export function useStoredOpen(id: string): [boolean, (open: boolean) => void] {
-  const [open, setOpen] = useState(() => stored()[id] ?? true)
+/**
+ * The open state of a section. It is read at mount and is open when nothing is stored.
+ * Without an id, the section starts closed and nothing is stored.
+ */
+export function useStoredOpen(id?: string): [boolean, (open: boolean) => void] {
+  const [open, setOpen] = useState(() => (id ? (stored()[id] ?? true) : false))
   const save = (next: boolean): void => {
     // A section that mounts open also fires a toggle event. It changes nothing.
     if (next === open) return
     setOpen(next)
+    if (!id) return
     try {
+      // Read the map again, so the other sections keep their states.
       localStorage.setItem(KEY, JSON.stringify({ ...stored(), [id]: next }))
     } catch {
       // Without storage, the state lasts until the section unmounts.

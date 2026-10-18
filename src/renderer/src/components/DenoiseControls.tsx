@@ -3,17 +3,22 @@ import { t } from '../lib/strings'
 import { Select } from './ui/select'
 import { Slider } from './ui/slider'
 import { Row, ToggleRow } from './ui/settingsLayout'
+import { useStoredOpen } from '../hooks/useStoredOpen'
 
 /** The same sensor controls are used for conversion and editor preparation. */
 export function DenoiseControls({
   value,
   change,
-  commit
+  commit,
+  storageId
 }: {
   value: DenoiseOptions
   change: (options: DenoiseOptions, commit?: boolean) => void
   commit?: () => void
+  /** Keeps the open state of Advanced, as a section does. Without it, Advanced starts closed. */
+  storageId?: string
 }): React.JSX.Element {
+  const [open, setOpen] = useStoredOpen(storageId)
   const update = (patch: Partial<DenoiseOptions>, committed = true): void =>
     change({ ...value, ...patch }, committed)
   const window = (
@@ -50,7 +55,11 @@ export function DenoiseControls({
       {value.algorithm === 'bm3d' && (
         <p className="text-xs text-tone-500">{t('denoise.bm3dHelp')}</p>
       )}
-      <details className="space-y-3 text-xs text-tone-300">
+      <details
+        open={open}
+        onToggle={(event) => setOpen(event.currentTarget.open)}
+        className="space-y-3 text-xs text-tone-300"
+      >
         <summary className="control-label cursor-pointer select-none font-bold text-tone-400">
           {t('denoise.advanced')}
         </summary>
