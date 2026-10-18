@@ -93,7 +93,7 @@ vi.mock('../src/renderer/src/components/EditorControls', async () => {
       onNavigate
     }: {
       setPicking: (value: boolean) => void
-      onNavigate: (page: 'emulsion') => void
+      onNavigate: (page: 'emulsion' | 'paper') => void
     }) {
       return (
         <>
@@ -102,6 +102,9 @@ vi.mock('../src/renderer/src/components/EditorControls', async () => {
           </button>
           <button data-sidebar-page="emulsion" onClick={() => onNavigate('emulsion')}>
             Choose emulsion
+          </button>
+          <button data-sidebar-page="paper" onClick={() => onNavigate('paper')}>
+            Choose paper
           </button>
         </>
       )
@@ -707,12 +710,10 @@ it('inverts a negative print on request and shows a tiny scope while the scope i
 })
 
 function openPaper(): void {
-  fireEvent.click(screen.getByRole('button', { name: 'Choose emulsion' }))
-  fireEvent.click(screen.getByRole('tab', { name: t('editor.darkroom') }))
-  fireEvent.click(screen.getByText(t('editor.paperStock'), { selector: '[data-sidebar-page] *' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Choose paper' }))
 }
 
-it('returns through the Emulsion stack with focus, tab and scroll restored', () => {
+it('returns from the stock pages with focus and scroll restored', () => {
   const close = vi.fn(async () => true)
   editor.setState({
     session,
@@ -733,33 +734,23 @@ it('returns through the Emulsion stack with focus, tab and scroll restored', () 
   expect(document.activeElement).toBe(back)
   expect(back.closest('.overflow-y-auto')).toBeNull()
   expect(body.scrollTop).toBe(0)
-  fireEvent.click(screen.getByRole('tab', { name: t('editor.darkroom') }))
+  fireEvent.click(screen.getByRole('button', { name: t('editor.backToAdjustments') }))
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Choose emulsion' }))
+  expect(body.scrollTop).toBe(120)
   body.scrollTop = 64
-  const paper = screen
-    .getByText(t('editor.paperStock'), { selector: '[data-sidebar-page] *' })
-    .closest('button')!
+  const paper = screen.getByRole('button', { name: 'Choose paper' })
   fireEvent.click(paper)
   expect(screen.getByRole('heading', { name: t('editor.paperStock') })).toBeTruthy()
   expect(body.scrollTop).toBe(0)
   fireEvent.keyDown(document.body, { key: 'Escape' })
   expect(close).not.toHaveBeenCalled()
-  expect(
-    screen.getByRole('tab', { name: t('editor.darkroom') }).getAttribute('aria-selected')
-  ).toBe('true')
+  expect(screen.getByRole('button', { name: 'Pick white balance' })).toBeTruthy()
   expect(document.activeElement).toBe(paper)
   expect(body.scrollTop).toBe(64)
   fireEvent.click(paper)
-  fireEvent.click(screen.getByRole('button', { name: t('editor.backToEmulsion') }))
-  expect(document.activeElement).toBe(paper)
   fireEvent.click(screen.getByRole('button', { name: t('editor.backToAdjustments') }))
-  expect(screen.getByRole('button', { name: 'Pick white balance' })).toBeTruthy()
-  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Choose emulsion' }))
-  expect(body.scrollTop).toBe(120)
+  expect(document.activeElement).toBe(paper)
   fireEvent.click(screen.getByRole('button', { name: 'Choose emulsion' }))
-  expect(body.scrollTop).toBe(0)
-  expect(
-    screen.getByRole('tab', { name: t('editor.filmStock') }).getAttribute('aria-selected')
-  ).toBe('true')
   fireEvent.keyDown(document.body, { key: 'Escape' })
   expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Choose emulsion' }))
   fireEvent.keyDown(document.body, { key: 'Escape', repeat: true })
@@ -781,7 +772,6 @@ it('returns to adjustments when crop opens or the photo changes', () => {
   act(() => editor.setState({ cropping: false }))
   openPaper()
   act(() => editor.setState({ session: { ...session, sessionId: 'new-session' } }))
-  expect(screen.queryByRole('button', { name: t('editor.backToEmulsion') })).toBeNull()
   expect(screen.queryByRole('button', { name: t('editor.backToAdjustments') })).toBeNull()
 })
 
@@ -824,7 +814,7 @@ it('keeps an X3I zoomable and its SFD RAW toggle usable while it merges, and mor
   expect(body.scrollTop).toBe(0)
 })
 
-it('returns to Emulsion film stocks when undo removes the film from the paper page', () => {
+it('returns to adjustments when undo removes the film from the paper page', () => {
   editor.setState({
     session,
     documents: { [file.path]: doc },
@@ -838,11 +828,5 @@ it('returns to Emulsion film stocks when undo removes the film from the paper pa
     editor.setState({ documents: { [file.path]: { ...doc, recipe: { ...recipe, film: null } } } })
   )
   expect(screen.queryByRole('heading', { name: t('editor.paperStock') })).toBeNull()
-  expect(
-    screen.getByRole('tab', { name: t('editor.filmStock') }).getAttribute('aria-selected')
-  ).toBe('true')
-  expect(
-    (screen.getByRole('tab', { name: t('editor.darkroom') }) as HTMLButtonElement).disabled
-  ).toBe(true)
-  expect(document.activeElement).toBe(screen.getByRole('tab', { name: t('editor.filmStock') }))
+  expect(screen.getByRole('button', { name: 'Pick white balance' })).toBeTruthy()
 })

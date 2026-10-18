@@ -309,6 +309,9 @@
   "editor.negativePreview": "Negative preview",
   "editor.negativePreviewHelp": "Shows the negative inverted, as a positive. Only the view changes; exports keep the negative.",
   "editor.grain": "Grain",
+  "editor.effects": "Effects",
+  "editor.grainLookHelp": "Add film grain to the image.",
+  "editor.halationLookHelp": "Add light scattering and a glow around bright areas, as in film.",
   "editor.halation": "Halation",
   "editor.couplers": "Color separation",
   "editor.gammaFilm": "Film contrast",
@@ -331,6 +334,10 @@
   "editor.neutral": "Neutral",
   "editor.visibleArea": "Visible area",
   "editor.look": "Emulsion",
+  "editor.panels": "Panels",
+  "editor.tabRaw": "RAW",
+  "editor.tabFilm": "FILM",
+  "editor.tabGrading": "GRADING",
   "editor.standard": "Standard",
   "editor.negativeFilm": "Color negative",
   "editor.fullSpectrum": "Full spectrum",
@@ -398,7 +405,6 @@
   "editor.scatterSpatialScaleHelp": "Scales the width of both the narrow and wide scattering. 1 uses the stock’s physical sizes; 0 removes the spread.",
   "editor.halationAmountHelp": "Scales light reflected from the film base. 1 uses the stock’s physical strength; 0 removes halation while keeping scattering.",
   "editor.halationSpatialScaleHelp": "Scales the spread of reflected light. 1 uses the stock’s physical size. This does not change the reflection strength.",
-  "editor.backToEmulsion": "Back to Emulsion",
   "editor.grainChannelOffsets": "Channel offsets",
   "editor.grainChannelOffsetHelp": "Add or subtract RMS granularity from the main value for this color channel. Zero uses the main value. The channel stays between 0 and 100."
 }

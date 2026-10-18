@@ -309,6 +309,9 @@
   "editor.negativePreview": "负片反转预览",
   "editor.negativePreviewHelp": "将负片反转为正像显示。仅改变显示，导出仍为负片。",
   "editor.grain": "颗粒",
+  "editor.effects": "效果",
+  "editor.grainLookHelp": "为图像添加胶片颗粒。",
+  "editor.halationLookHelp": "像胶片一样，添加光散射和明亮区域周围的光晕。",
   "editor.halation": "光晕",
   "editor.couplers": "色彩分离",
   "editor.gammaFilm": "胶片反差",
@@ -331,6 +334,10 @@
   "editor.neutral": "中性",
   "editor.visibleArea": "可见区域",
   "editor.look": "乳剂",
+  "editor.panels": "面板",
+  "editor.tabRaw": "RAW",
+  "editor.tabFilm": "胶片",
+  "editor.tabGrading": "调色",
   "editor.standard": "标准",
   "editor.negativeFilm": "彩色负片",
   "editor.fullSpectrum": "全光谱",
@@ -398,7 +405,6 @@
   "editor.scatterSpatialScaleHelp": "调节窄幅和宽幅散射宽度的倍率。1使用胶片本身的大小，0消除扩散。",
   "editor.halationAmountHelp": "调节片基反射光量的倍率。1使用胶片本身的强度，0消除光晕并保留散射。",
   "editor.halationSpatialScaleHelp": "调节反射光扩散范围的倍率。1使用胶片本身的大小，不改变反射强度。",
-  "editor.backToEmulsion": "返回乳剂",
   "editor.grainChannelOffsets": "通道偏移",
   "editor.grainChannelOffsetHelp": "在主数值上增加或减少此颜色通道的RMS颗粒度。0表示使用主数值。通道数值保持在0到100之间。"
 }

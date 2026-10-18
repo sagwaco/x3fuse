@@ -396,6 +396,12 @@ calibration and the Ektachrome 100 model. It approximates the look without
 reconstructing a separate IR band or measured Aerochrome spectral response.
 Files without FCBlue calibration cannot select this preset.
 
+The editor sidebar has three tabs under the histogram. **RAW** holds Light, Tone
+curve, White balance, and Detail. **FILM** holds the Emulsion section: the film
+stock, its print paper, and the darkroom controls. **GRADING** holds Color grading
+and Effects. Grain and halation live in Effects and also work on camera matching
+looks, with generic film grain and halation settings.
+
 Double-click a slider thumb to restore its default. Grain and halation have
 strength controls and advanced settings. New edits use the camera's as-shot crop.
 Monochrome filters mix calibrated Foveon sensor-layer responses and remain gray

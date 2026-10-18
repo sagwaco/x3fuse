@@ -74,9 +74,7 @@ export function EditorScreen(): React.JSX.Element {
     const returning = sidebarPage === 'edit' || previous === 'paper'
     body.scrollTop = returning ? sidebarScroll.current[sidebarPage] : 0
     if (returning) {
-      const origin = body.querySelector<HTMLElement>(
-        `[data-sidebar-page="${sidebarPage === 'edit' ? 'emulsion' : previous}"]`
-      )
+      const origin = body.querySelector<HTMLElement>(`[data-sidebar-page="${previous}"]`)
       const fallback = body.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')
       const focus = origin ?? fallback ?? sidebarBack.current
       focus?.focus({ preventScroll: true })
@@ -100,7 +98,7 @@ export function EditorScreen(): React.JSX.Element {
   // An X3I whose SFD RAW is not stored yet merges it, and only its SFD RAW section works.
   const x3iPending = needsX3iMerge(editor)
   useEffect(() => {
-    if (!doc?.recipe.film && sidebarPage === 'paper') navigateSidebar('emulsion')
+    if (!doc?.recipe.film && sidebarPage === 'paper') navigateSidebar('edit')
   }, [doc?.recipe.film, sidebarPage, navigateSidebar])
   // The photo's geometry when crop mode opened; Cancel puts it back.
   const entry = useRef<{ path: string; geometry: Partial<EditRecipe> }>()
@@ -187,7 +185,7 @@ export function EditorScreen(): React.JSX.Element {
       if (event.key !== 'Escape') return
       event.preventDefault()
       event.stopPropagation()
-      if (!event.repeat) navigateSidebar(sidebarPage === 'paper' ? 'emulsion' : 'edit')
+      if (!event.repeat) navigateSidebar('edit')
     }
     window.addEventListener('keydown', back, true)
     return () => window.removeEventListener('keydown', back, true)
@@ -661,13 +659,9 @@ export function EditorScreen(): React.JSX.Element {
                     variant="ghost"
                     size="icon"
                     className="-ml-1 h-6 w-6"
-                    aria-label={t(
-                      sidebarPage === 'paper' ? 'editor.backToEmulsion' : 'editor.backToAdjustments'
-                    )}
-                    title={t(
-                      sidebarPage === 'paper' ? 'editor.backToEmulsion' : 'editor.backToAdjustments'
-                    )}
-                    onClick={() => navigateSidebar(sidebarPage === 'paper' ? 'emulsion' : 'edit')}
+                    aria-label={t('editor.backToAdjustments')}
+                    title={t('editor.backToAdjustments')}
+                    onClick={() => navigateSidebar('edit')}
                   >
                     <ArrowLeft className="h-4 w-4" aria-hidden="true" />
                   </Button>
@@ -693,11 +687,7 @@ export function EditorScreen(): React.JSX.Element {
                     disabled={unavailable || editor.before || !!cloudFile}
                     className="contents"
                   >
-                    <EmulsionControls
-                      key={editor.session?.sessionId}
-                      recipe={doc.recipe}
-                      onNavigate={navigateSidebar}
-                    />
+                    <EmulsionControls key={editor.session?.sessionId} recipe={doc.recipe} />
                   </fieldset>
                 </div>
               )}

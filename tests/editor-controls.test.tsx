@@ -44,6 +44,7 @@ const change = vi.fn()
 const commit = vi.fn()
 const invoke = vi.fn()
 const renderThumbnail = vi.fn()
+const setPicking = vi.fn()
 let setRecipe: Dispatch<SetStateAction<EditRecipe>>
 function Controls({ initial = defaultRecipe() }: { initial?: EditRecipe }): React.JSX.Element {
   const [recipe, update] = useState(initial)
@@ -51,20 +52,18 @@ function Controls({ initial = defaultRecipe() }: { initial?: EditRecipe }): Reac
   const [page, setPage] = useState<'edit' | 'emulsion' | 'paper'>('edit')
   return (
     <>
-      {page !== 'edit' && (
-        <button onClick={() => setPage(page === 'paper' ? 'emulsion' : 'edit')}>Back</button>
-      )}
+      {page !== 'edit' && <button onClick={() => setPage('edit')}>Back</button>}
       {page === 'edit' ? (
         <EditorControls
           recipe={recipe}
           picking={false}
-          setPicking={() => {}}
+          setPicking={setPicking}
           onNavigate={setPage}
         />
       ) : (
         <>
           <div hidden={page !== 'emulsion'}>
-            <EmulsionControls recipe={recipe} onNavigate={setPage} />
+            <EmulsionControls recipe={recipe} />
           </div>
           {page === 'paper' && <LookPicker kind="paper" recipe={recipe} gallery />}
         </>
@@ -85,21 +84,24 @@ function back(): void {
     button = screen.queryByRole('button', { name: 'Back' })
   }
 }
-function emulsionTab(tab: 'filmStock' | 'darkroom' | 'grain' | 'halation'): void {
-  if (screen.queryByRole('group', { name: t('editor.paperStock') }))
-    fireEvent.click(screen.getByRole('button', { name: 'Back' }))
-  if (!screen.queryByRole('tablist', { name: t('editor.look') }))
-    fireEvent.click(screen.getByText(t('editor.look'), { selector: '[data-sidebar-page] *' }))
-  fireEvent.click(screen.getByRole('tab', { name: t(`editor.${tab}`) }))
+/** Show a tab of the edit sidebar, leaving any stock page first. */
+function panelTab(tab: 'raw' | 'film' | 'grading'): void {
+  back()
+  fireEvent.click(
+    screen.getByRole('tab', { name: t(`editor.tab${tab[0].toUpperCase()}${tab.slice(1)}`) })
+  )
 }
 function darkroom(): void {
-  emulsionTab('darkroom')
+  panelTab('film')
 }
 /** Open a stock page from the full controls. */
 function picker(caption: string): HTMLElement {
-  emulsionTab(caption === t('editor.paperStock') ? 'darkroom' : 'filmStock')
-  if (caption === t('editor.paperStock'))
-    fireEvent.click(screen.getByText(caption, { selector: '[data-sidebar-page] *' }))
+  panelTab('film')
+  fireEvent.click(
+    screen.getByText(caption === t('editor.paperStock') ? caption : t('editor.look'), {
+      selector: '[data-sidebar-page] *'
+    })
+  )
   return screen.getByRole('group', { name: caption })
 }
 function chooseFilm(name: string): void {
@@ -117,7 +119,7 @@ function adjust(label: string, value: number): void {
 }
 const film = (): EditRecipe['film'] => change.mock.lastCall?.[0].film
 const swatch = (group: string, name: string): HTMLElement => {
-  if (group === t('editor.filter')) emulsionTab('filmStock')
+  if (group === t('editor.filter')) picker(t('editor.filmStock'))
   return within(screen.getByRole('radiogroup', { name: group })).getByRole('radio', { name })
 }
 
@@ -180,74 +182,70 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-it('places Emulsion above Light and Tone curve immediately after Light', () => {
+const sections = (container: HTMLElement): Array<string | null> =>
+  [...container.querySelectorAll('summary')].map((node) => node.textContent)
+
+it('groups the sidebar into RAW, FILM and GRADING tabs that start on RAW', () => {
   const view = render(<Controls />)
-  const sections = [...view.container.querySelectorAll('summary')].map((node) => node.textContent)
-  expect(sections.slice(0, 4)).toEqual([
+  expect(screen.getAllByRole('tab').map((tab) => tab.getAttribute('aria-selected'))).toEqual([
+    'true',
+    'false',
+    'false'
+  ])
+  expect(sections(view.container)).toEqual([
     t('editor.light'),
     t('editor.curves'),
     t('editor.whiteBalance'),
-    t('editor.color')
+    t('editor.detail'),
+    t('denoise.advanced')
   ])
-  expect(sections).not.toContain(t('editor.look'))
-  expect(sections).not.toContain(t('editor.darkroom'))
+  panelTab('film')
+  expect(sections(view.container)).toEqual([t('editor.look')])
   const button = screen.getByText(t('editor.look'), { selector: '[data-sidebar-page] *' })
-  const light = screen.getByText(t('editor.light'), { selector: 'summary' })
-  expect(button.compareDocumentPosition(light) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  const paper = screen.getByText(t('editor.paperStock'), { selector: '[data-sidebar-page] *' })
+  expect(button.compareDocumentPosition(paper) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  expect(screen.getByRole('slider', { name: t('editor.gammaFilm') })).toBeTruthy()
+  panelTab('grading')
+  expect(sections(view.container).slice(0, 1)).toEqual([t('editor.color')])
 })
 
-it('supports arrow keys between Emulsion tabs and recovers when film is removed', () => {
-  render(<Controls />)
-  emulsionTab('filmStock')
+it('supports arrow keys between the panel tabs and shows only the film button without a stock', () => {
+  const view = render(<Controls />)
   const tabs = screen.getAllByRole('tab')
   expect(tabs.map((tab) => tab.textContent)).toEqual(
-    ['filmStock', 'darkroom', 'grain', 'halation'].map((key) => t(`editor.${key}`))
+    ['tabRaw', 'tabFilm', 'tabGrading'].map((key) => t(`editor.${key}`))
   )
   fireEvent.keyDown(tabs[0], { key: 'ArrowRight' })
+  expect(setPicking).toHaveBeenLastCalledWith(false)
   expect(tabs[1].getAttribute('aria-selected')).toBe('true')
   expect(document.activeElement).toBe(tabs[1])
   fireEvent.keyDown(tabs[1], { key: 'End' })
-  expect(tabs[3].getAttribute('aria-selected')).toBe('true')
-  expect(document.activeElement).toBe(tabs[3])
-  act(() => setRecipe({ ...defaultRecipe(), film: null }))
+  expect(tabs[2].getAttribute('aria-selected')).toBe('true')
+  setPicking.mockClear()
+  fireEvent.keyDown(tabs[2], { key: 'ArrowRight' })
+  expect(setPicking).not.toHaveBeenCalled()
   expect(tabs[0].getAttribute('aria-selected')).toBe('true')
-  expect(tabs.slice(1).every((tab) => (tab as HTMLButtonElement).disabled)).toBe(true)
+  fireEvent.keyDown(tabs[0], { key: 'ArrowLeft' })
+  expect(tabs[2].getAttribute('aria-selected')).toBe('true')
+  fireEvent.keyDown(tabs[2], { key: 'Home' })
+  expect(tabs[0].getAttribute('aria-selected')).toBe('true')
+  fireEvent.click(tabs[1])
+  expect(setPicking).toHaveBeenCalledWith(false)
+  act(() => setRecipe({ ...defaultRecipe(), film: null }))
+  expect(sections(view.container)).toEqual([t('editor.look')])
+  expect(
+    screen.queryByText(t('editor.paperStock'), { selector: '[data-sidebar-page] *' })
+  ).toBeNull()
+  expect(screen.queryByRole('slider', { name: t('editor.gammaFilm') })).toBeNull()
   expect(change).not.toHaveBeenCalled()
 })
-
-it.each(['grain', 'halation'] as const)(
-  'resets %s with the icon or Shift-click and guards disabled resets',
-  (effect) => {
-    const recipe = defaultRecipe()
-    recipe.film!.grainParams!.blur = 2
-    recipe.film!.halationParams!.halationAmount = 3
-    render(<Controls initial={recipe} />)
-    emulsionTab(effect)
-    const toggle = screen.getByRole('switch', { name: t(`editor.${effect}`) })
-    const resetName = t(effect === 'grain' ? 'editor.resetGrain' : 'editor.resetHalation')
-    const reset = screen.getByRole('button', { name: resetName })
-    expect(reset.textContent).toBe('')
-    expect(reset.nextElementSibling).toBe(toggle)
-    const label = screen.getByText(t(`editor.${effect}`), { selector: '.control-label > span' })
-    fireEvent.click(label)
-    expect(change).not.toHaveBeenCalled()
-    fireEvent.click(label, { shiftKey: true })
-    expect(film()?.[effect]).toBe(recipe.film![effect])
-    expect(film()?.[effect === 'grain' ? 'grainParams' : 'halationParams']).toEqual(
-      DEFAULT_FILM[effect === 'grain' ? 'grainParams' : 'halationParams']
-    )
-    act(() => editor.setState({ closing: true }))
-    change.mockClear()
-    fireEvent.click(label, { shiftKey: true })
-    fireEvent.click(reset)
-    expect(change).not.toHaveBeenCalled()
-  }
-)
 
 it('binds Exposure to the film when a stock is chosen and to the digital pipeline for Standard', () => {
   expect(defaultRecipe().film).toEqual(DEFAULT_FILM)
   render(<Controls initial={{ ...defaultRecipe(), film: null, exposure: 1 }} />)
+  panelTab('film')
   expect(screen.getByText(t('editor.standard'), { selector: '[data-sidebar-page] *' })).toBeTruthy()
+  panelTab('raw')
   expect(
     screen.getByRole('slider', { name: t('editor.exposure') }).getAttribute('aria-valuenow')
   ).toBe('1')
@@ -288,6 +286,7 @@ it('shows the chosen film stock as a labeled canister on the Emulsion button', (
 it('previews every film stock on the photo and pairs each with its print paper', async () => {
   vi.stubGlobal('PointerEvent', MouseEvent)
   render(<Controls />)
+  panelTab('film')
   fireEvent.pointerMove(screen.getByRole('button', { name: t('editor.look') }), {
     pointerType: 'mouse'
   })
@@ -315,14 +314,14 @@ it('previews every film stock on the photo and pairs each with its print paper',
     cameraProfile: 'Standard'
   })
   expect(screen.queryByRole('switch', { name: t('editor.grain') })).toBeNull()
-  back()
+  panelTab('film')
   expect(screen.getByText(t('editor.standard'), { selector: '[data-sidebar-page] *' })).toBeTruthy()
 })
 
 it('offers black-and-white looks with their own filters, papers and darkroom', () => {
   render(<Controls />)
   const filters = (): Array<string | null> => {
-    emulsionTab('filmStock')
+    picker(t('editor.filmStock'))
     return within(screen.getByRole('radiogroup', { name: t('editor.filter') }))
       .getAllByRole('radio')
       .map((radio) => radio.getAttribute('aria-label'))
@@ -501,6 +500,7 @@ it('selects the logged camera profile and separates camera matching from film st
     }
   })
   render(<Controls initial={{ ...defaultRecipe(), film: null, cameraProfile: 'FCBlue' }} />)
+  panelTab('film')
   expect(screen.getByText('FOV Blue')).toBeTruthy()
   picker(t('editor.filmStock'))
   expect(screen.getByRole('button', { name: 'FOV Blue' }).ariaPressed).toBe('true')
@@ -557,6 +557,7 @@ it('selects and restores Aerochrome with the existing camera and film recipe', (
   ).toBe('true')
   const pasted = pasteRecipe(saved, defaultRecipe())
   act(() => setRecipe(pasted))
+  panelTab('film')
   expect(
     screen.getByText(t('editor.aerochrome'), { selector: '[data-sidebar-page] *' })
   ).toBeTruthy()
@@ -582,6 +583,7 @@ it('selects and restores Aerochrome with the existing camera and film recipe', (
   expect(screen.queryByText(t('editor.paperStock'))).toBeNull()
   chooseFilm('Kodak Ektachrome 100')
   expect(change.mock.lastCall?.[0].cameraProfile).toBeNull()
+  panelTab('film')
   expect(
     screen.getByText('Kodak Ektachrome 100', { selector: '[data-sidebar-page] *' })
   ).toBeTruthy()
@@ -614,6 +616,7 @@ it('identifies saved Aerochrome edits and explains the fallback on a camera with
     defaultRecipe()
   )
   render(<Controls initial={pasted} />)
+  panelTab('film')
   expect(
     screen.getByText(t('editor.aerochrome'), { selector: '[data-sidebar-page] *' })
   ).toBeTruthy()
@@ -845,7 +848,7 @@ it('resets sliders to actual nonzero and nullable defaults and prevents resets w
   expect(film()?.couplers).toBe(0.25)
   reset(t('editor.evPaper'))
   expect(film()?.evPaper).toBeNull()
-  back()
+  panelTab('raw')
   act(() => editor.setState({ closing: true }))
   change.mockClear()
   reset(t('editor.temperature'))
@@ -933,161 +936,6 @@ it('maps the darkroom sliders so dragging right does what the label says', () =>
   expect(film()?.couplers).toBe(0.6)
 })
 
-it('moves all grain channels with the main slider and changes offsets independently', () => {
-  render(<Controls />)
-  emulsionTab('grain')
-  adjust(t('editor.grainRmsGranularity'), 12)
-  expect(film()?.grainParams).toMatchObject({ rmsBase: 12, rmsGranularity: [12, 12, 12] })
-  const offsets = screen
-    .getByText(t('editor.grainChannelOffsets'), { selector: 'summary' })
-    .closest('details')!
-  expect(offsets.open).toBe(false)
-  offsets.open = true
-  adjust(t('editor.red'), 2)
-  adjust(t('editor.green'), -3)
-  expect(film()?.grainParams).toMatchObject({ rmsBase: 12, rmsGranularity: [14, 9, 12] })
-  adjust(t('editor.grainRmsGranularity'), 20)
-  expect(film()?.grainParams?.rmsGranularity).toEqual([22, 17, 20])
-  adjust(t('editor.grainBlur'), 1.2)
-  adjust(t('editor.grainSharpen'), 0)
-  expect(film()?.grainParams).toMatchObject({ blur: 1.2, multUsmAmount: 0 })
-  reset(t('editor.red'))
-  expect(film()?.grainParams?.rmsGranularity).toEqual([20, 17, 20])
-  back()
-  emulsionTab('grain')
-  expect(
-    (screen.getByRole('spinbutton', { name: t('editor.grainRmsGranularity') }) as HTMLInputElement)
-      .value
-  ).toBe('20')
-  fireEvent.click(screen.getByRole('switch', { name: t('editor.grain') }))
-  expect(film()?.grain).toBe(false)
-  expect(screen.queryByRole('slider', { name: t('editor.grainBlur') })).toBeNull()
-  emulsionTab('grain')
-  fireEvent.click(screen.getByRole('button', { name: t('editor.resetGrain') }))
-  expect(film()).toMatchObject({ grain: false, grainParams: filmGrainDefaults(2) })
-})
-
-it('preserves grain offsets at both bounds and restores them from a saved recipe', () => {
-  const saved = defaultRecipe()
-  saved.film!.grainParams = { ...filmGrainDefaults(2), rmsBase: 12, rmsGranularity: [14, 9, 12] }
-  render(<Controls initial={JSON.parse(JSON.stringify(saved))} />)
-  emulsionTab('grain')
-  adjust(t('editor.grainRmsGranularity'), 100)
-  expect(film()?.grainParams).toMatchObject({ rmsBase: 98, rmsGranularity: [100, 95, 98] })
-  adjust(t('editor.grainRmsGranularity'), 0)
-  expect(film()?.grainParams).toMatchObject({ rmsBase: 3, rmsGranularity: [5, 0, 3] })
-  act(() => setRecipe(saved))
-  expect(
-    (screen.getByRole('spinbutton', { name: t('editor.grainRmsGranularity') }) as HTMLInputElement)
-      .value
-  ).toBe('12')
-  reset(t('editor.grainRmsGranularity'))
-  expect(film()?.grainParams).toEqual(filmGrainDefaults(2))
-})
-
-it('uses the full main grain range for black-and-white film with unequal saved channels', () => {
-  const saved = defaultRecipe()
-  saved.film = {
-    ...saved.film!,
-    film: 21,
-    grainParams: { ...filmGrainDefaults(21), rmsGranularity: [25, 44, 44] }
-  }
-  render(<Controls initial={saved} />)
-  emulsionTab('grain')
-  expect(screen.queryByText(t('editor.grainChannelOffsets'))).toBeNull()
-  adjust(t('editor.grainRmsGranularity'), 100)
-  expect(film()?.grainParams?.rmsGranularity).toEqual([100, 100, 100])
-})
-
-it('keeps scatter and halation amount and size independent', () => {
-  render(<Controls />)
-  emulsionTab('halation')
-  expect(screen.queryByRole('slider', { name: t('editor.halationAmount') })).toBeNull()
-  fireEvent.click(screen.getByRole('switch', { name: t('editor.halation') }))
-  adjust(t('editor.halationAmount'), 2)
-  expect(film()?.halationParams).toEqual({
-    scatterAmount: 1,
-    scatterSpatialScale: 1,
-    halationAmount: 2,
-    halationSpatialScale: 1
-  })
-  adjust(t('editor.halationSpatialScale'), 3)
-  adjust(t('editor.scatterAmount'), 0.5)
-  adjust(t('editor.scatterSpatialScale'), 2)
-  adjust(t('editor.halationAmount'), 0)
-  expect(film()).toMatchObject({
-    halation: true,
-    halationParams: {
-      scatterAmount: 0.5,
-      scatterSpatialScale: 2,
-      halationAmount: 0,
-      halationSpatialScale: 3
-    }
-  })
-  reset(t('editor.halationAmount'))
-  expect(film()?.halationParams?.halationAmount).toBe(1)
-  expect(film()?.halationParams?.halationSpatialScale).toBe(3)
-  emulsionTab('halation')
-  fireEvent.click(screen.getByRole('button', { name: t('editor.resetHalation') }))
-  expect(film()?.halationParams).toEqual(DEFAULT_FILM.halationParams)
-})
-
-it('loads stock grain defaults and preserves adjustments when selecting the active stock', () => {
-  const recipe = defaultRecipe()
-  recipe.film!.grainParams = { rmsBase: 7, rmsGranularity: [9, 7, 5], blur: 1.2, multUsmAmount: 0 }
-  render(<Controls initial={recipe} />)
-  chooseFilm('Kodak Portra 400')
-  expect(film()?.grainParams).toEqual(recipe.film!.grainParams)
-  chooseFilm('Kodak Gold 200')
-  expect(film()?.grainParams?.rmsGranularity).toEqual([5, 5, 5])
-  expect(film()?.grainParams?.rmsBase).toBeUndefined()
-  expect(film()?.grainParams).toMatchObject({ blur: 1.2, multUsmAmount: 0 })
-  chooseFilm('Kodak Vision3 500T')
-  expect(film()?.grainParams?.rmsGranularity).toEqual([9, 13, 30])
-  chooseFilm('Kodak Tri-X 7266')
-  expect(film()?.grainParams?.rmsGranularity).toEqual([44, 44, 44])
-  emulsionTab('grain')
-  expect(screen.queryByRole('slider', { name: t('editor.green') })).toBeNull()
-  adjust(t('editor.grainRmsGranularity'), 25)
-  expect(film()?.grainParams?.rmsGranularity).toEqual([25, 25, 25])
-  reset(t('editor.grainRmsGranularity'))
-  expect(film()?.grainParams?.rmsGranularity).toEqual([44, 44, 44])
-})
-
-it('preserves saved legacy effects until each effect is explicitly reset', () => {
-  const recipe = defaultRecipe()
-  Object.assign(recipe.film!, {
-    grainParams: null,
-    halationParams: null,
-    grainAmount: 4,
-    grainSize: 2,
-    grainRoughness: 0.6,
-    halation: true,
-    halationStrength: 1,
-    halationRadius: 0.004,
-    halationMidtones: 0.5
-  })
-  render(<Controls initial={recipe} />)
-  expect(change).not.toHaveBeenCalled()
-  emulsionTab('grain')
-  expect(screen.getByText(t('editor.legacyFilmEffect'))).toBeTruthy()
-  expect(screen.queryByRole('slider', { name: t('editor.grainBlur') })).toBeNull()
-  expect(screen.queryByRole('slider', { name: t('editor.halationAmount') })).toBeNull()
-  emulsionTab('grain')
-  fireEvent.click(screen.getByRole('button', { name: t('editor.resetGrain') }))
-  expect(film()).toMatchObject({
-    grainParams: filmGrainDefaults(2),
-    grainAmount: 1,
-    grainSize: 1,
-    grainRoughness: 0,
-    halationParams: null,
-    halationRadius: 0.004
-  })
-  emulsionTab('halation')
-  fireEvent.click(screen.getByRole('button', { name: t('editor.resetHalation') }))
-  expect(film()?.halationParams).toEqual(DEFAULT_FILM.halationParams)
-})
-
 it('keeps legacy grain when choosing another stock or the Aerochrome look', () => {
   editor.setState({
     session: {
@@ -1122,72 +970,13 @@ it('keeps legacy grain when choosing another stock or the Aerochrome look', () =
   }
 })
 
-it('keeps effects off during reset and enables them only through native switches', () => {
-  const recipe = defaultRecipe()
-  Object.assign(recipe.film!, {
-    grain: false,
-    grainAmount: 0,
-    grainParams: null,
-    halation: false,
-    halationStrength: 0,
-    halationParams: null
-  })
-  render(<Controls initial={recipe} />)
-  for (const effect of ['grain', 'halation'] as const) {
-    emulsionTab(effect)
-    const toggle = screen.getByRole('switch', { name: t(`editor.${effect}`) }) as HTMLButtonElement
-    expect(toggle.disabled).toBe(true)
-    fireEvent.click(toggle)
-  }
-  expect(change).not.toHaveBeenCalled()
-  emulsionTab('grain')
-  fireEvent.click(screen.getByRole('button', { name: t('editor.resetGrain') }))
-  emulsionTab('halation')
-  fireEvent.click(screen.getByRole('button', { name: t('editor.resetHalation') }))
-  expect(film()).toMatchObject({ grain: false, halation: false })
-  for (const effect of ['grain', 'halation'] as const) {
-    emulsionTab(effect)
-    const toggle = screen.getByRole('switch', { name: t(`editor.${effect}`) }) as HTMLButtonElement
-    expect(toggle.disabled).toBe(false)
-    fireEvent.click(toggle)
-  }
-  expect(film()).toMatchObject({
-    grain: true,
-    halation: true,
-    grainParams: filmGrainDefaults(2),
-    halationParams: DEFAULT_FILM.halationParams
-  })
-})
-
-it.each([
-  [() => t('editor.grainRmsGranularity'), 'grainRmsGranularityHelp'],
-  [() => t('editor.red'), 'grainChannelOffsetHelp'],
-  [() => t('editor.green'), 'grainChannelOffsetHelp'],
-  [() => t('editor.blue'), 'grainChannelOffsetHelp'],
-  [() => t('editor.grainBlur'), 'grainBlurHelp'],
-  [() => t('editor.grainSharpen'), 'grainSharpenHelp'],
-  [() => t('editor.scatterAmount'), 'scatterAmountHelp'],
-  [() => t('editor.scatterSpatialScale'), 'scatterSpatialScaleHelp'],
-  [() => t('editor.halationAmount'), 'halationAmountHelp'],
-  [() => t('editor.halationSpatialScale'), 'halationSpatialScaleHelp']
-] as const)('explains native effect slider %s', async (label, help) => {
-  vi.stubGlobal('PointerEvent', MouseEvent)
-  render(<Controls initial={{ ...defaultRecipe(), film: { ...DEFAULT_FILM, halation: true } }} />)
-  emulsionTab(help.startsWith('grain') ? 'grain' : 'halation')
-  if (help === 'grainChannelOffsetHelp')
-    screen
-      .getByText(t('editor.grainChannelOffsets'), { selector: 'summary' })
-      .closest('details')!.open = true
-  const button = screen.getByRole('button', { name: label() })
-  fireEvent.pointerMove(button, { pointerType: 'mouse' })
-  expect((await screen.findByRole('tooltip')).textContent).toBe(t(`editor.${help}`))
-})
-
 it('adjusts color ranges chosen from swatches and edits curve points from the keyboard', () => {
   render(<Controls />)
+  panelTab('grading')
   fireEvent.click(swatch(t('editor.colorBand'), t('editor.blue')))
   adjust(t('editor.hue'), 40)
   expect(change.mock.lastCall?.[0].hsl[5]).toEqual({ hue: 40, saturation: 0, luminance: 0 })
+  panelTab('raw')
   fireEvent.click(swatch(t('editor.curveChannel'), t('editor.red')))
   fireEvent.click(screen.getByRole('button', { name: t('editor.addPoint') }))
   const point = screen.getByRole('slider', { name: `${t('editor.curvePoint')} 2` })
@@ -1456,6 +1245,7 @@ it('maps the perspective sliders to pitch and yaw, fitting the crop, and restore
 
 it('shows Standard when a copied camera profile is unavailable in the photo', () => {
   render(<Controls initial={{ ...defaultRecipe(), film: null, cameraProfile: 'FCBlue' }} />)
+  panelTab('film')
   expect(screen.getByText(t('editor.standard'), { selector: '[data-sidebar-page] *' })).toBeTruthy()
   picker(t('editor.filmStock'))
   expect(screen.getByRole('button', { name: t('editor.standard'), exact: true }).ariaPressed).toBe(

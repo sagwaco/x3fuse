@@ -309,6 +309,9 @@
   "editor.negativePreview": "ネガを反転して表示",
   "editor.negativePreviewHelp": "ネガを反転してポジとして表示します。表示だけが変わり、書き出しはネガのままです。",
   "editor.grain": "粒子",
+  "editor.effects": "エフェクト",
+  "editor.grainLookHelp": "フィルムの粒子を画像に追加します。",
+  "editor.halationLookHelp": "フィルムのように、光の散乱と明るい部分の周りのにじみを加えます。",
   "editor.halation": "ハレーション",
   "editor.couplers": "色分離",
   "editor.gammaFilm": "フィルムのコントラスト",
@@ -331,6 +334,10 @@
   "editor.neutral": "ニュートラル",
   "editor.visibleArea": "表示範囲",
   "editor.look": "乳剤",
+  "editor.panels": "パネル",
+  "editor.tabRaw": "RAW",
+  "editor.tabFilm": "フィルム",
+  "editor.tabGrading": "カラー",
   "editor.standard": "標準",
   "editor.negativeFilm": "カラーネガ",
   "editor.fullSpectrum": "フルスペクトル",
@@ -398,7 +405,6 @@
   "editor.scatterSpatialScaleHelp": "狭い散乱と広い散乱の幅を調整する倍率。1でフィルム本来のサイズ、0で広がりをなくします。",
   "editor.halationAmountHelp": "フィルムベースから反射する光の量を調整する倍率。1でフィルム本来の強度、0で散乱を残してハレーションをなくします。",
   "editor.halationSpatialScaleHelp": "反射光の広がりを調整する倍率。1でフィルム本来のサイズになります。反射の強度は変わりません。",
-  "editor.backToEmulsion": "エマルジョンに戻る",
   "editor.grainChannelOffsets": "チャンネルのオフセット",
   "editor.grainChannelOffsetHelp": "この色チャンネルのRMS粒状度をメイン値から増減します。0ではメイン値を使用します。チャンネルの範囲は0〜100です。"
 }

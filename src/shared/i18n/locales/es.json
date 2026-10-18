@@ -309,6 +309,9 @@
   "editor.negativePreview": "Vista previa del negativo",
   "editor.negativePreviewHelp": "Muestra el negativo invertido, como un positivo. Solo cambia la vista; las exportaciones conservan el negativo.",
   "editor.grain": "Grano",
+  "editor.effects": "Efectos",
+  "editor.grainLookHelp": "Añade grano de película a la imagen.",
+  "editor.halationLookHelp": "Añade dispersión de luz y un resplandor alrededor de las zonas brillantes, como en la película.",
   "editor.halation": "Halo",
   "editor.couplers": "Separación de color",
   "editor.gammaFilm": "Contraste de la película",
@@ -331,6 +334,10 @@
   "editor.neutral": "Neutro",
   "editor.visibleArea": "Área visible",
   "editor.look": "Emulsión",
+  "editor.panels": "Paneles",
+  "editor.tabRaw": "RAW",
+  "editor.tabFilm": "Película",
+  "editor.tabGrading": "Gradación",
   "editor.standard": "Estándar",
   "editor.negativeFilm": "Negativo en color",
   "editor.fullSpectrum": "Espectro completo",
@@ -398,7 +405,6 @@
   "editor.scatterSpatialScaleHelp": "Ajusta la amplitud de la dispersión estrecha y amplia. 1 usa los tamaños físicos de la película; 0 elimina la dispersión.",
   "editor.halationAmountHelp": "Ajusta la luz reflejada por la base de la película. 1 usa la intensidad física de la película; 0 elimina el halo y mantiene la dispersión.",
   "editor.halationSpatialScaleHelp": "Ajusta la extensión de la luz reflejada. 1 usa el tamaño físico de la película. No cambia la intensidad del reflejo.",
-  "editor.backToEmulsion": "Volver a Emulsión",
   "editor.grainChannelOffsets": "Diferencias entre canales",
   "editor.grainChannelOffsetHelp": "Añade o resta granularidad RMS al valor principal de este canal de color. Cero usa el valor principal. El canal se mantiene entre 0 y 100."
 }

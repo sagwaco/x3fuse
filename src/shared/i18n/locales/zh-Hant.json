@@ -309,6 +309,9 @@
   "editor.negativePreview": "負片反轉預覽",
   "editor.negativePreviewHelp": "將負片反轉為正像顯示。僅改變顯示，匯出仍為負片。",
   "editor.grain": "顆粒",
+  "editor.effects": "效果",
+  "editor.grainLookHelp": "為影像加入底片顆粒。",
+  "editor.halationLookHelp": "像底片一樣，加入光散射和明亮區域周圍的光暈。",
   "editor.halation": "光暈",
   "editor.couplers": "色彩分離",
   "editor.gammaFilm": "底片反差",
@@ -331,6 +334,10 @@
   "editor.neutral": "中性",
   "editor.visibleArea": "可見區域",
   "editor.look": "乳劑",
+  "editor.panels": "面板",
+  "editor.tabRaw": "RAW",
+  "editor.tabFilm": "底片",
+  "editor.tabGrading": "調色",
   "editor.standard": "標準",
   "editor.negativeFilm": "彩色負片",
   "editor.fullSpectrum": "全光譜",
@@ -398,7 +405,6 @@
   "editor.scatterSpatialScaleHelp": "調整窄幅和寬幅散射寬度的倍率。1使用底片本身的大小，0消除擴散。",
   "editor.halationAmountHelp": "調整片基反射光量的倍率。1使用底片本身的強度，0消除光暈並保留散射。",
   "editor.halationSpatialScaleHelp": "調整反射光擴散範圍的倍率。1使用底片本身的大小，不改變反射強度。",
-  "editor.backToEmulsion": "返回乳劑",
   "editor.grainChannelOffsets": "通道偏移",
   "editor.grainChannelOffsetHelp": "在主數值上增加或減少此顏色通道的RMS顆粒度。0表示使用主數值。通道數值保持在0到100之間。"
 }
