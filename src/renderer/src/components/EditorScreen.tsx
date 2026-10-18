@@ -767,10 +767,22 @@ export function EditorScreen(): React.JSX.Element {
               )}
             </div>
             {/* The scroll padding keeps the focus out from under the stuck headers of a
-                section and of a section in it. */}
+                section and of a section in it, 80 px at most. */}
             <div
               ref={sidebarBody}
               className="min-h-0 flex-1 scroll-pt-20 overflow-x-hidden overflow-y-auto pb-3"
+              onFocus={(event) => {
+                // WebKit before Safari 27 ignores the scroll padding when it shows the focus.
+                // Only a field in a section can be under a stuck header. A header is never
+                // under one. A pointer focus does not scroll, so a drag does not jump.
+                const target = event.target
+                if (!target.closest('details') || target.closest('summary')) return
+                if (!target.matches(':focus-visible')) return
+                const body = event.currentTarget
+                const hidden =
+                  body.getBoundingClientRect().top + 80 - target.getBoundingClientRect().top
+                if (hidden > 0) body.scrollTop -= hidden
+              }}
             >
               {sidebarPage === 'paper' && doc && (
                 <fieldset
@@ -809,9 +821,6 @@ export function EditorScreen(): React.JSX.Element {
                         icon
                       }))}
                       onValueChange={chooseScope}
-                      // The accent is below 4.5:1 contrast in the light and gray themes, so an
-                      // armed Qualifier shows a stronger fill.
-                      className={qualifying ? '[&>[data-selected]]:bg-ink/30' : undefined}
                     />
                   </div>
                   {/* While out of view, only the header scope renders. */}

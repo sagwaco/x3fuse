@@ -153,6 +153,10 @@ vi.mock('../src/renderer/src/components/EditorControls', async () => {
           <button data-sidebar-page="paper" onClick={() => onNavigate('paper')}>
             Choose paper
           </button>
+          <details open>
+            <summary>Mock section</summary>
+            <button>Mock field</button>
+          </details>
         </>
       )
     }
@@ -820,9 +824,9 @@ it('qualifies a point or a dragged area, apart from the white balance picker', (
   })
   const view = render(<EditorScreen />)
   fireEvent.click(view.container.querySelector('[data-paint]')!)
-  const tablist = screen.getByRole('tablist', { name: 'Scope area' })
-  const [entire, visible, qualifier] = within(tablist).getAllByRole('tab')
-  const armed = '[&>[data-selected]]:bg-ink/30'
+  const [entire, visible, qualifier] = within(
+    screen.getByRole('tablist', { name: 'Scope area' })
+  ).getAllByRole('tab')
   const picker = (): HTMLElement => screen.getByRole('button', { name: 'Pick white balance' })
   const qualifying = (): string | null | undefined => previewAttribute('data-qualifying')
   const region = (): unknown => JSON.parse(scopeAttribute('data-scope-region') ?? 'null')
@@ -839,21 +843,18 @@ it('qualifies a point or a dragged area, apart from the white balance picker', (
   expect(qualifying()).toBe('true')
   expect(picker().getAttribute('aria-pressed')).toBe('false')
   expect(hint()?.getAttribute('role')).toBe('status')
-  // An armed Qualifier shows a stronger fill, not an accent color, for contrast in every theme.
-  expect(tablist.className).toContain(armed)
-  expect(tablist.className).not.toContain('accent')
   // Without an area, the Qualifier measures the entire image.
   expect(scopeAttribute('data-scope-url')).toBe(frame.url)
   expect(region()).toBeNull()
-  // The picker, from its button or from W, disarms the Qualifier.
+  // The picker, from its button or from W, disarms the Qualifier. The hint shows the armed state.
   fireEvent.click(picker())
   expect(qualifying()).toBe('false')
   expect(hint()).toBeNull()
-  expect(tablist.className).not.toContain(armed)
   // A click on the selected Qualifier arms it again.
   expect(selectedScope()).toBe('scope-tab-qualifier')
   fireEvent.click(qualifier)
   expect(qualifying()).toBe('true')
+  expect(hint()).not.toBeNull()
   expect(picker().getAttribute('aria-pressed')).toBe('false')
   fireEvent.keyDown(document, { key: 'w' })
   expect(picker().getAttribute('aria-pressed')).toBe('true')
@@ -1111,6 +1112,40 @@ it('inverts a negative print on request and shows a tiny scope while the scope i
   act(() => report([{ isIntersecting: true }]))
   expect(view.container.querySelector('[data-compact="true"]')).toBeNull()
   vi.unstubAllGlobals()
+})
+
+it('scrolls a focused field out from under the stuck section headers', () => {
+  editor.setState({ session, documents: { [file.path]: doc }, loading: false, preview: frame })
+  render(<EditorScreen />)
+  const field = screen.getByRole('button', { name: 'Mock field' })
+  const body = field.closest<HTMLElement>('.overflow-y-auto')!
+  const place = (element: Element, top: number): void => {
+    element.getBoundingClientRect = () => ({ top }) as DOMRect
+  }
+  const focus = (element: HTMLElement): void => {
+    act(() => element.focus())
+    act(() => element.blur())
+  }
+  place(body, 100)
+  body.scrollTop = 500
+  // The headers of a section and of a section in it cover up to 80 px of the body.
+  place(field, 130)
+  focus(field)
+  expect(body.scrollTop).toBe(450)
+  // A field below them stays.
+  place(field, 180)
+  focus(field)
+  expect(body.scrollTop).toBe(450)
+  // Out of a section, nothing sticks above a control, so the browser scrolls it.
+  const tab = screen.getByRole('tab', { name: 'Entire image' })
+  place(tab, 0)
+  focus(tab)
+  expect(body.scrollTop).toBe(450)
+  // A focus from the pointer is not :focus-visible. It does not scroll, so a drag does not jump.
+  field.matches = () => false
+  place(field, 130)
+  focus(field)
+  expect(body.scrollTop).toBe(450)
 })
 
 function openPaper(): void {

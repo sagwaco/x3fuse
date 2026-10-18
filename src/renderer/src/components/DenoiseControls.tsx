@@ -69,7 +69,7 @@ export function DenoiseControls({
             'control-label cursor-pointer select-none font-bold text-tone-400',
             // Below the section header, as a nested section. The margins keep the layout at rest.
             storageId &&
-              'sticky top-10 z-10 -mx-4 -my-2 bg-[color:color-mix(in_srgb,rgb(var(--tone-900))_30%,rgb(var(--tone-950)))] px-4 py-2'
+              'sticky top-10 z-[1] -mx-4 -my-2 bg-[color:color-mix(in_srgb,rgb(var(--tone-900))_30%,rgb(var(--tone-950)))] px-4 py-2'
           )}
         >
           {t('denoise.advanced')}

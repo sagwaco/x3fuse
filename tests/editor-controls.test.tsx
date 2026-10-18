@@ -302,14 +302,21 @@ it('keeps section headers at the top of the sidebar while their sections scroll'
     screen.getByText(label, { selector: 'summary' }).className.split(' ')
   render(<Controls />)
   // A section header sticks at the top. A nested one sticks below its parent header,
-  // which is h-10 high, and goes under it.
+  // which is h-10 high, and goes under it. Both stay under the panel resize handle (z-20).
   expect(summary(t('editor.light'))).toEqual(
-    expect.arrayContaining(['sticky', 'top-0', 'z-20', 'h-10', '[details_details>&]:top-10'])
+    expect.arrayContaining([
+      'sticky',
+      'top-0',
+      'z-[2]',
+      'h-10',
+      '[details_details>&]:top-10',
+      '[details_details>&]:z-[1]'
+    ])
   )
   // The header is opaque, so the fields that scroll under it do not show through.
   expect(summary(t('editor.light')).join(' ')).toContain('bg-[color:color-mix(')
   expect(summary(t('denoise.advanced'))).toEqual(
-    expect.arrayContaining(['sticky', 'top-10', 'z-10'])
+    expect.arrayContaining(['sticky', 'top-10', 'z-[1]'])
   )
   // In the conversion form, Advanced does not stick.
   cleanup()
