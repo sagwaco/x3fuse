@@ -61,7 +61,7 @@ X3Fuse metering and scanner workflow.
 
 - `assets/camera-tone-deltas.json`: 2ee2bea81844b572b08d4b5eb1e21f0905798ac571aef66038eaa33482d19144
 
-- `src/render.wgsl`: 77751740cfb70b773c255cf05074d2b55cd72c5851d9fb698bc23f3959d1fef8
+- `src/render.wgsl`: c9d7ceb906d2078c11f41ea6b559cfd4a122a782f764dbeb82dcab2ffb9dabd0
 - `licenses/SPEKTRAFILM_LICENSE.txt`: 76d629501783ae52e8d63aee1e054c1e1a9713b9fe7d36fb306e25b1d14b24e9
 - `assets/irradiance_xy_tc.npy`: 52f90c724811f5fab80769f8548bf24d08a521eb09e65ab6e016893258d2a783
 - `assets/neutral_print_filters.json`: 22ae6cca433cfbeab87df7f17cd58a2f65e88cab845818819195e6f1a80db67c

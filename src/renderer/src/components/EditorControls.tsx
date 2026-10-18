@@ -15,6 +15,7 @@ import {
   FILM_MONOCHROME_FILTERS,
   MONOCHROME_FILTERS,
   defaultRecipe,
+  monochromeFilm,
   negativePrint,
   type EditRecipe,
   type FilmSettings,
@@ -38,6 +39,7 @@ import { SfdRaw, SfdRawInfo } from './SfdRaw'
 import { EffectsSection } from './EffectsControls'
 import { useStoredOpen } from '../hooks/useStoredOpen'
 import { ColorMixer } from './ColorMixer'
+import { ColorWheels } from './ColorWheels'
 
 /** Tracks that show which way a slider moves the picture. */
 const TEMPERATURE = 'linear-gradient(to right, #4f7cff, #d4d4d4, #ffb43d)'
@@ -82,7 +84,6 @@ const FILTER_COLORS: Record<MonochromeFilter, string> = {
 }
 const filmStock = (film: FilmSettings | null): (typeof stocks)[number] | undefined =>
   stocks.find((stock) => !stock.isPaper && stock.index === film?.film)
-const monochromeFilm = (film: FilmSettings | null): boolean => !!filmStock(film)?.monochrome
 const positiveFilm = (film: FilmSettings | null): boolean => !!filmStock(film)?.isPositive
 /** For a help icon in a `group/reset` row. It hides while the row's label shows Reset. */
 export const HIDE_WHILE_RESETTING = 'group-has-[[data-resetting]]/reset:invisible'
@@ -557,6 +558,9 @@ export const EditorControls = memo(function EditorControls({
               </Section>
               <Section id="colorMixer" name={t('editor.colorMixer')}>
                 <ColorMixer recipe={recipe} />
+              </Section>
+              <Section id="colorWheels" name={t('editor.colorWheels')}>
+                <ColorWheels recipe={recipe} />
               </Section>
             </>
           )}

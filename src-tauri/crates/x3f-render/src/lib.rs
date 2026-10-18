@@ -9,8 +9,8 @@ mod stocks;
 pub use camera::{read_camera_profiles, CameraProfile, CameraProfiles};
 pub use color::{as_shot_white_balance, pick_white_balance};
 pub use recipe::{
-    Crop, Curves, EditRecipe, EffectsSettings, FilmSettings, GrainParams, HalationParams, HslBand,
-    MonochromeFilter, MonochromeSettings, Point,
+    ColorWheels, Crop, Curves, EditRecipe, EffectsSettings, FilmSettings, GrainParams,
+    HalationParams, HslBand, MonochromeFilter, MonochromeSettings, Point, Wheel,
 };
 pub use stocks::STOCKS_JSON;
 
@@ -24,8 +24,8 @@ pub use stocks::STOCKS_JSON;
 /// halation with a sigma per channel. Version 6 ports the experimental models.
 /// Version 7 applies native camera looks before film exposure.
 /// Version 8 adds native grain and halation controls with stock baselines.
-/// Version 9 uses smooth tone curves.
-pub const RENDER_VERSION: u32 = 9;
+/// Version 9 uses smooth tone curves. Version 10 adds color wheels.
+pub const RENDER_VERSION: u32 = 10;
 
 use image::ImageEncoder;
 use serde::{Deserialize, Serialize};
@@ -282,7 +282,7 @@ struct GpuSource {
     fill: Option<[u32; 4]>,
 }
 
-const PARAMETER_SLOTS: usize = 56;
+const PARAMETER_SLOTS: usize = 60;
 type Parameters = [[f32; 4]; PARAMETER_SLOTS];
 const PARAMETER_BYTES: u64 = std::mem::size_of::<Parameters>() as u64;
 const MAX_DISPATCHES: u64 = 80;
@@ -1665,6 +1665,29 @@ impl Renderer {
                 b.saturation / 100.,
                 b.luminance / 100.,
                 centers[i],
+            ];
+        }
+        // Color wheels: rows 56..58 hold each zone's RGB offset and log2 gain;
+        // row 59 the two zone borders, the ramp half-width and an on flag.
+        // Zero wheels leave the flag off, so `finish` skips the grade.
+        let w = &r.wheels;
+        let zones = [w.shadows, w.midtones, w.highlights];
+        if zones != [Wheel::default(); 3] {
+            for (row, wheel) in zones.into_iter().enumerate() {
+                // The dot on a hue wheel with red at 0°, green at 120° and blue
+                // at 240°. 0.1 at the rim is a strong tint that rarely clips.
+                for (c, hue) in [0f32, 120., 240.].into_iter().enumerate() {
+                    let (sin, cos) = hue.to_radians().sin_cos();
+                    p[56 + row][c] = 0.1 * (wheel.x * cos + wheel.y * sin);
+                }
+                p[56 + row][3] = wheel.luminance / 100.;
+            }
+            let shift = -0.2 * w.balance / 100.;
+            p[59] = [
+                1. / 3. + shift,
+                2. / 3. + shift,
+                0.005 + 0.3 * w.blending / 100.,
+                1.,
             ];
         }
         if let (Some(f), Some(pair), Some(_)) = (film, pair, spatial) {

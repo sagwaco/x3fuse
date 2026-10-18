@@ -4,7 +4,7 @@
 // assets/PROVENANCE.md; source attribution: NOTICE.
 struct Pixels { v: array<vec4<f32>> }
 struct Table { v: array<f32> }
-struct Uniforms { v: array<vec4<f32>, 56> }
+struct Uniforms { v: array<vec4<f32>, 60> }
 @group(0) @binding(0) var<storage, read> source: Pixels;
 @group(0) @binding(1) var<storage, read> auxiliary: Pixels;
 @group(0) @binding(2) var<storage, read_write> destination: Pixels;
@@ -375,6 +375,16 @@ fn finish(@builtin(global_invocation_id) id:vec3<u32>) {
     for(var band=0u;band<8u;band++) {let center=p.v[8u+band].w;let dist=min(abs(hsv.x-center),1.0-abs(hsv.x-center));let w=max(0.0,1.0-dist/0.125);delta+=p.v[8u+band].xyz*w;total+=w;}
     delta/=max(total,1.0);hsv.x=fract(hsv.x+delta.x/12.0+1.0);hsv.y=clamp(hsv.y*(1.0+delta.y),0.0,1.0);hsv.z*=exp2(delta.z);
     if total>0.0 && any(abs(delta)>vec3<f32>(0)) {percept=hsv_to_rgb(hsv);}
+    // Color wheels. Two smooth ramps at the zone borders split the luma into
+    // shadow, midtone and highlight weights that sum to one. Each zone scales
+    // the pixel by its gain and adds its tint, in proportion to its weight.
+    if p.v[59].w>0.5 {
+        let luma=dot(percept,vec3<f32>(0.2126,0.7152,0.0722));
+        let s=smoothstep(p.v[59].xy-p.v[59].z,p.v[59].xy+p.v[59].z,vec2<f32>(luma));
+        let w=vec3<f32>(1.0-s.x,s.x-s.y,s.y);
+        let gain=exp2(dot(w,vec3<f32>(p.v[56].w,p.v[57].w,p.v[58].w)));
+        percept=percept*gain+mat3x3<f32>(p.v[56].xyz,p.v[57].xyz,p.v[58].xyz)*w;
+    }
     // Extrapolate endpoint slopes so identity curves retain extended channels;
     // conversion to the selected output gamut happens before the final clamp.
     percept=vec3<f32>(sample_curve(sample_curve(percept.x,3u),0u),sample_curve(sample_curve(percept.y,3u),1u),sample_curve(sample_curve(percept.z,3u),2u));

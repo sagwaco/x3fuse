@@ -22,6 +22,9 @@ pub struct EditRecipe {
     pub vibrance: f32,
     pub curves: Curves,
     pub hsl: [HslBand; 8],
+    /// Three-way color grading. The default is identity and is not written.
+    #[serde(skip_serializing_if = "is_default")]
+    pub wheels: ColorWheels,
     /// Strength passed to the RAW preparation stage (0..10), not applied twice.
     pub denoise: u8,
     pub denoise_options: x3f_core::DenoiseOptions,
@@ -48,6 +51,9 @@ pub struct EditRecipe {
 fn is_middle_exposure(source: &x3f_core::X3iSource) -> bool {
     *source == x3f_core::X3iSource::MiddleExposure
 }
+fn is_default<T: Default + PartialEq>(value: &T) -> bool {
+    *value == T::default()
+}
 impl Default for EditRecipe {
     fn default() -> Self {
         Self {
@@ -66,6 +72,7 @@ impl Default for EditRecipe {
             vibrance: 0.,
             curves: Curves::default(),
             hsl: [HslBand::default(); 8],
+            wheels: ColorWheels::default(),
             denoise: 10,
             denoise_options: x3f_core::DenoiseOptions::default(),
             sharpen: 0.,
@@ -135,6 +142,40 @@ pub struct HslBand {
     pub saturation: f32,
     pub luminance: f32,
 }
+/// Three-way color grading of the display-encoded image, after the HSL bands.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
+pub struct ColorWheels {
+    pub shadows: Wheel,
+    pub midtones: Wheel,
+    pub highlights: Wheel,
+    /// Overlap of the tonal zones (0..100). Zero is a hard split.
+    pub blending: f32,
+    /// Moves the zone borders (-100..100). Negative values widen the shadows.
+    pub balance: f32,
+}
+impl Default for ColorWheels {
+    fn default() -> Self {
+        Self {
+            shadows: Wheel::default(),
+            midtones: Wheel::default(),
+            highlights: Wheel::default(),
+            blending: 50.,
+            balance: 0.,
+        }
+    }
+}
+/// One color wheel. `x`, `y` is the dot in the unit disc, with `y` up. Its
+/// angle is the hue (red at 0°, green at 120°, blue at 240°) and its length the
+/// strength. `luminance` (-100..100) is the zone's brightness.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
+pub struct Wheel {
+    pub x: f32,
+    pub y: f32,
+    pub luminance: f32,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Crop {
@@ -414,6 +455,18 @@ impl EditRecipe {
                 range("HSL adjustment", value, -100., 100.)?;
             }
         }
+        let wheels = &self.wheels;
+        for wheel in [wheels.shadows, wheels.midtones, wheels.highlights] {
+            range("wheel x", wheel.x, -1., 1.)?;
+            range("wheel y", wheel.y, -1., 1.)?;
+            // The editor clamps the length to 1; allow for float rounding.
+            if wheel.x.hypot(wheel.y) > 1.0001 {
+                return Err("Wheel offsets must lie in the unit disc".into());
+            }
+            range("wheel luminance", wheel.luminance, -100., 100.)?;
+        }
+        range("wheel blending", wheels.blending, 0., 100.)?;
+        range("wheel balance", wheels.balance, -100., 100.)?;
         if let Some(f) = &self.film {
             f.validate()?;
         }
@@ -500,7 +553,53 @@ impl FilmSettings {
 
 #[cfg(test)]
 mod tests {
-    use super::{EditRecipe, EffectsSettings, GrainParams};
+    use super::{ColorWheels, EditRecipe, EffectsSettings, GrainParams, Wheel};
+
+    #[test]
+    fn default_wheels_are_not_written_and_others_round_trip() {
+        let saved = serde_json::to_value(EditRecipe::default()).unwrap();
+        assert!(saved.get("wheels").is_none());
+        let recipe: EditRecipe = serde_json::from_str(r#"{"wheels":{}}"#).unwrap();
+        assert_eq!(recipe.wheels, ColorWheels::default());
+        let recipe = EditRecipe {
+            wheels: ColorWheels {
+                midtones: Wheel {
+                    x: 0.3,
+                    y: -0.4,
+                    luminance: 20.,
+                },
+                balance: -30.,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        recipe.validate().unwrap();
+        let saved = serde_json::to_value(&recipe).unwrap();
+        assert_eq!(saved["wheels"]["blending"], 50.);
+        assert_eq!(serde_json::from_value::<EditRecipe>(saved).unwrap(), recipe);
+        for wheel in [
+            Wheel {
+                x: 0.8,
+                y: 0.8,
+                luminance: 0.,
+            },
+            Wheel {
+                luminance: 101.,
+                ..Default::default()
+            },
+            Wheel {
+                x: f32::NAN,
+                ..Default::default()
+            },
+        ] {
+            let mut bad = recipe.clone();
+            bad.wheels.shadows = wheel;
+            assert!(bad.validate().is_err());
+        }
+        let mut bad = recipe;
+        bad.wheels.blending = 101.;
+        assert!(bad.validate().is_err());
+    }
 
     #[test]
     fn effects_missing_and_null_are_none_and_an_object_round_trips() {

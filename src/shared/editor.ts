@@ -12,6 +12,30 @@ export interface HslBand {
   saturation: number
   luminance: number
 }
+/** One color wheel. `x`, `y` is the dot in the unit disc, with `y` up. Its angle is the
+    hue (red at 0°, green at 120°, blue at 240°) and its length the strength. */
+export interface Wheel {
+  x: number
+  y: number
+  /** The zone's brightness, -100..100. */
+  luminance: number
+}
+/** Three-way color grading. Blending (0..100) softens the zone borders; Balance
+    (-100..100) moves them, with negative values widening the shadows. */
+export interface ColorWheels {
+  shadows: Wheel
+  midtones: Wheel
+  highlights: Wheel
+  blending: number
+  balance: number
+}
+export const DEFAULT_WHEELS: ColorWheels = {
+  shadows: { x: 0, y: 0, luminance: 0 },
+  midtones: { x: 0, y: 0, luminance: 0 },
+  highlights: { x: 0, y: 0, luminance: 0 },
+  blending: 50,
+  balance: 0
+}
 export type Rgb = [number, number, number]
 export interface GrainParams {
   rmsGranularity: Rgb
@@ -96,6 +120,8 @@ export interface EditRecipe {
   vibrance: number
   curves: Record<'master' | 'red' | 'green' | 'blue', CurvePoint[]>
   hsl: HslBand[]
+  /** Missing means `DEFAULT_WHEELS`. The renderer does not write the default. */
+  wheels?: ColorWheels
   denoise: number
   denoiseOptions: DenoiseOptions
   sharpen: number
@@ -122,6 +148,9 @@ export const usesSfd = (recipe: EditRecipe | undefined): boolean => recipe?.x3iS
 export const negativePrint = (film: FilmSettings | null): boolean =>
   !!film?.negative &&
   !stocks.find((stock) => !stock.isPaper && stock.index === film.film)?.isPositive
+/** True when the film stock is black-and-white. */
+export const monochromeFilm = (film: FilmSettings | null): boolean =>
+  !!stocks.find((stock) => !stock.isPaper && stock.index === film?.film)?.monochrome
 export const DEFAULT_FILM: FilmSettings = {
   film: 2,
   paper: 3,
@@ -211,6 +240,8 @@ export function defaultRecipe(): EditRecipe {
     vibrance: 0,
     curves: { master: line(), red: line(), green: line(), blue: line() },
     hsl: Array.from({ length: 8 }, () => ({ hue: 0, saturation: 0, luminance: 0 })),
+    // Present so Reset clears the wheels.
+    wheels: structuredClone(DEFAULT_WHEELS),
     denoise: 10,
     denoiseOptions: defaultDenoiseOptions(),
     sharpen: 0,

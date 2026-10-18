@@ -516,6 +516,111 @@ fn gpu_generic_effects() {
 }
 
 #[test]
+#[ignore = "requires hardware GPU"]
+fn gpu_color_wheels() {
+    let renderer = Renderer::new().unwrap();
+    let cancel = AtomicBool::new(false);
+    // Dark, middle and bright neutral patches, side by side. The default tone
+    // curve shows them at about 0.12, 0.5 and 0.88.
+    let mut source = image(96, 32);
+    for (i, pixel) in source.data.as_chunks_mut::<3>().0.iter_mut().enumerate() {
+        pixel.fill([0.0167, 0.105, 0.45][i % 96 / 32]);
+    }
+    // The display RGB (0..1) at the center of each patch.
+    let render = |wheels: ColorWheels| -> [[f32; 3]; 3] {
+        let recipe = EditRecipe {
+            film: None,
+            wheels,
+            ..Default::default()
+        };
+        let data = renderer
+            .render(&source, &recipe, RenderOptions::default(), &cancel)
+            .unwrap()
+            .data;
+        std::array::from_fn(|patch| {
+            let at = (16 * 96 + 16 + 32 * patch) * 3;
+            std::array::from_fn(|c| f32::from(data[at + c]) / 65535.)
+        })
+    };
+    let luma = |c: [f32; 3]| 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    let toward_red = |c: [f32; 3], b: [f32; 3]| c[0] > b[0] + 0.005 && c[2] < b[2] - 0.002;
+    let red = Wheel {
+        x: 1.,
+        ..Default::default()
+    };
+    // 240°, blue.
+    let blue = Wheel {
+        x: -0.5,
+        y: -0.866,
+        ..Default::default()
+    };
+    let hard = ColorWheels {
+        blending: 0.,
+        ..Default::default()
+    };
+    let base = render(ColorWheels::default());
+    let lumas = base.map(luma);
+    assert!(
+        lumas[0] < 0.25 && (0.4..0.6).contains(&lumas[1]) && lumas[2] > 0.8,
+        "{lumas:?}"
+    );
+    // Blending and Balance without a wheel change nothing.
+    assert_eq!(
+        render(ColorWheels {
+            balance: 70.,
+            ..hard
+        }),
+        base
+    );
+    // With a hard split, a shadows tint moves only the dark patch toward red,
+    // and a highlights tint only the bright patch toward blue.
+    let shadows = render(ColorWheels {
+        shadows: red,
+        ..hard
+    });
+    assert!(toward_red(shadows[0], base[0]), "{shadows:?} {base:?}");
+    assert_eq!(shadows[1..], base[1..]);
+    let highlights = render(ColorWheels {
+        highlights: blue,
+        ..hard
+    });
+    assert!(highlights[2][2] > base[2][2] + 0.02 && highlights[2][0] < base[2][0] - 0.01);
+    assert_eq!(highlights[..2], base[..2]);
+    // Full blending lets the shadows tint reach the middle patch, less strongly.
+    let wide = render(ColorWheels {
+        shadows: red,
+        blending: 100.,
+        ..Default::default()
+    });
+    assert!(toward_red(wide[1], base[1]), "{wide:?} {base:?}");
+    assert!(wide[1][0] - base[1][0] < wide[0][0] - base[0][0]);
+    assert_eq!(wide[2], base[2]);
+    // Balance moves the borders: -100 puts the middle patch in the shadows,
+    // +100 puts it in the highlights.
+    let low = render(ColorWheels {
+        shadows: red,
+        balance: -100.,
+        ..hard
+    });
+    assert!(toward_red(low[1], base[1]), "{low:?} {base:?}");
+    let high = render(ColorWheels {
+        highlights: blue,
+        balance: 100.,
+        ..hard
+    });
+    assert!(high[1][2] > base[1][2] + 0.02, "{high:?} {base:?}");
+    // Luminance brightens its zone.
+    let brighter = render(ColorWheels {
+        midtones: Wheel {
+            luminance: 50.,
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+    assert!(luma(brighter[1]) > lumas[1] + 0.05, "{brighter:?} {base:?}");
+}
+
+#[test]
 #[ignore = "requires a hardware GPU; run with --ignored"]
 fn gpu_grain_intensity_has_headroom() {
     let renderer = Renderer::new().unwrap();
@@ -1086,7 +1191,7 @@ fn spektrafilm_license_ships_unmodified() {
     for (shader, expected) in [
         (
             include_bytes!("render.wgsl").as_slice(),
-            "77751740cfb70b773c255cf05074d2b55cd72c5851d9fb698bc23f3959d1fef8",
+            "c9d7ceb906d2078c11f41ea6b559cfd4a122a782f764dbeb82dcab2ffb9dabd0",
         ),
         (
             include_bytes!("gamut.wgsl").as_slice(),

@@ -43,7 +43,7 @@ capture filter. Attach the file's camera profiles to `PreparedImage` for both
 preview and export, as with other camera looks.
 
 Processing is geometric sampling → white balance/exposure → optional sensor-layer
-monochrome → highlights/shadows → optional spectral film → contrast/saturation/vibrance/HSL/curves
+monochrome → highlights/shadows → optional spectral film → contrast/saturation/vibrance/HSL/color wheels/curves
 → luminance sharpening → whites/blacks → output primaries/transfer curve. An
 explicit Merrill or dp Quattro camera profile renders through Sigma's native
 Color Mode from x3f-sys: the scene goes back to camera BMT and on to native
