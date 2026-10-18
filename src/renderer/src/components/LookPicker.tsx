@@ -11,6 +11,7 @@ import stocks from '@shared/film-stocks.json'
 import { useEditorStore } from '../stores/editorStore'
 import { t } from '../lib/strings'
 import { HelpTooltip } from './ui/settingsLayout'
+import { FilmCanister } from './FilmCanister'
 
 type Stock = (typeof stocks)[number]
 const FAMILIES = ['negativeFilm', 'slideFilm', 'cinemaFilm', 'bwFilm']
@@ -29,6 +30,23 @@ const PAPERS = stocks.filter((stock) => stock.isPaper)
 const AEROCHROME_FILM = FILMS.find((stock) => stock.key === 'kodak_ektachrome_100')!
 /** Black-and-white film prints only on black-and-white paper, and color on color. */
 const sameModel = (a: Stock | undefined, b: Stock): boolean => !!a?.monochrome === !!b.monochrome
+
+/** Canister colors as [body, text]: a look's own, else its family's, else its maker's. */
+const CANISTERS: Record<string, [string, string]> = {
+  aerochrome: ['#7d1838', '#f7b218'],
+  monochrome: ['#1c1c1c', '#f2f2ec'],
+  kodak: ['#d71f26', '#f7b218'],
+  fujifilm: ['#f2f2ec', '#009a49']
+}
+const canister = (
+  stock: Stock,
+  aerochrome: boolean
+): { color: string; ink: string; text: string } => {
+  const look = aerochrome ? 'aerochrome' : stock.monochrome ? 'monochrome' : stock.key.split('_')[0]
+  const [color, ink] = CANISTERS[look] ?? ['#d4d4d4', '#262626']
+  // The film speed, such as 400 in "Portra 400" or 500T in "Vision3 500T".
+  return { color, ink, text: aerochrome ? 'IR' : (stock.name.match(/\d{2,}[A-Z]?/)?.[0] ?? '') }
+}
 
 interface Look {
   id: string
@@ -229,7 +247,7 @@ export function LookPicker({
       : recipe.film
         ? aerochrome
           ? 'aerochrome'
-          : FILMS.find((stock) => stock.index === recipe.film?.film)?.key
+          : FILMS.find((film) => film.index === recipe.film?.film)?.key
         : recipe.monochrome
           ? 'Monochrome'
           : looks.some((look) => look.id === cameraProfile)
@@ -239,6 +257,7 @@ export function LookPicker({
   const caption = t(
     kind === 'film' ? (gallery ? 'editor.filmStock' : 'editor.look') : 'editor.paperStock'
   )
+  const stock = kind === 'film' && FILMS.find((film) => film.index === recipe.film?.film)
   if (gallery)
     return (
       <div role="group" aria-label={caption} className="grid grid-cols-3 gap-x-2 gap-y-3 p-4">
@@ -293,6 +312,7 @@ export function LookPicker({
     )
   return (
     <div className="relative flex items-center gap-2 rounded-xl border border-ink/15 bg-ink/[0.03] px-3 py-2.5 hover:border-ink/25 has-[:disabled]:opacity-50">
+      {stock && <FilmCanister {...canister(stock, aerochrome)} className="-my-1 h-10 shrink-0" />}
       {/* The button's ::after covers the box, so all of it opens the picker. */}
       <button
         type="button"

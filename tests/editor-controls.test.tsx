@@ -259,6 +259,30 @@ it('binds Exposure to the film when a stock is chosen and to the digital pipelin
   expect(change).toHaveBeenLastCalledWith({ film: DEFAULT_FILM })
 })
 
+it('shows the chosen film stock as a labeled canister on the Emulsion button', () => {
+  const canister = (kind: 'film' | 'paper', recipe: Partial<EditRecipe>): string[] | null => {
+    const view = render(<LookPicker kind={kind} recipe={{ ...defaultRecipe(), ...recipe }} />)
+    const label = view.container.querySelector('svg text')
+    view.unmount()
+    return label && [label.textContent!, label.getAttribute('fill')!]
+  }
+  const film = (index: number): Partial<EditRecipe> => ({ film: { ...DEFAULT_FILM, film: index } })
+  expect(canister('film', film(14))).toEqual(['200', '#009a49'])
+  expect(canister('film', film(11))).toEqual(['500T', '#f7b218'])
+  expect(canister('film', { ...film(20), monochrome: { filter: 'neutral' } })).toEqual([
+    '5222',
+    '#f2f2ec'
+  ])
+  expect(
+    canister('film', {
+      film: { ...DEFAULT_FILM, film: 15, negative: true },
+      cameraProfile: 'FCBlue'
+    })
+  ).toEqual(['IR', '#f7b218'])
+  expect(canister('film', { film: null })).toBeNull()
+  expect(canister('paper', film(14))).toBeNull()
+})
+
 it('previews every film stock on the photo and pairs each with its print paper', async () => {
   vi.stubGlobal('PointerEvent', MouseEvent)
   render(<Controls />)
