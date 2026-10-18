@@ -15,7 +15,13 @@ import {
   Pipette
 } from 'lucide-react'
 import { negativePrint, type EditRecipe, type PreviewRegion } from '@shared/editor'
-import { useEditorStore, isTextEditing, needsX3iMerge, previewCurrent } from '../stores/editorStore'
+import {
+  useEditorStore,
+  isTextEditing,
+  needsX3iMerge,
+  previewCurrent,
+  geometryKey
+} from '../stores/editorStore'
 import { useQueueStore } from '../stores/queueStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { t } from '../lib/strings'
@@ -118,13 +124,12 @@ export function EditorScreen(): React.JSX.Element {
   const currentFile = active ?? file
   const doc = editor.session ? editor.documents[editor.session.path] : undefined
   // A qualified area belongs to one photo and its geometry. A change clears it.
-  const areaKey = JSON.stringify([
-    editor.session?.sessionId,
-    doc && [doc.recipe.crop, doc.recipe.rotation, doc.recipe.straighten],
-    doc && [doc.recipe.pitch, doc.recipe.yaw]
-  ])
+  const geometry = doc && geometryKey(doc.recipe)
+  const areaKey = `${editor.session?.sessionId}:${geometry}`
   if (qualified && qualified.key !== areaKey) setQualified(null)
   const qualify = (region: PreviewRegion): void => {
+    // A preview of other geometry, as before an undone rotation renders, shows other pixels.
+    if (editor.previewGeometry !== geometry) return
     setQualified({ key: areaKey, region })
     setQualifying(false)
   }
@@ -354,8 +359,17 @@ export function EditorScreen(): React.JSX.Element {
   // A negative print can show as a positive. Before shows the original, so it stays as it is.
   const inverted =
     editor.negativePreview && !editor.before && !!doc && negativePrint(doc.recipe.film)
-  // Visible area shows the tile of the current view while zoomed.
-  const visibleTile = scopeSource === 'visible' && !!editor.viewport
+  // While zoomed, an edit renders the tile first, and the whole-image preview later.
+  // Visible area reads the tile of the current view; the other sources read the
+  // preview of the current recipe. Until it arrives, the scope keeps its last paint as pending.
+  const sourceUrl =
+    scopeSource === 'visible' && editor.viewport
+      ? viewTile
+        ? editor.tile?.url
+        : undefined
+      : !editor.viewport || previewCurrent(editor)
+        ? editor.preview?.url
+        : undefined
   // The preview gives points and rectangles as 0 to 1 of the image that it shows: the
   // rendered preview, cropped and oriented. The scope reads the same preview, so they
   // need no conversion. Crop mode renders the photo without its crop, so it measures all of it.
@@ -376,22 +390,10 @@ export function EditorScreen(): React.JSX.Element {
   const scopeProps = {
     // The scope reads its pixels after the developing cloud leaves.
     // The read would make the cloud skip frames.
-    url:
-      displayFile && !cloudFile && sidebarPage === 'edit'
-        ? visibleTile
-          ? viewTile
-            ? editor.tile?.url
-            : undefined
-          : editor.preview?.url
-        : undefined,
+    url: displayFile && !cloudFile && sidebarPage === 'edit' ? sourceUrl : undefined,
     region: scopeRegion,
     fileId: currentFile?.id,
-    // While zoomed, an edit renders the tile first, and the whole-image preview later.
-    // A source that does not show the current view or recipe keeps its last scope as pending.
-    pending:
-      !!cloudFile ||
-      editor.loading ||
-      (visibleTile ? !viewTile : !!editor.viewport && !previewCurrent(editor)),
+    pending: !!cloudFile || editor.loading || (!!editor.viewport && !sourceUrl),
     mode: scope
   }
   // A tiny scope shows in the header while the full one is scrolled away.
@@ -794,9 +796,13 @@ export function EditorScreen(): React.JSX.Element {
                           document.getElementById(`scope-tab-${SCOPE_SOURCES[next][0]}`)?.focus()
                         }}
                         className={cn(
-                          'control-label flex items-center rounded-md border border-transparent px-2 py-1 text-[10px] text-tone-400 hover:bg-ink/5 hover:text-tone-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/50 aria-selected:border-ink/30 aria-selected:bg-ink/10 aria-selected:text-ink',
+                          // As the sidebar tabs: the accent is below 4.5:1 contrast in the light
+                          // and gray themes, so an armed Qualifier shows a stronger border and fill.
+                          'control-label flex items-center rounded-md border border-transparent px-2 py-1 text-[10px] text-tone-300 hover:bg-ink/5 hover:text-tone-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/70 aria-selected:border-ink/30 aria-selected:bg-ink/10 aria-selected:text-ink',
                           value === 'qualifier' && 'ml-auto',
-                          value === 'qualifier' && qualifying && 'aria-selected:text-accent'
+                          value === 'qualifier' &&
+                            qualifying &&
+                            'aria-selected:border-ink/60 aria-selected:bg-ink/15'
                         )}
                       >
                         {value === 'qualifier' ? (

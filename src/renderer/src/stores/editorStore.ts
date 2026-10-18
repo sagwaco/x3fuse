@@ -33,6 +33,8 @@ interface EditorState {
   preview: RenderedPreview | null
   /** The pitch and yaw `preview` was rendered with; analysis must not use it with other angles. */
   previewPose: { pitch: number; yaw: number } | null
+  /** The `geometryKey` of the recipe that `preview` was rendered with. */
+  previewGeometry: string | null
   before: boolean
   /** Show a negative print inverted, as a positive. Only the view changes. */
   negativePreview: boolean
@@ -84,9 +86,10 @@ interface EditorState {
 }
 
 const same = (a: EditRecipe, b: EditRecipe): boolean => JSON.stringify(a) === JSON.stringify(b)
-const sameGeometry = (a: EditRecipe, b: EditRecipe): boolean =>
-  JSON.stringify([a.crop, a.rotation, a.straighten, a.pitch, a.yaw]) ===
-  JSON.stringify([b.crop, b.rotation, b.straighten, b.pitch, b.yaw])
+/** The settings that move pixels: crop, rotation, straighten and perspective. */
+export const geometryKey = (recipe: EditRecipe): string =>
+  JSON.stringify([recipe.crop, recipe.rotation, recipe.straighten, recipe.pitch, recipe.yaw])
+const sameGeometry = (a: EditRecipe, b: EditRecipe): boolean => geometryKey(a) === geometryKey(b)
 const sameRegion = (a: PreviewRegion | null, b: PreviewRegion | null): boolean =>
   JSON.stringify(a) === JSON.stringify(b)
 const saves = new Set<Promise<void>>()
@@ -335,6 +338,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
             preview,
             previewKey: preview.draft ? null : key,
             previewPose: { pitch: recipe.pitch, yaw: recipe.yaw },
+            previewGeometry: geometryKey(recipe),
             switching: false
           })
         }
@@ -469,7 +473,12 @@ export const useEditorStore = create<EditorState>((set, get) => {
         if (isNative(preview)) cacheRender(key, preview)
         else misses.add(miss)
       } else if (key === currentKey() && get().session?.sessionId === sessionId) {
-        set({ preview, previewKey: key, previewPose: { pitch: recipe.pitch, yaw: recipe.yaw } })
+        set({
+          preview,
+          previewKey: key,
+          previewPose: { pitch: recipe.pitch, yaw: recipe.yaw },
+          previewGeometry: geometryKey(recipe)
+        })
       }
     } catch {
       // A newer render cancelled this one; try again later unless it failed on its own.
@@ -493,6 +502,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
     error: null,
     preview: null,
     previewPose: null,
+    previewGeometry: null,
     before: false,
     negativePreview: false,
     clipboard: null,

@@ -215,6 +215,13 @@ describe('scope preview', () => {
     view.rerender(<ColorScope url={preview} fileId="a" mode="waveform" />)
     await waitFor(() => expect(context.getImageData).toHaveBeenLastCalledWith(0, 0, 640, 480))
     expect(fetch).toHaveBeenCalledTimes(1)
+    // A withheld, stale source keeps the last paint as pending and reads no pixels.
+    const held = context.getImageData.mock.calls.length
+    view.rerender(<ColorScope url={undefined} fileId="a" mode="waveform" region={half} pending />)
+    expect(screen.getByRole('img')).toBe(canvas)
+    expect(view.container.firstElementChild?.getAttribute('aria-busy')).toBe('true')
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(context.getImageData).toHaveBeenCalledTimes(held)
   })
 
   it('shows no preview on failure and closes a decoded bitmap if reading pixels fails', async () => {

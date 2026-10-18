@@ -18,6 +18,26 @@ const CACHE_LOADS = 4
 const REST = 120
 /** The same after an eased zoom, which runs for 240 ms in CSS. */
 const EASED_REST = 260
+/** Screen pixels that an arrow key moves or sizes a selection. */
+const KEY_STEP = 8
+const ARROWS: Partial<Record<string, [number, number]>> = {
+  ArrowLeft: [-1, 0],
+  ArrowRight: [1, 0],
+  ArrowUp: [0, -1],
+  ArrowDown: [0, 1]
+}
+const clamp = (value: number): number => Math.max(0, Math.min(1, value))
+/** The rectangle of a key selection, inside the image. */
+function markerRegion({ x, y, width, height }: PreviewRegion): PreviewRegion {
+  const left = clamp(x - width / 2)
+  const top = clamp(y - height / 2)
+  return {
+    x: left,
+    y: top,
+    width: clamp(x + width / 2) - left,
+    height: clamp(y + height / 2) - top
+  }
+}
 
 /** Zoom is relative to the oriented JPEG's natural dimensions; null follows Fit. */
 export function ZoomablePreview({
@@ -67,6 +87,8 @@ export function ZoomablePreview({
   // The start point and the current rectangle of a region drag.
   const select = useRef<{ x: number; y: number; region?: PreviewRegion } | null>(null)
   const [band, setBand] = useState<PreviewRegion | null>(null)
+  // A selection by keys: its center and its size, 0 to 1 of the image.
+  const [marker, setMarker] = useState<PreviewRegion | null>(null)
   const [size, setSize] = useState({ width: 0, height: 0 })
   const [loaded, setLoaded] = useState({ width: 0, height: 0 })
   // Known dimensions apply in the same render as the picture they belong to.
@@ -304,7 +326,21 @@ export function ZoomablePreview({
     if (!rect || rect.width <= 0 || rect.height <= 0) return null
     return { x: (clientX - rect.left) / rect.width, y: (clientY - rect.top) / rect.height }
   }
-  const clamp = (value: number): number => Math.max(0, Math.min(1, value))
+  // Ends a selection by keys or by pointer without a report. A pointer that is still
+  // down then neither pans nor clicks.
+  const cancelSelection = useCallback((): void => {
+    if (select.current) {
+      moved.current = true
+      drag.current = null
+      select.current = null
+    }
+    setBand(null)
+    setMarker(null)
+  }, [])
+  const armed = !!onImageRegion
+  useEffect(() => {
+    if (!armed) cancelSelection()
+  }, [armed, cancelSelection])
 
   const onDimensions = useCallback(({ width, height }: { width: number; height: number }): void => {
     setLoaded((previous) =>
@@ -321,13 +357,15 @@ export function ZoomablePreview({
     [onDimensions]
   )
   const fullResolution = ready && scale > fit
-  // The rectangle being dragged, else the given one, in image pixels.
-  const shown = band ?? outline
+  // The rectangle being dragged or moved by keys, else the given one, in image pixels.
+  // A point shows as a square of 8 screen pixels.
+  const shown = band ?? (marker && markerRegion(marker)) ?? outline
+  const dot = 4 / scale
   const box = shown && {
-    x: shown.x * image.width,
-    y: shown.y * image.height,
-    width: shown.width * image.width,
-    height: shown.height * image.height,
+    x: shown.x * image.width - (shown.width ? 0 : dot),
+    y: shown.y * image.height - (shown.height ? 0 : dot),
+    width: shown.width * image.width || 2 * dot,
+    height: shown.height * image.height || 2 * dot,
     fill: 'none'
   }
   const content = useMemo(
@@ -381,6 +419,49 @@ export function ZoomablePreview({
           moved.current = false
         }}
         onKeyDown={(event) => {
+          // Keys select as a pointer does: arrow keys move a point, Shift with arrow keys
+          // sizes a rectangle around it, Return applies it, and Escape cancels.
+          const arrow = ARROWS[event.key]
+          const plain = !event.metaKey && !event.ctrlKey && !event.altKey
+          if (onImageRegion && ready && arrow && plain) {
+            event.preventDefault()
+            event.stopPropagation()
+            const [dx, dy] = arrow
+            const stepX = KEY_STEP / (image.width * scale)
+            const stepY = KEY_STEP / (image.height * scale)
+            const center = visibleRegion
+              ? {
+                  x: visibleRegion.x + visibleRegion.width / 2,
+                  y: visibleRegion.y + visibleRegion.height / 2
+                }
+              : { x: 0.5, y: 0.5 }
+            const from = marker ?? { ...center, width: 0, height: 0 }
+            setMarker(
+              event.shiftKey
+                ? {
+                    ...from,
+                    width: clamp(from.width + dx * stepX),
+                    height: clamp(from.height + dy * stepY)
+                  }
+                : { ...from, x: clamp(from.x + dx * stepX), y: clamp(from.y + dy * stepY) }
+            )
+            return
+          }
+          if (marker && event.key === 'Enter') {
+            event.preventDefault()
+            event.stopPropagation()
+            const region = markerRegion(marker)
+            if (region.width && region.height) onImageRegion?.(region)
+            else onImagePoint?.(marker.x, marker.y)
+            setMarker(null)
+            return
+          }
+          if ((marker || select.current) && event.key === 'Escape') {
+            event.preventDefault()
+            event.stopPropagation()
+            cancelSelection()
+            return
+          }
           if (!['+', '=', '-', ...(digitZoom ? ['0', '1'] : [])].includes(event.key)) return
           event.preventDefault()
           event.stopPropagation()
@@ -390,6 +471,8 @@ export function ZoomablePreview({
         }}
         onPointerDown={(event) => {
           if (event.button !== 0 || !event.isPrimary) return
+          // Another pointer owns the drag in progress.
+          if (drag.current && drag.current.id !== event.pointerId) return
           moved.current = false
           event.currentTarget.focus()
           const presented = interruptZoom()
@@ -399,8 +482,10 @@ export function ZoomablePreview({
           event.preventDefault()
           event.currentTarget.setPointerCapture(event.pointerId)
           drag.current = { id: event.pointerId, x: event.clientX, y: event.clientY }
-          if (start) select.current = { x: clamp(start.x), y: clamp(start.y) }
-          else setDragging(true)
+          if (start) {
+            select.current = { x: clamp(start.x), y: clamp(start.y) }
+            setMarker(null)
+          } else setDragging(true)
         }}
         onPointerMove={(event) => {
           const previous = drag.current
@@ -430,6 +515,8 @@ export function ZoomablePreview({
           drag.current = { id: event.pointerId, x: event.clientX, y: event.clientY }
         }}
         onPointerUp={(event) => {
+          // Only the pointer that started the drag ends it.
+          if (drag.current && drag.current.id !== event.pointerId) return
           // Report before the capture ends, which clears the drag.
           const region = select.current?.region
           if (region?.width && region.height) onImageRegion?.(region)
@@ -438,11 +525,15 @@ export function ZoomablePreview({
           }
           stopDragging()
         }}
-        onPointerCancel={() => {
+        onPointerCancel={(event) => {
+          if (drag.current && drag.current.id !== event.pointerId) return
           moved.current = true
           stopDragging()
         }}
-        onLostPointerCapture={stopDragging}
+        onLostPointerCapture={(event) => {
+          if (drag.current && drag.current.id !== event.pointerId) return
+          stopDragging()
+        }}
       >
         <div
           ref={mediaRef}

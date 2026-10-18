@@ -6,7 +6,7 @@ import { DEFAULT_FILM, defaultRecipe, type PreviewRegion } from '@shared/editor'
 import { displayPreviewUrl, previewUrl } from '@shared/preview'
 import { DEFAULT_SETTINGS, type X3FFileDTO } from '@shared/types'
 import { EditorScreen } from '../src/renderer/src/components/EditorScreen'
-import { useEditorStore as editor } from '../src/renderer/src/stores/editorStore'
+import { useEditorStore as editor, geometryKey } from '../src/renderer/src/stores/editorStore'
 import { useQueueStore as queue } from '../src/renderer/src/stores/queueStore'
 import { useSettingsStore } from '../src/renderer/src/stores/settingsStore'
 import { t } from '../src/renderer/src/lib/strings'
@@ -745,8 +745,8 @@ it('measures the entire image or the visible area, and waits for current pixels 
   act(() => editor.setState({ viewport: region, tile }))
   expect(scopeAttribute('data-scope-url')).toBe(frame.url)
   expect(scopeAttribute('data-pending')).toBe('false')
-  // An exposure change while zoomed renders the tile first. The entire image keeps its
-  // last scope as pending until prefetch refreshes the whole-image preview.
+  // An exposure change while zoomed renders the tile first. The scope gets no stale
+  // pixels and keeps its last paint as pending until prefetch refreshes the preview.
   const brighter = { ...recipe, exposure: 1 }
   act(() =>
     editor.setState({
@@ -754,8 +754,13 @@ it('measures the entire image or the visible area, and waits for current pixels 
       tile: { ...tile, revision: 2, url: 'x3f-edit://localhost/tile-b' }
     })
   )
-  expect(scopeAttribute('data-scope-url')).toBe(frame.url)
+  expect(scopeAttribute('data-scope-url')).toBeNull()
   expect(scopeAttribute('data-pending')).toBe('true')
+  // Also for a new qualified area: it waits for the current preview.
+  fireEvent.click(tabs[2])
+  expect(scopeAttribute('data-scope-url')).toBeNull()
+  expect(scopeAttribute('data-pending')).toBe('true')
+  fireEvent.click(tabs[0])
   const refreshed = { ...frame, revision: 2, url: 'x3f-edit://localhost/live-b' }
   act(() => editor.setState({ preview: refreshed, previewKey: renderKey(brighter) }))
   expect(scopeAttribute('data-scope-url')).toBe(refreshed.url)
@@ -787,12 +792,17 @@ it('qualifies a point or a dragged area, apart from the white balance picker', (
     documents: { [file.path]: doc },
     loading: false,
     preview: frame,
+    previewGeometry: geometryKey(recipe),
     close
   })
   const view = render(<EditorScreen />)
   const [entire, visible, qualifier] = within(
     screen.getByRole('tablist', { name: 'Scope area' })
   ).getAllByRole('tab')
+  // Tab text uses tone and ink, not the accent, for contrast in every theme.
+  expect(entire.className).toContain('text-tone-300')
+  expect(entire.className).toContain('aria-selected:text-ink')
+  expect(qualifier.className).not.toContain('accent')
   const picker = (): HTMLElement => screen.getByRole('button', { name: 'Pick white balance' })
   const qualifying = (): string | null | undefined => previewAttribute('data-qualifying')
   const region = (): unknown => JSON.parse(scopeAttribute('data-scope-region') ?? 'null')
@@ -809,6 +819,9 @@ it('qualifies a point or a dragged area, apart from the white balance picker', (
   expect(qualifying()).toBe('true')
   expect(picker().getAttribute('aria-pressed')).toBe('false')
   expect(hint()?.getAttribute('role')).toBe('status')
+  // An armed Qualifier shows a stronger border, not an accent color.
+  expect(qualifier.className).toContain('aria-selected:border-ink/60')
+  expect(qualifier.className).not.toContain('accent')
   // Without an area, the Qualifier measures the entire image.
   expect(scopeAttribute('data-scope-url')).toBe(frame.url)
   expect(region()).toBeNull()
@@ -847,12 +860,35 @@ it('qualifies a point or a dragged area, apart from the white balance picker', (
   expect(region()).toEqual(drawn)
   expect(outline()).toEqual(drawn)
 
-  // A geometry change clears the area.
-  act(() =>
-    editor.setState({ documents: { [file.path]: { ...doc, recipe: { ...recipe, rotation: 1 } } } })
-  )
+  // A geometry change clears the area. Until the new geometry renders, the photo shows
+  // other pixels, so a selection on it is ignored and the Qualifier stays armed.
+  const rotated = { ...recipe, rotation: 1 }
+  const rotate = (value: typeof recipe, rendered: typeof recipe): void =>
+    act(() =>
+      editor.setState({
+        documents: { [file.path]: { ...doc, recipe: value } },
+        previewGeometry: geometryKey(rendered)
+      })
+    )
+  rotate(rotated, recipe)
   expect(region()).toBeNull()
   expect(outline()).toBeNull()
+  fireEvent.click(qualifier)
+  fireEvent.click(view.container.querySelector('[data-drag]')!)
+  expect(region()).toBeNull()
+  expect(qualifying()).toBe('true')
+  rotate(rotated, rotated)
+  fireEvent.click(view.container.querySelector('[data-drag]')!)
+  expect(region()).toEqual(drawn)
+  // The same for an undo back to the old geometry before it renders.
+  rotate(recipe, rotated)
+  expect(region()).toBeNull()
+  fireEvent.click(qualifier)
+  fireEvent.click(view.container.querySelector('[data-point]')!)
+  expect(region()).toBeNull()
+  rotate(recipe, recipe)
+  fireEvent.click(view.container.querySelector('[data-drag]')!)
+  expect(region()).toEqual(drawn)
   // Leaving the tab clears the area.
   fireEvent.click(qualifier)
   fireEvent.click(view.container.querySelector('[data-drag]')!)
