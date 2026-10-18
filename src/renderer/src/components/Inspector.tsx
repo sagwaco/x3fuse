@@ -58,7 +58,10 @@ export function Inspector(): React.JSX.Element {
           </div>
           <CullControls />
 
-          <Section title={t('inspector.scopes')} action={!multiple && <ScopeMenu />}>
+          <Section
+            title={t('inspector.scopes')}
+            action={!multiple && <ScopeMenu className="-my-1.5" />}
+          >
             {multiple ? (
               <p className="py-6 text-center text-xs text-tone-500">
                 {t('inspector.scopes_multiple')}

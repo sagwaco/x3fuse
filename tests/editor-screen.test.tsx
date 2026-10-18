@@ -159,7 +159,9 @@ vi.mock('../src/renderer/src/components/EditorControls', async () => {
   }
 })
 vi.mock('../src/renderer/src/components/BatchProgress', () => ({ BatchProgress: () => null }))
-vi.mock('../src/renderer/src/components/ScopeMenu', () => ({ ScopeMenu: () => null }))
+vi.mock('../src/renderer/src/components/ScopeMenu', () => ({
+  ScopeMenu: () => <button data-scope-menu>Scope view</button>
+}))
 vi.mock('../src/renderer/src/components/ZoomControls', () => ({ ZoomControls: () => null }))
 vi.mock('../src/renderer/src/components/ui/resizablePanel', () => ({
   ResizablePanel: ({ children }: { children: ReactNode }) => <aside>{children}</aside>
@@ -739,12 +741,17 @@ it('measures the entire image or the visible area, and waits for current pixels 
     preview: frame,
     previewKey: renderKey()
   })
-  render(<EditorScreen />)
-  const tabs = within(screen.getByRole('tablist', { name: 'Scope area' })).getAllByRole('tab')
-  expect(tabs.map((tab) => tab.getAttribute('aria-label') ?? tab.textContent)).toEqual([
-    'Entire image',
-    'Visible area',
-    'Qualifier'
+  const view = render(<EditorScreen />)
+  // The scope view menu leads the scope row, and icon tabs choose the area. The header
+  // has no menu.
+  const tablist = screen.getByRole('tablist', { name: 'Scope area' })
+  const tabs = within(tablist).getAllByRole('tab')
+  expect(tablist.parentElement!.firstElementChild).toBe(screen.getByText('Scope view'))
+  expect(view.container.querySelectorAll('[data-scope-menu]')).toHaveLength(1)
+  expect(tabs.map((tab) => [tab.getAttribute('aria-label'), tab.getAttribute('title')])).toEqual([
+    ['Entire image', 'Entire image'],
+    ['Visible area', 'Visible area'],
+    ['Qualifier', 'Qualifier']
   ])
   expect(selectedScope()).toBe('scope-tab-entire')
   expect(scopeAttribute('data-scope-url')).toBe(frame.url)
@@ -813,13 +820,9 @@ it('qualifies a point or a dragged area, apart from the white balance picker', (
   })
   const view = render(<EditorScreen />)
   fireEvent.click(view.container.querySelector('[data-paint]')!)
-  const [entire, visible, qualifier] = within(
-    screen.getByRole('tablist', { name: 'Scope area' })
-  ).getAllByRole('tab')
-  // Tab text uses tone and ink, not the accent, for contrast in every theme.
-  expect(entire.className).toContain('text-tone-300')
-  expect(entire.className).toContain('aria-selected:text-ink')
-  expect(qualifier.className).not.toContain('accent')
+  const tablist = screen.getByRole('tablist', { name: 'Scope area' })
+  const [entire, visible, qualifier] = within(tablist).getAllByRole('tab')
+  const armed = '[&>[data-selected]]:bg-ink/30'
   const picker = (): HTMLElement => screen.getByRole('button', { name: 'Pick white balance' })
   const qualifying = (): string | null | undefined => previewAttribute('data-qualifying')
   const region = (): unknown => JSON.parse(scopeAttribute('data-scope-region') ?? 'null')
@@ -836,9 +839,9 @@ it('qualifies a point or a dragged area, apart from the white balance picker', (
   expect(qualifying()).toBe('true')
   expect(picker().getAttribute('aria-pressed')).toBe('false')
   expect(hint()?.getAttribute('role')).toBe('status')
-  // An armed Qualifier shows a stronger border, not an accent color.
-  expect(qualifier.className).toContain('aria-selected:border-ink/60')
-  expect(qualifier.className).not.toContain('accent')
+  // An armed Qualifier shows a stronger fill, not an accent color, for contrast in every theme.
+  expect(tablist.className).toContain(armed)
+  expect(tablist.className).not.toContain('accent')
   // Without an area, the Qualifier measures the entire image.
   expect(scopeAttribute('data-scope-url')).toBe(frame.url)
   expect(region()).toBeNull()
@@ -846,7 +849,11 @@ it('qualifies a point or a dragged area, apart from the white balance picker', (
   fireEvent.click(picker())
   expect(qualifying()).toBe('false')
   expect(hint()).toBeNull()
+  expect(tablist.className).not.toContain(armed)
+  // A click on the selected Qualifier arms it again.
+  expect(selectedScope()).toBe('scope-tab-qualifier')
   fireEvent.click(qualifier)
+  expect(qualifying()).toBe('true')
   expect(picker().getAttribute('aria-pressed')).toBe('false')
   fireEvent.keyDown(document, { key: 'w' })
   expect(picker().getAttribute('aria-pressed')).toBe('true')
@@ -1087,6 +1094,20 @@ it('inverts a negative print on request and shows a tiny scope while the scope i
   expect(view.container.querySelector('[data-compact="true"]')).toBeNull()
   act(() => report([{ isIntersecting: false }]))
   expect(view.container.querySelector('aside .h-8 [data-compact="true"]')).not.toBeNull()
+  // A click on the tiny scope scrolls the sidebar back to the full scope, without motion
+  // when reduced motion is on. The focus moves to the scope area.
+  const scrollTo = vi.fn()
+  HTMLElement.prototype.scrollTo = scrollTo
+  const show = screen.getByRole('button', { name: t('editor.showScope') })
+  expect(show.getAttribute('title')).toBe(t('editor.showScope'))
+  expect(show.querySelector('[data-compact="true"]')).not.toBeNull()
+  fireEvent.click(show)
+  expect(scrollTo.mock.contexts[0]).toBe(show.closest('aside')!.querySelector('.overflow-y-auto'))
+  expect(scrollTo).toHaveBeenLastCalledWith({ top: 0, behavior: 'smooth' })
+  expect(document.activeElement?.id).toBe('scope-tab-entire')
+  vi.stubGlobal('matchMedia', () => ({ matches: true }))
+  fireEvent.click(show)
+  expect(scrollTo).toHaveBeenLastCalledWith({ top: 0, behavior: 'auto' })
   act(() => report([{ isIntersecting: true }]))
   expect(view.container.querySelector('[data-compact="true"]')).toBeNull()
   vi.unstubAllGlobals()

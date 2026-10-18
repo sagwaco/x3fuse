@@ -1,5 +1,6 @@
 import { defaultDenoiseOptions, type DenoiseOptions } from '@shared/denoise'
 import { t } from '../lib/strings'
+import { cn } from '../lib/cn'
 import { Select } from './ui/select'
 import { Slider } from './ui/slider'
 import { Row, ToggleRow } from './ui/settingsLayout'
@@ -15,7 +16,10 @@ export function DenoiseControls({
   value: DenoiseOptions
   change: (options: DenoiseOptions, commit?: boolean) => void
   commit?: () => void
-  /** Keeps the open state of Advanced, as a section does. Without it, Advanced starts closed. */
+  /**
+   * For the editor sidebar. Keeps the open state of Advanced, and keeps its header at the
+   * top while it scrolls, as a section does. Without it, Advanced starts closed.
+   */
   storageId?: string
 }): React.JSX.Element {
   const [open, setOpen] = useStoredOpen(storageId)
@@ -60,7 +64,14 @@ export function DenoiseControls({
         onToggle={(event) => setOpen(event.currentTarget.open)}
         className="space-y-3 text-xs text-tone-300"
       >
-        <summary className="control-label cursor-pointer select-none font-bold text-tone-400">
+        <summary
+          className={cn(
+            'control-label cursor-pointer select-none font-bold text-tone-400',
+            // Below the section header, as a nested section. The margins keep the layout at rest.
+            storageId &&
+              'sticky top-10 z-10 -mx-4 -my-2 bg-[color:color-mix(in_srgb,rgb(var(--tone-900))_30%,rgb(var(--tone-950)))] px-4 py-2'
+          )}
+        >
           {t('denoise.advanced')}
         </summary>
         <ToggleRow

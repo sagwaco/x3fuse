@@ -337,6 +337,7 @@
   "editor.scopeEntire": "Imagen completa",
   "editor.scopeVisible": "Área visible",
   "editor.scopeQualifier": "Calificador",
+  "editor.showScope": "Mostrar el monitor de señal",
   "editor.scopeQualifyHint": "Haz clic en un punto o arrastra un rectángulo en la imagen para medirlo. Con la imagen enfocada, las flechas mueven un punto; Mayús con las flechas ajusta un rectángulo; Intro aplica; Esc cancela.",
   "editor.look": "Emulsión",
   "editor.panels": "Paneles",

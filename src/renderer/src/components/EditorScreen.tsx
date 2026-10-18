@@ -12,7 +12,9 @@ import {
   SquareSplitHorizontal,
   ArrowLeft,
   PanelRight,
-  Pipette
+  Pipette,
+  RectangleHorizontal,
+  Scan
 } from 'lucide-react'
 import { negativePrint, type EditRecipe, type PreviewRegion } from '@shared/editor'
 import {
@@ -26,6 +28,7 @@ import { useQueueStore } from '../stores/queueStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { t } from '../lib/strings'
 import { Button } from './ui/button'
+import { GlassGroup } from './ui/glassGroup'
 import { ResizablePanel } from './ui/resizablePanel'
 import { useToolbarSwap } from '../hooks/useToolbarSwap'
 import { ZoomControls } from './ZoomControls'
@@ -50,9 +53,9 @@ import { withShortcut } from '../lib/shortcut'
 type SidebarPage = 'edit' | 'emulsion' | 'paper'
 /** The pixels that the scope measures. */
 const SCOPE_SOURCES = [
-  ['entire', 'scopeEntire'],
-  ['visible', 'scopeVisible'],
-  ['qualifier', 'scopeQualifier']
+  ['entire', 'scopeEntire', RectangleHorizontal],
+  ['visible', 'scopeVisible', Scan],
+  ['qualifier', 'scopeQualifier', Pipette]
 ] as const
 type ScopeSource = (typeof SCOPE_SOURCES)[number][0]
 
@@ -418,6 +421,12 @@ export function EditorScreen(): React.JSX.Element {
       setScopeHidden(false)
     }
   }, [sidebarShown])
+  // The tiny scope goes away when the full one shows, so the focus moves to the scope area.
+  const showScope = (): void => {
+    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    sidebarBody.current?.scrollTo({ top: 0, behavior: reduce ? 'auto' : 'smooth' })
+    document.getElementById(`scope-tab-${scopeSource}`)?.focus({ preventScroll: true })
+  }
   const history = (
     <>
       <Button
@@ -727,10 +736,17 @@ export function EditorScreen(): React.JSX.Element {
                   <div className="ml-0.5 flex min-w-0 items-center gap-1.5">
                     {currentFile && <PhotoInfo file={currentFile} />}
                   </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    {scopeHidden && <ColorScope {...scopeProps} compact />}
-                    <ScopeMenu />
-                  </div>
+                  {scopeHidden && (
+                    <button
+                      type="button"
+                      aria-label={t('editor.showScope')}
+                      title={t('editor.showScope')}
+                      onClick={showScope}
+                      className="shrink-0 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/60"
+                    >
+                      <ColorScope {...scopeProps} compact />
+                    </button>
+                  )}
                 </>
               ) : (
                 <div className="flex items-center gap-1">
@@ -750,9 +766,11 @@ export function EditorScreen(): React.JSX.Element {
                 </div>
               )}
             </div>
+            {/* The scroll padding keeps the focus out from under the stuck headers of a
+                section and of a section in it. */}
             <div
               ref={sidebarBody}
-              className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto pb-3"
+              className="min-h-0 flex-1 scroll-pt-20 overflow-x-hidden overflow-y-auto pb-3"
             >
               {sidebarPage === 'paper' && doc && (
                 <fieldset
@@ -774,57 +792,27 @@ export function EditorScreen(): React.JSX.Element {
               )}
               <div hidden={sidebarPage !== 'edit'}>
                 <div ref={scopeBox} className="p-3">
-                  <div
-                    role="tablist"
-                    aria-label={t('editor.scopeArea')}
-                    className="mb-2 flex gap-1"
-                  >
-                    {SCOPE_SOURCES.map(([value, label], index) => (
-                      <button
-                        key={value}
-                        id={`scope-tab-${value}`}
-                        type="button"
-                        role="tab"
-                        aria-selected={scopeSource === value}
-                        aria-controls="scope-panel"
-                        aria-label={value === 'qualifier' ? t(`editor.${label}`) : undefined}
-                        title={value === 'qualifier' ? t(`editor.${label}`) : undefined}
-                        tabIndex={scopeSource === value ? 0 : -1}
-                        onClick={() => chooseScope(value)}
-                        onKeyDown={(event) => {
-                          const count = SCOPE_SOURCES.length
-                          const next =
-                            event.key === 'ArrowRight'
-                              ? (index + 1) % count
-                              : event.key === 'ArrowLeft'
-                                ? (index + count - 1) % count
-                                : event.key === 'Home'
-                                  ? 0
-                                  : event.key === 'End'
-                                    ? count - 1
-                                    : -1
-                          if (next < 0) return
-                          event.preventDefault()
-                          chooseScope(SCOPE_SOURCES[next][0])
-                          document.getElementById(`scope-tab-${SCOPE_SOURCES[next][0]}`)?.focus()
-                        }}
-                        className={cn(
-                          // As the sidebar tabs: the accent is below 4.5:1 contrast in the light
-                          // and gray themes, so an armed Qualifier shows a stronger border and fill.
-                          'control-label flex items-center rounded-md border border-transparent px-2 py-1 text-[10px] text-tone-300 hover:bg-ink/5 hover:text-tone-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/70 aria-selected:border-ink/30 aria-selected:bg-ink/10 aria-selected:text-ink',
-                          value === 'qualifier' && 'ml-auto',
-                          value === 'qualifier' &&
-                            qualifying &&
-                            'aria-selected:border-ink/60 aria-selected:bg-ink/15'
-                        )}
-                      >
-                        {value === 'qualifier' ? (
-                          <Pipette aria-hidden="true" className="h-3.5 w-3.5" />
-                        ) : (
-                          t(`editor.${label}`)
-                        )}
-                      </button>
-                    ))}
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    {/* Shifted so the text lines up with the scope below. */}
+                    <ScopeMenu className="-ml-1" />
+                    <GlassGroup
+                      kind="tabs"
+                      id="scope"
+                      panelId={() => 'scope-panel'}
+                      display="icon"
+                      size="sm"
+                      aria-label={t('editor.scopeArea')}
+                      value={scopeSource}
+                      items={SCOPE_SOURCES.map(([value, label, icon]) => ({
+                        value,
+                        label: t(`editor.${label}`),
+                        icon
+                      }))}
+                      onValueChange={chooseScope}
+                      // The accent is below 4.5:1 contrast in the light and gray themes, so an
+                      // armed Qualifier shows a stronger fill.
+                      className={qualifying ? '[&>[data-selected]]:bg-ink/30' : undefined}
+                    />
                   </div>
                   {/* While out of view, only the header scope renders. */}
                   <div

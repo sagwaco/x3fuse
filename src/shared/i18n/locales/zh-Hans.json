@@ -337,6 +337,7 @@
   "editor.scopeEntire": "整张图像",
   "editor.scopeVisible": "可见区域",
   "editor.scopeQualifier": "限定器",
+  "editor.showScope": "显示示波器",
   "editor.scopeQualifyHint": "点击图像中的一点或拖出一个矩形进行测量。图像获得焦点时，方向键移动点，Shift+方向键调整矩形大小，按 Return 应用，按 Escape 取消。",
   "editor.look": "乳剂",
   "editor.panels": "面板",

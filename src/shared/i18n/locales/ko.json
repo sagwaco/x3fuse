@@ -337,6 +337,7 @@
   "editor.scopeEntire": "전체 이미지",
   "editor.scopeVisible": "보이는 영역",
   "editor.scopeQualifier": "퀄리파이어",
+  "editor.showScope": "스코프 표시",
   "editor.scopeQualifyHint": "이미지에서 한 점을 클릭하거나 사각형을 드래그하여 측정하세요. 이미지에 포커스가 있으면 화살표 키로 점을 옮기고, Shift+화살표 키로 사각형 크기를 조정하고, Return으로 적용하며 Escape로 취소합니다.",
   "editor.look": "유제",
   "editor.panels": "패널",

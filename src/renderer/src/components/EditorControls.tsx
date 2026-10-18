@@ -261,13 +261,16 @@ export function Section({
   // Sections reach the panel edges, divided by rules; a nested one does too.
   // An open section fades from a faint light under its header to dark by its first
   // field, so its start is easy to see.
+  // The header stays at the top of the sidebar while its section scrolls under it. It has
+  // the panel color (tone-900/30 on tone-950) and the start of the fade, so it looks the
+  // same at rest. A nested header stays below the header of its parent, and goes under it.
   return (
     <details
       open={open}
       onToggle={(event) => setOpen(event.currentTarget.open)}
       className="border-t border-ink/10 px-4 open:bg-gradient-to-b open:from-ink/[0.03] open:to-transparent open:bg-[length:100%_3rem] open:bg-no-repeat [details_&]:-mx-4"
     >
-      <summary className="control-label flex cursor-pointer list-none items-center gap-1.5 rounded py-3 font-bold tracking-[0.16em] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/50 [&::-webkit-details-marker]:hidden">
+      <summary className="control-label sticky top-0 z-20 -mx-4 flex h-10 cursor-pointer list-none items-center gap-1.5 bg-[color:color-mix(in_srgb,rgb(var(--tone-900))_30%,rgb(var(--tone-950)))] px-4 font-bold tracking-[0.16em] focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ink/50 [details[open]>&]:bg-[linear-gradient(rgb(var(--ink)/0.03),transparent_3rem)] [details_details>&]:top-10 [details_details>&]:z-10 [&::-webkit-details-marker]:hidden">
         {name}
         {info}
         <ChevronDown
