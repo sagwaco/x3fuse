@@ -6209,7 +6209,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "x3fuse-tauri"
+name = "x3fuse"
 version = "0.2.0"
 dependencies = [
  "base64 0.22.1",

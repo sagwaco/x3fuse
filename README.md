@@ -302,8 +302,8 @@ The ZIP in `artifacts/` contains the application and its resources:
 | Platform | Extracted layout | Launch |
 | -------- | ---------------- | ------ |
 | macOS | `X3Fuse.app`, with resources inside | Open the app |
-| Windows | `x3fuse-tauri.exe` beside `resources/` | Run the executable |
-| Linux | `bin/x3fuse-tauri` and `lib/x3fuse-tauri/resources/` | Run `./bin/x3fuse-tauri` |
+| Windows | `x3fuse.exe` beside `resources/` | Run the executable |
+| Linux | `bin/x3fuse` and `lib/x3fuse/resources/` | Run `./bin/x3fuse` |
 
 Keep the complete extracted directory together. These artifacts need the platform
 webview runtime and, on macOS/Linux, Perl. They do not need a source checkout.

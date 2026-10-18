@@ -180,15 +180,15 @@ mod tests {
 
     #[test]
     fn only_release_app_bundles_can_update() {
-        let app = Path::new("/Applications/X3Fuse.app/Contents/MacOS/x3fuse-tauri");
+        let app = Path::new("/Applications/X3Fuse.app/Contents/MacOS/x3fuse");
         assert_eq!(installation_notice(false, app), None);
         assert_eq!(
             installation_notice(true, app),
             Some("updates.installed_app_only")
         );
         for executable in [
-            "/work/src-tauri/target/debug/x3fuse-tauri",
-            "/work/src-tauri/target/release/x3fuse-tauri",
+            "/work/src-tauri/target/debug/x3fuse",
+            "/work/src-tauri/target/release/x3fuse",
         ] {
             for debug in [true, false] {
                 assert_eq!(
@@ -201,7 +201,9 @@ mod tests {
 
     #[test]
     fn translocated_bundles_must_move_before_updating() {
-        let executable = Path::new("/private/var/folders/user/AppTranslocation/uuid/d/X3Fuse.app/Contents/MacOS/x3fuse-tauri");
+        let executable = Path::new(
+            "/private/var/folders/user/AppTranslocation/uuid/d/X3Fuse.app/Contents/MacOS/x3fuse",
+        );
         assert_eq!(
             installation_notice(false, executable),
             Some("updates.move_to_applications")

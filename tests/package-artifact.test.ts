@@ -39,16 +39,16 @@ it('creates fresh ZIPs with complete native layouts, launch instructions, and Un
     await file('src-tauri/resources/exiftool/exiftool_files/perl532.dll')
     const opcode = 'DP2M_FF_DNG_Opcodelist3_5.6'
     await file(`src-tauri/resources/opcodes/${opcode}`)
-    await file('src-tauri/target/release/x3fuse-tauri')
-    await file('src-tauri/target/release/x3fuse-tauri.exe')
+    await file('src-tauri/target/release/x3fuse')
+    await file('src-tauri/target/release/x3fuse.exe')
     const mac = 'src-tauri/target/release/bundle/macos/X3Fuse.app/Contents'
-    await file(`${mac}/MacOS/x3fuse-tauri`)
+    await file(`${mac}/MacOS/x3fuse`)
     await file(`${mac}/Resources/resources/exiftool/exiftool`)
     await file(`${mac}/Resources/resources/exiftool/lib/Image/ExifTool.pm`)
     await file(`${mac}/Resources/resources/opcodes/${opcode}`)
     if (!windows) {
-      await chmod(join(root, 'src-tauri/target/release/x3fuse-tauri'), 0o755)
-      await chmod(join(root, mac, 'MacOS/x3fuse-tauri'), 0o755)
+      await chmod(join(root, 'src-tauri/target/release/x3fuse'), 0o755)
+      await chmod(join(root, mac, 'MacOS/x3fuse'), 0o755)
       await symlink(opcode, join(root, 'src-tauri/resources/opcodes/current'))
       await symlink(opcode, join(root, mac, 'Resources/resources/opcodes/current'))
     }
@@ -68,16 +68,16 @@ it('creates fresh ZIPs with complete native layouts, launch instructions, and Un
       const prefix = `${name}/`
       const binary =
         platform === 'darwin'
-          ? 'X3Fuse.app/Contents/MacOS/x3fuse-tauri'
+          ? 'X3Fuse.app/Contents/MacOS/x3fuse'
           : platform === 'win32'
-            ? 'x3fuse-tauri.exe'
-            : 'bin/x3fuse-tauri'
+            ? 'x3fuse.exe'
+            : 'bin/x3fuse'
       const resources =
         platform === 'darwin'
           ? 'X3Fuse.app/Contents/Resources/resources/'
           : platform === 'win32'
             ? 'resources/'
-            : 'lib/x3fuse-tauri/resources/'
+            : 'lib/x3fuse/resources/'
       expect(entries).toContain(prefix + binary)
       expect(entries).toContain(prefix + resources + `opcodes/${opcode}`)
       expect(entries).toContain(

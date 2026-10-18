@@ -168,8 +168,8 @@ jobs:
           data["version"] = version
           config.write_text(json.dumps(data, indent=2) + "\n")
           for filename, pattern in (
-              ("Cargo.toml", r'(\[package\]\s+name = "x3fuse-tauri"\s+version = ")[^"]+'),
-              ("Cargo.lock", r'(name = "x3fuse-tauri"\s+version = ")[^"]+'),
+              ("Cargo.toml", r'(\[package\]\s+name = "x3fuse"\s+version = ")[^"]+'),
+              ("Cargo.lock", r'(name = "x3fuse"\s+version = ")[^"]+'),
           ):
               path = Path("src-tauri") / filename
               updated, count = re.subn(pattern, lambda match: match[1] + version, path.read_text())
@@ -203,7 +203,7 @@ jobs:
 
       - name: Verify universal binary
         run: |
-          architectures=$(lipo -info src-tauri/target/universal-apple-darwin/release/bundle/macos/X3Fuse.app/Contents/MacOS/x3fuse-tauri)
+          architectures=$(lipo -info src-tauri/target/universal-apple-darwin/release/bundle/macos/X3Fuse.app/Contents/MacOS/x3fuse)
           printf '%s\n' "$architectures"
           if [[ "$architectures" != *x86_64* || "$architectures" != *arm64* ]]; then
             echo "ERROR: App must contain both x86_64 and arm64."

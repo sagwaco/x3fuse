@@ -1,5 +1,5 @@
 {
-  "name": "x3fuse-tauri",
+  "name": "x3fuse",
   "version": "0.2.0",
   "description": "Cross-platform X3F converter using Tauri and x3fuse-core",
   "author": "Sang Lee",

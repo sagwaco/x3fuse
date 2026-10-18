@@ -42,7 +42,7 @@ export async function packageArtifact(
       const bundle = `${config.productName}.app`
       const source = join(release, 'bundle/macos', bundle)
       // Fail packaging if the app bundle was built before resources were prepared.
-      await stat(join(source, 'Contents/MacOS/x3fuse-tauri'))
+      await stat(join(source, 'Contents/MacOS/x3fuse'))
       await stat(join(source, 'Contents/Resources/resources/exiftool', launcher))
       await stat(join(source, 'Contents/Resources/resources/exiftool/lib'))
       await stat(join(source, 'Contents/Resources/resources/opcodes'))
@@ -53,9 +53,9 @@ export async function packageArtifact(
         await cp(source, join(stage, bundle), { recursive: true, verbatimSymlinks: true })
       }
     } else {
-      const executable = `x3fuse-tauri${windows ? '.exe' : ''}`
+      const executable = `x3fuse${windows ? '.exe' : ''}`
       const binaryDir = windows ? stage : join(stage, 'bin')
-      const resourceDir = windows ? stage : join(stage, 'lib/x3fuse-tauri')
+      const resourceDir = windows ? stage : join(stage, 'lib/x3fuse')
       await mkdir(binaryDir, { recursive: true })
       await cp(join(release, executable), join(binaryDir, executable))
       await cp(resources, join(resourceDir, 'resources'), { recursive: true, verbatimSymlinks: true })
@@ -65,8 +65,8 @@ export async function packageArtifact(
       platform === 'darwin'
         ? `Open ${config.productName}.app. macOS 14 or newer and system Perl are required.\nApple Silicon (M-series): x3fuse-alpha-macos-arm64.zip\nIntel Mac: x3fuse-alpha-macos-x64.zip\nCheck Apple menu > About This Mac: Chip identifies Apple Silicon; Processor identifies Intel.`
         : windows
-          ? 'Run x3fuse-tauri.exe. Microsoft WebView2 Runtime must be installed.'
-          : 'Run ./bin/x3fuse-tauri. WebKitGTK 4.1, GTK 3, and Perl must be installed.'
+          ? 'Run x3fuse.exe. Microsoft WebView2 Runtime must be installed.'
+          : 'Run ./bin/x3fuse. WebKitGTK 4.1, GTK 3, and Perl must be installed.'
     await writeFile(
       join(stage, 'README.txt'),
       `X3Fuse alpha ${config.version}\n${launch}\nKeep the complete extracted directory together.\nPublished macOS alpha releases are signed and notarized; development builds are not notarized. Windows and Linux builds are unsigned.\nmacOS alpha builds use the separate bundle identifier com.sagwa.X3Fuse.alpha, check for updates, and offer the stable release when it is newer. Windows and Linux alpha builds do not support automatic updates.\nSource and build instructions: https://github.com/sagwaco/x3fuse/tree/main\n`

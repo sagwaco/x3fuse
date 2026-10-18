@@ -2,11 +2,11 @@
 members = ["crates/x3f-render"]
 
 [package]
-name = "x3fuse-tauri"
+name = "x3fuse"
 version = "0.2.0"
 edition = "2021"
 license = "GPL-3.0-only"
-default-run = "x3fuse-tauri"
+default-run = "x3fuse"
 
 [lib]
 name = "x3fuse_app"

@@ -39,7 +39,7 @@ const executable = join(
   'src-tauri',
   'target',
   'debug',
-  process.platform === 'win32' ? 'x3fuse-tauri.exe' : 'x3fuse-tauri'
+  process.platform === 'win32' ? 'x3fuse.exe' : 'x3fuse'
 )
 await access(executable).catch(() => {
   throw new Error('First run: npm run test:native -- --build')

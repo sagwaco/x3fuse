@@ -80,8 +80,8 @@ with tempfile.TemporaryDirectory() as directory:
     lock = json.loads((workspace / "package-lock.json").read_text(encoding="utf-8"))
     assert lock["packages"][""]["version"] == "1.2.3"
     for filename, pattern in (
-        ("Cargo.toml", r'\[package\]\s+name = "x3fuse-tauri"\s+version = "([^"]+)"'),
-        ("Cargo.lock", r'name = "x3fuse-tauri"\s+version = "([^"]+)"'),
+        ("Cargo.toml", r'\[package\]\s+name = "x3fuse"\s+version = "([^"]+)"'),
+        ("Cargo.lock", r'name = "x3fuse"\s+version = "([^"]+)"'),
     ):
         assert re.findall(pattern, (workspace / "src-tauri" / filename).read_text(encoding="utf-8")) == ["1.2.3"], filename
 print("Release version updates passed")
