@@ -19,9 +19,21 @@ function Wheels({ initial = defaultRecipe() }: { initial?: EditRecipe }): React.
   setRecipe = update
   return <ColorWheels recipe={recipe} />
 }
+// jsdom's PointerEvent drops the mouse fields. This one keeps them and the pointer id.
+class TestPointerEvent extends MouseEvent {
+  pointerId: number
+  constructor(type: string, init: PointerEventInit = {}) {
+    super(type, init)
+    this.pointerId = init.pointerId ?? 0
+  }
+}
 const wheels = (): EditRecipe['wheels'] => change.mock.lastCall?.[0].wheels
-const disc = (name: string): HTMLElement =>
-  screen.getByRole('application', { name: t(`editor.${name}`) })
+/** The wheel's disc, laid out as a 100 px square at the origin. */
+function disc(name: string): HTMLElement {
+  const element = screen.getByRole('application', { name: t(`editor.${name}`) })
+  element.getBoundingClientRect = () => DOMRect.fromRect({ width: 100, height: 100 })
+  return element
+}
 
 beforeEach(() => {
   vi.stubGlobal(
@@ -32,8 +44,7 @@ beforeEach(() => {
       disconnect(): void {}
     }
   )
-  // jsdom's PointerEvent drops clientX and clientY.
-  vi.stubGlobal('PointerEvent', MouseEvent)
+  vi.stubGlobal('PointerEvent', TestPointerEvent)
   HTMLElement.prototype.setPointerCapture = vi.fn()
   change
     .mockReset()
@@ -61,12 +72,6 @@ afterEach(() => {
 it('drags the Midtones dot inside the disc, commits on release and resets it', () => {
   render(<Wheels />)
   const midtones = disc('midtones')
-  vi.spyOn(midtones, 'getBoundingClientRect').mockReturnValue({
-    left: 0,
-    top: 0,
-    width: 100,
-    height: 100
-  } as DOMRect)
   fireEvent.pointerDown(midtones, { clientX: 80, clientY: 30, pointerId: 1, button: 0 })
   expect(change).toHaveBeenLastCalledWith(
     { wheels: expect.objectContaining({ midtones: { x: 0.6, y: 0.4, luminance: 0 } }) },
@@ -87,6 +92,51 @@ it('drags the Midtones dot inside the disc, commits on release and resets it', (
   )
   expect(wheels()!.midtones).toEqual({ x: 0, y: 0, luminance: 0 })
   expect(wheels()!.shadows).toEqual(DEFAULT_WHEELS.shadows)
+})
+
+it('drags only with the primary button of one pointer', () => {
+  render(<Wheels />)
+  const midtones = disc('midtones')
+  fireEvent.pointerDown(midtones, { clientX: 80, clientY: 30, pointerId: 1, button: 2 })
+  fireEvent.pointerDown(midtones, { clientX: 80, clientY: 30, pointerId: 1, ctrlKey: true })
+  expect(change).not.toHaveBeenCalled()
+  fireEvent.pointerDown(midtones, { clientX: 80, clientY: 30, pointerId: 1, button: 0 })
+  expect(change).toHaveBeenCalledTimes(1)
+  // A second pointer can neither take over nor end the drag.
+  fireEvent.pointerDown(midtones, { clientX: 10, clientY: 10, pointerId: 2, button: 0 })
+  fireEvent.pointerMove(midtones, { clientX: 10, clientY: 10, pointerId: 2 })
+  fireEvent.pointerUp(midtones, { pointerId: 2 })
+  expect(change).toHaveBeenCalledTimes(1)
+  expect(commit).not.toHaveBeenCalled()
+  fireEvent.pointerMove(midtones, { clientX: 70, clientY: 30, pointerId: 1 })
+  expect(wheels()!.midtones).toEqual({ x: 0.4, y: 0.4, luminance: 0 })
+  fireEvent.pointerUp(midtones, { pointerId: 1 })
+  expect(commit).toHaveBeenCalledTimes(1)
+})
+
+it('ends a drag when the pointer capture is lost', () => {
+  render(<Wheels />)
+  const midtones = disc('midtones')
+  fireEvent.pointerDown(midtones, { clientX: 80, clientY: 30, pointerId: 1, button: 0 })
+  fireEvent.lostPointerCapture(midtones, { pointerId: 1 })
+  expect(commit).toHaveBeenCalledTimes(1)
+  change.mockClear()
+  fireEvent.pointerMove(midtones, { clientX: 10, clientY: 10, pointerId: 1 })
+  expect(change).not.toHaveBeenCalled()
+})
+
+it('ends a drag when the wheel turns off or unmounts', () => {
+  const view = render(<Wheels />)
+  fireEvent.pointerDown(disc('midtones'), { clientX: 80, clientY: 30, pointerId: 1, button: 0 })
+  act(() => editor.setState({ closing: true }))
+  expect(commit).toHaveBeenCalledTimes(1)
+  act(() => editor.setState({ closing: false }))
+  change.mockClear()
+  fireEvent.pointerMove(disc('midtones'), { clientX: 10, clientY: 10, pointerId: 1 })
+  expect(change).not.toHaveBeenCalled()
+  fireEvent.pointerDown(disc('midtones'), { clientX: 80, clientY: 30, pointerId: 1, button: 0 })
+  view.unmount()
+  expect(commit).toHaveBeenCalledTimes(2)
 })
 
 it('nudges a dot with the arrow keys and writes Balance', () => {

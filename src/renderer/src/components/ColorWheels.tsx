@@ -1,4 +1,4 @@
-import { useContext, useId, useRef } from 'react'
+import { useCallback, useContext, useEffect, useId, useRef } from 'react'
 import {
   DEFAULT_WHEELS,
   monochromeFilm,
@@ -102,7 +102,8 @@ function WheelControl({
   change: (value: Wheel, save: boolean) => void
   commit: () => void
 }): React.JSX.Element {
-  const dragging = useRef(false)
+  // The pointer that drags the dot. Other pointers do nothing until it lets go.
+  const pointer = useRef<number | null>(null)
   const description = useId()
   const off = disabled || colorless
   const reset = (): void => change({ ...value, x: 0, y: 0 }, true)
@@ -112,11 +113,16 @@ function WheelControl({
     const y = 1 - ((event.clientY - box.top) / box.height) * 2
     change({ ...value, ...inDisc(x, y) }, false)
   }
-  const release = (): void => {
-    if (!dragging.current) return
-    dragging.current = false
+  const end = useCallback((): void => {
+    if (pointer.current === null) return
+    pointer.current = null
     commit()
+  }, [commit])
+  const release = (event: React.PointerEvent): void => {
+    if (event.pointerId === pointer.current) end()
   }
+  // A drag also ends when the wheel turns off or unmounts.
+  useEffect(() => end, [off, end])
   const hue = Math.round(((Math.atan2(value.y, value.x) * 180) / Math.PI + 360) % 360)
   const strength = Math.round(Math.hypot(value.x, value.y) * 100)
   return (
@@ -133,17 +139,19 @@ function WheelControl({
           className="relative aspect-square min-w-0 flex-1 touch-none rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/60"
           style={{ background: DISC }}
           onPointerDown={(event) => {
-            if (off) return
+            // Only a primary press drags. Control-click is a secondary click on macOS.
+            if (off || pointer.current !== null || event.button !== 0 || event.ctrlKey) return
             event.currentTarget.setPointerCapture(event.pointerId)
             event.currentTarget.focus()
-            dragging.current = true
+            pointer.current = event.pointerId
             move(event)
           }}
           onPointerMove={(event) => {
-            if (dragging.current && !off) move(event)
+            if (event.pointerId === pointer.current && !off) move(event)
           }}
           onPointerUp={release}
           onPointerCancel={release}
+          onLostPointerCapture={release}
           onDoubleClick={() => {
             if (!off) reset()
           }}

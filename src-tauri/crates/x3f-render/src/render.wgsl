@@ -375,12 +375,15 @@ fn finish(@builtin(global_invocation_id) id:vec3<u32>) {
     for(var band=0u;band<8u;band++) {let center=p.v[8u+band].w;let dist=min(abs(hsv.x-center),1.0-abs(hsv.x-center));let w=max(0.0,1.0-dist/0.125);delta+=p.v[8u+band].xyz*w;total+=w;}
     delta/=max(total,1.0);hsv.x=fract(hsv.x+delta.x/12.0+1.0);hsv.y=clamp(hsv.y*(1.0+delta.y),0.0,1.0);hsv.z*=exp2(delta.z);
     if total>0.0 && any(abs(delta)>vec3<f32>(0)) {percept=hsv_to_rgb(hsv);}
-    // Color wheels. Two smooth ramps at the zone borders split the luma into
-    // shadow, midtone and highlight weights that sum to one. Each zone scales
-    // the pixel by its gain and adds its tint, in proportion to its weight.
+    // Color wheels. Two ramps at the zone borders split the luma into shadow,
+    // midtone and highlight weights that sum to one; zero width is a hard
+    // split. Each zone scales the pixel by its gain and adds its tint, in
+    // proportion to its weight.
     if p.v[59].w>0.5 {
-        let luma=dot(percept,vec3<f32>(0.2126,0.7152,0.0722));
-        let s=smoothstep(p.v[59].xy-p.v[59].z,p.v[59].xy+p.v[59].z,vec2<f32>(luma));
+        let luma=vec2<f32>(dot(percept,vec3<f32>(0.2126,0.7152,0.0722)));
+        let border=p.v[59].xy;let ramp=p.v[59].z;
+        var s=step(border,luma);
+        if ramp>0.0 {s=smoothstep(border-ramp,border+ramp,luma);}
         let w=vec3<f32>(1.0-s.x,s.x-s.y,s.y);
         let gain=exp2(dot(w,vec3<f32>(p.v[56].w,p.v[57].w,p.v[58].w)));
         percept=percept*gain+mat3x3<f32>(p.v[56].xyz,p.v[57].xyz,p.v[58].xyz)*w;
