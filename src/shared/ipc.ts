@@ -179,7 +179,7 @@ export interface IpcRequestMap {
   'logs:sizes': { payload: void; result: LogSizes }
   /** Bytes in the preview disk cache. */
   'cache:size': { payload: void; result: number }
-  /** Removes the preview disk cache and the previews in memory. */
+  /** Removes the preview disk cache. The previews in memory stay. */
   'cache:clear': { payload: void; result: void }
 
   'app:info': { payload: void; result: AppInfo }

@@ -163,6 +163,21 @@ describe('Cache tab', () => {
     error.mockRestore()
   })
 
+  it('allows one Clear at a time', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    let fail!: (reason: Error) => void
+    invoke.mockReturnValueOnce(new Promise((_, reject) => (fail = reject)))
+    const clear = screen.getByRole('button', { name: t('settings.cache.clear') })
+    fireEvent.click(clear)
+    expect((clear as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(clear)
+    expect(invoke.mock.calls.filter(([c]) => c === 'cache:clear')).toHaveLength(1)
+    await act(async () => fail(new Error('Permission denied')))
+    await screen.findByRole('alert')
+    expect((clear as HTMLButtonElement).disabled).toBe(false)
+    error.mockRestore()
+  })
+
   it('writes the switch and the limit, and refreshes the size after a new limit', async () => {
     fireEvent.click(screen.getByRole('switch', { name: t('settings.cache.enabled') }))
     expect(update).toHaveBeenCalledWith({ previewCacheEnabled: false })
