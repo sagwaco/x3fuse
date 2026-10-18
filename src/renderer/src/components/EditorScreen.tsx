@@ -127,9 +127,12 @@ export function EditorScreen(): React.JSX.Element {
   const geometry = doc && geometryKey(doc.recipe)
   const areaKey = `${editor.session?.sessionId}:${geometry}`
   if (qualified && qualified.key !== areaKey) setQualified(null)
+  // The photo and the geometry of the frame on screen. A new preview shows only after it
+  // decodes, so until then the previous frame, of other geometry, can stay on screen.
+  const [shownArea, setShownArea] = useState<string | null>(null)
   const qualify = (region: PreviewRegion): void => {
-    // A preview of other geometry, as before an undone rotation renders, shows other pixels.
-    if (editor.previewGeometry !== geometry) return
+    // A frame of other geometry, as before an undone rotation paints, shows other pixels.
+    if (shownArea !== areaKey) return
     setQualified({ key: areaKey, region })
     setQualifying(false)
   }
@@ -641,7 +644,14 @@ export function EditorScreen(): React.JSX.Element {
                     // first render after the merge is a full preview.
                     onViewportChange={displayFile ? editor.setViewport : undefined}
                     onViewportMove={editor.holdPrefetch}
-                    onPaint={() => setPainted(true)}
+                    onPaint={(url) => {
+                      setPainted(true)
+                      setShownArea(
+                        url === editor.preview?.url
+                          ? `${editor.preview.sessionId}:${editor.previewGeometry}`
+                          : null
+                      )
+                    }}
                     // Digits rate the photo, as in Lightroom. Click and +/- still zoom.
                     digitZoom={false}
                     onImagePoint={

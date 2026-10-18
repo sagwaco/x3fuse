@@ -61,7 +61,7 @@ vi.mock('../src/renderer/src/components/FilmstripImage', async () => {
     }: {
       file: X3FFileDTO
       fullResolution?: boolean
-      onDimensions?: (dimensions: { width: number; height: number }) => void
+      onDimensions?: (dimensions: { width: number; height: number }, url: string) => void
       containerClassName?: string
       className?: string
     }) {
@@ -76,10 +76,13 @@ vi.mock('../src/renderer/src/components/FilmstripImage', async () => {
             data-full-resolution={fullResolution}
             onLoad={(event) => {
               setReady(true)
-              onDimensions?.({
-                width: event.currentTarget.naturalWidth,
-                height: event.currentTarget.naturalHeight
-              })
+              onDimensions?.(
+                {
+                  width: event.currentTarget.naturalWidth,
+                  height: event.currentTarget.naturalHeight
+                },
+                displayPreviewUrl(file, 'full')
+              )
             }}
             onError={() => setReady(false)}
           />
@@ -220,6 +223,7 @@ describe('filmstrip zoom preview', () => {
     expect(onPaint).not.toHaveBeenCalled()
     loadImage()
     expect(onPaint).toHaveBeenCalledOnce()
+    expect(onPaint).toHaveBeenCalledWith(displayPreviewUrl(file, 'full'))
   })
 
   it('uses the saved edited thumbnail for the Info navigator before and during zoom', () => {

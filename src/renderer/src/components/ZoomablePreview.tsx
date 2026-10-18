@@ -73,8 +73,8 @@ export function ZoomablePreview({
   onViewportChange?: (region: PreviewRegion | null) => void
   /** Called for each change of a view that has not rested yet. */
   onViewportMove?: () => void
-  /** Called after the image paints its pixels. */
-  onPaint?: () => void
+  /** Called after the image paints its pixels, with their url. */
+  onPaint?: (url: string) => void
   /** False leaves 0 and 1 for other shortcuts, such as star ratings. */
   digitZoom?: boolean
 }): React.JSX.Element {
@@ -350,9 +350,9 @@ export function ZoomablePreview({
   const paint = useRef(onPaint)
   paint.current = onPaint
   const painted = useCallback(
-    (size: { width: number; height: number }): void => {
+    (size: { width: number; height: number }, url: string): void => {
       onDimensions(size)
-      paint.current?.()
+      paint.current?.(url)
     },
     [onDimensions]
   )

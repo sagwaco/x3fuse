@@ -57,7 +57,7 @@ vi.mock('../src/renderer/src/components/ZoomablePreview', () => ({
     onImagePoint?: (x: number, y: number) => void
     onImageRegion?: (region: PreviewRegion) => void
     outline?: PreviewRegion | null
-    onPaint?: () => void
+    onPaint?: (url: string) => void
     onViewportChange?: unknown
   }) => (
     <div
@@ -67,7 +67,8 @@ vi.mock('../src/renderer/src/components/ZoomablePreview', () => ({
       data-outline={outline ? JSON.stringify(outline) : undefined}
       data-viewport={!!onViewportChange}
     >
-      <button data-paint onClick={onPaint} />
+      {/* The real preview paints a frame only after it decodes. */}
+      <button data-paint onClick={() => onPaint?.(displayPreviewUrl(file, 'full'))} />
       <button data-point onClick={() => onImagePoint?.(0.5, 0.5)} />
       <button
         data-drag
@@ -796,6 +797,7 @@ it('qualifies a point or a dragged area, apart from the white balance picker', (
     close
   })
   const view = render(<EditorScreen />)
+  fireEvent.click(view.container.querySelector('[data-paint]')!)
   const [entire, visible, qualifier] = within(
     screen.getByRole('tablist', { name: 'Scope area' })
   ).getAllByRole('tab')
@@ -860,34 +862,40 @@ it('qualifies a point or a dragged area, apart from the white balance picker', (
   expect(region()).toEqual(drawn)
   expect(outline()).toEqual(drawn)
 
-  // A geometry change clears the area. Until the new geometry renders, the photo shows
-  // other pixels, so a selection on it is ignored and the Qualifier stays armed.
+  // A geometry change clears the area. A new frame shows only after it decodes, so until
+  // the frame of the new geometry paints, even after its render arrives, a selection on
+  // the photo is ignored and the Qualifier stays armed.
   const rotated = { ...recipe, rotation: 1 }
-  const rotate = (value: typeof recipe, rendered: typeof recipe): void =>
-    act(() =>
-      editor.setState({
-        documents: { [file.path]: { ...doc, recipe: value } },
-        previewGeometry: geometryKey(rendered)
-      })
-    )
-  rotate(rotated, recipe)
+  const paint = (): boolean => fireEvent.click(view.container.querySelector('[data-paint]')!)
+  const drag = (): boolean => fireEvent.click(view.container.querySelector('[data-drag]')!)
+  const change = (value: typeof recipe): void =>
+    act(() => editor.setState({ documents: { [file.path]: { ...doc, recipe: value } } }))
+  const rendered = (value: typeof recipe, url: string): void =>
+    act(() => editor.setState({ preview: { ...frame, url }, previewGeometry: geometryKey(value) }))
+  change(rotated)
   expect(region()).toBeNull()
   expect(outline()).toBeNull()
   fireEvent.click(qualifier)
-  fireEvent.click(view.container.querySelector('[data-drag]')!)
+  drag()
+  expect(region()).toBeNull()
+  rendered(rotated, 'x3f-edit://localhost/portrait')
+  drag()
   expect(region()).toBeNull()
   expect(qualifying()).toBe('true')
-  rotate(rotated, rotated)
-  fireEvent.click(view.container.querySelector('[data-drag]')!)
+  paint()
+  drag()
   expect(region()).toEqual(drawn)
-  // The same for an undo back to the old geometry before it renders.
-  rotate(recipe, rotated)
+  // An undo: the portrait frame stays on screen until the landscape frame decodes.
+  change(recipe)
+  rendered(recipe, 'x3f-edit://localhost/landscape')
   expect(region()).toBeNull()
   fireEvent.click(qualifier)
   fireEvent.click(view.container.querySelector('[data-point]')!)
+  drag()
   expect(region()).toBeNull()
-  rotate(recipe, recipe)
-  fireEvent.click(view.container.querySelector('[data-drag]')!)
+  expect(qualifying()).toBe('true')
+  paint()
+  drag()
   expect(region()).toEqual(drawn)
   // Leaving the tab clears the area.
   fireEvent.click(qualifier)

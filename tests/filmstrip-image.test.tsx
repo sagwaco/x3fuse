@@ -2,7 +2,9 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react'
 import { FilmstripImage } from '../src/renderer/src/components/FilmstripImage'
+import { ZoomablePreview } from '../src/renderer/src/components/ZoomablePreview'
 import type { X3FFileDTO } from '@shared/types'
+import { displayPreviewUrl } from '@shared/preview'
 
 const { fitSubscribe, fullSubscribe } = vi.hoisted(() => ({
   fitSubscribe: vi.fn(),
@@ -40,6 +42,7 @@ beforeEach(() => {
 })
 afterEach(() => {
   cleanup()
+  vi.unstubAllGlobals()
   vi.restoreAllMocks()
   vi.clearAllMocks()
   vi.useRealTimers()
@@ -56,7 +59,7 @@ it('paints prefetched edited pixels immediately and keeps the original render UR
   expect(canvas.classList.contains('opacity-100')).toBe(true)
   expect(fitSubscribe).toHaveBeenCalledWith(url, expect.any(Function), expect.any(Function))
   expect(drawImage).toHaveBeenCalledWith(fit.image, 0, 0)
-  expect(dimensions).toHaveBeenCalledWith({ width: 6000, height: 4000 })
+  expect(dimensions).toHaveBeenCalledWith({ width: 6000, height: 4000 }, url)
   expect(fullSubscribe).not.toHaveBeenCalled()
   expect(view.container.querySelector('.rt-Skeleton')).toBeNull()
 })
@@ -151,7 +154,10 @@ it('paints a decoded 2K Fit cache hit before paint, using original geometry with
   expect([canvas.width, canvas.height]).toEqual([2048, 1365])
   expect(canvas.classList.contains('opacity-100')).toBe(true)
   expect(drawImage).toHaveBeenCalledWith(fit.image, 0, 0)
-  expect(onDimensions).toHaveBeenCalledWith({ width: 6000, height: 4000 })
+  expect(onDimensions).toHaveBeenCalledWith(
+    { width: 6000, height: 4000 },
+    displayPreviewUrl(file, 'full')
+  )
   expect(view.container.querySelector('img')).toBeNull()
   expect(view.container.querySelector('[data-small-preview]')).toBeNull()
   expect(fullSubscribe).not.toHaveBeenCalled()
@@ -223,4 +229,34 @@ it('ignores a previous file’s completed decode and preserves geometry when imp
   expect(view.container.querySelector('canvas')).toBe(medium)
   expect(view.container.querySelector('img')).toBe(current)
   expect(dimensions).toHaveBeenCalledTimes(2)
+})
+
+it('tells the zoomable editor preview which frame painted, only after the frame decodes', () => {
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe(): void {}
+      disconnect(): void {}
+    }
+  )
+  const decoding: Array<(preview: typeof fit) => void> = []
+  fitSubscribe.mockImplementation((_url, ready) => {
+    decoding.push(ready)
+    return () => {}
+  })
+  const onPaint = vi.fn()
+  const portrait = { ...file, displayPreviewUrl: 'x3f-edit://localhost/portrait' }
+  const view = render(<ZoomablePreview file={portrait} onPaint={onPaint} />)
+  act(() => decoding[0](fit))
+  expect(onPaint).toHaveBeenLastCalledWith(portrait.displayPreviewUrl)
+  // The render of an undone rotation arrives. Its frame decodes later, and the
+  // portrait frame stays on the canvas until then.
+  const landscape = { ...portrait, displayPreviewUrl: 'x3f-edit://localhost/landscape' }
+  view.rerender(<ZoomablePreview file={landscape} onPaint={onPaint} />)
+  const canvas = view.container.querySelector<HTMLCanvasElement>('[data-rendered-preview]')!
+  expect(canvas.dataset.previewUrl).toBe(portrait.displayPreviewUrl)
+  expect(onPaint).toHaveBeenCalledOnce()
+  act(() => decoding[1](fit))
+  expect(canvas.dataset.previewUrl).toBe(landscape.displayPreviewUrl)
+  expect(onPaint).toHaveBeenLastCalledWith(landscape.displayPreviewUrl)
 })
