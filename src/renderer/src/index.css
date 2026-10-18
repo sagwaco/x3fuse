@@ -685,14 +685,12 @@ html[data-theme='gray'] .glass-group {
     box-shadow 150ms ease;
 }
 
-/* The outer knob has the color of the hue, in a white ring. */
+/* The outer knob is a dot in the color of the hue. */
 .wheel-knob-outer {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
   background-color: var(--dot);
-  box-shadow:
-    0 0 0 2px #fff,
-    0 0 0 3px rgb(0 0 0 / 0.5);
+  box-shadow: none;
 }
 
 /* The lens magnifies the disc about the knob position, more near its rim, as a drop
@@ -762,8 +760,8 @@ html[data-theme='gray'] .glass-group {
 /* Outside the disc there is nothing to magnify, so the outer knob is glass tinted
    with the hue. */
 .wheel-knob:is(:hover, [data-active]) > .wheel-knob-outer {
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
   background-color: color-mix(in srgb, var(--dot) 85%, transparent);
 }
 
