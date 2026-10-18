@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Bug, Info, Palette, RefreshCw } from 'lucide-react'
+import { Bug, HardDrive, Info, Palette, RefreshCw } from 'lucide-react'
 import type { LogSizes } from '@shared/ipc'
 import { ipc } from '../lib/ipc'
 import { appInfo } from '../lib/appInfo'
@@ -15,6 +15,7 @@ import { Row, Section, ToggleRow } from './ui/settingsLayout'
 
 const TABS = [
   ['appearance', Palette],
+  ['cache', HardDrive],
   ['debug', Bug],
   ['updates', RefreshCw],
   ['about', Info]
@@ -119,6 +120,8 @@ export function SettingsWindow(): React.JSX.Element {
             </Row>
           </Section>
         )}
+
+        {tab === 'cache' && <CachePage />}
 
         {tab === 'debug' && (
           <Section title={t('settings.section.debug')}>
@@ -282,6 +285,58 @@ function SettingsTitlebar({
         ))}
       </div>
     </header>
+  )
+}
+
+/** Decimal sizes, as `formatBytes` shows them. */
+const CACHE_LIMITS = [256e6, 512e6, 1e9, 2e9, 5e9]
+
+/** The disk cache of embedded previews and photo details. Edited photos have their own. */
+function CachePage(): React.JSX.Element {
+  const settings = useSettingsStore((s) => s.settings)
+  const update = useSettingsStore((s) => s.update)
+  const [used, setUsed] = useState<number | null>(null)
+  const refresh = (): void => {
+    void ipc.invoke('cache:size').then(setUsed, console.error)
+  }
+  useEffect(() => {
+    refresh()
+    window.addEventListener('focus', refresh)
+    return () => window.removeEventListener('focus', refresh)
+  }, [])
+
+  return (
+    <Section title={t('settings.cache.title')}>
+      <ToggleRow
+        label={t('settings.cache.enabled')}
+        help={t('settings.cache.enabled.help')}
+        checked={settings.previewCacheEnabled}
+        onChange={(v) => void update({ previewCacheEnabled: v })}
+      />
+      <Row label={t('settings.cache.limit')}>
+        <Select
+          aria-label={t('settings.cache.limit')}
+          value={String(settings.previewCacheLimit)}
+          options={CACHE_LIMITS.map((bytes) => ({
+            value: String(bytes),
+            label: formatBytes(bytes)
+          }))}
+          onValueChange={(v) => void update({ previewCacheLimit: Number(v) }).then(refresh)}
+        />
+      </Row>
+      <Row label={t('settings.cache.used')}>
+        <span className="text-sm text-tone-400">
+          {used === null ? t('placeholder.dash') : formatBytes(used)}
+        </span>
+        <Button
+          variant="bordered"
+          size="sm"
+          onClick={() => void ipc.invoke('cache:clear').catch(console.error).then(refresh)}
+        >
+          {t('settings.cache.clear')}
+        </Button>
+      </Row>
+    </Section>
   )
 }
 

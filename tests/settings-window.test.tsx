@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { DEFAULT_SETTINGS } from '@shared/types'
 import { SettingsWindow } from '../src/renderer/src/components/SettingsWindow'
@@ -10,6 +10,7 @@ const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }))
 vi.mock('../src/renderer/src/lib/ipc', () => ({ ipc: { invoke, on: () => () => {} } }))
 
 const originalState = useSettingsStore.getState()
+let cacheSize = 0
 const update = vi.fn<typeof originalState.update>().mockResolvedValue(undefined)
 
 beforeEach(async () => {
@@ -23,6 +24,7 @@ beforeEach(async () => {
   invoke.mockImplementation(async (channel) => {
     if (channel === 'app:info') return { version: '1.0' }
     if (channel === 'logs:sizes') return { conversion: 0, error: 0, debug: 0 }
+    if (channel === 'cache:size') return cacheSize
     return null
   })
   await act(async () => {
@@ -70,7 +72,7 @@ it.each([
   await waitFor(() => expect(update).toHaveBeenCalledWith({ [key]: 'gray' }))
 })
 
-const tabNames = ['appearance', 'debug', 'updates', 'about'].map((key) =>
+const tabNames = ['appearance', 'cache', 'debug', 'updates', 'about'].map((key) =>
   t(`settings.section.${key}`)
 )
 const title = (): string | null => screen.getByRole('heading', { level: 1 }).textContent
@@ -105,11 +107,65 @@ it('shows the update toggles on the Updates tab and remembers it', async () => {
 it('moves the selection with the arrow keys', () => {
   const selected = (): string | null => screen.getByRole('tab', { selected: true }).textContent
   fireEvent.keyDown(screen.getByRole('tab', { selected: true }), { key: 'ArrowRight' })
-  expect(selected()).toBe(t('settings.section.debug'))
-  expect(document.activeElement?.textContent).toBe(t('settings.section.debug'))
-  expect(title()).toBe(t('settings.section.debug'))
+  expect(selected()).toBe(t('settings.section.cache'))
+  expect(document.activeElement?.textContent).toBe(t('settings.section.cache'))
+  expect(title()).toBe(t('settings.section.cache'))
   fireEvent.keyDown(screen.getByRole('tab', { selected: true }), { key: 'ArrowLeft' })
   fireEvent.keyDown(screen.getByRole('tab', { selected: true }), { key: 'ArrowLeft' })
   expect(selected()).toBe(t('settings.section.about'))
   expect(title()).toBe(t('settings.section.about'))
+})
+
+describe('Cache tab', () => {
+  const sizeRequests = (): number => invoke.mock.calls.filter(([c]) => c === 'cache:size').length
+
+  beforeEach(async () => {
+    cacheSize = 12_300_000
+    fireEvent.click(screen.getByRole('tab', { name: t('settings.section.cache') }))
+    await screen.findByText('12.3 MB')
+  })
+
+  afterEach(() => {
+    cacheSize = 0
+  })
+
+  it('shows the used size and refreshes it on focus', async () => {
+    expect(title()).toBe(t('settings.section.cache'))
+    expect(screen.getByText(t('settings.cache.title'))).toBeTruthy()
+    cacheSize = 5_000_000
+    act(() => {
+      window.dispatchEvent(new Event('focus'))
+    })
+    await screen.findByText('5 MB')
+  })
+
+  it('clears the cache and then shows the new size', async () => {
+    const before = sizeRequests()
+    cacheSize = 0
+    fireEvent.click(screen.getByRole('button', { name: t('settings.cache.clear') }))
+    await screen.findByText('0 bytes')
+    expect(invoke).toHaveBeenCalledWith('cache:clear')
+    expect(sizeRequests()).toBe(before + 1)
+  })
+
+  it('writes the switch and the limit, and refreshes the size after a new limit', async () => {
+    fireEvent.click(screen.getByRole('switch', { name: t('settings.cache.enabled') }))
+    expect(update).toHaveBeenCalledWith({ previewCacheEnabled: false })
+
+    const select = screen.getByRole('button', { name: t('settings.cache.limit') })
+    expect(select.textContent).toBe('1 GB')
+    const before = sizeRequests()
+    invoke.mockResolvedValueOnce(String(256e6))
+    fireEvent.keyDown(select, { key: 'ArrowDown' })
+    expect(invoke).toHaveBeenCalledWith(
+      'menu:popup',
+      expect.objectContaining({
+        items: ['256 MB', '512 MB', '1 GB', '2 GB', '5 GB'].map((label, index) =>
+          expect.objectContaining({ label, checked: index === 2 })
+        )
+      })
+    )
+    await waitFor(() => expect(update).toHaveBeenCalledWith({ previewCacheLimit: 256e6 }))
+    await waitFor(() => expect(sizeRequests()).toBe(before + 1))
+  })
 })
