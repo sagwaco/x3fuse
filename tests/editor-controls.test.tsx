@@ -171,6 +171,7 @@ beforeEach(() => {
 })
 afterEach(() => {
   cleanup()
+  localStorage.clear()
   editor.setState({
     change: originalChange,
     commit: originalCommit,
@@ -200,13 +201,18 @@ it('groups the sidebar into RAW, FILM and GRADING tabs that start on RAW', () =>
     t('denoise.advanced')
   ])
   panelTab('film')
-  expect(sections(view.container)).toEqual([t('editor.look')])
+  expect(sections(view.container)).toEqual([
+    t('editor.look'),
+    t('editor.effects'),
+    t('editor.grainChannelOffsets')
+  ])
   const button = screen.getByText(t('editor.look'), { selector: '[data-sidebar-page] *' })
   const paper = screen.getByText(t('editor.paperStock'), { selector: '[data-sidebar-page] *' })
   expect(button.compareDocumentPosition(paper) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   expect(screen.getByRole('slider', { name: t('editor.gammaFilm') })).toBeTruthy()
   panelTab('grading')
   expect(sections(view.container).slice(0, 1)).toEqual([t('editor.color')])
+  expect(sections(view.container)).not.toContain(t('editor.effects'))
 })
 
 it('supports arrow keys between the panel tabs and shows only the film button without a stock', () => {
@@ -232,12 +238,41 @@ it('supports arrow keys between the panel tabs and shows only the film button wi
   fireEvent.click(tabs[1])
   expect(setPicking).toHaveBeenCalledWith(false)
   act(() => setRecipe({ ...defaultRecipe(), film: null }))
-  expect(sections(view.container)).toEqual([t('editor.look')])
+  expect(sections(view.container)).toEqual([t('editor.look'), t('editor.effects')])
   expect(
     screen.queryByText(t('editor.paperStock'), { selector: '[data-sidebar-page] *' })
   ).toBeNull()
   expect(screen.queryByRole('slider', { name: t('editor.gammaFilm') })).toBeNull()
   expect(change).not.toHaveBeenCalled()
+})
+
+it('opens every section until it is closed, and keeps a closed section closed', async () => {
+  const section = (key: string): HTMLDetailsElement =>
+    screen.getByText(t(`editor.${key}`), { selector: 'summary' }).closest('details')!
+  const raw = ['light', 'curves', 'whiteBalance', 'detail']
+  render(<Controls />)
+  expect(raw.map((key) => section(key).open)).toEqual([true, true, true, true])
+  fireEvent.click(screen.getByText(t('editor.curves'), { selector: 'summary' }))
+  await waitFor(() => expect(localStorage.getItem('x3fuse.sections')).toBe('{"curves":false}'))
+  cleanup()
+  render(<Controls />)
+  expect(raw.map((key) => section(key).open)).toEqual([true, false, true, true])
+  panelTab('film')
+  expect(section('look').open && section('effects').open).toBe(true)
+  panelTab('raw')
+  expect(section('curves').open).toBe(false)
+  // A fresh storage, or one that fails, opens every section.
+  cleanup()
+  localStorage.clear()
+  render(<Controls />)
+  expect(section('curves').open).toBe(true)
+  const failing = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+    throw new Error('denied')
+  })
+  cleanup()
+  render(<Controls />)
+  expect(raw.map((key) => section(key).open)).toEqual([true, true, true, true])
+  failing.mockRestore()
 })
 
 it('binds Exposure to the film when a stock is chosen and to the digital pipeline for Standard', () => {
