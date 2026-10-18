@@ -1,4 +1,5 @@
 import { useCallback, useContext, useEffect, useId, useRef } from 'react'
+import { RotateCcw } from 'lucide-react'
 import {
   DEFAULT_WHEELS,
   monochromeFilm,
@@ -104,16 +105,31 @@ function WheelControl({
 }): React.JSX.Element {
   // The pointer that drags the dot. Other pointers do nothing until it lets go.
   const pointer = useRef<number | null>(null)
+  // While Shift is held in a drag, the hue (in radians) that the dot keeps.
+  const locked = useRef<number | null>(null)
   const description = useId()
   const off = disabled || colorless
   const reset = (): void => change({ ...value, x: 0, y: 0 }, true)
+  // The angle of the pointer from the center sets the hue, and its distance sets the
+  // strength. Past the rim, the dot follows the rim. With Shift, the dot moves only on
+  // the line from the center through the hue it had when Shift went down.
   const move = (event: React.PointerEvent<HTMLDivElement>): void => {
     const box = event.currentTarget.getBoundingClientRect()
-    const x = ((event.clientX - box.left) / box.width) * 2 - 1
-    const y = 1 - ((event.clientY - box.top) / box.height) * 2
+    let x = ((event.clientX - box.left) / box.width) * 2 - 1
+    let y = 1 - ((event.clientY - box.top) / box.height) * 2
+    if (!event.shiftKey) locked.current = null
+    else if (locked.current === null && (value.x || value.y)) {
+      locked.current = Math.atan2(value.y, value.x)
+    }
+    if (locked.current !== null) {
+      const [ux, uy] = [Math.cos(locked.current), Math.sin(locked.current)]
+      const along = Math.max(0, x * ux + y * uy)
+      ;[x, y] = [along * ux, along * uy]
+    }
     change({ ...value, ...inDisc(x, y) }, false)
   }
   const end = useCallback((): void => {
+    locked.current = null
     if (pointer.current === null) return
     pointer.current = null
     commit()
@@ -128,7 +144,7 @@ function WheelControl({
   return (
     <div className="space-y-2">
       <p className={cn('control-label text-center', disabled && 'opacity-40')}>{label}</p>
-      <div className={cn('flex items-center gap-1.5', off && 'opacity-40')}>
+      <div className={cn('flex justify-center', off && 'opacity-40')}>
         <div
           role="application"
           aria-roledescription={t('editor.colorWheel')}
@@ -136,7 +152,7 @@ function WheelControl({
           aria-label={label}
           aria-describedby={description}
           aria-disabled={off || undefined}
-          className="relative aspect-square min-w-0 flex-1 touch-none rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/60"
+          className="relative aspect-square w-full max-w-[80px] touch-none rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/60"
           style={{ background: DISC }}
           onPointerDown={(event) => {
             // Only a primary press drags. Control-click is a secondary click on macOS.
@@ -183,26 +199,31 @@ function WheelControl({
             style={{ left: `${(1 + value.x) * 50}%`, top: `${(1 - value.y) * 50}%` }}
           />
         </div>
+      </div>
+      {/* The button resets the whole wheel: its color and its luminance. */}
+      <div className="flex items-center gap-1.5">
+        <div className="min-w-0 flex-1">
+          <Slider
+            aria-label={`${label} ${t('editor.luminance')}`}
+            disabled={disabled}
+            value={value.luminance}
+            min={-100}
+            max={100}
+            onValueChange={(luminance) => change({ ...value, luminance }, false)}
+            onValueCommit={commit}
+            onReset={() => change({ ...value, luminance: 0 }, true)}
+          />
+        </div>
         <button
           type="button"
-          disabled={off}
+          disabled={disabled}
           aria-label={`${t('editor.resetWheel')}: ${label}`}
           title={t('editor.resetWheel')}
-          className="h-3 w-3 shrink-0 rounded-full bg-tone-500 hover:bg-tone-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/60"
-          onClick={reset}
-        />
-      </div>
-      <div className="mx-auto w-3/4">
-        <Slider
-          aria-label={`${label} ${t('editor.luminance')}`}
-          disabled={disabled}
-          value={value.luminance}
-          min={-100}
-          max={100}
-          onValueChange={(luminance) => change({ ...value, luminance }, false)}
-          onValueCommit={commit}
-          onReset={() => change({ ...value, luminance: 0 }, true)}
-        />
+          className="shrink-0 rounded text-tone-500 hover:text-tone-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/60 disabled:opacity-40"
+          onClick={() => change({ x: 0, y: 0, luminance: 0 }, true)}
+        >
+          <RotateCcw aria-hidden="true" className="h-3 w-3" />
+        </button>
       </div>
     </div>
   )

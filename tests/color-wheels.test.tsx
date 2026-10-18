@@ -94,6 +94,39 @@ it('drags the Midtones dot inside the disc, commits on release and resets it', (
   expect(wheels()!.shadows).toEqual(DEFAULT_WHEELS.shadows)
 })
 
+it('keeps the hue with Shift, so a drag changes only the strength', () => {
+  render(<Wheels />)
+  const midtones = disc('midtones')
+  // Red at the right of the center, at half strength.
+  fireEvent.pointerDown(midtones, { clientX: 75, clientY: 50, pointerId: 1, button: 0 })
+  expect(wheels()!.midtones).toMatchObject({ x: 0.5, y: 0 })
+  // With Shift, a move up and to the right stays on the red line.
+  fireEvent.pointerMove(midtones, { clientX: 90, clientY: 20, pointerId: 1, shiftKey: true })
+  expect(wheels()!.midtones).toMatchObject({ x: 0.8, y: 0 })
+  // Past the center, the dot stops at the center instead of taking the opposite hue.
+  fireEvent.pointerMove(midtones, { clientX: 20, clientY: 40, pointerId: 1, shiftKey: true })
+  expect(wheels()!.midtones).toMatchObject({ x: 0, y: 0 })
+  // Without Shift, the hue follows the pointer again.
+  fireEvent.pointerMove(midtones, { clientX: 50, clientY: 25, pointerId: 1 })
+  expect(wheels()!.midtones).toMatchObject({ x: 0, y: 0.5 })
+  fireEvent.pointerUp(midtones, { pointerId: 1 })
+})
+
+it('resets the color and the luminance of a wheel with its button', () => {
+  render(<Wheels />)
+  fireEvent.pointerDown(disc('shadows'), { clientX: 80, clientY: 30, pointerId: 1, button: 0 })
+  fireEvent.pointerUp(disc('shadows'), { pointerId: 1 })
+  fireEvent.keyDown(
+    screen.getByRole('slider', { name: `${t('editor.shadows')} ${t('editor.luminance')}` }),
+    { key: 'ArrowRight' }
+  )
+  expect(wheels()!.shadows.luminance).not.toBe(0)
+  fireEvent.click(
+    screen.getByRole('button', { name: `${t('editor.resetWheel')}: ${t('editor.shadows')}` })
+  )
+  expect(wheels()!.shadows).toEqual({ x: 0, y: 0, luminance: 0 })
+})
+
 it('drags only with the primary button of one pointer', () => {
   render(<Wheels />)
   const midtones = disc('midtones')

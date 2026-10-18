@@ -205,7 +205,7 @@ export function Adjustment({
       className={cn(
         'h-6 shrink-0 rounded-md border border-transparent bg-transparent text-right font-mono text-xs tabular-nums text-tone-400 [appearance:textfield] focus:border-ink/40 focus:bg-ink/[0.03] focus:text-tone-100 focus:outline-none disabled:opacity-40 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none',
         short
-          ? 'w-full px-1'
+          ? 'w-full px-0 text-[11px]'
           : 'w-14 translate-x-2.5 px-2 transition-transform focus:translate-x-0 motion-reduce:transition-none'
       )}
       onChange={(event) => {
@@ -244,13 +244,10 @@ export function Adjustment({
   }
   if (short) {
     // The slider and the value carry the full name. Shift-click on the letter resets.
-    // The label and value columns have the same width (room for -100), so the slider
-    // is centered.
+    // The label and value columns have the same width, so the slider is centered. They
+    // are narrow and have no gap: at 11 px, -100 just fits, and most values are shorter.
     return (
-      <div
-        className="grid grid-cols-[2.5rem_minmax(0,1fr)_2.5rem] items-center gap-2 py-1"
-        {...hold}
-      >
+      <div className="grid grid-cols-[1.875rem_minmax(0,1fr)_1.875rem] items-center py-1" {...hold}>
         <span
           aria-hidden="true"
           title={label}
