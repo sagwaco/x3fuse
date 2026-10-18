@@ -297,6 +297,7 @@ function CachePage(): React.JSX.Element {
   const update = useSettingsStore((s) => s.update)
   const [used, setUsed] = useState<number | null>(null)
   const [clearFailed, setClearFailed] = useState(false)
+  const [clearing, setClearing] = useState(false)
   const refresh = (): void => {
     void ipc.invoke('cache:size').then(setUsed, console.error)
   }
@@ -329,10 +330,13 @@ function CachePage(): React.JSX.Element {
         <span className="text-sm text-tone-400">
           {used === null ? t('placeholder.dash') : formatBytes(used)}
         </span>
+        {/* One Clear at a time, so that an older result cannot show after a newer one. */}
         <Button
           variant="bordered"
           size="sm"
+          disabled={clearing}
           onClick={() => {
+            setClearing(true)
             setClearFailed(false)
             void ipc
               .invoke('cache:clear')
@@ -340,7 +344,10 @@ function CachePage(): React.JSX.Element {
                 console.error('Could not clear the preview cache', error)
                 setClearFailed(true)
               })
-              .then(refresh)
+              .finally(() => {
+                setClearing(false)
+                refresh()
+              })
           }}
         >
           {t('settings.cache.clear')}
