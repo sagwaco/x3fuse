@@ -4,7 +4,7 @@ import { DEFAULT_SETTINGS, type X3FFileDTO } from '@shared/types'
 
 const invoke = vi.fn<(channel: string, payload: { paths: string[] }) => Promise<X3FFileDTO[]>>()
 ;(window as unknown as { x3f: unknown }).x3f = { invoke }
-const { useQueueStore: store } = await import('../src/renderer/src/stores/queueStore')
+const { useQueueStore: store, shownFiles } = await import('../src/renderer/src/stores/queueStore')
 const { useSettingsStore } = await import('../src/renderer/src/stores/settingsStore')
 
 const paths = Array.from({ length: 17 }, (_, i) => `/photos/${String(i).padStart(2, '0')}.X3F`)
@@ -42,7 +42,8 @@ beforeEach(() => {
     isProcessing: false,
     isPreparing: false,
     isCancelling: false,
-    pendingReconversion: null
+    pendingReconversion: null,
+    filter: { flags: [], rating: 0, ratingOp: 'atLeast' }
   })
   useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS }, loaded: true })
 })
@@ -50,23 +51,25 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks())
 
 describe('progressive file import', () => {
-  it('shows every placeholder immediately and hydrates the active-first chunk before later chunks', async () => {
+  it('shows every placeholder immediately and hydrates from the first shown photo', async () => {
     const first = deferred()
     const second = deferred()
     invoke.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
+    // The open dialog and Finder can give the last photo first.
     const importing = store.getState().addFiles([...paths].reverse())
     const placeholders = store.getState().files
-    const activeId = placeholders[0].id
+    const activeId = placeholders.find((file) => file.path === paths[0])!.id
     expect(placeholders).toHaveLength(17)
     expect(placeholders.every((file) => file.pending)).toBe(true)
     expect(store.getState().selectedIds).toEqual(new Set([activeId]))
+    expect(store.getState().activeId).toBe(activeId)
     expect(invoke).toHaveBeenCalledTimes(1)
-    const firstPaths = [paths[16], paths[15], ...paths.slice(0, 6)]
+    const firstPaths = paths.slice(0, 8)
     expect(invoke).toHaveBeenLastCalledWith('queue:add', { paths: firstPaths })
 
     first.resolve(metadata(firstPaths))
     await vi.waitFor(() => expect(invoke).toHaveBeenCalledTimes(2))
-    expect(invoke).toHaveBeenLastCalledWith('queue:add', { paths: paths.slice(6, 14) })
+    expect(invoke).toHaveBeenLastCalledWith('queue:add', { paths: paths.slice(8, 16) })
     expect(store.getState().files.filter((file) => !file.pending)).toHaveLength(8)
     expect(store.getState().files.filter((file) => file.pending)).toHaveLength(9)
     expect(store.getState().activeId).toBe(activeId)
@@ -82,12 +85,12 @@ describe('progressive file import', () => {
     }
 
     // Selection changes made during an import must survive every later response.
-    const selected = placeholders.find((file) => file.path === paths[14])!.id
+    const selected = placeholders.find((file) => file.path === paths[16])!.id
     store.getState().setSelection(new Set([selected]), selected)
-    second.resolve(metadata(paths.slice(6, 14)))
+    second.resolve(metadata(paths.slice(8, 16)))
     await importing
     expect(invoke).toHaveBeenCalledTimes(3)
-    expect(invoke).toHaveBeenLastCalledWith('queue:add', { paths: [paths[14]] })
+    expect(invoke).toHaveBeenLastCalledWith('queue:add', { paths: [paths[16]] })
     expect(store.getState().files.map((file) => file.id)).toEqual(
       placeholders.map((file) => file.id)
     )
@@ -197,6 +200,49 @@ describe('progressive file import', () => {
       paths[8]
     ])
     expect(store.getState().files.every((file) => file.pending === false)).toBe(true)
+  })
+
+  it('follows the first shown photo while dates arrive', async () => {
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, sortField: 'Date' } })
+    // Later paths are older photos.
+    invoke.mockImplementation(async (_channel, payload) =>
+      metadata(payload.paths).map((file) => ({
+        ...file,
+        capturedDate: new Date(Date.UTC(2024, 0, 31 - paths.indexOf(file.path))).toISOString()
+      }))
+    )
+    const active: string[] = []
+    const off = store.subscribe((s) => {
+      const path = s.files.find((file) => file.id === s.activeId)?.path
+      if (path && active.at(-1) !== path) active.push(path)
+    })
+    await store.getState().addFiles(paths)
+    off()
+    expect(invoke.mock.calls.map(([, payload]) => payload.paths)).toEqual([
+      paths.slice(0, 8),
+      paths.slice(8, 16),
+      [paths[16]]
+    ])
+    // Placeholders wait after the loaded photos, so the selection stays on the first row.
+    expect(active).toEqual([paths[0], paths[7], paths[15], paths[16]])
+    expect(shownFiles(store.getState())[0].id).toBe(store.getState().activeId)
+  })
+
+  it('selects nothing while a filter hides every placeholder', async () => {
+    store.setState({ filter: { flags: ['pick'], rating: 0, ratingOp: 'atLeast' } })
+    invoke.mockImplementation(async (_channel, payload) =>
+      metadata(payload.paths).map((file) => ({
+        ...file,
+        flag: paths.indexOf(file.path) % 5 === 3 ? 'pick' : undefined
+      }))
+    )
+    const importing = store.getState().addFiles(paths)
+    expect(store.getState().activeId).toBeNull()
+    expect(store.getState().selectedIds.size).toBe(0)
+    await importing
+    const pick = store.getState().files.find((file) => file.path === paths[3])!.id
+    expect(store.getState().activeId).toBe(pick)
+    expect(store.getState().selectedIds).toEqual(new Set([pick]))
   })
 })
 

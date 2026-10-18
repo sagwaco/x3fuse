@@ -96,6 +96,13 @@ reuse the Debug probe executable. Release builds omit the probe.
 - `x3f-preview` serves extracted previews through an asynchronous Tauri URI protocol.
   `x3f-edit` serves revisioned rendered images. The renderer uses bounded caches,
   worker-based scopes, and virtualized browsing views.
+- `preview::DiskCache` keeps embedded previews and import metadata on disk, keyed by
+  the source path and its `SourceStamp`, so that `queue:add` and thumbnails skip
+  ExifTool for photos seen before. Settings > Cache controls it: the
+  `previewCacheEnabled` and `previewCacheLimit` preferences, least-recently-used
+  eviction, and Clear. Edited thumbnails keep their own cache in `edits/thumbnails-v1`.
+  On the first import, the first shown photo is active and follows the shown order
+  until the user changes the selection; the dialog and Finder path order is arbitrary.
 
 ### Editor and film pipeline
 
@@ -145,8 +152,10 @@ reuse the Debug probe executable. Release builds omit the probe.
   keyed by path. Moving or renaming a photo loses its flags and rating.
 - Tauri resolves storage under `com.sagwa.X3Fuse`: preferences use
   `app_config_dir()/settings.json`; edits and caches use `app_data_dir()/edits`;
-  logs use `app_log_dir()`. On macOS, settings and app data are under
-  `~/Library/Application Support/com.sagwa.X3Fuse`, and logs are under
+  the preview cache uses `app_cache_dir()/previews-v1`; logs use `app_log_dir()`.
+  On macOS, settings and app data are under
+  `~/Library/Application Support/com.sagwa.X3Fuse`, the preview cache is under
+  `~/Library/Caches/com.sagwa.X3Fuse`, and logs are under
   `~/Library/Logs/com.sagwa.X3Fuse`.
 - Settings from the previous macOS app are not migrated. Users select output and
   denoise preferences once. Only the stable app migrates data and logs from
