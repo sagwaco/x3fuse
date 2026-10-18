@@ -36,6 +36,7 @@ import { HelpTooltip, ToggleRow } from './ui/settingsLayout'
 import { LookPicker } from './LookPicker'
 import { SfdRaw, SfdRawInfo } from './SfdRaw'
 import { EffectsSection } from './EffectsControls'
+import { ColorMixer } from './ColorMixer'
 
 /** Tracks that show which way a slider moves the picture. */
 const TEMPERATURE = 'linear-gradient(to right, #4f7cff, #d4d4d4, #ffb43d)'
@@ -70,17 +71,6 @@ const PANEL_TABS = [
 ] as const
 const hsl = (hue: number, saturation = 75, lightness = 55): string =>
   `hsl(${hue} ${saturation}% ${lightness}%)`
-/** Color mixer bands, in the renderer's order, by hue in degrees. */
-const BANDS = [
-  ['red', 0],
-  ['orange', 30],
-  ['yellow', 60],
-  ['green', 120],
-  ['aqua', 180],
-  ['blue', 240],
-  ['purple', 270],
-  ['magenta', 300]
-] as const
 const FILTER_COLORS: Record<MonochromeFilter, string> = {
   neutral: '#a3a3a3',
   red: hsl(0),
@@ -346,9 +336,7 @@ export const EditorControls = memo(function EditorControls({
     cloud ? undefined : state.preview?.asShotTemperature
   )
   const asShotTint = useEditorStore((state) => (cloud ? undefined : state.preview?.asShotTint))
-  const [band, setBand] = useState(0)
   const [extended, setExtended] = useState(false)
-  const hue = BANDS[band][1]
   const preset =
     WHITE_BALANCE.find(([, kelvin]) => recipe.temperature === kelvin && recipe.tint === 0)?.[0] ??
     'custom'
@@ -370,30 +358,6 @@ export const EditorControls = memo(function EditorControls({
       reset={() => change({ [key]: defaultRecipe()[key] })}
       commit={commit}
       {...options}
-    />
-  )
-  const mixer = (key: 'hue' | 'saturation' | 'luminance', track: string): React.JSX.Element => (
-    <Adjustment
-      key={`hsl-${key}`}
-      label={t(`editor.${key}`)}
-      value={recipe.hsl[band][key]}
-      track={track}
-      commit={commit}
-      reset={() =>
-        change({
-          hsl: recipe.hsl.map((entry, index) => (index === band ? { ...entry, [key]: 0 } : entry))
-        })
-      }
-      change={(value, commit) =>
-        change(
-          {
-            hsl: recipe.hsl.map((entry, index) =>
-              index === band ? { ...entry, [key]: value } : entry
-            )
-          },
-          commit
-        )
-      }
     />
   )
   return (
@@ -576,31 +540,9 @@ export const EditorControls = memo(function EditorControls({
               <Section name={t('editor.color')}>
                 {control('saturation')}
                 {control('vibrance', { help: t('editor.vibranceHelp') })}
-                <p className="control-label pt-2 text-[10px] text-tone-500">
-                  {t('editor.colorBand')}
-                </p>
-                <Swatches
-                  label={t('editor.colorBand')}
-                  value={String(band)}
-                  options={BANDS.map(([name, hue], index) => ({
-                    value: String(index),
-                    label: t(`editor.${name}`),
-                    color: hsl(hue)
-                  }))}
-                  onChange={(value) => setBand(Number(value))}
-                />
-                {mixer(
-                  'hue',
-                  `linear-gradient(to right, ${hsl(hue - 30)}, ${hsl(hue)}, ${hsl(hue + 30)})`
-                )}
-                {mixer(
-                  'saturation',
-                  `linear-gradient(to right, ${hsl(hue, 0)}, ${hsl(hue, 100, 50)})`
-                )}
-                {mixer(
-                  'luminance',
-                  `linear-gradient(to right, ${hsl(hue, 70, 15)}, ${hsl(hue, 70, 85)})`
-                )}
+              </Section>
+              <Section name={t('editor.colorMixer')}>
+                <ColorMixer recipe={recipe} />
               </Section>
               <EffectsSection recipe={recipe} />
             </>

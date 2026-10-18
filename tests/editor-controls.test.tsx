@@ -970,11 +970,15 @@ it('keeps legacy grain when choosing another stock or the Aerochrome look', () =
   }
 })
 
-it('adjusts color ranges chosen from swatches and edits curve points from the keyboard', () => {
-  render(<Controls />)
+it('adjusts color ranges in the color mixer and edits curve points from the keyboard', () => {
+  const view = render(<Controls />)
   panelTab('grading')
-  fireEvent.click(swatch(t('editor.colorBand'), t('editor.blue')))
-  adjust(t('editor.hue'), 40)
+  expect(sections(view.container).slice(0, 2)).toEqual([t('editor.color'), t('editor.colorMixer')])
+  // Grain channel offsets also have a Blue slider.
+  const mixer = within(screen.getByRole('tabpanel', { name: t('editor.hue') }))
+  fireEvent.change(mixer.getByRole('spinbutton', { name: t('editor.blue') }), {
+    target: { value: '40' }
+  })
   expect(change.mock.lastCall?.[0].hsl[5]).toEqual({ hue: 40, saturation: 0, luminance: 0 })
   panelTab('raw')
   fireEvent.click(swatch(t('editor.curveChannel'), t('editor.red')))
