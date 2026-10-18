@@ -454,6 +454,20 @@ html[data-platform='darwin'] .window-toolbar {
   initial-value: 0px;
 }
 
+/* The group track and the selected fill. Text on them keeps at least 4.5:1 on
+   the window, panel and section surfaces. On the gray surface an ink tint takes
+   the text under 4.5:1, so there both tints are lighter than the surface. */
+.glass-group {
+  --glass-track: rgb(var(--ink) / 0.05);
+  --glass-fill: rgb(var(--ink) / 0.15);
+  background-color: var(--glass-track);
+}
+
+html[data-theme='gray'] .glass-group {
+  --glass-track: rgb(255 255 255 / 0.06);
+  --glass-fill: rgb(255 255 255 / 0.25);
+}
+
 .glass-group-indicator {
   position: absolute;
   top: 0;
@@ -461,7 +475,7 @@ html[data-platform='darwin'] .window-toolbar {
   width: calc(var(--glass-w) + 2 * var(--glass-grow));
   height: calc(var(--glass-h) + 2 * var(--glass-grow));
   translate: calc(var(--glass-x) - var(--glass-grow)) calc(var(--glass-y) - var(--glass-grow));
-  background-color: rgb(var(--ink) / 0.15);
+  background-color: var(--glass-fill);
   pointer-events: none;
   transition:
     --glass-grow 200ms cubic-bezier(0.3, 1.3, 0.6, 1),
@@ -488,14 +502,14 @@ html[data-platform='darwin'] .window-toolbar {
   box-shadow: 0 1px 4px rgb(0 0 0 / 0.3);
 }
 
-/* The lens hides the items below it, so its color is the group color on the
-   window. The copy is larger about the indicator center, as through a lens. */
+/* The lens hides the items below it, so its color is the track on the window.
+   The copy is larger about the indicator center, as through a lens. */
 .glass-group-lens {
   display: none;
   position: absolute;
   inset: -16px;
   overflow: hidden;
-  background-color: color-mix(in srgb, rgb(var(--ink)) 5%, rgb(var(--tone-950)));
+  background: linear-gradient(var(--glass-track), var(--glass-track)) rgb(var(--tone-950));
   filter: brightness(1.1) saturate(1.5);
   transform: scale(1.25);
 }
@@ -522,6 +536,12 @@ html[data-platform='darwin'] .window-toolbar {
   filter: blur(3px) brightness(1.1) saturate(1.8);
 }
 
+/* The label copy lies behind the real label, so it is fainter. The real label
+   then keeps at least 4.5:1 on the glass (gray is the closest). */
+.glass-group[data-glass]:not([data-moving], [data-pressed]) .glass-group-lens > * > span {
+  opacity: 0.5;
+}
+
 /* The rim light, above the lens. */
 .glass-group:is([data-moving], [data-pressed], [data-glass]) > .glass-group-indicator::after {
   content: '';
@@ -535,7 +555,7 @@ html[data-platform='darwin'] .window-toolbar {
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
   .glass-group:is([data-moving], [data-pressed], [data-glass]) > .glass-group-indicator {
     z-index: auto;
-    background-color: rgb(var(--ink) / 0.15);
+    background-color: var(--glass-fill);
     box-shadow: none;
   }
 

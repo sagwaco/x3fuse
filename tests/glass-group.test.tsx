@@ -118,3 +118,58 @@ it('moves without the glass slide for reduced motion', () => {
     Reflect.deleteProperty(window, 'matchMedia')
   }
 })
+
+it.each([
+  ['the selected tab is disabled', 'x'],
+  ['no tab is selected', 'none']
+])('keeps the first enabled tab in the tab order when %s', (_, value) => {
+  const items = [
+    { value: 'x', label: 'X', disabled: true },
+    { value: 'y', label: 'Y' },
+    { value: 'z', label: 'Z' }
+  ]
+  render(
+    <GlassGroup
+      kind="tabs"
+      id="t"
+      panelId={(item) => item}
+      aria-label="T"
+      value={value}
+      items={items}
+      onValueChange={() => {}}
+    />
+  )
+  expect(screen.getAllByRole('tab').map((tab) => tab.tabIndex)).toEqual([-1, 0, -1])
+})
+
+it('measures again when the group resizes or its layout props change', () => {
+  let resize = (): void => {}
+  const observed: Element[] = []
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      constructor(callback: () => void) {
+        resize = callback
+      }
+      observe(element: Element): void {
+        observed.push(element)
+      }
+      disconnect(): void {}
+    }
+  )
+  const props = { 'aria-label': 'Mode', value: 'c', items: ITEMS, onValueChange: () => {} }
+  const { rerender } = render(<GlassGroup {...props} />)
+  const group = screen.getByRole('group')
+  expect(observed).toContain(group)
+  const indicator = group.querySelector<HTMLElement>('.glass-group-indicator')!
+  const x = (): string => indicator.style.getPropertyValue('--glass-x')
+  expect(x()).toBe('0px')
+  // The item moves and keeps its size, as in a wider group with justify-between.
+  const gamma = screen.getByRole('button', { name: 'Gamma' })
+  Object.defineProperty(gamma, 'offsetLeft', { configurable: true, value: 40 })
+  act(() => resize())
+  expect(x()).toBe('40px')
+  Object.defineProperty(gamma, 'offsetLeft', { configurable: true, value: 60 })
+  rerender(<GlassGroup {...props} className="gap-4" />)
+  expect(x()).toBe('60px')
+})

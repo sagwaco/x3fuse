@@ -73,6 +73,12 @@ export function GlassGroup<T extends string>({
   const tabs = kind === 'tabs'
   const tabId = (item: T): string | undefined => (id ? `${id}-tab-${item}` : undefined)
   const selected = items.findIndex((item) => item.value === value)
+  // The one tab in the tab order: the selected tab, or the first enabled tab when
+  // the selected tab is disabled or no tab is selected.
+  const tabStop =
+    selected >= 0 && !items[selected].disabled
+      ? selected
+      : items.findIndex((item) => !item.disabled)
 
   // A new selection slides the indicator as glass. The state changes in the same
   // render as the position, so the slide transition applies to the move.
@@ -91,11 +97,14 @@ export function GlassGroup<T extends string>({
 
   // The item boxes place the indicator and the copy of the items in its lens.
   // The indicator shows only after the first measure, so it does not slide in.
+  // A change of the items, the layout props or the group size measures again,
+  // because each can move items that keep their size.
   const root = useRef<HTMLDivElement>(null)
   const [boxes, setBoxes] = useState<Box[]>([])
   const order = items.map((item) => item.value).join('\n')
   useLayoutEffect(() => {
-    const buttons = Array.from(root.current!.querySelectorAll<HTMLElement>(':scope > button'))
+    const group = root.current!
+    const buttons = Array.from(group.querySelectorAll<HTMLElement>(':scope > button'))
     const measure = (): void => {
       const next = buttons.map((b) => ({
         x: b.offsetLeft,
@@ -108,9 +117,9 @@ export function GlassGroup<T extends string>({
     measure()
     if (typeof ResizeObserver === 'undefined') return
     const observer = new ResizeObserver(measure)
-    for (const button of buttons) observer.observe(button)
+    for (const element of [group, ...buttons]) observer.observe(element)
     return () => observer.disconnect()
-  }, [order])
+  }, [order, display, size, className])
 
   const move = (event: React.KeyboardEvent, index: number): void => {
     if (!tabs) return
@@ -177,7 +186,7 @@ export function GlassGroup<T extends string>({
         if (button && !button.disabled) press(event)
       }}
       className={cn(
-        'glass-group relative inline-flex bg-ink/5 p-0.5',
+        'glass-group relative inline-flex p-0.5',
         stacked ? (size === 'sm' ? 'rounded-[10px]' : 'rounded-xl') : 'rounded-lg',
         className
       )}
@@ -225,7 +234,7 @@ export function GlassGroup<T extends string>({
             aria-selected={tabs ? isSelected : undefined}
             aria-controls={tabs ? panelId?.(item.value) : undefined}
             aria-pressed={tabs ? undefined : isSelected}
-            tabIndex={tabs ? (isSelected ? 0 : -1) : undefined}
+            tabIndex={tabs ? (index === tabStop ? 0 : -1) : undefined}
             aria-label={display === 'icon' ? item.label : undefined}
             title={item.title ?? (display === 'icon' ? item.label : undefined)}
             aria-keyshortcuts={item.keyshortcuts}
