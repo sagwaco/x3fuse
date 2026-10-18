@@ -70,12 +70,55 @@ it('calls back for a click on the selected item', () => {
   expect(change).toHaveBeenCalledWith('a')
 })
 
-it('is a group of pressed buttons that slides its glass on a change', () => {
+it('is solid by default: a press does not turn the indicator to glass', () => {
+  vi.stubGlobal('PointerEvent', MouseEvent)
+  render(<GlassGroup aria-label="Mode" value="a" items={ITEMS} onValueChange={() => {}} />)
+  const group = screen.getByRole('group', { name: 'Mode' })
+  expect(group.dataset.variant).toBe('solid')
+  fireEvent.pointerDown(within(group).getAllByRole('button')[2], { button: 0 })
+  expect(group.hasAttribute('data-pressed')).toBe(false)
+  expect(group.querySelector('.glass-group-lens')).toBeNull()
+})
+
+it('is a split group of buttons without an indicator', () => {
+  vi.useFakeTimers()
+  const { rerender } = render(
+    <GlassGroup
+      variant="split"
+      aria-label="Mode"
+      value="a"
+      items={ITEMS}
+      onValueChange={() => {}}
+    />
+  )
+  const group = screen.getByRole('group', { name: 'Mode' })
+  expect(group.querySelector('.glass-group-indicator')).toBeNull()
+  expect(
+    within(group)
+      .getAllByRole('button')
+      .every((b) => b.classList.contains('flex-1'))
+  ).toBe(true)
+  // A selection change marks the group as moving, which squashes the new button.
+  rerender(
+    <GlassGroup
+      variant="split"
+      aria-label="Mode"
+      value="c"
+      items={ITEMS}
+      onValueChange={() => {}}
+    />
+  )
+  expect(group.hasAttribute('data-moving')).toBe(true)
+  act(() => vi.advanceTimersByTime(400))
+  expect(group.hasAttribute('data-moving')).toBe(false)
+})
+
+it('is a liquid group of pressed buttons that slides its glass on a change', () => {
   vi.useFakeTimers()
   vi.stubGlobal('PointerEvent', MouseEvent)
   const change = vi.fn()
   const { rerender } = render(
-    <GlassGroup aria-label="Mode" value="a" items={ITEMS} onValueChange={change} />
+    <GlassGroup variant="liquid" aria-label="Mode" value="a" items={ITEMS} onValueChange={change} />
   )
   const group = screen.getByRole('group', { name: 'Mode' })
   const buttons = within(group).getAllByRole('button')
@@ -93,7 +136,9 @@ it('is a group of pressed buttons that slides its glass on a change', () => {
   fireEvent.pointerUp(window)
   fireEvent.click(buttons[2])
   expect(change).toHaveBeenCalledWith('c')
-  rerender(<GlassGroup aria-label="Mode" value="c" items={ITEMS} onValueChange={change} />)
+  rerender(
+    <GlassGroup variant="liquid" aria-label="Mode" value="c" items={ITEMS} onValueChange={change} />
+  )
   expect(group.hasAttribute('data-moving')).toBe(true)
   act(() => vi.advanceTimersByTime(400))
   expect(group.hasAttribute('data-moving')).toBe(false)

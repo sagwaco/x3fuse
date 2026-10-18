@@ -419,11 +419,9 @@ html[data-platform='darwin'] .window-toolbar {
   }
 }
 
-/* GlassGroup. One indicator slides to the selected item. While it moves and
-   while the pointer presses an item, it is liquid glass as the switch knob is:
-   it grows, it rises above the items, and its lens holds a copy of the items.
-   The indicator box is in registered lengths, which interpolate, so the copy
-   moves against the indicator in the same frame. */
+/* GlassGroup. Except in the split variant, one indicator slides to the selected
+   item. The indicator box is in registered lengths, which interpolate, so the
+   liquid lens copy moves against the indicator in the same frame. */
 @property --glass-x {
   syntax: '<length>';
   inherits: true;
@@ -460,6 +458,9 @@ html[data-platform='darwin'] .window-toolbar {
 .glass-group {
   --glass-track: rgb(var(--ink) / 0.05);
   --glass-fill: rgb(var(--ink) / 0.15);
+}
+
+.glass-group:is([data-variant='solid'], [data-variant='liquid']) {
   background-color: var(--glass-track);
 }
 
@@ -491,12 +492,11 @@ html[data-theme='gray'] .glass-group {
   transition-timing-function: cubic-bezier(0.3, 1.2, 0.6, 1);
 }
 
-.glass-group:is([data-moving], [data-pressed]) > .glass-group-indicator {
+/* Liquid: while it moves or an item is pressed, the indicator grows, rises above
+   the items and shows a lens, as the switch knob does. */
+.glass-group[data-variant='liquid']:is([data-moving], [data-pressed]) > .glass-group-indicator {
   --glass-grow: 3px;
   z-index: 1;
-}
-
-.glass-group:is([data-moving], [data-pressed], [data-glass]) > .glass-group-indicator {
   overflow: hidden;
   background-color: transparent;
   box-shadow: 0 1px 4px rgb(0 0 0 / 0.3);
@@ -522,28 +522,15 @@ html[data-theme='gray'] .glass-group {
     calc(16px + var(--glass-grow) - var(--glass-y));
 }
 
-.glass-group:is([data-moving], [data-pressed], [data-glass])
+.glass-group[data-variant='liquid']:is([data-moving], [data-pressed])
   > .glass-group-indicator
   > .glass-group-lens {
   display: block;
 }
 
-/* Glass at rest is below the real icon and label. The copy of them in its lens
-   is soft, so it shows as light through thick glass, not as a second label. */
-.glass-group[data-glass]:not([data-moving], [data-pressed])
-  > .glass-group-indicator
-  > .glass-group-lens {
-  filter: blur(3px) brightness(1.1) saturate(1.8);
-}
-
-/* The label copy lies behind the real label, so it is fainter. The real label
-   then keeps at least 4.5:1 on the glass (gray is the closest). */
-.glass-group[data-glass]:not([data-moving], [data-pressed]) .glass-group-lens > * > span {
-  opacity: 0.5;
-}
-
 /* The rim light, above the lens. */
-.glass-group:is([data-moving], [data-pressed], [data-glass]) > .glass-group-indicator::after {
+.glass-group[data-variant='liquid']:is([data-moving], [data-pressed])
+  > .glass-group-indicator::after {
   content: '';
   position: absolute;
   inset: 0;
@@ -551,28 +538,113 @@ html[data-theme='gray'] .glass-group {
   box-shadow: inset 0 0 5px rgb(var(--ink) / 0.5);
 }
 
-/* A solid indicator below the items, for reduced transparency and more contrast. */
+/* Glass: the selected item has no fill, only a ring. The macOS glass material
+   below replaces the ring. */
+.glass-group[data-variant='glass'] > .glass-group-indicator {
+  background-color: transparent;
+  box-shadow: 0 0 0 1px rgb(var(--ink) / 0.3);
+}
+
+/* Split: when selected, the button squashes and bounces back. */
+@keyframes glass-squash {
+  0% {
+    scale: 1 1;
+  }
+  30% {
+    scale: 1.04 0.9;
+  }
+  60% {
+    scale: 0.98 1.04;
+  }
+  82% {
+    scale: 1.01 0.99;
+  }
+  100% {
+    scale: 1 1;
+  }
+}
+
+.glass-group[data-variant='split'][data-moving] > [data-selected] {
+  animation: glass-squash 380ms ease-out;
+}
+
+/* The native material follows the window appearance and the text follows the
+   theme, so the material shows only when the two schemes agree. Otherwise the
+   ring (glass) or the fill (split) stays. */
+@supports (-apple-visual-effect: -apple-system-glass-material) {
+  @media (prefers-color-scheme: dark) {
+    html[data-platform='darwin']:where([data-theme='dark'])
+      .glass-group[data-variant='glass']
+      > .glass-group-indicator,
+    html[data-platform='darwin']:where([data-theme='dark'])
+      .glass-group[data-variant='split']
+      > [data-selected] {
+      -apple-visual-effect: -apple-system-glass-material;
+      background-color: transparent;
+    }
+
+    html[data-platform='darwin']:where([data-theme='dark'])
+      .glass-group[data-variant='glass']
+      > .glass-group-indicator {
+      box-shadow: none;
+    }
+  }
+
+  @media (prefers-color-scheme: light) {
+    html[data-platform='darwin']:where(:not([data-theme='dark']))
+      .glass-group[data-variant='glass']
+      > .glass-group-indicator,
+    html[data-platform='darwin']:where(:not([data-theme='dark']))
+      .glass-group[data-variant='split']
+      > [data-selected] {
+      -apple-visual-effect: -apple-system-glass-material;
+      background-color: transparent;
+    }
+
+    html[data-platform='darwin']:where(:not([data-theme='dark']))
+      .glass-group[data-variant='glass']
+      > .glass-group-indicator {
+      box-shadow: none;
+    }
+  }
+}
+
+/* For reduced transparency and more contrast: a solid liquid indicator below the
+   items, and the ring or the fill in place of the material. Same specificity as
+   the darwin rules above, and later, so it wins there too. */
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
-  .glass-group:is([data-moving], [data-pressed], [data-glass]) > .glass-group-indicator {
+  .glass-group[data-variant='liquid']:is([data-moving], [data-pressed]) > .glass-group-indicator {
     z-index: auto;
     background-color: var(--glass-fill);
     box-shadow: none;
   }
 
-  .glass-group:is([data-moving], [data-pressed], [data-glass])
+  .glass-group[data-variant='liquid']:is([data-moving], [data-pressed])
     > .glass-group-indicator
     > .glass-group-lens {
     display: none;
   }
 
-  .glass-group:is([data-moving], [data-pressed], [data-glass]) > .glass-group-indicator::after {
+  .glass-group[data-variant='liquid']:is([data-moving], [data-pressed])
+    > .glass-group-indicator::after {
     content: none;
+  }
+
+  html[data-platform='darwin'] .glass-group[data-variant='glass'] > .glass-group-indicator {
+    -apple-visual-effect: none;
+    box-shadow: 0 0 0 1px rgb(var(--ink) / 0.3);
+  }
+
+  html[data-platform='darwin'] .glass-group[data-variant='split'] > [data-selected] {
+    -apple-visual-effect: none;
+    background-color: var(--glass-fill);
   }
 }
 
-/* No growth. A selection change does not slide (see GlassGroup). */
+/* No growth. A selection change does not slide or squash (see GlassGroup). Same
+   specificity as the liquid rule, and later, so it wins. */
 @media (prefers-reduced-motion: reduce) {
-  .glass-group:is([data-moving], [data-pressed]) > .glass-group-indicator {
+  .glass-group[data-variant='liquid']:is([data-moving], [data-pressed]) > .glass-group-indicator {
     --glass-grow: 0px;
   }
 }

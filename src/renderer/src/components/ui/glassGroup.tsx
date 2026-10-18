@@ -3,9 +3,9 @@ import type { LucideIcon } from 'lucide-react'
 import { cn } from '../../lib/cn'
 import { usePress } from '../../hooks/usePress'
 
-/** Milliseconds that the indicator stays glass after a selection change. Keep
- * it at least the slide duration in index.css (.glass-group[data-moving]). */
-const SLIDE = 320
+/** Milliseconds that a selection change shows as moving. Keep it at least the
+ * slide and the squash durations in index.css (.glass-group[data-moving]). */
+const SLIDE = 400
 /** Tab keys and the direction in which each one looks for an enabled tab. */
 const STEPS: Record<string, 1 | -1> = { ArrowRight: 1, Home: 1, ArrowLeft: -1, End: -1 }
 
@@ -39,8 +39,16 @@ export interface GlassGroupProps<T extends string> {
   display?: 'label' | 'icon' | 'stacked'
   size?: 'sm' | 'md'
   disabled?: boolean
-  /** The selected item stays liquid glass at rest, below its icon and label. */
-  glass?: boolean
+  /**
+   * `solid`: a background holds the group, and a fill slides to the selected item.
+   * `liquid`: as `solid`, but the fill turns to liquid glass while it moves or an item
+   * is pressed, as the switch knob does.
+   * `glass`: no group background. The selected item sits on the macOS glass material,
+   * or in a ring where that material is not available.
+   * `split`: separate buttons with a faint ring that fill the width. The selected button
+   * has the macOS glass material, or a fill, and squashes and bounces when selected.
+   */
+  variant?: 'solid' | 'liquid' | 'glass' | 'split'
   className?: string
 }
 
@@ -52,9 +60,8 @@ interface Box {
 }
 
 /**
- * One choice of many, as tabs or buttons. A background holds the whole group,
- * and one indicator slides to the selected item. While it moves or the pointer
- * presses an item, the indicator is liquid glass (see .glass-group in index.css).
+ * One choice of many, as tabs or buttons. Except in `split`, one indicator slides to
+ * the selected item (see `variant` and .glass-group in index.css).
  */
 export function GlassGroup<T extends string>({
   value,
@@ -67,10 +74,12 @@ export function GlassGroup<T extends string>({
   display = 'label',
   size = 'md',
   disabled,
-  glass,
+  variant = 'solid',
   className
 }: GlassGroupProps<T>): React.JSX.Element {
   const tabs = kind === 'tabs'
+  const liquid = variant === 'liquid'
+  const split = variant === 'split'
   const tabId = (item: T): string | undefined => (id ? `${id}-tab-${item}` : undefined)
   const selected = items.findIndex((item) => item.value === value)
   // The one tab in the tab order: the selected tab, or the first enabled tab when
@@ -80,8 +89,8 @@ export function GlassGroup<T extends string>({
       ? selected
       : items.findIndex((item) => !item.disabled)
 
-  // A new selection slides the indicator as glass. The state changes in the same
-  // render as the position, so the slide transition applies to the move.
+  // A new selection slides the indicator, or squashes a split button. The state
+  // changes in the same render as the position, so the transition applies to the move.
   const [shown, setShown] = useState(selected)
   const [moving, setMoving] = useState(false)
   if (shown !== selected) {
@@ -103,6 +112,7 @@ export function GlassGroup<T extends string>({
   const [boxes, setBoxes] = useState<Box[]>([])
   const order = items.map((item) => item.value).join('\n')
   useLayoutEffect(() => {
+    if (split) return
     const group = root.current!
     const buttons = Array.from(group.querySelectorAll<HTMLElement>(':scope > button'))
     const measure = (): void => {
@@ -119,7 +129,7 @@ export function GlassGroup<T extends string>({
     const observer = new ResizeObserver(measure)
     for (const element of [group, ...buttons]) observer.observe(element)
     return () => observer.disconnect()
-  }, [order, display, size, className])
+  }, [order, display, size, className, split])
 
   const move = (event: React.KeyboardEvent, index: number): void => {
     if (!tabs) return
@@ -153,13 +163,15 @@ export function GlassGroup<T extends string>({
     stacked && 'flex-col py-1.5 leading-none',
     stacked &&
       (size === 'sm'
-        ? 'min-w-[4.5rem] max-w-[7rem] gap-1.5 px-3 text-[11px] font-medium'
-        : 'min-w-[76px] gap-1 px-2.5 text-[13px]')
+        ? 'min-w-[4.5rem] gap-1.5 px-3 text-[11px] font-medium'
+        : 'min-w-[72px] gap-1.5 px-2.5 font-mono text-[10px] uppercase tracking-[0.14em]'),
+    stacked && size === 'sm' && !split && 'max-w-[7rem]',
+    split && 'min-w-0 flex-1'
   )
   const iconClass = stacked
     ? size === 'sm'
       ? 'h-5 w-5'
-      : 'h-[22px] w-[22px]'
+      : 'h-[18px] w-[18px]'
     : size === 'sm'
       ? 'h-3.5 w-3.5'
       : 'h-4 w-4'
@@ -178,20 +190,25 @@ export function GlassGroup<T extends string>({
       ref={root}
       role={tabs ? 'tablist' : 'group'}
       aria-label={label}
-      data-glass={glass || undefined}
+      data-variant={variant}
       data-moving={moving || undefined}
       data-pressed={pressed || undefined}
-      onPointerDown={(event) => {
-        const button = (event.target as Element).closest('button')
-        if (button && !button.disabled) press(event)
-      }}
+      onPointerDown={
+        liquid
+          ? (event) => {
+              const button = (event.target as Element).closest('button')
+              if (button && !button.disabled) press(event)
+            }
+          : undefined
+      }
       className={cn(
-        'glass-group relative inline-flex p-0.5',
+        'glass-group relative',
+        split ? 'flex w-full gap-1.5' : 'inline-flex p-0.5',
         stacked ? (size === 'sm' ? 'rounded-[10px]' : 'rounded-xl') : 'rounded-lg',
         className
       )}
     >
-      {box && (
+      {box && !split && (
         <span
           aria-hidden="true"
           className={cn('glass-group-indicator', radius, disabled && 'opacity-40')}
@@ -204,23 +221,25 @@ export function GlassGroup<T extends string>({
             } as React.CSSProperties
           }
         >
-          <span className="glass-group-lens">
-            {items.map((item, index) => {
-              const at = boxes[index]
-              return (
-                at && (
-                  <span
-                    key={item.value}
-                    data-selected={index === selected || undefined}
-                    className={itemClass}
-                    style={{ left: at.x, top: at.y, width: at.w, height: at.h }}
-                  >
-                    {content(item)}
-                  </span>
+          {liquid && (
+            <span className="glass-group-lens">
+              {items.map((item, index) => {
+                const at = boxes[index]
+                return (
+                  at && (
+                    <span
+                      key={item.value}
+                      data-selected={index === selected || undefined}
+                      className={itemClass}
+                      style={{ left: at.x, top: at.y, width: at.w, height: at.h }}
+                    >
+                      {content(item)}
+                    </span>
+                  )
                 )
-              )
-            })}
-          </span>
+              })}
+            </span>
+          )}
         </span>
       )}
       {items.map((item, index) => {
@@ -244,7 +263,9 @@ export function GlassGroup<T extends string>({
             onKeyDown={(event) => move(event, index)}
             className={cn(
               itemClass,
-              'relative hover:text-tone-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/60 disabled:opacity-40'
+              'relative hover:text-tone-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/60 disabled:opacity-40',
+              split &&
+                'ring-1 ring-inset ring-ink/10 hover:ring-ink/20 data-[selected]:bg-[var(--glass-fill)]'
             )}
           >
             {content(item)}

@@ -377,11 +377,12 @@ export const EditorControls = memo(function EditorControls({
           <SfdRaw recipe={recipe} />
         </Section>
       )}
-      {/* A toolbar as in macOS settings. */}
-      <div className="flex justify-center px-3 py-2.5">
+      {/* Buttons that share the width. The selected one is glass on macOS. */}
+      <div className="px-3 py-2.5">
         <GlassGroup
           kind="tabs"
           id="panel"
+          variant="split"
           panelId={(value) => `panel-${value}`}
           display="stacked"
           size="sm"

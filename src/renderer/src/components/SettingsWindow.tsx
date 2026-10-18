@@ -239,15 +239,15 @@ function SettingsTitlebar({
         </h1>
       </div>
       <div data-tauri-drag-region className="flex justify-center px-3 pb-2">
-        {/* The selected tab is glass, and its lens refracts a copy of its icon and
-            label. The gray accent is below 3:1 on the gray surface, so there the
-            selected icon keeps the label color. */}
+        {/* The selected tab sits on the macOS glass material, or in a ring. The gray
+            accent is below 3:1 on the gray surface, so there the selected icon keeps
+            the label color. */}
         <GlassGroup
           kind="tabs"
           id="settings"
           panelId={(value) => `settings-page-${value}`}
           display="stacked"
-          glass
+          variant="glass"
           aria-label={t('menu.file.settings')}
           value={tab}
           onValueChange={onSelect}
