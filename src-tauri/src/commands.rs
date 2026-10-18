@@ -44,7 +44,13 @@ pub async fn settings_set(
 }
 
 async fn write_settings(state: Arc<AppState>, payload: Value) -> Result<Settings, String> {
+    // Save and apply in one critical section, so that an older save cannot apply its
+    // values after a newer one.
+    static APPLY: std::sync::Mutex<()> = std::sync::Mutex::new(());
     tauri::async_runtime::spawn_blocking(move || {
+        let _apply = APPLY
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let next = state.preferences.set(payload)?;
         state
             .logs
@@ -418,7 +424,7 @@ pub async fn cache_size(state: State<'_, Arc<AppState>>) -> Result<u64, String> 
 #[tauri::command]
 pub async fn cache_clear(state: State<'_, Arc<AppState>>) -> Result<(), String> {
     let state = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || state.previews.clear())
+    tauri::async_runtime::spawn_blocking(move || state.previews.disk.clear())
         .await
         .map_err(|e| e.to_string())?
 }

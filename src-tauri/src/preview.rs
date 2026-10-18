@@ -18,6 +18,8 @@ use tokio::sync::{Mutex as AsyncMutex, Semaphore};
 const BUDGET: usize = 128 * 1024 * 1024;
 /// The preview cache directory in the app cache directory.
 pub const CACHE_DIRECTORY: &str = "previews-v1";
+/// The largest preview or metadata file that the cache stores and reads.
+const ENTRY_LIMIT: u64 = 16 * 1024 * 1024;
 type Image = Option<Arc<Vec<u8>>>;
 #[derive(Default)]
 struct Cache {
@@ -110,20 +112,21 @@ impl DiskCache {
             .open(self.file(ticket, extension))
             .ok()?;
         let mut bytes = Vec::new();
-        file.read_to_end(&mut bytes).ok()?;
+        file.by_ref()
+            .take(ENTRY_LIMIT + 1)
+            .read_to_end(&mut bytes)
+            .ok()?;
+        if bytes.len() as u64 > ENTRY_LIMIT {
+            return None;
+        }
         // Eviction removes the files with the oldest modified time first.
         let _ = file.set_modified(SystemTime::now());
         Some(bytes)
     }
 
-    fn discard(&self, ticket: &Ticket, extension: &str, error: &str) {
+    /// A corrupt entry is a miss. The next read from the source replaces it.
+    fn corrupt(&self, ticket: &Ticket, extension: &str, error: impl std::fmt::Display) {
         let path = self.file(ticket, extension);
-        let mut state = self.state();
-        if let Ok(meta) = fs::metadata(&path) {
-            if fs::remove_file(&path).is_ok() {
-                state.used = state.used.map(|used| used.saturating_sub(meta.len()));
-            }
-        }
         self.logs.write(
             "error",
             format!("Preview cache entry {}: {error}", path.display()),
@@ -139,7 +142,7 @@ impl DiskCache {
                 Some(meta)
             }
             Err(error) => {
-                self.discard(ticket, "json", &error.to_string());
+                self.corrupt(ticket, "json", error);
                 None
             }
         }
@@ -150,7 +153,7 @@ impl DiskCache {
         if is_jpeg(&bytes) {
             Some(bytes)
         } else {
-            self.discard(ticket, "jpg", "not a JPEG");
+            self.corrupt(ticket, "jpg", "not a JPEG");
             None
         }
     }
@@ -158,7 +161,7 @@ impl DiskCache {
     /// Stores data read from `path`. It does nothing when the file changed after the
     /// ticket, or when a Clear or Disable came after it.
     pub fn store(&self, path: &Path, ticket: &Ticket, extension: &str, bytes: &[u8]) {
-        if Self::key(path).as_ref() != Some(&ticket.key) {
+        if bytes.len() as u64 > ENTRY_LIMIT || Self::key(path).as_ref() != Some(&ticket.key) {
             return;
         }
         let mut state = self.state();
@@ -278,12 +281,6 @@ impl Previews {
             exif,
             disk,
         }
-    }
-
-    /// Clears the disk cache and the previews in memory.
-    pub fn clear(&self) -> Result<(), String> {
-        *self.cache.lock().unwrap() = Cache::default();
-        self.disk.clear()
     }
 
     /// Import metadata and previews for `paths`. The disk cache gives what it has, and one
@@ -582,7 +579,7 @@ mod tests {
     }
 
     #[test]
-    fn corrupt_entries_are_misses_and_are_removed() {
+    fn corrupt_and_oversized_entries_are_misses_until_replaced() {
         let dir = tempfile::tempdir().unwrap();
         let previews = previews(dir.path(), dir.path().into(), 1 << 20);
         let disk = &previews.disk;
@@ -590,11 +587,20 @@ mod tests {
         let ticket = disk.ticket(&path).unwrap();
         disk.store(&path, &ticket, "jpg", b"not a jpeg");
         disk.store(&path, &ticket, "json", b"{");
-        assert!(disk.size() > 0);
         assert!(disk.metadata(&ticket).is_none());
         assert!(disk.preview(&ticket).is_none());
-        assert_eq!(disk.size(), 0);
-        assert_eq!(fs::read_dir(dir.path().join("cache")).unwrap().count(), 0);
+        // The next read from the source replaces them. The size counts each file once.
+        put(disk, &path, JPEG);
+        assert!(disk.metadata(&ticket).is_some());
+        let json = serde_json::to_vec(&meta()).unwrap();
+        assert_eq!(disk.size(), (JPEG.len() + json.len()) as u64);
+
+        // Files over the entry limit are not stored, and are misses when found.
+        let large = [JPEG, &vec![0; ENTRY_LIMIT as usize]].concat();
+        disk.store(&path, &ticket, "jpg", &large);
+        assert_eq!(disk.preview(&ticket).as_deref(), Some(JPEG));
+        fs::write(disk.file(&ticket, "jpg"), &large).unwrap();
+        assert!(disk.preview(&ticket).is_none());
     }
 
     #[test]
@@ -657,13 +663,14 @@ mod tests {
         assert_eq!(disk.size(), used);
 
         // Clear during an extraction: the extraction does not store its result.
+        // The previews in memory stay.
         let extracting = disk.ticket(&other).unwrap();
         previews.prime(&path, JPEG.to_vec());
-        previews.clear().unwrap();
+        disk.clear().unwrap();
         assert_eq!(disk.size(), 0);
         assert!(previews
             .cached(&Previews::key(&path, false).unwrap())
-            .is_none());
+            .is_some());
         disk.store(&other, &extracting, "jpg", JPEG);
         assert_eq!(disk.size(), 0);
         assert!(!dir.path().join("cache").exists());
