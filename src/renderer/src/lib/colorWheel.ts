@@ -8,7 +8,8 @@ const SOFT = 0.2
 /** Clamps a dot to the unit disc. Rounding keeps sidecars short and stays inside the disc. */
 export function inDisc(x: number, y: number): Pick<Wheel, 'x' | 'y'> {
   const scale = Math.min(1, 1 / Math.hypot(x, y))
-  const round = (v: number): number => Math.round(v * scale * 1e4) / 1e4
+  // `|| 0` turns -0 into 0.
+  const round = (v: number): number => Math.round(v * scale * 1e4) / 1e4 || 0
   return { x: round(x), y: round(y) }
 }
 

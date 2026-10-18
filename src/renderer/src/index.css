@@ -649,17 +649,23 @@ html[data-theme='gray'] .glass-group {
   }
 }
 
-/* Color wheel knobs. The knob box is the hover and press area, at the knob position
-   (--kx, --ky are fractions of the disc). Its face is a solid dot. On hover and while
-   dragged, the face grows into liquid glass, as the switch knob does: its lens holds a
-   larger copy of the disc, centered on the knob position. The disc is the size
-   container, so 100cqw is its width. */
+/* Color wheel knobs. The knob box is the hover and press area. It is on the hue
+   (--cos, --sin), at --r of the radius from the center plus --out. The disc is the size
+   container, so 100cqw is its width, and --knob-x, --knob-y is the knob position in the
+   disc. The face is a solid dot that grows a little on hover and while dragged. Then the
+   inner knob is liquid glass, as the switch knob is: its lens holds a larger copy of the
+   disc, centered on the knob position. The outer knob takes the color of the hue. Keep
+   the box width equal to KNOB_BOX in ColorWheels.tsx. */
 .wheel-knob {
+  --knob-x: calc(50cqw + var(--cos) * (var(--r) * 50cqw + var(--out)));
+  --knob-y: calc(50cqw - var(--sin) * (var(--r) * 50cqw + var(--out)));
   position: absolute;
+  left: var(--knob-x);
+  top: var(--knob-y);
   display: grid;
   place-items: center;
-  width: 28px;
-  height: 28px;
+  width: 20px;
+  height: 20px;
   translate: -50% -50%;
   border-radius: 9999px;
 }
@@ -703,8 +709,8 @@ html[data-theme='gray'] .glass-group {
 }
 
 .wheel-knob-lens > * {
-  --at-x: calc(var(--kx) * var(--zoom) * 100cqw);
-  --at-y: calc(var(--ky) * var(--zoom) * 100cqw);
+  --at-x: calc(var(--zoom) * var(--knob-x));
+  --at-y: calc(var(--zoom) * var(--knob-y));
   position: absolute;
   left: 50%;
   top: 50%;
@@ -739,18 +745,26 @@ html[data-theme='gray'] .glass-group {
   background-blend-mode: normal;
   mix-blend-mode: normal;
   -webkit-mask-image: radial-gradient(
-    circle 13px at var(--at-x) var(--at-y),
-    #000 45%,
+    circle 7px at var(--at-x) var(--at-y),
+    #000 40%,
     transparent 100%
   );
-  mask-image: radial-gradient(circle 13px at var(--at-x) var(--at-y), #000 45%, transparent 100%);
+  mask-image: radial-gradient(circle 7px at var(--at-x) var(--at-y), #000 40%, transparent 100%);
 }
 
 .wheel-knob:is(:hover, [data-active]) > .wheel-knob-face {
-  width: 28px;
-  height: 28px;
+  width: 16px;
+  height: 16px;
   background-color: transparent;
-  box-shadow: 0 1px 3px rgb(0 0 0 / 0.35);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.35);
+}
+
+/* Outside the disc there is nothing to magnify, so the outer knob is glass tinted
+   with the hue. */
+.wheel-knob:is(:hover, [data-active]) > .wheel-knob-outer {
+  width: 14px;
+  height: 14px;
+  background-color: color-mix(in srgb, var(--dot) 85%, transparent);
 }
 
 .wheel-knob:is(:hover, [data-active]) .wheel-knob-lens {
@@ -763,7 +777,7 @@ html[data-theme='gray'] .glass-group {
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  box-shadow: inset 0 0 4px rgb(255 255 255 / 0.7);
+  box-shadow: inset 0 0 3px rgb(255 255 255 / 0.7);
 }
 
 /* A solid knob that still grows, for reduced transparency and more contrast. */

@@ -92,11 +92,14 @@ export const HIDE_WHILE_RESETTING = 'group-has-[[data-resetting]]/reset:invisibl
 export function ResetLabel({
   label,
   disabled,
-  reset
+  reset,
+  center = false
 }: {
   label: string
   disabled: boolean
   reset: () => void
+  /** Centers both texts, for a label above a centered control. */
+  center?: boolean
 }): React.JSX.Element {
   // Shift-click on the label resets the slider. The label says so while Shift is held.
   const [hover, setHover] = useState(false)
@@ -119,6 +122,7 @@ export function ResetLabel({
         data-resetting={resetting || undefined}
         className={cn(
           'control-label grid min-w-0 select-none',
+          center && 'justify-items-center',
           resetting && 'cursor-pointer text-tone-100'
         )}
         onPointerEnter={(event) => {

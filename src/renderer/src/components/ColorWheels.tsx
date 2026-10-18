@@ -30,7 +30,12 @@ const DISC = [
   `conic-gradient(from 90deg, ${[0, 300, 240, 180, 120, 60, 0].map((h) => `hsl(${h} 90% 55%)`).join(', ')})`
 ].join(', ')
 /** The width of a knob box (.wheel-knob in index.css), in pixels. */
-const KNOB_BOX = 28
+const KNOB_BOX = 20
+/** How far outside the rim the outer knob's center is, in pixels. It keeps the knob,
+    also when it grows on hover, fully outside the disc. */
+const OUTSIDE = 9
+/** The distance of the outer knob from the center, in radii of a disc this wide. */
+const outerRadius = (width: number): number => 1 + (2 * OUTSIDE) / width
 /** A wheel that the context menu copied, for this session. */
 let copied: Wheel | null = null
 
@@ -184,39 +189,42 @@ function WheelControl({
   // A drag also ends when the wheel turns off or unmounts.
   useEffect(() => end, [off, end])
   // The knob boxes overlap at high strength. Where a press is in both, the nearer knob
-  // takes it, and where the knobs are at the same place, outside the rim is the outer one.
+  // takes it.
   const knob = (event: React.MouseEvent<HTMLElement>): string | undefined => {
     const pressed = (event.target as Element).closest('[data-knob]')?.getAttribute('data-knob')
     if (!pressed) return undefined
     const p = point(event)
-    const reach = KNOB_BOX / event.currentTarget.getBoundingClientRect().width
+    const width = event.currentTarget.getBoundingClientRect().width
+    const reach = KNOB_BOX / width
     const away = (r: number): number =>
       Math.hypot(p[0] - r * Math.cos(hue), p[1] - r * Math.sin(hue))
-    const [inner, outer] = [away(saturation), away(1)]
+    const [inner, outer] = [away(saturation), away(outerRadius(width))]
     if (inner > reach || outer > reach) return pressed
-    if (Math.abs(inner - outer) > 1e-3) return inner < outer ? 'inner' : 'outer'
-    return Math.hypot(...p) >= 1 ? 'outer' : 'inner'
+    return inner < outer ? 'inner' : 'outer'
   }
   const degrees = Math.round(((hue * 180) / Math.PI + 360) % 360)
-  // A knob at `r` from the center, on the hue. Its face is a dot that turns into liquid
-  // glass on hover and while dragged (see .wheel-knob in index.css).
-  const knobAt = (which: 'inner' | 'outer', r: number, dot?: string): React.JSX.Element => {
-    const kx = (1 + r * Math.cos(hue)) / 2
-    const ky = (1 - r * Math.sin(hue)) / 2
+  // A knob on the hue, at `r` of the radius from the center plus `out` pixels. Its face
+  // is a dot that grows a little on hover and while dragged (see .wheel-knob in index.css).
+  // Then the inner knob is liquid glass over the disc, and the outer knob takes the hue.
+  const knobAt = (
+    which: 'inner' | 'outer',
+    r: number,
+    out = 0,
+    dot?: string
+  ): React.JSX.Element => {
+    const style = {
+      '--cos': Math.cos(hue),
+      '--sin': Math.sin(hue),
+      '--r': r,
+      '--out': `${out}px`
+    } as React.CSSProperties
     return (
       <span
         aria-hidden="true"
         data-knob={which}
         data-active={active === which || undefined}
         className={cn('wheel-knob', off && 'pointer-events-none')}
-        style={
-          {
-            left: `${kx * 100}%`,
-            top: `${ky * 100}%`,
-            '--kx': kx,
-            '--ky': ky
-          } as React.CSSProperties
-        }
+        style={style}
       >
         <span
           className={cn('wheel-knob-face', which === 'outer' && 'wheel-knob-outer')}
@@ -224,12 +232,14 @@ function WheelControl({
         >
           {/* Copies of the disc: one for each of red, green and blue, and one for the
               middle (see index.css). */}
-          <span className="wheel-knob-lens">
-            <span />
-            <span />
-            <span />
-            <span />
-          </span>
+          {which === 'inner' && (
+            <span className="wheel-knob-lens">
+              <span />
+              <span />
+              <span />
+              <span />
+            </span>
+          )}
         </span>
       </span>
     )
@@ -239,12 +249,14 @@ function WheelControl({
       {/* Shift-click on the name resets the wheel: its color and its luminance. */}
       <p className={cn('group/reset flex justify-center', disabled && 'opacity-40')}>
         <ResetLabel
+          center
           label={label}
           disabled={disabled}
           reset={() => change({ x: 0, y: 0, luminance: 0 }, true)}
         />
       </p>
-      <div className={cn('flex justify-center', off && 'opacity-40')}>
+      {/* The room above and below keeps the outer knob clear of the name and the slider. */}
+      <div className={cn('flex justify-center py-2.5', off && 'opacity-40')}>
         <div
           role="application"
           aria-roledescription={t('editor.colorWheel')}
@@ -263,6 +275,7 @@ function WheelControl({
             event.currentTarget.focus()
             const p = point(event)
             const pressed = knob(event)
+            const outer = outerRadius(event.currentTarget.getBoundingClientRect().width)
             setActive(pressed === 'outer' ? 'outer' : 'inner')
             // A press on a knob grabs it where it is. A press elsewhere moves the inner
             // knob to the pointer. A press on the inner knob keeps its hue until the
@@ -274,7 +287,7 @@ function WheelControl({
                 pressed === 'inner'
                   ? [value.x, value.y]
                   : pressed === 'outer'
-                    ? [Math.cos(hue), Math.sin(hue)]
+                    ? [outer * Math.cos(hue), outer * Math.sin(hue)]
                     : p,
               last: p,
               saturation: pressed === 'outer' ? saturation : null,
@@ -339,7 +352,7 @@ function WheelControl({
             />
           )}
           {/* The outer knob shows the hue on the rim, in its color. */}
-          {knobAt('outer', 1, `hsl(${degrees} 90% 55%)`)}
+          {knobAt('outer', 1, OUTSIDE, `hsl(${degrees} 90% 55%)`)}
           {knobAt('inner', saturation)}
         </div>
       </div>
