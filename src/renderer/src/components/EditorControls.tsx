@@ -407,7 +407,8 @@ export const EditorControls = memo(function EditorControls({
           <SfdRaw recipe={recipe} />
         </Section>
       )}
-      {/* A toolbar as in macOS settings: the chosen tab sits on a soft fill in the accent color. */}
+      {/* A toolbar as in macOS settings: the chosen tab sits on a soft fill. Its text is ink,
+          because the accent is below 4.5:1 contrast in the light and gray themes. */}
       <div
         role="tablist"
         aria-label={t('editor.panels')}
@@ -440,7 +441,7 @@ export const EditorControls = memo(function EditorControls({
               setTab(PANEL_TABS[next][0])
               document.getElementById(`panel-tab-${PANEL_TABS[next][0]}`)?.focus()
             }}
-            className="flex min-w-[4.5rem] max-w-[7rem] flex-col items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-medium leading-none text-tone-400 hover:bg-ink/[0.03] hover:text-tone-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/50 aria-selected:bg-ink/[0.07] aria-selected:text-accent disabled:opacity-40"
+            className="flex min-w-[4.5rem] max-w-[7rem] flex-col items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-medium leading-none text-tone-300 hover:bg-ink/[0.03] hover:text-tone-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/70 aria-selected:bg-ink/[0.07] aria-selected:text-ink disabled:opacity-40"
           >
             <Icon aria-hidden="true" className="h-5 w-5" strokeWidth={1.75} />
             <span className="max-w-full truncate">{t(`editor.${label}`)}</span>
