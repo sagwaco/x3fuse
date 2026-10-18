@@ -666,6 +666,7 @@ export function EditorScreen(): React.JSX.Element {
                     }
                     onImageRegion={qualifying && displayFile ? qualify : undefined}
                     outline={displayFile ? scopeRegion : null}
+                    selectionKey={shownArea}
                   />
                 ) : cloudFile ? null : (
                   <div
