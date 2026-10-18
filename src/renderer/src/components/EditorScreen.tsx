@@ -427,6 +427,26 @@ export function EditorScreen(): React.JSX.Element {
     sidebarBody.current?.scrollTo({ top: 0, behavior: reduce ? 'auto' : 'smooth' })
     document.getElementById(`scope-tab-${scopeSource}`)?.focus({ preventScroll: true })
   }
+  // WebKit before Safari 27 ignores the scroll padding when it shows the keyboard focus.
+  // Each section around the focus can have a stuck header of 40 px above it. A header
+  // sticks below the headers of the sections around it, not below its own.
+  // A focus from the pointer does not scroll, so a click or a drag does not jump.
+  const pointerFocus = useRef(false)
+  const revealFocus = (event: React.FocusEvent<HTMLDivElement>): void => {
+    const pointer = pointerFocus.current
+    pointerFocus.current = false
+    const target = event.target
+    let band = target.closest('summary') ? -40 : 0
+    let section = target.closest('details')
+    while (section) {
+      band += 40
+      section = section.parentElement!.closest('details')
+    }
+    if (pointer || band <= 0) return
+    const body = event.currentTarget
+    const hidden = body.getBoundingClientRect().top + band - target.getBoundingClientRect().top
+    if (hidden > 0) body.scrollTop -= hidden
+  }
   const history = (
     <>
       <Button
@@ -771,18 +791,9 @@ export function EditorScreen(): React.JSX.Element {
             <div
               ref={sidebarBody}
               className="min-h-0 flex-1 scroll-pt-20 overflow-x-hidden overflow-y-auto pb-3"
-              onFocus={(event) => {
-                // WebKit before Safari 27 ignores the scroll padding when it shows the focus.
-                // Only a field in a section can be under a stuck header. A header is never
-                // under one. A pointer focus does not scroll, so a drag does not jump.
-                const target = event.target
-                if (!target.closest('details') || target.closest('summary')) return
-                if (!target.matches(':focus-visible')) return
-                const body = event.currentTarget
-                const hidden =
-                  body.getBoundingClientRect().top + 80 - target.getBoundingClientRect().top
-                if (hidden > 0) body.scrollTop -= hidden
-              }}
+              onPointerDownCapture={() => (pointerFocus.current = true)}
+              onKeyDownCapture={() => (pointerFocus.current = false)}
+              onFocus={revealFocus}
             >
               {sidebarPage === 'paper' && doc && (
                 <fieldset
