@@ -100,7 +100,8 @@ reuse the Debug probe executable. Release builds omit the probe.
 ### Editor and film pipeline
 
 - `x3f-render` prepares calibrated scene-linear input with `x3f-core`, then applies
-  light, white balance, curves, HSL, monochrome filters, geometry, and film settings.
+  light, white balance, curves, HSL, color wheels, monochrome filters, geometry, and film
+  settings.
   The spektrafilm model includes negative response, DIR couplers, grain, halation,
   and print paper. Film rendering starts enabled and remains experimental.
   A look without a film stock keeps grain and halation in `recipe.effects`; the
