@@ -652,23 +652,22 @@ html[data-theme='gray'] .glass-group {
 /* Color wheel knobs. The knob box is the hover and press area, at the knob position
    (--kx, --ky are fractions of the disc). Its face is a solid dot. On hover and while
    dragged, the face grows into liquid glass, as the switch knob does: its lens holds a
-   smaller copy of the disc, centered on the knob position. The disc is the size
-   container, so 100cqw is its width. Keep the box width equal to KNOB_BOX in
-   ColorWheels.tsx. */
+   larger copy of the disc, centered on the knob position. The disc is the size
+   container, so 100cqw is its width. */
 .wheel-knob {
   position: absolute;
   display: grid;
   place-items: center;
-  width: theme(spacing.4);
-  height: theme(spacing.4);
+  width: 28px;
+  height: 28px;
   translate: -50% -50%;
   border-radius: 9999px;
 }
 
 .wheel-knob-face {
   position: relative;
-  width: theme(spacing.1);
-  height: theme(spacing.1);
+  width: 12px;
+  height: 12px;
   overflow: hidden;
   border-radius: 9999px;
   background-color: #fff;
@@ -682,38 +681,76 @@ html[data-theme='gray'] .glass-group {
 
 /* The outer knob has the color of the hue, in a white ring. */
 .wheel-knob-outer {
-  width: theme(spacing[2.5]);
-  height: theme(spacing[2.5]);
+  width: 10px;
+  height: 10px;
   background-color: var(--dot);
   box-shadow:
     0 0 0 2px #fff,
     0 0 0 3px rgb(0 0 0 / 0.5);
 }
 
+/* The lens magnifies the disc about the knob position, more near its rim, as a drop
+   of glass does. At the rim each channel has its own copy, and red magnifies most and
+   blue least, so the colors split there. A channel copy keeps one channel (multiply by
+   that primary), and the copies add up again (screen, isolated from the disc below).
+   In the middle, one copy of all channels fades in over them. */
 .wheel-knob-lens {
   display: none;
   position: absolute;
+  inset: 0;
+  isolation: isolate;
+  filter: brightness(1.05) saturate(1.3);
+}
+
+.wheel-knob-lens > * {
+  --at-x: calc(var(--kx) * var(--zoom) * 100cqw);
+  --at-y: calc(var(--ky) * var(--zoom) * 100cqw);
+  position: absolute;
   left: 50%;
   top: 50%;
-  width: 65cqw;
-  height: 65cqw;
-  translate: calc(var(--kx) * -65cqw) calc(var(--ky) * -65cqw);
+  width: calc(var(--zoom) * 100cqw);
+  height: calc(var(--zoom) * 100cqw);
+  translate: calc(-1 * var(--at-x)) calc(-1 * var(--at-y));
   border-radius: 9999px;
+  background: linear-gradient(var(--channel), var(--channel)), var(--disc);
+  background-blend-mode: multiply, normal, normal;
+  mix-blend-mode: screen;
+}
+
+.wheel-knob-lens > :nth-child(1) {
+  --channel: #f00;
+  --zoom: 1.75;
+}
+
+.wheel-knob-lens > :nth-child(2) {
+  --channel: #0f0;
+  --zoom: 1.5;
+}
+
+.wheel-knob-lens > :nth-child(3) {
+  --channel: #00f;
+  --zoom: 1.25;
+}
+
+/* The mask is a circle about the knob position, which is (--at-x, --at-y) in the copy. */
+.wheel-knob-lens > :nth-child(4) {
+  --zoom: 1.3;
   background: var(--disc);
-  filter: brightness(1.1) saturate(1.5);
+  background-blend-mode: normal;
+  mix-blend-mode: normal;
+  -webkit-mask-image: radial-gradient(
+    circle 13px at var(--at-x) var(--at-y),
+    #000 45%,
+    transparent 100%
+  );
+  mask-image: radial-gradient(circle 13px at var(--at-x) var(--at-y), #000 45%, transparent 100%);
 }
 
 .wheel-knob:is(:hover, [data-active]) > .wheel-knob-face {
-  width: theme(spacing.2);
-  height: theme(spacing.2);
+  width: 28px;
+  height: 28px;
   background-color: transparent;
-  box-shadow: 0 1px 2px rgb(0 0 0 / 0.35);
-}
-
-/* The outer dot is larger, so its glass is too. */
-.wheel-knob:is(:hover, [data-active]) > .wheel-knob-outer {
-  width: theme(spacing[3.5]);
-  height: theme(spacing[3.5]);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.35);
 }
 
 .wheel-knob:is(:hover, [data-active]) .wheel-knob-lens {
@@ -726,7 +763,7 @@ html[data-theme='gray'] .glass-group {
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  box-shadow: inset 0 0 2px rgb(255 255 255 / 0.7);
+  box-shadow: inset 0 0 4px rgb(255 255 255 / 0.7);
 }
 
 /* A solid knob that still grows, for reduced transparency and more contrast. */
