@@ -265,9 +265,18 @@ function SettingsTitlebar({
               onSelect(TABS[next][0])
               document.getElementById(`settings-tab-${TABS[next][0]}`)?.focus()
             }}
-            className="flex min-w-[76px] flex-col items-center gap-1 rounded-[10px] px-2.5 py-1.5 text-[13px] leading-none text-tone-400 hover:text-tone-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/50 aria-selected:bg-ink/[0.06] aria-selected:text-accent"
+            className="flex min-w-[76px] flex-col items-center gap-1 rounded-[10px] px-2.5 py-1.5 text-[13px] leading-none text-tone-300 hover:text-tone-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/70 aria-selected:bg-ink/[0.06] aria-selected:text-tone-100"
           >
-            <Icon aria-hidden="true" className="h-[22px] w-[22px]" strokeWidth={1.75} />
+            {/* The gray accent is below 3:1 on the gray surface, so there the icon
+                keeps the label color. */}
+            <Icon
+              aria-hidden="true"
+              className={cn(
+                'h-[22px] w-[22px]',
+                tab === value && 'text-accent [html[data-theme=gray]_&]:text-inherit'
+              )}
+              strokeWidth={1.75}
+            />
             <span>{t(`settings.section.${value}`)}</span>
           </button>
         ))}
