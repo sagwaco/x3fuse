@@ -50,6 +50,10 @@ async fn write_settings(state: Arc<AppState>, payload: Value) -> Result<Settings
             .logs
             .debug
             .store(next.debug_logging_enabled, Ordering::Relaxed);
+        state
+            .previews
+            .disk
+            .configure(next.preview_cache_enabled, next.preview_cache_limit);
         Ok(next)
     })
     .await
@@ -88,17 +92,15 @@ pub async fn queue_add(
             .into_iter()
             .map(metadata::basic_metadata)
             .collect::<Result<Vec<_>, _>>()),
-        state.exif.display(&paths)
+        state.previews.import(&paths)
     );
+    // The renderer matches the results to its rows by index, so keep the input order.
     let mut dtos = dtos.map_err(|e| e.to_string())??;
     for dto in &mut dtos {
         if let Some(meta) = meta.remove(&dto.path) {
             dto.orientation = meta.orientation;
             dto.aspect_ratio = meta.aspect_ratio;
             dto.exif = Some(meta.exif);
-            if let Some(bytes) = meta.preview {
-                state.previews.prime(&dto.path, bytes);
-            }
         }
     }
     let state = state.inner().clone();
@@ -404,6 +406,21 @@ pub async fn logs_sizes(state: State<'_, Arc<AppState>>) -> Result<Value, String
     tauri::async_runtime::spawn_blocking(move || logs.sizes())
         .await
         .map_err(|e| e.to_string())
+}
+/// The bytes in the preview disk cache.
+#[tauri::command]
+pub async fn cache_size(state: State<'_, Arc<AppState>>) -> Result<u64, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.previews.disk.size())
+        .await
+        .map_err(|e| e.to_string())
+}
+#[tauri::command]
+pub async fn cache_clear(state: State<'_, Arc<AppState>>) -> Result<(), String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.previews.clear())
+        .await
+        .map_err(|e| e.to_string())?
 }
 #[tauri::command]
 pub fn app_info(app: AppHandle) -> Value {

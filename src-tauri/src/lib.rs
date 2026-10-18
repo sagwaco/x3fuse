@@ -248,6 +248,16 @@ pub fn run() {
                     std::io::Error::other("Missing opcodes; run npm run sync:resources").into(),
                 );
             }
+            let settings = preferences.get();
+            let disk = Arc::new(preview::DiskCache::new(
+                app.path().app_cache_dir()?.join(preview::CACHE_DIRECTORY),
+                settings.preview_cache_enabled,
+                settings.preview_cache_limit,
+                logs.clone(),
+            ));
+            // Count the cache and apply its limit without delaying the window.
+            let trim = disk.clone();
+            std::thread::spawn(move || trim.trim());
             let _ = CORE_LOGS.set(logs.clone());
             // Legacy library globals are initialized once before any conversion workers exist.
             x3f_core::set_verbosity(x3f_core::Verbosity::Debug);
@@ -264,7 +274,7 @@ pub fn run() {
             app.manage(Arc::new(AppState {
                 preferences,
                 logs,
-                previews: preview::Previews::new(exif.clone()),
+                previews: preview::Previews::new(exif.clone(), disk),
                 editor: editor::Editor::new(edits),
                 culling: culling::Culling::load(app.path().app_data_dir()?.join("culling.json")),
                 exif,
@@ -408,6 +418,8 @@ pub fn run() {
             commands::licenses_open,
             commands::logs_clear,
             commands::logs_sizes,
+            commands::cache_size,
+            commands::cache_clear,
             commands::app_info,
             commands::haptics_detent,
             updater::update_check
