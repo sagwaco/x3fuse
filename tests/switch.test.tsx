@@ -21,8 +21,8 @@ it('shows the glass knob while pressed and for a moment after release', () => {
   expect(toggle.hasAttribute('data-pressed')).toBe(true)
   // A release anywhere ends the press, after a short hold.
   fireEvent.pointerUp(window)
-  act(() => vi.advanceTimersByTime(50))
+  act(() => vi.advanceTimersByTime(150))
   expect(toggle.hasAttribute('data-pressed')).toBe(true)
-  act(() => vi.advanceTimersByTime(100))
+  act(() => vi.advanceTimersByTime(50))
   expect(toggle.hasAttribute('data-pressed')).toBe(false)
 })

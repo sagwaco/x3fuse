@@ -9,6 +9,9 @@ const TRACK = cn(
   'data-[state=unchecked]:border-transparent data-[state=unchecked]:bg-ink/20'
 )
 
+/** Milliseconds that the knob stays glass after a release. */
+const HOLD = 200
+
 export interface SwitchProps {
   checked: boolean
   onCheckedChange: (checked: boolean) => void
@@ -24,7 +27,7 @@ export function Switch({
   id,
   'aria-label': label
 }: SwitchProps): React.JSX.Element {
-  // The knob shows as glass while the pointer presses it, and a moment after.
+  // The knob shows as glass while the pointer presses it, and for HOLD ms after.
   const [pressed, setPressed] = useState(false)
   return (
     <SwitchPrimitive.Root
@@ -36,7 +39,7 @@ export function Switch({
         const release = (): void => {
           window.removeEventListener('pointerup', release)
           window.removeEventListener('pointercancel', release)
-          setTimeout(() => setPressed(false), 100)
+          setTimeout(() => setPressed(false), HOLD)
         }
         window.addEventListener('pointerup', release)
         window.addEventListener('pointercancel', release)
