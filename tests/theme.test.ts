@@ -49,6 +49,6 @@ describe('applyTheme', () => {
     applyTheme({ ...DEFAULT_SETTINGS, appearanceMode: 'light', lightTheme: 'gray' })
     expect(document.documentElement.dataset.theme).toBe('gray')
     expect(setTheme).toHaveBeenCalledWith('light')
-    expect(setBackgroundColor).toHaveBeenCalledWith([119, 119, 119])
+    expect(setBackgroundColor).toHaveBeenCalledWith([133, 133, 133])
   })
 })

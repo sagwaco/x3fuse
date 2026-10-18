@@ -277,7 +277,7 @@ impl Settings {
         };
         let value = match theme {
             "light" => 250,
-            "gray" => 119,
+            "gray" => 133,
             _ => 10,
         };
         (
@@ -461,7 +461,7 @@ mod tests {
 
     #[test]
     fn window_theme_follows_or_pins_appearance() {
-        let gray = tauri::window::Color(119, 119, 119, 255);
+        let gray = tauri::window::Color(133, 133, 133, 255);
         let light = tauri::window::Color(250, 250, 250, 255);
         let mut settings = Settings {
             dark_theme: "gray".into(),

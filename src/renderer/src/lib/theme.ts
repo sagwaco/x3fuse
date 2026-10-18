@@ -4,7 +4,7 @@ import type { ConversionSettings, ThemeName } from '@shared/types'
 export const THEME_SURFACE: Record<ThemeName, [number, number, number]> = {
   dark: [10, 10, 10],
   light: [250, 250, 250],
-  gray: [119, 119, 119]
+  gray: [133, 133, 133]
 }
 
 export function resolveTheme(
