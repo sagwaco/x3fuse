@@ -200,8 +200,14 @@ export function Adjustment({
       max={max}
       step={step}
       value={Number(value.toFixed(4))}
-      // Shifted right so its digits end where the slider ends. Focus shows the box, in line.
-      className="h-6 w-14 shrink-0 translate-x-2.5 rounded-md border border-transparent bg-transparent px-2 text-right font-mono text-xs tabular-nums text-tone-400 transition-transform [appearance:textfield] focus:translate-x-0 focus:border-ink/40 focus:bg-ink/[0.03] focus:text-tone-100 focus:outline-none disabled:opacity-40 motion-reduce:transition-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+      // Above a slider, shifted right so its digits end where the slider ends. Focus shows
+      // the box, in line. In a row, it fills a column as wide as the label column.
+      className={cn(
+        'h-6 shrink-0 rounded-md border border-transparent bg-transparent text-right font-mono text-xs tabular-nums text-tone-400 [appearance:textfield] focus:border-ink/40 focus:bg-ink/[0.03] focus:text-tone-100 focus:outline-none disabled:opacity-40 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none',
+        short
+          ? 'w-full px-1'
+          : 'w-14 translate-x-2.5 px-2 transition-transform focus:translate-x-0 motion-reduce:transition-none'
+      )}
       onChange={(event) => {
         const value = event.currentTarget.valueAsNumber
         if (Number.isFinite(value)) change(fit(value), true)
@@ -238,19 +244,24 @@ export function Adjustment({
   }
   if (short) {
     // The slider and the value carry the full name. Shift-click on the letter resets.
+    // The label and value columns have the same width (room for -100), so the slider
+    // is centered.
     return (
-      <div className="flex items-center gap-2 py-1" {...hold}>
+      <div
+        className="grid grid-cols-[2.5rem_minmax(0,1fr)_2.5rem] items-center gap-2 py-1"
+        {...hold}
+      >
         <span
           aria-hidden="true"
           title={label}
-          className="control-label w-3 shrink-0 select-none"
+          className="control-label select-none"
           onClick={(event) => {
             if (event.shiftKey && !disabled) reset()
           }}
         >
           {short}
         </span>
-        <div className="min-w-0 flex-1">{slider}</div>
+        {slider}
         {input}
       </div>
     )
