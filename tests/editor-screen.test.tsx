@@ -930,6 +930,42 @@ it('qualifies a point or a dragged area, apart from the white balance picker', (
   expect(qualifying()).toBe('false')
 })
 
+it('keeps a qualified point square through an undo and a redo before the frames paint', () => {
+  const rotated = { ...recipe, rotation: 1 }
+  const portrait = { ...frame, url: 'x3f-edit://localhost/portrait', width: 683, height: 1024 }
+  editor.setState({
+    session,
+    documents: { [file.path]: { ...doc, recipe: rotated } },
+    loading: false,
+    preview: portrait,
+    previewGeometry: geometryKey(rotated)
+  })
+  const view = render(<EditorScreen />)
+  const point = (): boolean => fireEvent.click(view.container.querySelector('[data-point]')!)
+  const change = (value: typeof recipe): void =>
+    act(() => editor.setState({ documents: { [file.path]: { ...doc, recipe: value } } }))
+  const rendered = (value: typeof recipe, preview: typeof frame): void =>
+    act(() => editor.setState({ preview, previewGeometry: geometryKey(value) }))
+  const region = (): unknown => JSON.parse(scopeAttribute('data-scope-region') ?? 'null')
+  fireEvent.click(view.container.querySelector('[data-paint]')!)
+  fireEvent.click(screen.getByRole('tab', { name: 'Qualifier' }))
+  // An undo: the landscape render arrives, but its frame does not paint yet.
+  change(recipe)
+  rendered(recipe, { ...frame, url: 'x3f-edit://localhost/landscape' })
+  // A redo before the landscape frame paints: the portrait frame on screen matches the
+  // geometry again, but the latest render, which gives a point its size, is landscape.
+  change(rotated)
+  point()
+  expect(region()).toBeNull()
+  expect(screen.queryByText(t('editor.scopeQualifyHint'))).not.toBeNull()
+  // The portrait render arrives: a point is a square in its pixels.
+  rendered(rotated, { ...portrait, url: 'x3f-edit://localhost/portrait-2' })
+  point()
+  const square = region() as PreviewRegion
+  expect(square.width * 683).toBeCloseTo(0.02 * 1024)
+  expect(square.height * 1024).toBeCloseTo(0.02 * 1024)
+})
+
 it('drops a drag that began on a frame of other geometry when the next frame paints', () => {
   // The real preview and image, with frames that decode when the test says so.
   real.preview = true
