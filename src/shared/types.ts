@@ -109,6 +109,10 @@ export interface ConversionSettings {
   lightTheme: ThemeName
   /** Theme used while the appearance is dark. */
   darkTheme: ThemeName
+  /** Keep embedded previews and photo details on disk. */
+  previewCacheEnabled: boolean
+  /** Size limit of the preview cache in bytes (decimal units, as shown). */
+  previewCacheLimit: number
 }
 
 export const DEFAULT_SETTINGS: ConversionSettings = {
@@ -142,7 +146,9 @@ export const DEFAULT_SETTINGS: ConversionSettings = {
   lastImportDirectory: null,
   appearanceMode: 'auto',
   lightTheme: 'light',
-  darkTheme: 'dark'
+  darkTheme: 'dark',
+  previewCacheEnabled: true,
+  previewCacheLimit: 1_000_000_000
 }
 
 /**

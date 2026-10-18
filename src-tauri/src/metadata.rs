@@ -383,9 +383,13 @@ const INSPECTOR: &[(&str, &str)] = &[
     ("SerialNumber", "Serial"),
 ];
 
+/// The preview cache keeps the preview in a separate file.
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DisplayMeta {
     pub orientation: Option<u8>,
     pub aspect_ratio: Option<f64>,
+    #[serde(skip)]
     pub preview: Option<Vec<u8>>,
     pub exif: Vec<ExifPair>,
 }

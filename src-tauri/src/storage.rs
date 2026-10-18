@@ -223,6 +223,33 @@ mod tests {
     }
 
     #[test]
+    fn preview_cache_preferences_load_old_and_invalid_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        fs::write(
+            &path,
+            r#"{"sortAscending":false,"previewCacheEnabled":false,"previewCacheLimit":5}"#,
+        )
+        .unwrap();
+        let store = Preferences::load(path.clone());
+        assert!(!store.get().preview_cache_enabled);
+        assert_eq!(store.get().preview_cache_limit, 1_000_000_000);
+        assert!(store
+            .set(serde_json::json!({"previewCacheLimit": -1}))
+            .is_err());
+        assert!(store
+            .set(serde_json::json!({"previewCacheLimit": 99_999_999}))
+            .is_err());
+        store
+            .set(serde_json::json!({"previewCacheLimit": 2_000_000_000u64}))
+            .unwrap();
+        assert_eq!(
+            Preferences::load(path).get().preview_cache_limit,
+            2_000_000_000
+        );
+    }
+
+    #[test]
     fn layout_widths_round_trip_and_old_preferences_keep_defaults() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.json");

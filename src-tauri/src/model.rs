@@ -185,6 +185,19 @@ pub struct Settings {
     pub light_theme: String,
     #[serde(default = "default_dark_theme")]
     pub dark_theme: String,
+    /// The disk cache of embedded previews and import metadata.
+    #[serde(default = "default_true")]
+    pub preview_cache_enabled: bool,
+    /// The size limit of the preview cache in bytes.
+    #[serde(default = "default_preview_cache_limit")]
+    pub preview_cache_limit: u64,
+}
+
+/// Decimal units, as the Settings window shows sizes.
+const PREVIEW_CACHE_LIMITS: std::ops::RangeInclusive<u64> = 100_000_000..=1_000_000_000_000;
+
+fn default_preview_cache_limit() -> u64 {
+    1_000_000_000
 }
 
 fn default_appearance_mode() -> String {
@@ -225,6 +238,8 @@ impl Default for Settings {
             appearance_mode: default_appearance_mode(),
             light_theme: default_light_theme(),
             dark_theme: default_dark_theme(),
+            preview_cache_enabled: true,
+            preview_cache_limit: default_preview_cache_limit(),
         }
     }
 }
@@ -253,6 +268,7 @@ impl Settings {
                 .last_import_directory
                 .as_ref()
                 .is_some_and(|p| !p.is_absolute())
+            || !PREVIEW_CACHE_LIMITS.contains(&self.preview_cache_limit)
         {
             return Err("Invalid application setting".into());
         }
@@ -381,7 +397,7 @@ pub struct FileDto {
     pub cull: crate::culling::Cull,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ExifPair {
     pub label: String,
     pub value: String,
@@ -457,6 +473,22 @@ mod tests {
         settings.dark_theme = "dark".into();
         settings.appearance_mode = "night".into();
         assert!(settings.validate().is_err());
+    }
+
+    #[test]
+    fn preview_cache_settings_migrate_and_validate() {
+        let mut wire = serde_json::to_value(Settings::default()).unwrap();
+        let fields = wire.as_object_mut().unwrap();
+        fields.remove("previewCacheEnabled");
+        fields.remove("previewCacheLimit");
+        let mut settings: Settings = serde_json::from_value(wire).unwrap();
+        assert!(settings.preview_cache_enabled);
+        assert_eq!(settings.preview_cache_limit, 1_000_000_000);
+        assert!(settings.validate().is_ok());
+        for limit in [0, 99_999_999, 1_000_000_000_001] {
+            settings.preview_cache_limit = limit;
+            assert!(settings.validate().is_err());
+        }
     }
 
     #[test]

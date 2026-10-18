@@ -177,6 +177,10 @@ export interface IpcRequestMap {
   'licenses:open': { payload: void; result: void }
   'logs:clear': { payload: void; result: void }
   'logs:sizes': { payload: void; result: LogSizes }
+  /** Bytes in the preview disk cache. */
+  'cache:size': { payload: void; result: number }
+  /** Removes the preview disk cache and the previews in memory. */
+  'cache:clear': { payload: void; result: void }
 
   'app:info': { payload: void; result: AppInfo }
   /** Trackpad click as a slider drag reaches a detent (macOS only). */
@@ -246,6 +250,8 @@ export const IPC_REQUEST_CHANNELS: IpcRequestChannel[] = [
   'licenses:open',
   'logs:clear',
   'logs:sizes',
+  'cache:size',
+  'cache:clear',
   'app:info',
   'haptics:detent',
   'update:check'

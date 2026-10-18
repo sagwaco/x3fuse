@@ -7,7 +7,11 @@ import type { SortField, X3FFileDTO } from '@shared/types'
  */
 export function sortFiles(files: X3FFileDTO[], field: SortField, ascending: boolean): X3FFileDTO[] {
   const sorted = [...files].sort((a, b) => compare(a, b, field))
-  return ascending ? sorted : sorted.reverse()
+  if (!ascending) sorted.reverse()
+  if (field === 'File Name') return sorted
+  // Placeholders do not have a date or size yet. They stay after the loaded photos in
+  // import order, so that loaded photos fill in from the start of the view.
+  return [...sorted.filter((file) => !file.pending), ...files.filter((file) => file.pending)]
 }
 
 function compare(a: X3FFileDTO, b: X3FFileDTO, field: SortField): number {

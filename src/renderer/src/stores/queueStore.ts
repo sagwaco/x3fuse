@@ -360,13 +360,27 @@ export const useQueueStore = create<QueueState>((set, get) => {
         fileName: basename(path),
         pending: true
       }))
-      set((s) => ({
-        files: [...s.files, ...placeholders],
-        // Give the preview and Info panel the same subject on the first import.
-        ...(s.files.length === 0
-          ? { selectedIds: new Set([placeholders[0].id]), activeId: placeholders[0].id }
-          : {})
-      }))
+      // The first import selects the first shown photo, not the first path: the open
+      // dialog and Finder give paths in their own order. The views then open at the start
+      // and thumbnails load from there. Dates, sizes, flags and ratings arrive with each
+      // chunk and can change the order, so the selection follows the first shown photo
+      // until the user or another action changes the selection or leaves the queue.
+      type Pin = { ids: Set<string>; active: string | null }
+      const follow = (files: X3FFileDTO[], filter: CullFilter): Pin => {
+        const first = shownFiles({ files, filter })[0]?.id ?? null
+        return { ids: new Set(first ? [first] : []), active: first }
+      }
+      let pin = null as Pin | null
+      set((s) => {
+        const files = [...s.files, ...placeholders]
+        if (s.files.length) return { files }
+        pin = follow(files, s.filter)
+        return { files, selectedIds: pin.ids, activeId: pin.active }
+      })
+      // Leaving the queue ends the following, also when the user returns before the next chunk.
+      const leave = useNavStore.subscribe(({ screen }) => {
+        if (screen !== 'queue') pin = null
+      })
 
       // Re-evaluate priorities between batches: rapid browsing can move far ahead of import.
       const remaining = new Set(placeholders.map((file) => file.id))
@@ -405,10 +419,10 @@ export const useQueueStore = create<QueueState>((set, get) => {
         const unresolved = new Set(
           chunk.filter((file) => !metaById.has(file.id)).map((file) => file.id)
         )
-        set((s) => ({
-          selectedIds: new Set([...s.selectedIds].filter((id) => !unresolved.has(id))),
-          activeId: s.activeId && unresolved.has(s.activeId) ? null : s.activeId,
-          files: s.files.flatMap((f) => {
+        set((s) => {
+          // A response for rows that are all gone, as after Clear, changes nothing.
+          if (!s.files.some((f) => metaById.has(f.id) || unresolved.has(f.id))) return s
+          const files = s.files.flatMap((f) => {
             if (unresolved.has(f.id)) return []
             const dto = metaById.get(f.id)
             if (!dto) return [f]
@@ -430,8 +444,25 @@ export const useQueueStore = create<QueueState>((set, get) => {
               }
             ]
           })
-        }))
+          // The identity of the selection shows that nothing else changed it.
+          if (pin && s.selectedIds === pin.ids && s.activeId === pin.active) {
+            const next = follow(files, s.filter)
+            if (next.active !== pin.active) pin = next
+            return { files, selectedIds: pin.ids, activeId: pin.active }
+          }
+          pin = null
+          // Keep the selection object when it loses nothing: another import can follow it.
+          const lost = [...s.selectedIds].some((id) => unresolved.has(id))
+          return {
+            files,
+            selectedIds: lost
+              ? new Set([...s.selectedIds].filter((id) => !unresolved.has(id)))
+              : s.selectedIds,
+            activeId: s.activeId && unresolved.has(s.activeId) ? null : s.activeId
+          }
+        })
       }
+      leave()
     },
 
     removeFiles(ids) {
