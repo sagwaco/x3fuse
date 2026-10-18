@@ -274,6 +274,54 @@ html[data-platform='darwin'] .window-toolbar {
   }
 }
 
+/* Settings titlebar. Order of fallbacks: native glass material, CSS glass,
+   solid window surface. The CSS tint uses the theme surface, so the tone
+   text stays readable in every theme. */
+.glass-titlebar {
+  background-color: rgb(var(--tone-950));
+}
+
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+  .glass-titlebar {
+    background-color: rgb(var(--tone-950) / 0.72);
+    -webkit-backdrop-filter: blur(20px) saturate(1.8);
+    backdrop-filter: blur(20px) saturate(1.8);
+  }
+}
+
+/* The native material follows the window appearance and the text follows
+   the theme, so the material shows only when the two schemes agree. */
+@supports (-apple-visual-effect: -apple-system-glass-material) {
+  @media (prefers-color-scheme: dark) {
+    html[data-platform='darwin']:where([data-theme='dark']) .glass-titlebar {
+      background-color: transparent;
+      -apple-visual-effect: -apple-system-glass-material;
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+    }
+  }
+
+  @media (prefers-color-scheme: light) {
+    html[data-platform='darwin']:where(:not([data-theme='dark'])) .glass-titlebar {
+      background-color: transparent;
+      -apple-visual-effect: -apple-system-glass-material;
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+    }
+  }
+}
+
+/* Same specificity as the darwin rules above, and later, so it wins there too. */
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .glass-titlebar,
+  html[data-platform='darwin'] .glass-titlebar {
+    -apple-visual-effect: none;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background-color: rgb(var(--tone-950));
+  }
+}
+
 /* Switch knob. While pressed, the knob grows about its center into a wider
    glass capsule that stands out past the track, as in the macOS switch.
    The slider knob does the same while the pointer is on it. */
