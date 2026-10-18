@@ -3,7 +3,7 @@ import type { QueueViewMode } from '@shared/types'
 import { useSettingsStore } from '../stores/settingsStore'
 import { t } from '../lib/strings'
 import { withShortcut } from '../lib/shortcut'
-import { Button } from './ui/button'
+import { GlassGroup } from './ui/glassGroup'
 
 const MODES: { mode: QueueViewMode; icon: typeof List; labelKey: string; key?: string }[] = [
   { mode: 'list', icon: List, labelKey: 'view.list' },
@@ -18,24 +18,19 @@ export function ViewControls({ disabled = false }: { disabled?: boolean }): Reac
   const update = useSettingsStore((s) => s.update)
 
   return (
-    <div className="flex items-center gap-0.5">
-      {MODES.map(({ mode, icon: Icon, labelKey, key }) => (
-        <Button
-          key={mode}
-          type="button"
-          variant="ghost"
-          size="icon"
-          disabled={disabled}
-          aria-label={t(labelKey)}
-          title={key ? withShortcut(t(labelKey), key) : t(labelKey)}
-          aria-keyshortcuts={key}
-          aria-pressed={viewMode === mode}
-          onClick={() => void update({ queueViewMode: mode })}
-          className={viewMode === mode ? 'bg-ink/15 text-tone-100' : ''}
-        >
-          <Icon className="h-4 w-4" aria-hidden="true" />
-        </Button>
-      ))}
-    </div>
+    <GlassGroup
+      display="icon"
+      aria-label={t('view.mode')}
+      disabled={disabled}
+      value={viewMode}
+      onValueChange={(mode) => void update({ queueViewMode: mode })}
+      items={MODES.map(({ mode, icon, labelKey, key }) => ({
+        value: mode,
+        icon,
+        label: t(labelKey),
+        title: key ? withShortcut(t(labelKey), key) : t(labelKey),
+        keyshortcuts: key
+      }))}
+    />
   )
 }
