@@ -19,6 +19,8 @@ export interface Wheel {
   y: number
   /** The zone's brightness, -100..100. */
   luminance: number
+  /** The hue (radians) that the wheel keeps at zero strength. Missing means 0. */
+  hue?: number
 }
 /** Three-way color grading. Blending (0..100) softens the zone borders; Balance
     (-100..100) moves them, with negative values widening the shadows. */
@@ -309,6 +311,22 @@ export interface RenderedPreview {
   /** Slider values equivalent to the camera's white balance (temperature: null). */
   asShotTemperature?: number
   asShotTint?: number
+}
+
+/** The recipe without the hue that a wheel keeps at zero strength: it changes no pixels. */
+export function pixelRecipe(recipe: EditRecipe): EditRecipe {
+  if (!recipe.wheels) return recipe
+  const strip = ({ hue: _hue, ...wheel }: Wheel): Wheel => wheel
+  const { shadows, midtones, highlights } = recipe.wheels
+  return {
+    ...recipe,
+    wheels: {
+      ...recipe.wheels,
+      shadows: strip(shadows),
+      midtones: strip(midtones),
+      highlights: strip(highlights)
+    }
+  }
 }
 
 /** Geometry and the per-photo stochastic seed never travel with adjustments. */

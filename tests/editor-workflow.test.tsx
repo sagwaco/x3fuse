@@ -1,7 +1,13 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { act, cleanup, renderHook } from '@testing-library/react'
-import { defaultRecipe, pasteRecipe, type EditRecipe, type X3iStatus } from '@shared/editor'
+import {
+  DEFAULT_WHEELS,
+  defaultRecipe,
+  pasteRecipe,
+  type EditRecipe,
+  type X3iStatus
+} from '@shared/editor'
 import { DEFAULT_SETTINGS, type X3FFileDTO } from '@shared/types'
 import {
   useEditorStore as editor,
@@ -116,6 +122,26 @@ afterEach(async () => {
   await editor.getState().close()
   vi.clearAllTimers()
   vi.useRealTimers()
+})
+
+it('renders no frame for a wheel hue kept at zero strength', async () => {
+  await editor.getState().open(file)
+  await vi.waitFor(() => expect(editor.getState().rendering).toBe(false))
+  const renders = (): number =>
+    invoke.mock.calls.filter(([command]) => command === 'editor:render').length
+  const before = renders()
+  const midtones = { x: 0, y: 0, luminance: 0, hue: 1.5 }
+  editor.getState().change({ wheels: { ...DEFAULT_WHEELS, midtones } }, false)
+  expect(editor.getState().documents[file.path].recipe.wheels?.midtones.hue).toBe(1.5)
+  // Renders start after a short wait. None starts here.
+  await vi.advanceTimersByTimeAsync(250)
+  expect(renders()).toBe(before)
+  // The frame on screen is still the frame of the recipe.
+  expect(previewCurrent(editor.getState())).toBe(true)
+  editor
+    .getState()
+    .change({ wheels: { ...DEFAULT_WHEELS, midtones: { ...midtones, x: 0.5 } } }, false)
+  await vi.waitFor(() => expect(renders()).toBeGreaterThan(before))
 })
 
 it('opens a real RAW session and saves one undo step for a slider gesture with the source fingerprint', async () => {

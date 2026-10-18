@@ -923,7 +923,7 @@ impl Editor {
         let mut key = serde_json::to_vec(&(
             &canonical,
             source_revision,
-            recipe,
+            recipe.pixels(),
             max_edge,
             region,
             x3f_render::RENDER_VERSION,
@@ -1730,7 +1730,7 @@ fn near_default(recipe: &EditRecipe) -> bool {
         monochrome: base.monochrome,
         crop: base.crop,
         seed: base.seed,
-        ..recipe.clone()
+        ..recipe.pixels()
     };
     probe == base
 }
@@ -1739,9 +1739,11 @@ fn near_default(recipe: &EditRecipe) -> bool {
 /// an earlier build), also the default film with the as-shot crop and seed: those
 /// builds saved it for every opened photo.
 fn matches_defaults(recipe: &EditRecipe, defaults: &EditRecipe, legacy: bool) -> bool {
-    *recipe == *defaults
+    // A hue that a wheel keeps at zero strength is not an edit.
+    let recipe = recipe.pixels();
+    recipe == *defaults
         || legacy
-            && *recipe
+            && recipe
                 == EditRecipe {
                     film: Some(x3f_render::FilmSettings {
                         grain_params: None,
@@ -1913,6 +1915,11 @@ mod tests {
         assert!(!super::matches_defaults(&earlier, &defaults, false));
         assert!(!super::matches_defaults(&cropped, &defaults, true));
         assert!(!super::matches_defaults(&exposed, &defaults, true));
+        // A hue that a wheel keeps at zero strength changes no pixels, so it is no edit.
+        let mut kept = defaults.clone();
+        kept.wheels.midtones.hue = 1.5;
+        assert!(super::near_default(&kept));
+        assert!(super::matches_defaults(&kept, &defaults, false));
         let mono = super::as_shot_recipe(crop, "Monochrome", "12345678abcdef");
         assert!(super::near_default(&mono));
         assert!(!super::matches_defaults(&mono, &defaults, true));

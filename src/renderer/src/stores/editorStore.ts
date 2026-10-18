@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import {
   defaultRecipe,
   pasteRecipe,
+  pixelRecipe,
   usesSfd,
   type EditRecipe,
   type EditRecord,
@@ -148,8 +149,9 @@ function updateQueue(path: string, edit: EditRecord): void {
   }))
 }
 
+// A hue that a wheel keeps at zero strength changes no pixels, so it is not in the key.
 const renderKey = (sessionId: string, recipe: EditRecipe): string =>
-  `${sessionId}:${JSON.stringify(recipe)}`
+  `${sessionId}:${JSON.stringify(pixelRecipe(recipe))}`
 
 function asShotRecipe(session: EditorSession | null, seed: number): EditRecipe {
   return {
@@ -632,9 +634,11 @@ export const useEditorStore = create<EditorState>((set, get) => {
       const recipe = { ...doc.recipe, ...patch }
       // Without its SFD RAW, an X3I can still change to its unfused RAW.
       if (same(recipe, doc.recipe) || blocked(get(), recipe)) return
+      // A hue that a wheel keeps at zero strength changes no pixels, so it needs no render.
+      const visible = !same(pixelRecipe(recipe), pixelRecipe(doc.recipe))
       set((state) => ({
         before: false,
-        cache: null,
+        cache: visible ? null : state.cache,
         switching:
           !waitsForMerge(state, recipe) &&
           (state.switching || switchesFrames(state, doc.recipe, recipe)),
@@ -645,7 +649,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
         }
       }))
       if (commit) get().commit()
-      else get().render()
+      else if (visible) get().render()
     },
     commit() {
       const path = get().session?.path

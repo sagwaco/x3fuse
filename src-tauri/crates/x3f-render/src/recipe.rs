@@ -167,13 +167,17 @@ impl Default for ColorWheels {
 }
 /// One color wheel. `x`, `y` is the dot in the unit disc, with `y` up. Its
 /// angle is the hue (red at 0°, green at 120°, blue at 240°) and its length the
-/// strength. `luminance` (-100..100) is the zone's brightness.
+/// strength. `luminance` (-100..100) is the zone's brightness. `hue` (radians)
+/// is the hue that the editor keeps at zero strength, where `x`, `y` hold none.
+/// The renderer does not read it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct Wheel {
     pub x: f32,
     pub y: f32,
     pub luminance: f32,
+    #[serde(skip_serializing_if = "is_default")]
+    pub hue: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -391,6 +395,17 @@ impl Crop {
     }
 }
 impl EditRecipe {
+    /// The recipe without what does not change pixels: the hue that a wheel keeps at
+    /// zero strength. Compare and key renders with it.
+    pub fn pixels(&self) -> EditRecipe {
+        let mut recipe = self.clone();
+        let wheels = &mut recipe.wheels;
+        for wheel in [&mut wheels.shadows, &mut wheels.midtones, &mut wheels.highlights] {
+            wheel.hue = 0.;
+        }
+        recipe
+    }
+
     pub fn validate(&self) -> Result<(), String> {
         if self.version != 1 {
             return Err(format!("Unsupported edit recipe version {}", self.version));
@@ -464,6 +479,9 @@ impl EditRecipe {
                 return Err("Wheel offsets must lie in the unit disc".into());
             }
             range("wheel luminance", wheel.luminance, -100., 100.)?;
+            // atan2 gives -PI..PI; allow for float rounding.
+            let half = std::f32::consts::PI + 1e-3;
+            range("wheel hue", wheel.hue, -half, half)?;
         }
         range("wheel blending", wheels.blending, 0., 100.)?;
         range("wheel balance", wheels.balance, -100., 100.)?;
@@ -567,6 +585,11 @@ mod tests {
                     x: 0.3,
                     y: -0.4,
                     luminance: 20.,
+                    ..Default::default()
+                },
+                highlights: Wheel {
+                    hue: 1.5,
+                    ..Default::default()
                 },
                 balance: -30.,
                 ..Default::default()
@@ -576,12 +599,19 @@ mod tests {
         recipe.validate().unwrap();
         let saved = serde_json::to_value(&recipe).unwrap();
         assert_eq!(saved["wheels"]["blending"], 50.);
+        // Only a kept hue is written.
+        assert!(saved["wheels"]["midtones"].get("hue").is_none());
+        assert_eq!(saved["wheels"]["highlights"]["hue"], 1.5);
         assert_eq!(serde_json::from_value::<EditRecipe>(saved).unwrap(), recipe);
         for wheel in [
             Wheel {
                 x: 0.8,
                 y: 0.8,
-                luminance: 0.,
+                ..Default::default()
+            },
+            Wheel {
+                hue: 4.,
+                ..Default::default()
             },
             Wheel {
                 luminance: 101.,
