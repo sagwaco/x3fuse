@@ -2,7 +2,7 @@ import { useState } from 'react'
 import type { EditRecipe } from '@shared/editor'
 import { useEditorStore } from '../stores/editorStore'
 import { t } from '../lib/strings'
-import { Button } from './ui/button'
+import { GlassGroup } from './ui/glassGroup'
 import { Adjustment } from './EditorControls'
 
 const hsl = (hue: number, saturation = 75, lightness = 55): string =>
@@ -28,10 +28,10 @@ const TABS = [
 
 /** One slider per color band for the property of the selected tab. */
 export function ColorMixer({ recipe }: { recipe: EditRecipe }): React.JSX.Element {
-  const [tab, setTab] = useState(0)
+  const [key, setKey] = useState<(typeof TABS)[number][0]>('hue')
   const change = useEditorStore((state) => state.change)
   const commit = useEditorStore((state) => state.commit)
-  const [key, , colors] = TABS[tab]
+  const colors = TABS.find(([value]) => value === key)![2]
   const set = (band: number, value: number, save = true): void =>
     change(
       {
@@ -41,46 +41,16 @@ export function ColorMixer({ recipe }: { recipe: EditRecipe }): React.JSX.Elemen
     )
   return (
     <>
-      <div
-        role="tablist"
+      <GlassGroup
+        kind="tabs"
+        id="color-mixer"
+        panelId={() => 'color-mixer-panel'}
         aria-label={t('editor.colorMixer')}
-        className="flex rounded-lg bg-ink/5 p-0.5"
-      >
-        {TABS.map(([value, label], index) => (
-          <Button
-            key={value}
-            id={`color-mixer-tab-${value}`}
-            type="button"
-            variant="ghost"
-            size="sm"
-            role="tab"
-            aria-selected={tab === index}
-            aria-controls="color-mixer-panel"
-            tabIndex={tab === index ? 0 : -1}
-            onClick={() => setTab(index)}
-            onKeyDown={(event) => {
-              const count = TABS.length
-              const next =
-                event.key === 'ArrowRight'
-                  ? (index + 1) % count
-                  : event.key === 'ArrowLeft'
-                    ? (index + count - 1) % count
-                    : event.key === 'Home'
-                      ? 0
-                      : event.key === 'End'
-                        ? count - 1
-                        : -1
-              if (next < 0) return
-              event.preventDefault()
-              setTab(next)
-              document.getElementById(`color-mixer-tab-${TABS[next][0]}`)?.focus()
-            }}
-            className="flex-1 justify-center aria-selected:bg-ink/15 aria-selected:text-tone-100"
-          >
-            {t(`editor.${label}`)}
-          </Button>
-        ))}
-      </div>
+        value={key}
+        onValueChange={setKey}
+        items={TABS.map(([value, label]) => ({ value, label: t(`editor.${label}`) }))}
+        className="grid auto-cols-fr grid-flow-col"
+      />
       <div role="tabpanel" id="color-mixer-panel" aria-labelledby={`color-mixer-tab-${key}`}>
         {BANDS.map(([name, hue], band) => (
           <Adjustment

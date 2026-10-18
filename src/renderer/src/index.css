@@ -274,54 +274,6 @@ html[data-platform='darwin'] .window-toolbar {
   }
 }
 
-/* Settings titlebar. Order of fallbacks: native glass material, CSS glass,
-   solid window surface. The CSS tint uses the theme surface, so the tone
-   text stays readable in every theme. */
-.glass-titlebar {
-  background-color: rgb(var(--tone-950));
-}
-
-@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
-  .glass-titlebar {
-    background-color: rgb(var(--tone-950) / 0.72);
-    -webkit-backdrop-filter: blur(20px) saturate(1.8);
-    backdrop-filter: blur(20px) saturate(1.8);
-  }
-}
-
-/* The native material follows the window appearance and the text follows
-   the theme, so the material shows only when the two schemes agree. */
-@supports (-apple-visual-effect: -apple-system-glass-material) {
-  @media (prefers-color-scheme: dark) {
-    html[data-platform='darwin']:where([data-theme='dark']) .glass-titlebar {
-      background-color: transparent;
-      -apple-visual-effect: -apple-system-glass-material;
-      -webkit-backdrop-filter: none;
-      backdrop-filter: none;
-    }
-  }
-
-  @media (prefers-color-scheme: light) {
-    html[data-platform='darwin']:where(:not([data-theme='dark'])) .glass-titlebar {
-      background-color: transparent;
-      -apple-visual-effect: -apple-system-glass-material;
-      -webkit-backdrop-filter: none;
-      backdrop-filter: none;
-    }
-  }
-}
-
-/* Same specificity as the darwin rules above, and later, so it wins there too. */
-@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
-  .glass-titlebar,
-  html[data-platform='darwin'] .glass-titlebar {
-    -apple-visual-effect: none;
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
-    background-color: rgb(var(--tone-950));
-  }
-}
-
 /* Switch knob. While pressed, the knob grows about its center into a wider
    glass capsule that stands out past the track, as in the macOS switch.
    The slider knob does the same while the pointer is on it. */
@@ -464,6 +416,144 @@ html[data-platform='darwin'] .window-toolbar {
   .switch-knob,
   .slider-knob {
     transition: none;
+  }
+}
+
+/* GlassGroup. One indicator slides to the selected item. While it moves and
+   while the pointer presses an item, it is liquid glass as the switch knob is:
+   it grows, it rises above the items, and its lens holds a copy of the items.
+   The indicator box is in registered lengths, which interpolate, so the copy
+   moves against the indicator in the same frame. */
+@property --glass-x {
+  syntax: '<length>';
+  inherits: true;
+  initial-value: 0px;
+}
+
+@property --glass-y {
+  syntax: '<length>';
+  inherits: true;
+  initial-value: 0px;
+}
+
+@property --glass-w {
+  syntax: '<length>';
+  inherits: true;
+  initial-value: 0px;
+}
+
+@property --glass-h {
+  syntax: '<length>';
+  inherits: true;
+  initial-value: 0px;
+}
+
+@property --glass-grow {
+  syntax: '<length>';
+  inherits: true;
+  initial-value: 0px;
+}
+
+.glass-group-indicator {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: calc(var(--glass-w) + 2 * var(--glass-grow));
+  height: calc(var(--glass-h) + 2 * var(--glass-grow));
+  translate: calc(var(--glass-x) - var(--glass-grow)) calc(var(--glass-y) - var(--glass-grow));
+  background-color: rgb(var(--ink) / 0.15);
+  pointer-events: none;
+  transition:
+    --glass-grow 200ms cubic-bezier(0.3, 1.3, 0.6, 1),
+    background-color 150ms ease,
+    box-shadow 150ms ease;
+}
+
+/* Only a selection change slides the indicator. A resize moves it at once. */
+.glass-group[data-moving] > .glass-group-indicator {
+  transition-property:
+    --glass-x, --glass-y, --glass-w, --glass-h, --glass-grow, background-color, box-shadow;
+  transition-duration: 300ms;
+  transition-timing-function: cubic-bezier(0.3, 1.2, 0.6, 1);
+}
+
+.glass-group:is([data-moving], [data-pressed]) > .glass-group-indicator {
+  --glass-grow: 3px;
+  z-index: 1;
+}
+
+.glass-group:is([data-moving], [data-pressed], [data-glass]) > .glass-group-indicator {
+  overflow: hidden;
+  background-color: transparent;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.3);
+}
+
+/* The lens hides the items below it, so its color is the group color on the
+   window. The copy is larger about the indicator center, as through a lens. */
+.glass-group-lens {
+  display: none;
+  position: absolute;
+  inset: -16px;
+  overflow: hidden;
+  background-color: color-mix(in srgb, rgb(var(--ink)) 5%, rgb(var(--tone-950)));
+  filter: brightness(1.1) saturate(1.5);
+  transform: scale(1.25);
+}
+
+/* The copy of each item has its own box in the group. This puts the group
+   origin at the same point as in the real group. */
+.glass-group-lens > * {
+  position: absolute;
+  translate: calc(16px + var(--glass-grow) - var(--glass-x))
+    calc(16px + var(--glass-grow) - var(--glass-y));
+}
+
+.glass-group:is([data-moving], [data-pressed], [data-glass])
+  > .glass-group-indicator
+  > .glass-group-lens {
+  display: block;
+}
+
+/* Glass at rest is below the real icon and label. The copy of them in its lens
+   is soft, so it shows as light through thick glass, not as a second label. */
+.glass-group[data-glass]:not([data-moving], [data-pressed])
+  > .glass-group-indicator
+  > .glass-group-lens {
+  filter: blur(3px) brightness(1.1) saturate(1.8);
+}
+
+/* The rim light, above the lens. */
+.glass-group:is([data-moving], [data-pressed], [data-glass]) > .glass-group-indicator::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 5px rgb(var(--ink) / 0.5);
+}
+
+/* A solid indicator below the items, for reduced transparency and more contrast. */
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .glass-group:is([data-moving], [data-pressed], [data-glass]) > .glass-group-indicator {
+    z-index: auto;
+    background-color: rgb(var(--ink) / 0.15);
+    box-shadow: none;
+  }
+
+  .glass-group:is([data-moving], [data-pressed], [data-glass])
+    > .glass-group-indicator
+    > .glass-group-lens {
+    display: none;
+  }
+
+  .glass-group:is([data-moving], [data-pressed], [data-glass]) > .glass-group-indicator::after {
+    content: none;
+  }
+}
+
+/* No growth. A selection change does not slide (see GlassGroup). */
+@media (prefers-reduced-motion: reduce) {
+  .glass-group:is([data-moving], [data-pressed]) > .glass-group-indicator {
+    --glass-grow: 0px;
   }
 }
 

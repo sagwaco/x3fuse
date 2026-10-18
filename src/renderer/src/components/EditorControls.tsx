@@ -32,6 +32,7 @@ import { withShortcut } from '../lib/shortcut'
 import { Button } from './ui/button'
 import { cn } from '../lib/cn'
 import { Select } from './ui/select'
+import { GlassGroup } from './ui/glassGroup'
 import { Slider } from './ui/slider'
 import { HelpTooltip, ToggleRow } from './ui/settingsLayout'
 import { LookPicker } from './LookPicker'
@@ -372,46 +373,23 @@ export const EditorControls = memo(function EditorControls({
           <SfdRaw recipe={recipe} />
         </Section>
       )}
-      {/* A toolbar as in macOS settings: the chosen tab sits on a soft fill. Its text is ink,
-          because the accent is below 4.5:1 contrast in the light and gray themes. */}
-      <div
-        role="tablist"
-        aria-label={t('editor.panels')}
-        className="flex justify-center gap-2 px-3 py-2.5"
-      >
-        {PANEL_TABS.map(([value, label, Icon], index) => (
-          <button
-            key={value}
-            id={`panel-tab-${value}`}
-            type="button"
-            role="tab"
-            aria-selected={tab === value}
-            aria-controls={`panel-${value}`}
-            tabIndex={tab === value ? 0 : -1}
-            onClick={() => setTab(value)}
-            onKeyDown={(event) => {
-              const count = PANEL_TABS.length
-              const next =
-                event.key === 'ArrowRight'
-                  ? (index + 1) % count
-                  : event.key === 'ArrowLeft'
-                    ? (index + count - 1) % count
-                    : event.key === 'Home'
-                      ? 0
-                      : event.key === 'End'
-                        ? count - 1
-                        : -1
-              if (next < 0) return
-              event.preventDefault()
-              setTab(PANEL_TABS[next][0])
-              document.getElementById(`panel-tab-${PANEL_TABS[next][0]}`)?.focus()
-            }}
-            className="flex min-w-[4.5rem] max-w-[7rem] flex-col items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-medium leading-none text-tone-300 hover:bg-ink/[0.03] hover:text-tone-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/70 aria-selected:bg-ink/[0.07] aria-selected:text-ink disabled:opacity-40"
-          >
-            <Icon aria-hidden="true" className="h-5 w-5" strokeWidth={1.75} />
-            <span className="max-w-full truncate">{t(`editor.${label}`)}</span>
-          </button>
-        ))}
+      {/* A toolbar as in macOS settings. */}
+      <div className="flex justify-center px-3 py-2.5">
+        <GlassGroup
+          kind="tabs"
+          id="panel"
+          panelId={(value) => `panel-${value}`}
+          display="stacked"
+          size="sm"
+          aria-label={t('editor.panels')}
+          value={tab}
+          onValueChange={setTab}
+          items={PANEL_TABS.map(([value, label, icon]) => ({
+            value,
+            icon,
+            label: t(`editor.${label}`)
+          }))}
+        />
       </div>
       <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`panel-tab-${tab}`}>
         <div {...inert}>

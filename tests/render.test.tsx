@@ -400,7 +400,7 @@ describe('renderer smoke', () => {
     render(<SettingsWindow />)
     expect(screen.queryByText('Output settings')).toBeNull()
     expect(screen.queryByText('Export settings')).toBeNull()
-    expect(screen.getByText('Debug')).toBeTruthy()
+    expect(screen.getByRole('tab', { name: 'Debug' })).toBeTruthy()
   })
 
   it('refreshes an existing Settings window on focus and unsubscribes on unmount', async () => {

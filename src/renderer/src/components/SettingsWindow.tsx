@@ -9,7 +9,7 @@ import { cn } from '../lib/cn'
 import { formatBytes } from '../lib/format'
 import { t } from '../lib/strings'
 import { Button } from './ui/button'
-import { Segmented } from './ui/segmented'
+import { GlassGroup } from './ui/glassGroup'
 import { Select } from './ui/select'
 import { Row, Section, ToggleRow } from './ui/settingsLayout'
 
@@ -82,10 +82,10 @@ export function SettingsWindow(): React.JSX.Element {
         {tab === 'appearance' && (
           <Section title={t('settings.section.appearance')}>
             <Row label={t('settings.appearance.mode')}>
-              <Segmented
+              <GlassGroup
                 aria-label={t('settings.appearance.mode')}
                 value={settings.appearanceMode}
-                options={[
+                items={[
                   { value: 'auto', label: t('settings.appearance.auto') },
                   { value: 'light', label: t('theme.light') },
                   { value: 'dark', label: t('theme.dark') }
@@ -207,7 +207,10 @@ export function SettingsWindow(): React.JSX.Element {
   )
 }
 
-/** Glass titlebar with the page title and the toolbar tabs. The page scrolls under it. */
+/**
+ * The titlebar with the page title and the toolbar tabs. It has the window color
+ * and a divider, as the main window toolbar has. The page scrolls under it.
+ */
 function SettingsTitlebar({
   tab,
   onSelect
@@ -218,7 +221,7 @@ function SettingsTitlebar({
   return (
     // On macOS the native traffic lights sit on the top row. A bare drag region
     // takes only direct hits, so the title and the tab row carry it too.
-    <header className="glass-titlebar sticky top-0 z-10 border-b border-ink/10">
+    <header className="sticky top-0 z-10 border-b border-ink/10 bg-tone-950">
       {/* 32 px is the macOS titlebar height, so the title aligns with the traffic
           lights. The same padding on each side keeps the title centered. */}
       <div
@@ -232,54 +235,26 @@ function SettingsTitlebar({
           {t(`settings.section.${tab}`)}
         </h1>
       </div>
-      <div
-        data-tauri-drag-region
-        role="tablist"
-        aria-label={t('menu.file.settings')}
-        className="flex justify-center gap-1 px-3 pb-2"
-      >
-        {TABS.map(([value, Icon], index) => (
-          <button
-            key={value}
-            id={`settings-tab-${value}`}
-            type="button"
-            role="tab"
-            aria-selected={tab === value}
-            aria-controls={`settings-page-${value}`}
-            tabIndex={tab === value ? 0 : -1}
-            onClick={() => onSelect(value)}
-            onKeyDown={(event) => {
-              const count = TABS.length
-              const next =
-                event.key === 'ArrowRight'
-                  ? (index + 1) % count
-                  : event.key === 'ArrowLeft'
-                    ? (index + count - 1) % count
-                    : event.key === 'Home'
-                      ? 0
-                      : event.key === 'End'
-                        ? count - 1
-                        : -1
-              if (next < 0) return
-              event.preventDefault()
-              onSelect(TABS[next][0])
-              document.getElementById(`settings-tab-${TABS[next][0]}`)?.focus()
-            }}
-            className="flex min-w-[76px] flex-col items-center gap-1 rounded-[10px] px-2.5 py-1.5 text-[13px] leading-none text-tone-300 hover:text-tone-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/70 aria-selected:bg-ink/[0.06] aria-selected:text-tone-100"
-          >
-            {/* The gray accent is below 3:1 on the gray surface, so there the icon
-                keeps the label color. */}
-            <Icon
-              aria-hidden="true"
-              className={cn(
-                'h-[22px] w-[22px]',
-                tab === value && 'text-accent [html[data-theme=gray]_&]:text-inherit'
-              )}
-              strokeWidth={1.75}
-            />
-            <span>{t(`settings.section.${value}`)}</span>
-          </button>
-        ))}
+      <div data-tauri-drag-region className="flex justify-center px-3 pb-2">
+        {/* The selected tab is glass, and its lens refracts a copy of its icon and
+            label. The gray accent is below 3:1 on the gray surface, so there the
+            selected icon keeps the label color. */}
+        <GlassGroup
+          kind="tabs"
+          id="settings"
+          panelId={(value) => `settings-page-${value}`}
+          display="stacked"
+          glass
+          aria-label={t('menu.file.settings')}
+          value={tab}
+          onValueChange={onSelect}
+          items={TABS.map(([value, icon]) => ({
+            value,
+            icon,
+            label: t(`settings.section.${value}`)
+          }))}
+          className="[&_[data-selected]>svg]:text-accent [html[data-theme=gray]_&_[data-selected]>svg]:text-inherit"
+        />
       </div>
     </header>
   )
