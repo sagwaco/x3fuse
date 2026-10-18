@@ -297,6 +297,33 @@ it('opens every section until it is closed, and keeps closed sections closed', a
   expect(localStorage.getItem('x3fuse.sections')).toBeNull()
 })
 
+it('keeps section headers at the top of the sidebar while their sections scroll', () => {
+  const summary = (label: string): string[] =>
+    screen.getByText(label, { selector: 'summary' }).className.split(' ')
+  render(<Controls />)
+  // A section header sticks at the top. A nested one sticks below its parent header,
+  // which is h-10 high, and goes under it. Both stay under the panel resize handle (z-20).
+  expect(summary(t('editor.light'))).toEqual(
+    expect.arrayContaining([
+      'sticky',
+      'top-0',
+      'z-[2]',
+      'h-10',
+      '[details_details>&]:top-10',
+      '[details_details>&]:z-[1]'
+    ])
+  )
+  // The header is opaque, so the fields that scroll under it do not show through.
+  expect(summary(t('editor.light')).join(' ')).toContain('bg-[color:color-mix(')
+  expect(summary(t('denoise.advanced'))).toEqual(
+    expect.arrayContaining(['sticky', 'top-10', 'z-[1]'])
+  )
+  // In the conversion form, Advanced does not stick.
+  cleanup()
+  render(<DenoiseControls value={defaultDenoiseOptions()} change={vi.fn()} />)
+  expect(summary(t('denoise.advanced'))).not.toContain('sticky')
+})
+
 it('binds Exposure to the film when a stock is chosen and to the digital pipeline for Standard', () => {
   expect(defaultRecipe().film).toEqual(DEFAULT_FILM)
   render(<Controls initial={{ ...defaultRecipe(), film: null, exposure: 1 }} />)

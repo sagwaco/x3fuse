@@ -338,6 +338,7 @@
   "editor.scopeEntire": "Entire image",
   "editor.scopeVisible": "Visible area",
   "editor.scopeQualifier": "Qualifier",
+  "editor.showScope": "Show scope",
   "editor.scopeQualifyHint": "Click a point or drag a rectangle in the image to measure it. In the focused image, arrow keys move a point, Shift with arrow keys sizes a rectangle, Return applies, and Escape cancels.",
   "editor.look": "Emulsion",
   "editor.panels": "Panels",

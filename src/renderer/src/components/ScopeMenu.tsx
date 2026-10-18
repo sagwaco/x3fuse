@@ -4,7 +4,8 @@ import { useSettingsStore } from '../stores/settingsStore'
 import { t } from '../lib/strings'
 import { NativeMenuButton } from './ui/nativeMenuButton'
 
-export function ScopeMenu(): React.JSX.Element {
+/** `className` places the menu in its row. */
+export function ScopeMenu({ className = '' }: { className?: string }): React.JSX.Element {
   const mode = useSettingsStore((s) => s.settings.inspectorScopeMode)
   const update = useSettingsStore((s) => s.update)
 
@@ -12,7 +13,7 @@ export function ScopeMenu(): React.JSX.Element {
     <NativeMenuButton
       variant="ghost"
       size="sm"
-      className="-my-1.5 ml-auto h-auto min-w-0 gap-1 px-1 py-1.5 text-[10px] font-semibold uppercase leading-normal tracking-wide text-tone-500"
+      className={`h-auto min-w-0 gap-1 px-1 py-1.5 text-[10px] font-semibold uppercase leading-normal tracking-wide text-tone-500 ${className}`}
       aria-label={t('inspector.scope_view')}
       items={SCOPE_MODES.map((value) => ({
         value,

@@ -338,6 +338,7 @@
   "editor.scopeEntire": "画像全体",
   "editor.scopeVisible": "表示範囲",
   "editor.scopeQualifier": "クオリファイアー",
+  "editor.showScope": "スコープを表示",
   "editor.scopeQualifyHint": "画像の一点をクリックするか、矩形をドラッグして測定します。画像にフォーカスがあるときは、矢印キーで点を移動、Shift+矢印キーで矩形のサイズを変更、Returnで適用、Escapeでキャンセルします。",
   "editor.look": "乳剤",
   "editor.panels": "パネル",
