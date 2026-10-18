@@ -111,15 +111,17 @@ describe('scope rendering scheduler', () => {
     renderer.dispose()
   })
 
-  it('separates image identity, mode, width and pixel ratio in completed cache keys', () => {
+  it('separates image identity, mode, width, pixel ratio and theme in completed cache keys', () => {
     const source = request()
     const key = scopeRenderKey(source)
     expect(scopeRenderKey({ ...source })).toBe(key)
+    expect(scopeRenderKey({ ...source, theme: 'dark' })).toBe(key)
     for (const changed of [
       request(),
       { ...source, mode: 'histogram' as const },
       { ...source, width: 300 },
-      { ...source, pixelRatio: 1 }
+      { ...source, pixelRatio: 1 },
+      { ...source, theme: 'light' as const }
     ])
       expect(scopeRenderKey(changed)).not.toBe(key)
   })

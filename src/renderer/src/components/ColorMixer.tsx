@@ -56,6 +56,8 @@ export function ColorMixer({ recipe }: { recipe: EditRecipe }): React.JSX.Elemen
           <Adjustment
             key={name}
             label={t(`editor.${name}`)}
+            // One row per color, with the first letter of its name.
+            short={Array.from(t(`editor.${name}`))[0]}
             value={recipe.hsl[band][key]}
             track={`linear-gradient(to right, ${colors(hue).join(', ')})`}
             change={(value, save) => set(band, value, save)}

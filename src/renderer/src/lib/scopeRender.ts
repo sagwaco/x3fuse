@@ -7,10 +7,16 @@ let nextImageId = 0
 let cachedBytes = 0
 const CACHE_BUDGET = 16 * 1024 * 1024
 
-export function scopeRenderKey({ image, mode, width, pixelRatio }: ScopeRenderRequest): string {
+export function scopeRenderKey({
+  image,
+  mode,
+  width,
+  pixelRatio,
+  theme = 'dark'
+}: ScopeRenderRequest): string {
   let id = imageIds.get(image)
   if (id === undefined) imageIds.set(image, (id = ++nextImageId))
-  return `${id}:${mode}:${width}:${pixelRatio}`
+  return `${id}:${mode}:${width}:${pixelRatio}:${theme}`
 }
 
 export function cachedScope(key: string): RenderedScope | undefined {

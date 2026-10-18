@@ -160,17 +160,14 @@ export function GlassGroup<T extends string>({
     display === 'label' && 'gap-1.5 font-mono font-medium uppercase tracking-[0.1em]',
     display === 'label' && (size === 'sm' ? 'h-6 px-2 text-[10px]' : 'h-7 px-2.5 text-[11px]'),
     display === 'icon' && (size === 'sm' ? 'h-6 w-6' : 'h-7 w-7'),
-    stacked && 'flex-col py-1.5 leading-none',
-    stacked &&
-      (size === 'sm'
-        ? 'min-w-[4.5rem] gap-1.5 px-3 text-[11px] font-medium'
-        : 'min-w-[72px] gap-1.5 px-2.5 font-mono text-[10px] uppercase tracking-[0.14em]'),
+    stacked && 'flex-col font-mono text-[10px] uppercase leading-none tracking-[0.14em]',
+    stacked && (size === 'sm' ? 'min-w-[4.5rem] gap-2 p-3' : 'min-w-[72px] gap-1.5 px-2.5 py-1.5'),
     stacked && size === 'sm' && !split && 'max-w-[7rem]',
     split && 'min-w-0 flex-1'
   )
   const iconClass = stacked
     ? size === 'sm'
-      ? 'h-5 w-5'
+      ? 'h-4 w-4'
       : 'h-[18px] w-[18px]'
     : size === 'sm'
       ? 'h-3.5 w-3.5'

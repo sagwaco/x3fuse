@@ -6,6 +6,7 @@ import type { PreviewRegion } from '@shared/editor'
 import { useScopeImage } from '../hooks/useScopeImage'
 import { useElementWidth } from '../hooks/useElementWidth'
 import { useDelayedLoading } from '../hooks/useDelayedLoading'
+import { useTheme } from '../hooks/useTheme'
 import { t } from '../lib/strings'
 import { cn } from '../lib/cn'
 import {
@@ -50,10 +51,14 @@ export function ColorScope({
   const [completed, setCompleted] = useState<string>()
   const [painted, setPainted] = useState<string>()
   const [error, setError] = useState<string>()
+  // The scope draws in colors for the theme surface, so a theme change draws it again.
+  const theme = useTheme()
   const request = useMemo(
     () =>
-      image && image !== 'loading' && width > 0 ? { image, mode, width, pixelRatio } : undefined,
-    [image, mode, width, pixelRatio]
+      image && image !== 'loading' && width > 0
+        ? { image, mode, width, pixelRatio, theme }
+        : undefined,
+    [image, mode, width, pixelRatio, theme]
   )
   const key = request ? scopeRenderKey(request) : undefined
   const cached = key ? cachedScope(key) : undefined
@@ -112,7 +117,6 @@ export function ColorScope({
 
   return (
     <div
-      data-theme="dark"
       ref={container}
       aria-busy={loading}
       className={
@@ -136,7 +140,7 @@ export function ColorScope({
         ? null
         : !visible &&
           !loading && (
-            <p className="absolute inset-0 flex items-center justify-center text-xs text-tone-600">
+            <p className="absolute inset-0 flex items-center justify-center text-xs text-tone-500">
               {t('inspector.no_preview')}
             </p>
           )}

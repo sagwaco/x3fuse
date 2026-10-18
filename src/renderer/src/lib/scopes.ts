@@ -1,7 +1,61 @@
-import type { ScopeMode } from '@shared/types'
+import type { ScopeMode, ThemeName } from '@shared/types'
 
 export type ScopePixels = Pick<ImageData, 'data' | 'width' | 'height'>
-export const SCOPE_COLORS = ['#ef4444', '#22c55e', '#3b82f6', '#e5e5e5']
+
+export interface ScopePalette {
+  /** Red, green, blue and luma traces. */
+  channels: [string, string, string, string]
+  vector: string
+  grid: string
+  rings: string
+  label: string
+  target: string
+  skin: string
+  /** How the density traces combine with the surface and with each other. */
+  blend: GlobalCompositeOperation
+  /** The opacity of the densest trace. Multiplied traces need more to show. */
+  density: number
+}
+
+/**
+ * Scope colors on each theme surface. On dark, light traces add up. On light and gray,
+ * dark traces multiply, so overlaps get darker as ink does. Labels keep 4.5:1.
+ */
+export const SCOPE_PALETTES: Record<ThemeName, ScopePalette> = {
+  dark: {
+    channels: ['#ef4444', '#22c55e', '#3b82f6', '#e5e5e5'],
+    vector: '#d4e5dc',
+    grid: '#404040',
+    rings: '#737373',
+    label: '#737373',
+    target: '#a3a3a3',
+    skin: '#d4a574',
+    blend: 'lighter',
+    density: 0.6
+  },
+  light: {
+    channels: ['#dc2626', '#16a34a', '#2563eb', '#404040'],
+    vector: '#1f3d2e',
+    grid: '#d4d4d4',
+    rings: '#a3a3a3',
+    label: '#737373',
+    target: '#525252',
+    skin: '#b45309',
+    blend: 'multiply',
+    density: 0.85
+  },
+  gray: {
+    channels: ['#6b1414', '#0d3d20', '#172e70', '#0a0a0a'],
+    vector: '#10241a',
+    grid: '#6a6a6a',
+    rings: '#4a4a4a',
+    label: '#1a1a1a',
+    target: '#222222',
+    skin: '#7c2d12',
+    blend: 'multiply',
+    density: 1
+  }
+}
 export const SKIN_TONE_ANGLE = (123 * Math.PI) / 180
 
 /** Full-range, gamma-encoded Rec.709 signal values; these are preview JPEG scopes. */

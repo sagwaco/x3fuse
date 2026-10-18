@@ -491,6 +491,14 @@ it('toggles the SFD RAW of an X3I above Light, and paste keeps the frames of eac
   act(() => editor.setState({ x3i: { frames: 7, processed: false } }))
   const sections = [...view.container.querySelectorAll('summary')].map((node) => node.textContent)
   expect(sections.slice(0, 2)).toEqual([t('editor.sfdRaw'), t('editor.light')])
+  // The section is part of the RAW tab, after the tabs. Other tabs hide it, but keep it
+  // mounted, because it starts the merge that a recipe needs.
+  const sfdSummary = (): HTMLElement =>
+    within(screen.getByRole('tabpanel')).getByText(t('editor.sfdRaw'), { selector: 'summary' })
+  expect(sfdSummary().closest('[hidden]')).toBeNull()
+  fireEvent.click(screen.getByRole('tab', { name: t('editor.tabFilm') }))
+  expect(sfdSummary().closest('[hidden]')).not.toBeNull()
+  fireEvent.click(screen.getByRole('tab', { name: t('editor.tabRaw') }))
   expect(info()).not.toBeNull()
   expect(toggle().getAttribute('aria-checked')).toBe('false')
   expect(screen.getByText(t('editor.x3iSourceMiddle'))).toBeTruthy()
@@ -531,9 +539,10 @@ it('toggles the SFD RAW of an X3I above Light, and paste keeps the frames of eac
   fireEvent.click(toggle())
   expect(change).toHaveBeenLastCalledWith({ x3iSource: undefined })
   // An SFD RAW that the photo uses but that is not stored merges, and the
-  // other sections wait for it.
+  // other sections wait for it. It merges from another tab too, and RAW shows.
   const sfd: EditRecipe = { ...defaultRecipe(), x3iSource: 'merge' }
   processX3i.mockClear()
+  fireEvent.click(screen.getByRole('tab', { name: t('editor.tabFilm') }))
   act(() => {
     setRecipe(sfd)
     editor.setState({
@@ -542,6 +551,9 @@ it('toggles the SFD RAW of an X3I above Light, and paste keeps the frames of eac
     })
   })
   expect(processX3i).toHaveBeenCalledTimes(1)
+  expect(screen.getByRole('tab', { name: t('editor.tabRaw') }).getAttribute('aria-selected')).toBe(
+    'true'
+  )
   expect(
     screen.getByText(t('editor.light'), { selector: 'summary' }).closest('[inert]')
   ).not.toBeNull()

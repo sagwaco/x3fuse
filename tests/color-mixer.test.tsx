@@ -80,13 +80,14 @@ it('edits one band property per tab with a slider for each color', () => {
   expect(recipe.hsl.filter((_, index) => index !== 5)).toEqual(
     before.filter((_, index) => index !== 5)
   )
-  // Shift-click on a label resets only that band's value for the tab.
+  // Each row shows the first letter of its color, with the full name as its tooltip.
+  // Shift-click on the letter resets only that band's value for the tab.
   fireEvent.change(screen.getByRole('spinbutton', { name: t('editor.green') }), {
     target: { value: '30' }
   })
-  fireEvent.click(screen.getByText(t('editor.blue'), { selector: '.control-label > span' }), {
-    shiftKey: true
-  })
+  const blue = screen.getByTitle(t('editor.blue'))
+  expect(blue.textContent).toBe(t('editor.blue')[0])
+  fireEvent.click(blue, { shiftKey: true })
   expect(recipe.hsl[5].luminance).toBe(0)
   expect(recipe.hsl[3].luminance).toBe(30)
 })

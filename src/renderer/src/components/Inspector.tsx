@@ -60,7 +60,7 @@ export function Inspector(): React.JSX.Element {
 
           <Section
             title={t('inspector.scopes')}
-            action={!multiple && <ScopeMenu className="-my-1.5" />}
+            action={!multiple && <ScopeMenu className="-my-0.5" />}
           >
             {multiple ? (
               <p className="py-6 text-center text-xs text-tone-500">

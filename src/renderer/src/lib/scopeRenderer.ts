@@ -1,10 +1,11 @@
-import type { ScopeMode } from '@shared/types'
+import type { ScopeMode, ThemeName } from '@shared/types'
 import {
   chroma,
   COLOR_TARGETS,
   histogram,
   scopeDensitySteps,
-  SCOPE_COLORS,
+  SCOPE_PALETTES,
+  type ScopePalette,
   SKIN_TONE_ANGLE
 } from './scopes'
 
@@ -13,6 +14,8 @@ export interface ScopeRenderRequest {
   mode: ScopeMode
   width: number
   pixelRatio: number
+  /** The theme whose surface the scope is drawn for. Dark when not set. */
+  theme?: ThemeName
 }
 
 type Context = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D
@@ -20,8 +23,9 @@ type Context = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D
 /** Identical drawing on the worker and on older webviews, with yield points for the latter. */
 export function* drawScope(
   ctx: Context,
-  { image, mode, width, pixelRatio }: ScopeRenderRequest
+  { image, mode, width, pixelRatio, theme = 'dark' }: ScopeRenderRequest
 ): Generator<void> {
+  const palette = SCOPE_PALETTES[theme]
   ctx.scale(pixelRatio, pixelRatio)
   ctx.font = '9px system-ui'
   ctx.lineWidth = 0.5
@@ -34,8 +38,18 @@ export function* drawScope(
     const cx = x + densitySize / (2 * pixelRatio)
     const cy = y + densitySize / (2 * pixelRatio)
     const layers = yield* scopeDensitySteps(image, mode, densitySize, densitySize)
-    yield* drawDensity(ctx, layers[0], densitySize, densitySize, x, y, pixelRatio, '#d4e5dc')
-    ctx.strokeStyle = '#737373'
+    yield* drawDensity(
+      ctx,
+      layers[0],
+      densitySize,
+      densitySize,
+      x,
+      y,
+      pixelRatio,
+      palette.vector,
+      palette
+    )
+    ctx.strokeStyle = palette.rings
     for (const fraction of [0.5, 1]) {
       ctx.beginPath()
       ctx.arc(cx, cy, radius * fraction, 0, Math.PI * 2)
@@ -43,7 +57,7 @@ export function* drawScope(
     }
     line(ctx, cx - radius, cy, cx + radius, cy)
     line(ctx, cx, cy - radius, cx, cy + radius)
-    ctx.strokeStyle = '#d4a574'
+    ctx.strokeStyle = palette.skin
     ctx.setLineDash([3, 3])
     line(
       ctx,
@@ -59,9 +73,9 @@ export function* drawScope(
       const [cb, cr] = chroma(target.rgb[0], target.rgb[1], target.rgb[2])
       const tx = cx + cb * radius
       const ty = cy - cr * radius
-      ctx.strokeStyle = '#a3a3a3'
+      ctx.strokeStyle = palette.target
       ctx.strokeRect(tx - 3, ty - 3, 6, 6)
-      ctx.fillStyle = '#a3a3a3'
+      ctx.fillStyle = palette.target
       const length = Math.hypot(cb, cr)
       ctx.fillText(target.label, tx + (cb / length) * 12, ty - (cr / length) * 12)
     }
@@ -75,10 +89,10 @@ export function* drawScope(
   ctx.textBaseline = 'middle'
   for (const value of [0, 25, 50, 75, 100]) {
     const y = top + (1 - value / 100) * (plotHeight - 1)
-    ctx.strokeStyle = '#404040'
+    ctx.strokeStyle = palette.grid
     line(ctx, left, y, left + plotWidth - 1, y)
     if (mode !== 'histogram') {
-      ctx.fillStyle = '#737373'
+      ctx.fillStyle = palette.label
       ctx.textAlign = 'right'
       ctx.fillText(`${value}%`, left - 5, y)
     }
@@ -97,15 +111,15 @@ export function* drawScope(
       }
       ctx.lineTo(left + plotWidth - 1, top + plotHeight - 1)
       ctx.closePath()
-      ctx.fillStyle = SCOPE_COLORS[c]
+      ctx.fillStyle = palette.channels[c]
       ctx.globalAlpha = 0.25
       ctx.fill()
       ctx.globalAlpha = 0.9
-      ctx.strokeStyle = SCOPE_COLORS[c]
+      ctx.strokeStyle = palette.channels[c]
       ctx.stroke()
       ctx.globalAlpha = 1
     })
-    ctx.fillStyle = '#737373'
+    ctx.fillStyle = palette.label
     for (const value of [0, 64, 128, 192, 255]) {
       ctx.textAlign = value === 0 ? 'left' : value === 255 ? 'right' : 'center'
       ctx.fillText(String(value), left + (value / 255) * (plotWidth - 1), 192)
@@ -129,7 +143,8 @@ export function* drawScope(
       x,
       top,
       pixelRatio,
-      SCOPE_COLORS[c],
+      palette.channels[c],
+      palette,
       c === 3 ? 0.55 : 1
     )
   }
@@ -151,12 +166,13 @@ function* drawDensity(
   y: number,
   pixelRatio: number,
   color: string,
+  { blend, density }: ScopePalette,
   opacity = 1
 ): Generator<void> {
   let max = 0
   for (let i = 0; i < counts.length; i++) if (counts[i] > max) max = counts[i]
   if (max === 0) return
-  const scale = (0.6 * opacity) / Math.log1p(max)
+  const scale = (density * opacity) / Math.log1p(max)
   // One density bin per device pixel. Splat each as a round point 0.75 device px in
   // radius: it covers its own pixel and ~0.19 of each edge neighbour. Accumulating
   // alpha here and compositing once replaces one canvas arc per bin.
@@ -191,7 +207,7 @@ function* drawDensity(
     data[i * 4 + 3] = alpha[i] * 255
   }
   layerContext.putImageData(pixels, 0, 0)
-  ctx.globalCompositeOperation = 'lighter'
+  ctx.globalCompositeOperation = blend
   ctx.drawImage(layer, x, y, width / pixelRatio, height / pixelRatio)
   ctx.globalCompositeOperation = 'source-over'
 }

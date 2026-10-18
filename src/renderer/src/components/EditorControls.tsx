@@ -147,6 +147,7 @@ export function ResetLabel({
 
 export function Adjustment({
   label,
+  short,
   value,
   min = -100,
   max = 100,
@@ -160,6 +161,8 @@ export function Adjustment({
   commit
 }: {
   label: string
+  /** A short visible label. With it, the label, slider and value share one row. */
+  short?: string
   value: number
   min?: number
   max?: number
@@ -188,13 +191,72 @@ export function Adjustment({
   const fit = (value: number): number =>
     Math.max(range.min, Math.min(range.max, Math.round(value / range.step) * range.step))
   const map = range.scale
+  const input = (
+    <input
+      aria-label={label}
+      type="number"
+      disabled={disabled}
+      min={min}
+      max={max}
+      step={step}
+      value={Number(value.toFixed(4))}
+      // Shifted right so its digits end where the slider ends. Focus shows the box, in line.
+      className="h-6 w-14 shrink-0 translate-x-2.5 rounded-md border border-transparent bg-transparent px-2 text-right font-mono text-xs tabular-nums text-tone-400 transition-transform [appearance:textfield] focus:translate-x-0 focus:border-ink/40 focus:bg-ink/[0.03] focus:text-tone-100 focus:outline-none disabled:opacity-40 motion-reduce:transition-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+      onChange={(event) => {
+        const value = event.currentTarget.valueAsNumber
+        if (Number.isFinite(value)) change(fit(value), true)
+      }}
+    />
+  )
+  const slider = (
+    <Slider
+      disabled={disabled}
+      aria-label={label}
+      value={map ? map.to(value) : value}
+      min={map ? map.to(range.min) : range.min}
+      max={map ? map.to(range.max) : range.max}
+      step={map?.step ?? range.step}
+      valueText={map && String(value)}
+      track={track}
+      onValueChange={(value) => change(map ? fit(map.from(value)) : value, false)}
+      // Radix rounds a step onto its grid of positions, and the value rounds back.
+      onKeyStep={
+        map &&
+        ((direction, large) => {
+          const next = fit(map.from(map.to(value) + direction * (large ? 10 : 1) * map.step))
+          if (next !== value) change(next, true)
+        })
+      }
+      onValueCommit={commit}
+      onReset={reset}
+    />
+  )
+  const hold = {
+    onPointerDown: () => setHeld({ min, max, step, scale }),
+    onPointerUp: () => setHeld(undefined),
+    onPointerCancel: () => setHeld(undefined)
+  }
+  if (short) {
+    // The slider and the value carry the full name. Shift-click on the letter resets.
+    return (
+      <div className="flex items-center gap-2 py-1" {...hold}>
+        <span
+          aria-hidden="true"
+          title={label}
+          className="control-label w-3 shrink-0 select-none"
+          onClick={(event) => {
+            if (event.shiftKey && !disabled) reset()
+          }}
+        >
+          {short}
+        </span>
+        <div className="min-w-0 flex-1">{slider}</div>
+        {input}
+      </div>
+    )
+  }
   return (
-    <div
-      className="space-y-1.5 py-2"
-      onPointerDown={() => setHeld({ min, max, step, scale })}
-      onPointerUp={() => setHeld(undefined)}
-      onPointerCancel={() => setHeld(undefined)}
-    >
+    <div className="space-y-1.5 py-2" {...hold}>
       <div className="group/reset flex items-center justify-between gap-2">
         <span className="flex min-w-0 items-center gap-1.5">
           <ResetLabel
@@ -204,43 +266,9 @@ export function Adjustment({
           />
           {help && <HelpTooltip label={label} text={help} className={HIDE_WHILE_RESETTING} />}
         </span>
-        <input
-          aria-label={label}
-          type="number"
-          disabled={disabled}
-          min={min}
-          max={max}
-          step={step}
-          value={Number(value.toFixed(4))}
-          // Shifted right so its digits end where the slider ends. Focus shows the box, in line.
-          className="h-6 w-14 shrink-0 translate-x-2.5 rounded-md border border-transparent bg-transparent px-2 text-right font-mono text-xs tabular-nums text-tone-400 transition-transform [appearance:textfield] focus:translate-x-0 focus:border-ink/40 focus:bg-ink/[0.03] focus:text-tone-100 focus:outline-none disabled:opacity-40 motion-reduce:transition-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-          onChange={(event) => {
-            const value = event.currentTarget.valueAsNumber
-            if (Number.isFinite(value)) change(fit(value), true)
-          }}
-        />
+        {input}
       </div>
-      <Slider
-        disabled={disabled}
-        aria-label={label}
-        value={map ? map.to(value) : value}
-        min={map ? map.to(range.min) : range.min}
-        max={map ? map.to(range.max) : range.max}
-        step={map?.step ?? range.step}
-        valueText={map && String(value)}
-        track={track}
-        onValueChange={(value) => change(map ? fit(map.from(value)) : value, false)}
-        // Radix rounds a step onto its grid of positions, and the value rounds back.
-        onKeyStep={
-          map &&
-          ((direction, large) => {
-            const next = fit(map.from(map.to(value) + direction * (large ? 10 : 1) * map.step))
-            if (next !== value) change(next, true)
-          })
-        }
-        onValueCommit={commit}
-        onReset={reset}
-      />
+      {slider}
     </div>
   )
 }
@@ -341,6 +369,12 @@ export const EditorControls = memo(function EditorControls({
   // While an X3I merges an SFD RAW that it uses, only the SFD RAW section works.
   const pending = useEditorStore(needsX3iMerge)
   const inert = pending ? { inert: '', className: 'opacity-50' } : {}
+  // When such a merge starts, RAW shows, because its progress is in the SFD RAW section.
+  const [wasPending, setWasPending] = useState(pending)
+  if (pending !== wasPending) {
+    setWasPending(pending)
+    if (pending) setPanelTab('raw')
+  }
   const cloud = useContext(DevelopingCloud)
   const asShotTemperature = useEditorStore((state) =>
     cloud ? undefined : state.preview?.asShotTemperature
@@ -372,11 +406,6 @@ export const EditorControls = memo(function EditorControls({
   )
   return (
     <>
-      {x3i && (
-        <Section id="sfdRaw" name={t('editor.sfdRaw')} info={!x3i.processed && <SfdRawInfo />}>
-          <SfdRaw recipe={recipe} />
-        </Section>
-      )}
       {/* Buttons that share the width. The selected one is glass on macOS. */}
       <div className="px-3 py-2.5">
         <GlassGroup
@@ -397,6 +426,15 @@ export const EditorControls = memo(function EditorControls({
         />
       </div>
       <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`panel-tab-${tab}`}>
+        {/* The SFD RAW section stays out of the inert part, because it works during a merge.
+            It stays mounted on the other tabs, because it starts the merge that a recipe needs. */}
+        {x3i && (
+          <div hidden={tab !== 'raw'}>
+            <Section id="sfdRaw" name={t('editor.sfdRaw')} info={!x3i.processed && <SfdRawInfo />}>
+              <SfdRaw recipe={recipe} />
+            </Section>
+          </div>
+        )}
         <div {...inert}>
           {tab === 'raw' && (
             <>
