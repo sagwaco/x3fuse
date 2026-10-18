@@ -9,8 +9,8 @@ mod stocks;
 pub use camera::{read_camera_profiles, CameraProfile, CameraProfiles};
 pub use color::{as_shot_white_balance, pick_white_balance};
 pub use recipe::{
-    Crop, Curves, EditRecipe, FilmSettings, GrainParams, HalationParams, HslBand, MonochromeFilter,
-    MonochromeSettings, Point,
+    Crop, Curves, EditRecipe, EffectsSettings, FilmSettings, GrainParams, HalationParams, HslBand,
+    MonochromeFilter, MonochromeSettings, Point,
 };
 pub use stocks::STOCKS_JSON;
 
@@ -473,6 +473,16 @@ impl Chain {
         self.release(original);
         result
     }
+    /// Grain on a scene-linear image: through the reference stock's density
+    /// domain, and back as a gain, so values above one keep their range.
+    fn linear_grain(&mut self, linear: usize, spatial: &film::grain::Spatial) -> usize {
+        let density = self.one("grain_to_density", linear);
+        let grained = self.grain(density, spatial);
+        let result = self.two("grain_from_density", grained, linear);
+        self.release(grained);
+        self.release(linear);
+        result
+    }
     /// Mix independent Gaussian blurs of the source to form an exponential tail.
     fn exponential(&mut self, src: usize, decay: [f32; 3]) -> usize {
         if film::widest(decay) * film::couplers::EXPONENTIAL_MAX_SIGMA < MIN_SIGMA {
@@ -700,11 +710,21 @@ fn choose_tiling(
 fn build_passes(
     base: Parameters,
     film: Option<(&FilmSettings, &film::Spatial, &film::grain::Spatial)>,
+    effects_only: bool,
     sharpen: f32,
 ) -> (Vec<Pass>, usize) {
     let mut chain = Chain::new(base);
     let mut current = chain.start();
-    if let Some((settings, spatial, grain)) = film {
+    if let (Some((settings, spatial, grain)), true) = (film, effects_only) {
+        // Generic effects run on the scene-linear image, before `finish`. Every
+        // pass keeps the source alpha, which carries the Fill Light gain.
+        if settings.halation {
+            current = chain.halation(current, spatial);
+        }
+        if settings.grain_active() {
+            current = chain.linear_grain(current, grain);
+        }
+    } else if let Some((settings, spatial, grain)) = film {
         let raw = chain.one("expose", current);
         chain.release(current);
         current = if settings.halation {
@@ -927,6 +947,8 @@ impl Renderer {
             "grain_usm",
             "grain_ratio",
             "grain_finish",
+            "grain_to_density",
+            "grain_from_density",
             "print_spectral",
             "print_develop",
             "scan",
@@ -1216,8 +1238,19 @@ impl Renderer {
             .film
             .lock()
             .map_err(|_| RenderError::Gpu("Renderer unavailable".into()))?;
-        if let Some(settings) = &recipe.film {
-            let filter = recipe.monochrome.map(|m| m.filter);
+        // Without a film stock, grain and halation borrow the reference stock's tables.
+        let reference = recipe
+            .effects
+            .as_ref()
+            .filter(|e| recipe.film.is_none() && e.active())
+            .map(EffectsSettings::reference);
+        let film_settings = recipe.film.as_ref().or(reference.as_ref());
+        if let Some(settings) = film_settings {
+            let filter = recipe
+                .film
+                .is_some()
+                .then(|| recipe.monochrome.map(|m| m.filter))
+                .flatten();
             let stale = film_cache.as_ref().is_none_or(|(lut, pair, _)| {
                 !lut.matches(settings, filter) || !pair.matches(settings)
             });
@@ -1236,21 +1269,17 @@ impl Renderer {
                 *film_cache = Some((lut, pair, tables));
             }
         }
-        let prepared = recipe.film.as_ref().and(film_cache.as_ref());
+        let prepared = film_settings.and(film_cache.as_ref());
         // spektrafilm's spatial parameters are physical, so they are derived
         // from the full output frame; a tile or region must never change them.
-        let spatial = recipe
-            .film
-            .as_ref()
+        let spatial = film_settings
             .zip(prepared)
             .map(|(f, (_, pair, _))| film::Spatial::new(f, geom.long_edge(), pair.monochrome));
-        let grain_spatial = recipe
-            .film
-            .as_ref()
+        let grain_spatial = film_settings
             .zip(prepared)
             .map(|(f, (_, pair, _))| pair.grain.spatial_for(geom.long_edge(), f));
         let stage_sigma =
-            |pick: fn(&film::Spatial, &FilmSettings) -> f32| match (&spatial, &recipe.film) {
+            |pick: fn(&film::Spatial, &FilmSettings) -> f32| match (&spatial, film_settings) {
                 (Some(s), Some(f)) => pick(s, f),
                 _ => 0.,
             };
@@ -1272,9 +1301,7 @@ impl Renderer {
                 0.
             }
         });
-        let grain_margin = recipe
-            .film
-            .as_ref()
+        let grain_margin = film_settings
             .zip(grain_spatial.as_ref())
             .filter(|(f, _)| f.grain_active())
             .map_or(0., |(_, grain)| grain.margin());
@@ -1292,6 +1319,7 @@ impl Renderer {
             recipe,
             options,
             &geom,
+            film_settings,
             prepared.map(|(_, pair, _)| pair),
             spatial.as_ref(),
             look,
@@ -1371,12 +1399,11 @@ impl Renderer {
         base[0] = [0.; 4];
         let (passes, output) = build_passes(
             base,
-            recipe
-                .film
-                .as_ref()
+            film_settings
                 .zip(spatial.as_ref())
                 .zip(grain_spatial.as_ref())
                 .map(|((settings, spatial), grain)| (settings, spatial, grain)),
+            recipe.film.is_none(),
             sharpen_sigma,
         );
         let candidates = match tiling {
@@ -1590,6 +1617,7 @@ impl Renderer {
         r: &EditRecipe,
         o: RenderOptions,
         g: &geometry::Geometry,
+        film: Option<&FilmSettings>,
         pair: Option<&film::FilmPair>,
         spatial: Option<&film::Spatial>,
         look: Look<'_>,
@@ -1639,7 +1667,7 @@ impl Renderer {
                 centers[i],
             ];
         }
-        if let (Some(f), Some(pair), Some(_)) = (&r.film, pair, spatial) {
+        if let (Some(f), Some(pair), Some(_)) = (film, pair, spatial) {
             let channels = |values| film::channels(values, pair.monochrome);
             let grain = pair.grain.spatial_for(g.long_edge(), f);
             let native = f.halation_params.as_ref();
@@ -2044,6 +2072,7 @@ mod coupler_chain_tests {
                 let (passes, _) = build_passes(
                     [[0.; 4]; PARAMETER_SLOTS],
                     Some((&settings, &spatial, &grain)),
+                    false,
                     1.,
                 );
                 assert!(passes.len() < MAX_DISPATCHES as usize);

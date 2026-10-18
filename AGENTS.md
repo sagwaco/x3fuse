@@ -103,6 +103,9 @@ reuse the Debug probe executable. Release builds omit the probe.
   light, white balance, curves, HSL, monochrome filters, geometry, and film settings.
   The spektrafilm model includes negative response, DIR couplers, grain, halation,
   and print paper. Film rendering starts enabled and remains experimental.
+  A look without a film stock keeps grain and halation in `recipe.effects`; the
+  renderer borrows the default stock's grain tables and runs them on the
+  scene-linear image before `finish`, with the Fill Light gain carried in alpha.
 - Editing requires Metal on macOS, DirectX 12 on Windows, or Vulkan on Linux.
   GPU work is serialized. Bounded tiles support previews and full-size exports.
   A device or driver failure is reported as an error.

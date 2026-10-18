@@ -221,7 +221,10 @@ pub(crate) fn effective_recipe(recipe: &EditRecipe) -> EditRecipe {
 /// only in the EXIF of the embedded JPEG. Earlier headers store it directly.
 /// # Safety
 /// `x3f` must be a parsed file that `control` reads.
-unsafe fn recorded_mode(x3f: *mut sys::x3f_t, control: sys::Control<'_>) -> Result<String, RenderError> {
+unsafe fn recorded_mode(
+    x3f: *mut sys::x3f_t,
+    control: sys::Control<'_>,
+) -> Result<String, RenderError> {
     let bytes = unsafe {
         if (*x3f).header.version < 0x0004_0000 {
             (*x3f).header.color_mode.map(|v| v as u8).to_vec()
@@ -235,7 +238,8 @@ unsafe fn recorded_mode(x3f: *mut sys::x3f_t, control: sys::Control<'_>) -> Resu
             if image.data.is_null() {
                 return Ok(String::new());
             }
-            let jpeg = std::slice::from_raw_parts(image.data.cast::<u8>(), image.data_size as usize);
+            let jpeg =
+                std::slice::from_raw_parts(image.data.cast::<u8>(), image.data_size as usize);
             sys::jpeg_exif::parse_jpeg_exif(jpeg)
                 .and_then(|exif| exif.picture_mode)
                 .unwrap_or_default()
@@ -268,7 +272,9 @@ impl Metadata {
         // An X3I holds complete X3F frames. Frame 0 has the camera metadata.
         let core_error = |e: x3f_core::Error| RenderError::Invalid(e.to_string());
         if x3f_core::is_x3i(path).map_err(core_error)? {
-            let frame = x3f_core::X3iContainer::open(path).map_err(core_error)?.frames()[0];
+            let frame = x3f_core::X3iContainer::open(path)
+                .map_err(core_error)?
+                .frames()[0];
             control = control.with_window(frame.offset, frame.length);
         }
         #[cfg(not(windows))]
@@ -784,6 +790,78 @@ mod tests {
                 assert_ne!(standard.rgb16(), result.rgb16());
             }
         }
+    }
+    #[test]
+    #[ignore = "requires a GPU and X3F_CAMERA_PROFILE_INPUT with a Merrill or Quattro file"]
+    fn real_fill_light_survives_generic_effects() {
+        let path = std::path::PathBuf::from(
+            std::env::var_os("X3F_CAMERA_PROFILE_INPUT").expect("Set X3F_CAMERA_PROFILE_INPUT"),
+        );
+        let cancel = AtomicBool::new(false);
+        let profiles = read_camera_profiles(&path, &cancel).unwrap();
+        let mode = profiles.as_shot.clone();
+        let image = x3f_core::prepare_scene_linear(
+            &path,
+            &x3f_core::SceneLinearOptions {
+                denoise_intensity: 0,
+                ..Default::default()
+            },
+            &cancel,
+            |_| (),
+        )
+        .unwrap();
+        let prepared = crate::PreparedImage::new(image, &cancel)
+            .unwrap()
+            .with_camera_profiles(profiles);
+        let renderer = crate::Renderer::new().unwrap();
+        let options = crate::RenderOptions {
+            max_dimension: Some(128),
+            ..Default::default()
+        };
+        let render = |fill_light: f32, effects: bool| {
+            let recipe = EditRecipe {
+                camera_profile: Some(mode.clone()),
+                film: None,
+                fill_light,
+                effects: effects.then(|| crate::EffectsSettings {
+                    grain: true,
+                    halation: true,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            };
+            let out = renderer
+                .render_prepared(&prepared, &recipe, options, &cancel)
+                .unwrap();
+            out.rgb16().unwrap().to_vec()
+        };
+        let (plain0, plain2) = (render(0., false), render(2., false));
+        let (fx0, fx2) = (render(0., true), render(2., true));
+        // Shadows: the darkest quarter of the plain render without Fill Light.
+        let mut order: Vec<usize> = (0..plain0.len() / 3).collect();
+        order.sort_by_key(|&i| plain0[i * 3 + 1]);
+        order.truncate(order.len() / 4);
+        let mean = |data: &[u16]| {
+            order
+                .iter()
+                .map(|&i| f64::from(data[i * 3 + 1]))
+                .sum::<f64>()
+                / order.len() as f64
+        };
+        let plain_ratio = mean(&plain2) / mean(&plain0);
+        let effects_ratio = mean(&fx2) / mean(&fx0);
+        eprintln!(
+            "mode {mode}: shadow mean plain {} -> {} (x{plain_ratio:.3}); effects {} -> {} (x{effects_ratio:.3})",
+            mean(&plain0),
+            mean(&plain2),
+            mean(&fx0),
+            mean(&fx2)
+        );
+        assert!(plain_ratio > 1.05, "Fill Light must brighten the shadows");
+        assert!(
+            (effects_ratio / plain_ratio - 1.).abs() < 0.15,
+            "effects must keep the Fill Light gain"
+        );
     }
     #[test]
     #[ignore = "requires a GPU and X3F_CAMERA_PROFILE_INPUT with a Merrill or Quattro file"]

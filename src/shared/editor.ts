@@ -26,6 +26,14 @@ export interface HalationParams {
   halationAmount: number
   halationSpatialScale: number
 }
+/** Grain and halation for a look without a film stock, such as a camera matching profile.
+    A film stock keeps its own grain and halation in `FilmSettings`. */
+export interface EffectsSettings {
+  grain: boolean
+  grainParams: GrainParams
+  halation: boolean
+  halationParams: HalationParams
+}
 export interface FilmSettings {
   film: number
   paper: number
@@ -98,6 +106,8 @@ export interface EditRecipe {
   pitch: number
   yaw: number
   film: FilmSettings | null
+  /** Used only while `film` is null. Missing or null renders without grain or halation. */
+  effects?: EffectsSettings | null
   monochrome: { filter: MonochromeFilter } | null
   seed: number
   /** The frames of an X3I. Absent means the middle exposure, the unfused RAW.
@@ -159,6 +169,13 @@ export function filmHalationDefaults(
         : [0.015, 0.005, 0]
   return { halationSizeRgb: [size, size, size], halationStrengthRgb: strength }
 }
+/** Generic effects for a look without a film stock: spektrafilm's schema-default grain, no halation. */
+export const DEFAULT_EFFECTS: EffectsSettings = {
+  grain: false,
+  grainParams: { rmsGranularity: [6, 8, 10], blur: 0.89, multUsmAmount: 1.5 },
+  halation: false,
+  halationParams: { ...DEFAULT_FILM.halationParams! }
+}
 /** RMS values from the bundled Spektrafilm grain presets. */
 export function filmGrainDefaults(film: number): GrainParams {
   const stock = stocks.find((item) => !item.isPaper && item.index === film)
@@ -203,6 +220,8 @@ export function defaultRecipe(): EditRecipe {
     pitch: 0,
     yaw: 0,
     film: structuredClone(DEFAULT_FILM),
+    // Written as null so Reset clears the generic effects of a camera look.
+    effects: null,
     monochrome: null,
     seed: 0
   }

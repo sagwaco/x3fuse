@@ -147,12 +147,12 @@ fn expose(@builtin(global_invocation_id) id:vec3<u32>) {
 @compute @workgroup_size(16,8)
 fn scatter_mix(@builtin(global_invocation_id) id:vec3<u32>) {
     let pos=id.xy;if !in_bounds(pos) {return;}let i=index(pos);let w=p.v[37].xyz;
-    destination.v[i]=vec4<f32>((1.0-w)*source.v[i].rgb+w*auxiliary.v[i].rgb,1);
+    destination.v[i]=vec4<f32>((1.0-w)*source.v[i].rgb+w*auxiliary.v[i].rgb,source.v[i].w);
 }
 @compute @workgroup_size(16,8)
 fn combine(@builtin(global_invocation_id) id:vec3<u32>) {
     let pos=id.xy;if !in_bounds(pos) {return;}let i=index(pos);
-    destination.v[i]=vec4<f32>(p.v[21].x*source.v[i].rgb+p.v[21].y*auxiliary.v[i].rgb,1);
+    destination.v[i]=vec4<f32>(p.v[21].x*source.v[i].rgb+p.v[21].y*auxiliary.v[i].rgb,source.v[i].w);
 }
 // Multi-bounce halation add and renormalize. `halation_midtones` gates the
 // added light by the blurred signal level, keeping halation in the highlights.
@@ -162,7 +162,7 @@ fn halation_finish(@builtin(global_invocation_id) id:vec3<u32>) {
     let base=source.v[i].rgb;let bounced=auxiliary.v[i].rgb;
     let level=max(0.0,dot(bounced,vec3<f32>(1.0/3.0)));
     let gate=mix(1.0,level/(level+0.18),p.v[38].w);
-    destination.v[i]=vec4<f32>((base+p.v[38].xyz*gate*bounced)*p.v[39].xyz,1);
+    destination.v[i]=vec4<f32>((base+p.v[38].xyz*gate*bounced)*p.v[39].xyz,source.v[i].w);
 }
 @compute @workgroup_size(16,8)
 fn develop(@builtin(global_invocation_id) id:vec3<u32>) {
@@ -294,7 +294,7 @@ fn blur(@builtin(global_invocation_id) id:vec3<u32>) {
     let falloff=-0.5/(sigma*sigma);
     var sum=vec3<f32>(0);var weight=vec3<f32>(0);
     for(var k=-radius;k<=radius;k++) {let w=exp(f32(k*k)*falloff);sum+=w*load_at(vec2<i32>(pos)+axis*k);weight+=w;}
-    destination.v[index(pos)]=vec4<f32>(sum/weight,1);
+    destination.v[index(pos)]=vec4<f32>(sum/weight,source.v[index(pos)].w);
 }
 fn rgb_to_hsv(c:vec3<f32>)->vec3<f32> {
     let mx=max(c.x,max(c.y,c.z));let mn=min(c.x,min(c.y,c.z));let d=mx-mn;

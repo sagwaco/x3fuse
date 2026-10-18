@@ -121,3 +121,39 @@ fn grain_finish(@builtin(global_invocation_id) id:vec3<u32>) {
     noise=mix(vec3<f32>(dot(noise,vec3<f32>(1.0/3.0))),noise,p.v[17].w)*p.v[17].z;
     destination.v[i]=vec4<f32>(original+noise,1);
 }
+// Generic grain on a scene-linear image. A pixel maps to a density between the
+// ends of the reference stock's grain table, brighter light to lower density.
+// The result is a gain on the linear value, so highlights keep their range.
+// Calibrated at 0.18 gray against the reference stock; a tone-dependent match would need a gradient comparison.
+const GENERIC_GRAIN_DECADES=2.5;
+fn generic_grain_range(c:u32) -> vec2<f32> {
+    let total=u32(p.v[52].x)+u32(p.v[52].y)*9u;
+    let a=spectral.v[total+c];let b=spectral.v[total+(u32(p.v[52].z)-1u)*3u+c];
+    return vec2<f32>(min(a,b),max(a,b));
+}
+fn generic_grain_fraction(linear:f32) -> f32 {
+    return clamp(-log2(max(linear,1e-6))*0.30103/GENERIC_GRAIN_DECADES,0.0,1.0);
+}
+@compute @workgroup_size(16,8)
+fn grain_to_density(@builtin(global_invocation_id) id:vec3<u32>) {
+    let pos=id.xy;if !in_bounds(pos) {return;}let i=index(pos);
+    var result=vec3<f32>(0);
+    for (var c=0u;c<3u;c++) {
+        let range=generic_grain_range(c);
+        result[c]=mix(range.x,range.y,generic_grain_fraction(source.v[i][c]));
+    }
+    destination.v[i]=vec4<f32>(result,source.v[i].w);
+}
+// `source` holds the grained density and `auxiliary` the linear image.
+@compute @workgroup_size(16,8)
+fn grain_from_density(@builtin(global_invocation_id) id:vec3<u32>) {
+    let pos=id.xy;if !in_bounds(pos) {return;}let i=index(pos);
+    let linear=auxiliary.v[i].rgb;var result=vec3<f32>(0);
+    for (var c=0u;c<3u;c++) {
+        let range=generic_grain_range(c);
+        let span=max(range.y-range.x,1e-6);
+        let before=mix(range.x,range.y,generic_grain_fraction(linear[c]));
+        result[c]=linear[c]*exp2(-(source.v[i][c]-before)/span*GENERIC_GRAIN_DECADES*3.321928);
+    }
+    destination.v[i]=vec4<f32>(result,auxiliary.v[i].w);
+}

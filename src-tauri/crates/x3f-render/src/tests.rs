@@ -281,6 +281,7 @@ fn native_stock_baselines_and_zero_effects_are_preserved() {
     let (passes, _) = build_passes(
         [[0.; 4]; PARAMETER_SLOTS],
         Some((&settings, &spatial, &grain.spatial_for(3500., &settings))),
+        false,
         0.,
     );
     assert!(passes
@@ -428,6 +429,90 @@ fn gpu_native_film_controls() {
         ..base
     };
     assert!(!render(zero, (1024, 0)).is_empty());
+}
+
+#[test]
+#[ignore = "requires hardware GPU"]
+fn gpu_generic_effects() {
+    let renderer = Renderer::new().unwrap();
+    let cancel = AtomicBool::new(false);
+    let render = |source: &SceneLinearImage, effects: Option<EffectsSettings>| {
+        renderer
+            .render_tiled(
+                source,
+                &EditRecipe {
+                    film: None,
+                    camera_profile: None,
+                    fill_light: 1.,
+                    effects,
+                    seed: 17,
+                    ..Default::default()
+                },
+                RenderOptions::default(),
+                &cancel,
+                (1024, 0),
+            )
+            .unwrap()
+            .data
+    };
+    let means = |data: &[u16]| {
+        let mut sums = [0f64; 3];
+        for pixel in data.as_chunks::<3>().0.iter() {
+            for (sum, &v) in sums.iter_mut().zip(pixel.iter()) {
+                *sum += f64::from(v);
+            }
+        }
+        sums.map(|s| s / (data.len() / 3) as f64)
+    };
+    let source = split_scene(1024, 24);
+    let off = render(&source, None);
+    let on = render(
+        &source,
+        Some(EffectsSettings {
+            grain: true,
+            halation: true,
+            ..Default::default()
+        }),
+    );
+    assert_eq!(on.len(), off.len());
+    assert_ne!(*on, *off, "effects must change pixels");
+    let (before, after) = (means(&off), means(&on));
+    println!("mean before {before:?} after {after:?}");
+    for c in 0..3 {
+        assert!(
+            (after[c] - before[c]).abs() <= 0.1 * before[c],
+            "channel {c}: {} vs {}",
+            after[c],
+            before[c]
+        );
+    }
+    let mut flat = image(256, 64);
+    flat.data.fill(0.18);
+    let grain = Some(EffectsSettings {
+        grain: true,
+        ..Default::default()
+    });
+    let grained = render(&flat, grain);
+    let clean = render(&flat, None);
+    let deviation = |data: &[u16]| {
+        let mean = means(data)[1];
+        let n = (data.len() / 3) as f64;
+        (data
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|p| (f64::from(p[1]) - mean).powi(2))
+            .sum::<f64>()
+            / n)
+            .sqrt()
+    };
+    println!(
+        "flat stddev grain {} clean {}",
+        deviation(&grained),
+        deviation(&clean)
+    );
+    assert!(deviation(&grained) > 0.);
+    assert!(deviation(&grained) > deviation(&clean));
 }
 
 #[test]
@@ -949,6 +1034,7 @@ fn halation_sigmas_follow_each_channel() {
     let (passes, _) = build_passes(
         [[0.; 4]; PARAMETER_SLOTS],
         Some((&film, &colour, &grain)),
+        false,
         0.,
     );
     for sigma in [
@@ -1000,7 +1086,7 @@ fn spektrafilm_license_ships_unmodified() {
     for (shader, expected) in [
         (
             include_bytes!("render.wgsl").as_slice(),
-            "3a55fd209a889f9992eb00b87425dbb07f5bae2e351aee8e74ca64851da06c06",
+            "77751740cfb70b773c255cf05074d2b55cd72c5851d9fb698bc23f3959d1fef8",
         ),
         (
             include_bytes!("gamut.wgsl").as_slice(),
@@ -1008,7 +1094,7 @@ fn spektrafilm_license_ships_unmodified() {
         ),
         (
             include_bytes!("grain.wgsl").as_slice(),
-            "a6751867b681204ebfce6d6382a781fa2d7fe536e2fdfdeb6c944662ce1403d2",
+            "573f9a270909e8bb1e6788d8abdc24278d643a0c03d51303234b0d7bc27de6aa",
         ),
     ] {
         assert_eq!(
@@ -1739,6 +1825,7 @@ fn gpu_grain_blur_tiles(renderer: &Renderer) {
     let (passes, _) = build_passes(
         [[0.; 4]; PARAMETER_SLOTS],
         Some((&film, &spatial, &grain)),
+        false,
         0.,
     );
     assert!(passes
@@ -2614,4 +2701,78 @@ fn gpu_experimental_reference() {
     }
     eprintln!("Experimental parity: max u16 delta {worst}");
     assert!(worst <= 40);
+}
+
+#[test]
+fn effects_without_film_add_halation_and_grain_between_start_and_finish() {
+    let reference = EffectsSettings {
+        grain: true,
+        halation: true,
+        ..Default::default()
+    }
+    .reference();
+    let spatial = film::Spatial::new(&reference, 3500., false);
+    let grain = film::grain::Grain::build_with_params(
+        &film::profile::load(reference.film as usize).unwrap(),
+        reference.grain_params.as_ref(),
+    )
+    .unwrap()
+    .spatial_for(3500., &reference);
+    assert!(grain.margin() > 0.);
+    // `plan_source` reserves a coupler margin only while couplers are on.
+    assert_eq!(reference.couplers, 0.);
+    let names = |film, effects_only| {
+        let (passes, _) = build_passes([[0.; 4]; PARAMETER_SLOTS], film, effects_only, 0.);
+        passes.iter().map(|p| p.entry).collect::<Vec<_>>()
+    };
+    let with = names(Some((&reference, &spatial, &grain)), true);
+    for entry in [
+        "halation_finish",
+        "grain_to_density",
+        "grain_layer",
+        "grain_from_density",
+    ] {
+        assert!(with.contains(&entry), "{entry}");
+    }
+    assert!(!with.contains(&"expose") && !with.contains(&"scan"));
+    let position = |entry| with.iter().position(|e| *e == entry).unwrap();
+    assert!(position("adjust") < position("halation_finish"));
+    assert!(position("halation_finish") < position("grain_to_density"));
+    assert!(position("grain_from_density") < position("finish"));
+    let (passes, _) = build_passes(
+        [[0.; 4]; PARAMETER_SLOTS],
+        Some((&reference, &spatial, &grain)),
+        true,
+        1.,
+    );
+    assert!(passes.len() < MAX_DISPATCHES as usize);
+    for pass in &passes {
+        assert_ne!(pass.buffers[0], pass.buffers[2]);
+        assert_ne!(pass.buffers[1], pass.buffers[2]);
+    }
+    assert_eq!(names(None, true), ["sample", "adjust", "finish", "output"]);
+}
+
+#[test]
+fn effects_passes_keep_the_fill_light_gain_in_alpha() {
+    // The camera look reads the gain from alpha in `finish`.
+    let shaders = [include_str!("render.wgsl"), include_str!("grain.wgsl")].join("\n");
+    for entry in [
+        "blur",
+        "scatter_mix",
+        "combine",
+        "halation_finish",
+        "grain_to_density",
+        "grain_from_density",
+    ] {
+        let body = shaders
+            .split(&format!("fn {entry}("))
+            .nth(1)
+            .and_then(|rest| rest.split("@compute").next())
+            .unwrap();
+        assert!(
+            body.contains("].w);") && !body.contains(",1);"),
+            "{entry} must pass alpha through"
+        );
+    }
 }

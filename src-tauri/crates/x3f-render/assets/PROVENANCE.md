@@ -55,13 +55,13 @@ X3Fuse metering and scanner workflow.
 
 - `licenses/COLOUR_LICENSE.txt`: cd9efcd4b6ac5218189d90ffc25f9766f8411e62c5526c452145e1cc8b19baf7
 - `src/gamut.wgsl`: 28e03614fc6efe2895b5c5161f04ab62d045171f9324d342df77f167f88b4158
-- `src/grain.wgsl`: a6751867b681204ebfce6d6382a781fa2d7fe536e2fdfdeb6c944662ce1403d2
+- `src/grain.wgsl`: 573f9a270909e8bb1e6788d8abdc24278d643a0c03d51303234b0d7bc27de6aa
 - `assets/presets/grain.toml`: e3537e9c987b3d9e5f916d697c3726014da4f6387d3f5aae57edc88ba54c9de6
 - `licenses/NUMPY_LICENSE.txt`: 1be1df33863f97a7bc1c4d67980bd6c69c9a6fef0a5ee76e6ad6cb91e56e8491
 
 - `assets/camera-tone-deltas.json`: 2ee2bea81844b572b08d4b5eb1e21f0905798ac571aef66038eaa33482d19144
 
-- `src/render.wgsl`: 3a55fd209a889f9992eb00b87425dbb07f5bae2e351aee8e74ca64851da06c06
+- `src/render.wgsl`: 77751740cfb70b773c255cf05074d2b55cd72c5851d9fb698bc23f3959d1fef8
 - `licenses/SPEKTRAFILM_LICENSE.txt`: 76d629501783ae52e8d63aee1e054c1e1a9713b9fe7d36fb306e25b1d14b24e9
 - `assets/irradiance_xy_tc.npy`: 52f90c724811f5fab80769f8548bf24d08a521eb09e65ab6e016893258d2a783
 - `assets/neutral_print_filters.json`: 22ae6cca433cfbeab87df7f17cd58a2f65e88cab845818819195e6f1a80db67c

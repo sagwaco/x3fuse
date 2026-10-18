@@ -36,6 +36,8 @@ pub struct EditRecipe {
     pub yaw: f32,
     pub monochrome: Option<MonochromeSettings>,
     pub film: Option<FilmSettings>,
+    /// Grain and halation for a look without a film stock. Ignored while `film` is Some.
+    pub effects: Option<EffectsSettings>,
     pub seed: u32,
     /// The frames of an X3I that the editor uses: by default the middle
     /// exposure, which needs no merge. X3F files ignore it. The default is not
@@ -74,6 +76,7 @@ impl Default for EditRecipe {
             yaw: 0.,
             monochrome: None,
             film: Some(FilmSettings::default()),
+            effects: None,
             seed: 0,
             x3i_source: x3f_core::X3iSource::MiddleExposure,
         }
@@ -147,6 +150,29 @@ impl Default for Crop {
             y: 0.,
             width: 1.,
             height: 1.,
+        }
+    }
+}
+
+/// Grain and halation for a look without a film stock.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
+pub struct EffectsSettings {
+    pub grain: bool,
+    pub grain_params: GrainParams,
+    pub halation: bool,
+    pub halation_params: HalationParams,
+}
+impl Default for EffectsSettings {
+    fn default() -> Self {
+        Self {
+            grain: false,
+            grain_params: GrainParams {
+                rms_granularity: [6., 8., 10.],
+                ..GrainParams::default()
+            },
+            halation: false,
+            halation_params: HalationParams::default(),
         }
     }
 }
@@ -391,7 +417,29 @@ impl EditRecipe {
         if let Some(f) = &self.film {
             f.validate()?;
         }
+        if let Some(e) = &self.effects {
+            e.grain_params.validate()?;
+            e.halation_params.validate()?;
+        }
         Ok(())
+    }
+}
+impl EffectsSettings {
+    pub(crate) fn active(&self) -> bool {
+        self.grain || self.halation
+    }
+    /// The reference stock settings that carry these effects. Its grain tables
+    /// and halation baselines serve a look without a film stock.
+    pub(crate) fn reference(&self) -> FilmSettings {
+        FilmSettings {
+            grain: self.grain,
+            grain_params: Some(self.grain_params.clone()),
+            halation: self.halation,
+            halation_params: Some(self.halation_params.clone()),
+            // No DIR couplers run here, so no tile margin is reserved for them.
+            couplers: 0.,
+            ..FilmSettings::default()
+        }
     }
 }
 impl FilmSettings {
@@ -452,7 +500,53 @@ impl FilmSettings {
 
 #[cfg(test)]
 mod tests {
-    use super::GrainParams;
+    use super::{EditRecipe, EffectsSettings, GrainParams};
+
+    #[test]
+    fn effects_missing_and_null_are_none_and_an_object_round_trips() {
+        for json in [r#"{}"#, r#"{"effects":null}"#] {
+            let recipe: EditRecipe = serde_json::from_str(json).unwrap();
+            assert_eq!(recipe.effects, None);
+            // The key must be present: the editor's defaults write it as null.
+            assert_eq!(
+                serde_json::to_value(&recipe).unwrap().get("effects"),
+                Some(&serde_json::Value::Null)
+            );
+        }
+        let effects = EffectsSettings {
+            grain: true,
+            halation: true,
+            ..Default::default()
+        };
+        assert_eq!(effects.grain_params.rms_granularity, [6., 8., 10.]);
+        let recipe = EditRecipe {
+            effects: Some(effects),
+            ..Default::default()
+        };
+        let saved = serde_json::to_value(&recipe).unwrap();
+        assert_eq!(saved["effects"]["grainParams"]["rmsGranularity"][1], 8.);
+        let restored: EditRecipe = serde_json::from_value(saved).unwrap();
+        assert_eq!(restored, recipe);
+    }
+
+    #[test]
+    fn effects_with_invalid_ranges_fail_validation() {
+        let mut recipe = EditRecipe {
+            effects: Some(EffectsSettings::default()),
+            ..Default::default()
+        };
+        assert!(recipe.validate().is_ok());
+        recipe.effects.as_mut().unwrap().grain_params.blur = -1.;
+        assert!(recipe.validate().is_err());
+        recipe.effects = Some(EffectsSettings::default());
+        recipe
+            .effects
+            .as_mut()
+            .unwrap()
+            .halation_params
+            .halation_amount = 1e6;
+        assert!(recipe.validate().is_err());
+    }
 
     #[test]
     fn grain_rms_base_round_trips_without_changing_channels() {
