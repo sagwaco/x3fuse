@@ -377,6 +377,10 @@ export const useQueueStore = create<QueueState>((set, get) => {
         pin = follow(files, s.filter)
         return { files, selectedIds: pin.ids, activeId: pin.active }
       })
+      // Leaving the queue ends the following, also when the user returns before the next chunk.
+      const leave = useNavStore.subscribe(({ screen }) => {
+        if (screen !== 'queue') pin = null
+      })
 
       // Re-evaluate priorities between batches: rapid browsing can move far ahead of import.
       const remaining = new Set(placeholders.map((file) => file.id))
@@ -416,6 +420,8 @@ export const useQueueStore = create<QueueState>((set, get) => {
           chunk.filter((file) => !metaById.has(file.id)).map((file) => file.id)
         )
         set((s) => {
+          // A response for rows that are all gone, as after Clear, changes nothing.
+          if (!s.files.some((f) => metaById.has(f.id) || unresolved.has(f.id))) return s
           const files = s.files.flatMap((f) => {
             if (unresolved.has(f.id)) return []
             const dto = metaById.get(f.id)
@@ -439,24 +445,24 @@ export const useQueueStore = create<QueueState>((set, get) => {
             ]
           })
           // The identity of the selection shows that nothing else changed it.
-          if (
-            pin &&
-            s.selectedIds === pin.ids &&
-            s.activeId === pin.active &&
-            useNavStore.getState().screen === 'queue'
-          ) {
+          if (pin && s.selectedIds === pin.ids && s.activeId === pin.active) {
             const next = follow(files, s.filter)
             if (next.active !== pin.active) pin = next
             return { files, selectedIds: pin.ids, activeId: pin.active }
           }
           pin = null
+          // Keep the selection object when it loses nothing: another import can follow it.
+          const lost = [...s.selectedIds].some((id) => unresolved.has(id))
           return {
             files,
-            selectedIds: new Set([...s.selectedIds].filter((id) => !unresolved.has(id))),
+            selectedIds: lost
+              ? new Set([...s.selectedIds].filter((id) => !unresolved.has(id)))
+              : s.selectedIds,
             activeId: s.activeId && unresolved.has(s.activeId) ? null : s.activeId
           }
         })
       }
+      leave()
     },
 
     removeFiles(ids) {

@@ -6,6 +6,7 @@ const invoke = vi.fn<(channel: string, payload: { paths: string[] }) => Promise<
 ;(window as unknown as { x3f: unknown }).x3f = { invoke }
 const { useQueueStore: store, shownFiles } = await import('../src/renderer/src/stores/queueStore')
 const { useSettingsStore } = await import('../src/renderer/src/stores/settingsStore')
+const { useNavStore } = await import('../src/renderer/src/stores/navStore')
 
 const paths = Array.from({ length: 17 }, (_, i) => `/photos/${String(i).padStart(2, '0')}.X3F`)
 
@@ -19,6 +20,14 @@ function metadata(paths: string[]): X3FFileDTO[] {
     aspectRatio: 1.5,
     exif: [{ label: 'Camera', value: 'Sigma' }],
     frames: 7
+  }))
+}
+
+/** Later paths are older photos. */
+function dated(chunk: string[]): X3FFileDTO[] {
+  return metadata(chunk).map((file) => ({
+    ...file,
+    capturedDate: new Date(Date.UTC(2024, 0, 31 - paths.indexOf(file.path))).toISOString()
   }))
 }
 
@@ -46,6 +55,7 @@ beforeEach(() => {
     filter: { flags: [], rating: 0, ratingOp: 'atLeast' }
   })
   useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS }, loaded: true })
+  useNavStore.setState({ screen: 'queue' })
 })
 
 afterEach(() => vi.restoreAllMocks())
@@ -204,13 +214,7 @@ describe('progressive file import', () => {
 
   it('follows the first shown photo while dates arrive', async () => {
     useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, sortField: 'Date' } })
-    // Later paths are older photos.
-    invoke.mockImplementation(async (_channel, payload) =>
-      metadata(payload.paths).map((file) => ({
-        ...file,
-        capturedDate: new Date(Date.UTC(2024, 0, 31 - paths.indexOf(file.path))).toISOString()
-      }))
-    )
+    invoke.mockImplementation(async (_channel, payload) => dated(payload.paths))
     const active: string[] = []
     const off = store.subscribe((s) => {
       const path = s.files.find((file) => file.id === s.activeId)?.path
@@ -226,6 +230,41 @@ describe('progressive file import', () => {
     // Placeholders wait after the loaded photos, so the selection stays on the first row.
     expect(active).toEqual([paths[0], paths[7], paths[15], paths[16]])
     expect(shownFiles(store.getState())[0].id).toBe(store.getState().activeId)
+  })
+
+  it('ignores a response for rows that a Clear removed', async () => {
+    const a = deferred()
+    const b = deferred()
+    invoke.mockReturnValueOnce(a.promise).mockReturnValueOnce(b.promise)
+    const importingA = store.getState().addFiles(paths.slice(0, 3))
+    store.getState().clearQueue()
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, sortField: 'Date' } })
+    invoke.mockImplementation(async (_channel, payload) => dated(payload.paths))
+    const importingB = store.getState().addFiles(paths)
+    a.resolve(metadata(paths.slice(0, 3)))
+    await importingA
+    b.resolve(dated(paths.slice(0, 8)))
+    await importingB
+    // Import B still follows its first shown photo: the oldest one.
+    const oldest = store.getState().files.find((file) => file.path === paths[16])!.id
+    expect(store.getState().activeId).toBe(oldest)
+    expect(store.getState().selectedIds).toEqual(new Set([oldest]))
+  })
+
+  it('stops following after a visit to another screen', async () => {
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, sortField: 'Date' } })
+    const first = deferred()
+    invoke
+      .mockReturnValueOnce(first.promise)
+      .mockImplementation(async (_channel, payload) => dated(payload.paths))
+    const importing = store.getState().addFiles(paths)
+    const activeId = store.getState().activeId
+    useNavStore.getState().goToExport()
+    useNavStore.getState().goToQueue()
+    first.resolve(dated(paths.slice(0, 8)))
+    await importing
+    expect(store.getState().activeId).toBe(activeId)
+    expect(store.getState().selectedIds).toEqual(new Set([activeId]))
   })
 
   it('selects nothing while a filter hides every placeholder', async () => {
