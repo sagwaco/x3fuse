@@ -769,13 +769,14 @@ describe('image points and regions', () => {
   function setupRegion() {
     const onImagePoint = vi.fn()
     const onImageRegion = vi.fn()
-    const show = (outline?: Region, armed = true): void => {
+    const show = (outline?: Region, armed = true, selectionKey?: string): void => {
       result.rerender(
         <ZoomablePreview
           file={file}
           onImagePoint={armed ? onImagePoint : undefined}
           onImageRegion={armed ? onImageRegion : undefined}
           outline={outline}
+          selectionKey={selectionKey}
         />
       )
     }
@@ -943,6 +944,27 @@ describe('image points and regions', () => {
     expect(Number(outline()?.getAttribute('width'))).toBeCloseTo(640)
     fireEvent.pointerUp(surface, { pointerId: 1 })
     expect(onImageRegion).toHaveBeenCalledWith(closeTo({ x: 0.1, y: 0.1, width: 0.4, height: 0.4 }))
+  })
+
+  it('ends a drag or a key selection in progress when the picture changes', () => {
+    const { surface, outline, show, onImagePoint, onImageRegion } = setupRegion()
+    show(undefined, true, 'portrait')
+    fireEvent.pointerDown(surface, { button: 0, clientX: 80, clientY: 60 })
+    pointerMove(surface, { clientX: 400, clientY: 300 })
+    show(undefined, true, 'landscape')
+    expect(outline()).toBeNull()
+    fireEvent.pointerUp(surface)
+    fireEvent.click(surface, { clientX: 400, clientY: 300, detail: 1 })
+    expect(onImageRegion).not.toHaveBeenCalled()
+    expect(onImagePoint).not.toHaveBeenCalled()
+    // The same picture keeps a key selection; another one ends it.
+    fireEvent.keyDown(surface, { key: 'ArrowRight' })
+    show(undefined, true, 'landscape')
+    expect(outline()).not.toBeNull()
+    show(undefined, true, 'portrait')
+    expect(outline()).toBeNull()
+    expect(fireEvent.keyDown(surface, { key: 'Enter' })).toBe(true)
+    expect(onImagePoint).not.toHaveBeenCalled()
   })
 
   it('cancels a drag on Escape or when the mode ends, without a pan or a click', () => {

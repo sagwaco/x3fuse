@@ -45,6 +45,7 @@ export function ZoomablePreview({
   onImagePoint,
   onImageRegion,
   outline,
+  selectionKey,
   naturalSize,
   tile,
   cache,
@@ -61,6 +62,8 @@ export function ZoomablePreview({
   onImageRegion?: (region: PreviewRegion) => void
   /** A rectangle, 0 to 1 of the image, to show as a dashed outline. */
   outline?: PreviewRegion | null
+  /** Names the picture that selections are made on. A change ends a selection in progress. */
+  selectionKey?: string | null
   naturalSize?: { width: number; height: number }
   tile?: Tile | null
   /**
@@ -337,10 +340,10 @@ export function ZoomablePreview({
     setBand(null)
     setMarker(null)
   }, [])
+  // A selection ends without a report when the mode ends or the picture changes, as when
+  // a frame of other geometry paints during a drag.
   const armed = !!onImageRegion
-  useEffect(() => {
-    if (!armed) cancelSelection()
-  }, [armed, cancelSelection])
+  useEffect(cancelSelection, [armed, selectionKey, cancelSelection])
 
   const onDimensions = useCallback(({ width, height }: { width: number; height: number }): void => {
     setLoaded((previous) =>

@@ -44,39 +44,52 @@ vi.mock('../src/renderer/src/components/DevelopingPreview', async () => {
     }
   }
 })
-vi.mock('../src/renderer/src/components/ZoomablePreview', () => ({
-  ZoomablePreview: ({
+// One test uses the real preview, with frame decoding under its control.
+type Decoded = { image: { width: number; height: number }; width: number; height: number }
+const real = vi.hoisted(() => ({
+  preview: false,
+  decode: vi.fn<(url: string, ready: (preview: Decoded) => void) => () => void>(() => () => {})
+}))
+vi.mock('../src/renderer/src/lib/fitPreviews', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/renderer/src/lib/fitPreviews')>()),
+  subscribeFitPreview: real.decode
+}))
+vi.mock('../src/renderer/src/components/ZoomablePreview', async () => {
+  const actual = await vi.importActual<
+    typeof import('../src/renderer/src/components/ZoomablePreview')
+  >('../src/renderer/src/components/ZoomablePreview')
+  type Props = Parameters<typeof actual.ZoomablePreview>[0]
+  return {
+    ZoomablePreview: (props: Props) =>
+      real.preview ? <actual.ZoomablePreview {...props} /> : <MockPreview {...props} />
+  }
+  function MockPreview({
     file,
     onImagePoint,
     onImageRegion,
     outline,
     onPaint,
     onViewportChange
-  }: {
-    file: X3FFileDTO
-    onImagePoint?: (x: number, y: number) => void
-    onImageRegion?: (region: PreviewRegion) => void
-    outline?: PreviewRegion | null
-    onPaint?: (url: string) => void
-    onViewportChange?: unknown
-  }) => (
-    <div
-      data-editor-frame={displayPreviewUrl(file, 'full')}
-      data-picking={!!onImagePoint}
-      data-qualifying={!!onImageRegion}
-      data-outline={outline ? JSON.stringify(outline) : undefined}
-      data-viewport={!!onViewportChange}
-    >
-      {/* The real preview paints a frame only after it decodes. */}
-      <button data-paint onClick={() => onPaint?.(displayPreviewUrl(file, 'full'))} />
-      <button data-point onClick={() => onImagePoint?.(0.5, 0.5)} />
-      <button
-        data-drag
-        onClick={() => onImageRegion?.({ x: 0.1, y: 0.2, width: 0.3, height: 0.4 })}
-      />
-    </div>
-  )
-}))
+  }: Props): React.JSX.Element {
+    return (
+      <div
+        data-editor-frame={displayPreviewUrl(file, 'full')}
+        data-picking={!!onImagePoint}
+        data-qualifying={!!onImageRegion}
+        data-outline={outline ? JSON.stringify(outline) : undefined}
+        data-viewport={!!onViewportChange}
+      >
+        {/* The real preview paints a frame only after it decodes. */}
+        <button data-paint onClick={() => onPaint?.(displayPreviewUrl(file, 'full'))} />
+        <button data-point onClick={() => onImagePoint?.(0.5, 0.5)} />
+        <button
+          data-drag
+          onClick={() => onImageRegion?.({ x: 0.1, y: 0.2, width: 0.3, height: 0.4 })}
+        />
+      </div>
+    )
+  }
+})
 vi.mock('../src/renderer/src/components/CropPreview', () => ({
   CropPreview: ({ onPaint }: { onPaint?: () => void }) => (
     <div data-crop-preview>
@@ -207,6 +220,8 @@ afterEach(() => {
   queue.setState(initialQueue, true)
   useSettingsStore.setState(initialSettings, true)
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
+  real.preview = false
 })
 
 it('shows the saved thumbnail during RAW preparation and enables editing only for the live frame', () => {
@@ -913,6 +928,95 @@ it('qualifies a point or a dragged area, apart from the white balance picker', (
   act(() => editor.setState({ session: other, preview: { ...frame, sessionId: 'session-b' } }))
   expect(region()).toBeNull()
   expect(qualifying()).toBe('false')
+})
+
+it('drops a drag that began on a frame of other geometry when the next frame paints', () => {
+  // The real preview and image, with frames that decode when the test says so.
+  real.preview = true
+  const decoding = new Map<string, (preview: Decoded) => void>()
+  real.decode.mockImplementation((url, ready) => {
+    decoding.set(url, ready)
+    return () => {}
+  })
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+    drawImage: vi.fn()
+  } as unknown as CanvasRenderingContext2D)
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      constructor(private callback: ResizeObserverCallback) {}
+      observe(target: Element): void {
+        if (target.getAttribute('aria-label') !== 'Image preview') return
+        const entry = { target, contentRect: { width: 800, height: 600 } } as ResizeObserverEntry
+        this.callback([entry], this as unknown as ResizeObserver)
+      }
+      unobserve(): void {}
+      disconnect(): void {}
+    }
+  )
+  vi.stubGlobal(
+    'PointerEvent',
+    class extends MouseEvent {
+      pointerId = 1
+      isPrimary = true
+    }
+  )
+  const rotated = { ...recipe, rotation: 1 }
+  const portrait = { ...frame, url: 'x3f-edit://localhost/portrait' }
+  const landscape = { ...frame, url: 'x3f-edit://localhost/landscape' }
+  editor.setState({
+    session,
+    documents: { [file.path]: { ...doc, recipe: rotated } },
+    loading: false,
+    preview: portrait,
+    previewGeometry: geometryKey(rotated)
+  })
+  const view = render(<EditorScreen />)
+  const tall = { width: 683, height: 1024 }
+  act(() => decoding.get(portrait.url)!({ image: tall, ...tall }))
+  const surface = screen.getByRole('region', { name: 'Image preview' })
+  const media = view.container.querySelector<HTMLElement>('.preview-image')!
+  media.getBoundingClientRect = () => ({ left: 0, top: 0, width: 800, height: 600 }) as DOMRect
+  surface.setPointerCapture = vi.fn()
+  surface.hasPointerCapture = () => true
+  surface.releasePointerCapture = vi.fn()
+  const band = (): Element | null => view.container.querySelector('[data-region-outline]')
+  const region = (): unknown => JSON.parse(scopeAttribute('data-scope-region') ?? 'null')
+  const drag = (): void => {
+    fireEvent.pointerDown(surface, { button: 0, clientX: 80, clientY: 60 })
+    fireEvent.pointerMove(surface, { clientX: 400, clientY: 300 })
+  }
+  fireEvent.click(screen.getByRole('tab', { name: 'Qualifier' }))
+
+  // An undone rotation renders. Its landscape frame still decodes, so the portrait
+  // frame stays on screen, and a drag begins on it.
+  act(() =>
+    editor.setState({
+      documents: { [file.path]: doc },
+      preview: landscape,
+      previewGeometry: geometryKey(recipe)
+    })
+  )
+  drag()
+  expect(band()).not.toBeNull()
+  // The landscape frame paints before the release: the drag ends without an area.
+  const wide = { width: 1024, height: 683 }
+  act(() => decoding.get(landscape.url)!({ image: wide, ...wide }))
+  expect(band()).toBeNull()
+  fireEvent.pointerUp(surface)
+  fireEvent.click(surface, { clientX: 400, clientY: 300 })
+  expect(region()).toBeNull()
+  // The Qualifier stays armed.
+  expect(screen.queryByText(t('editor.scopeQualifyHint'))).not.toBeNull()
+  // A drag on the landscape frame measures its area.
+  drag()
+  fireEvent.pointerUp(surface)
+  expect(region()).toEqual({
+    x: expect.closeTo(0.1),
+    y: expect.closeTo(0.1),
+    width: expect.closeTo(0.4),
+    height: expect.closeTo(0.4)
+  })
 })
 
 it('inverts a negative print on request and shows a tiny scope while the scope is scrolled away', () => {
