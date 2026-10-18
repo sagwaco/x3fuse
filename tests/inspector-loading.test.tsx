@@ -61,7 +61,8 @@ describe('inspector metadata loading', () => {
       activeId: files[1].id
     })
     render(<Inspector />)
-    expect(screen.getByText('Info - 2 images')).toBeTruthy()
+    expect(screen.getByText('2 images')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Photo info' })).toBeNull()
     const stack = screen.getByRole('group', { name: '2 images' })
     expect(stack.querySelectorAll('img')).toHaveLength(2)
     expect(stack.firstElementChild?.querySelector('img')?.getAttribute('alt')).toBe('b.X3F')
@@ -69,57 +70,63 @@ describe('inspector metadata loading', () => {
     expect(screen.getByText('Scopes not available for multiple images')).toBeTruthy()
     expect(screen.queryByTestId('scope')).toBeNull()
     expect(screen.queryByRole('button', { name: 'Scope view' })).toBeNull()
-    // The card shows the common camera and a mixed lens. Other mixed rows come below it.
-    expect(screen.getByText('SIGMA').getAttribute('title')).toBe('SIGMA')
-    expect(screen.getByText('Multiple values', { selector: 'p > span' })).toBeTruthy()
-    expect(screen.queryByText('Camera')).toBeNull()
-    expect(screen.queryByText('Lens')).toBeNull()
-    for (const label of ['ISO', 'Copyright']) {
+    // A common value can be copied. A mixed value cannot.
+    expect(screen.getByText('Camera').nextElementSibling?.textContent).toBe('SIGMA')
+    expect(screen.getByRole('button', { name: 'SIGMA' })).toBeTruthy()
+    for (const label of ['ISO', 'Lens', 'Copyright']) {
       expect(screen.getByText(label).nextElementSibling?.textContent).toBe('Multiple values')
       expect(screen.getByText(label).nextElementSibling?.classList.contains('text-tone-500')).toBe(
         true
       )
     }
-    // A selection has no single file size.
-    expect(screen.queryByText(/ MB$/)).toBeNull()
-    expect(screen.getByText('X3F')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Multiple values' })).toBeNull()
     expect(invoke).not.toHaveBeenCalled()
 
     act(() => useQueueStore.getState().setSelection(new Set([files[0].id]), files[0].id))
-    expect(screen.getByText('Info - a.X3F')).toBeTruthy()
+    // The title is the file name, with the photo info beside it.
+    expect(
+      screen.getByRole('button', { name: 'Photo info' }).previousElementSibling?.textContent
+    ).toBe('a.X3F')
+    expect(screen.queryByText('Info')).toBeNull()
     expect(screen.queryByRole('group')).toBeNull()
     expect(screen.getByAltText('a.X3F')).toBeTruthy()
     expect(screen.getByTestId('scope')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Scope view' })).toBeTruthy()
-    expect(screen.getByText('ISO 100')).toBeTruthy()
-    expect(screen.getByText('50mm')).toBeTruthy()
-    expect(screen.queryByText('ISO')).toBeNull()
+    expect(screen.getByText('ISO').nextElementSibling?.textContent).toBe('100')
     act(() => useQueueStore.getState().deselectAll())
     expect(screen.getByText('Info')).toBeTruthy()
     expect(screen.getByText('Select a file to see its details')).toBeTruthy()
   })
 
-  it('lists the rows that the card does not show below it, with the file size', () => {
-    files = [
-      {
-        ...files[0],
-        fileSize: 52_400_000,
-        exif: [
-          { label: 'Camera', value: 'SIGMA sd Quattro H' },
-          { label: 'Dimensions', value: '6192 × 4128' },
-          { label: 'Captured', value: '2024-05-01 10:00:00' },
-          { label: 'Program', value: 'Aperture-priority AE' }
-        ]
-      }
-    ]
+  it('copies a value on click and confirms it briefly', async () => {
+    vi.useFakeTimers()
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+    files = [{ ...files[0], exif: [{ label: 'Lens', value: '17-50mm' }] }]
     useQueueStore.setState({ files, selectedIds: new Set([files[0].id]), activeId: files[0].id })
     render(<Inspector />)
-    for (const text of ['SIGMA sd Quattro H', 'No lens information', '26 MP', '52.4 MB', 'X3F'])
-      expect(screen.getByText(text)).toBeTruthy()
-    expect(screen.getByText('6192 × 4128', { exact: false })).toBeTruthy()
-    expect(screen.queryByText('Dimensions')).toBeNull()
-    expect(screen.getByText('Captured').nextElementSibling?.textContent).toBe('2024-05-01 10:00:00')
-    expect(screen.getByText('Program').nextElementSibling?.textContent).toBe('Aperture-priority AE')
+    const value = screen.getByRole('button', { name: '17-50mm' })
+    await act(async () => value.click())
+    expect(writeText).toHaveBeenCalledWith('17-50mm')
+    expect(value.textContent).toBe('Copied')
+    // A second copy restarts the confirmation.
+    act(() => vi.advanceTimersByTime(1000))
+    await act(async () => value.click())
+    act(() => vi.advanceTimersByTime(1000))
+    expect(value.textContent).toBe('Copied')
+    act(() => vi.advanceTimersByTime(200))
+    expect(value.textContent).toBe('17-50mm')
+    // Another photo does not show the confirmation for its own value.
+    await act(async () => value.click())
+    const other = { ...files[0], id: 'other', exif: [{ label: 'Lens', value: '30mm' }] }
+    act(() =>
+      useQueueStore.setState({ files: [other], selectedIds: new Set(['other']), activeId: 'other' })
+    )
+    expect(screen.getByText('Lens').nextElementSibling?.textContent).toBe('30mm')
+    // Without a clipboard API, a click does nothing.
+    delete (navigator as { clipboard?: unknown }).clipboard
+    await act(async () => screen.getByRole('button', { name: '30mm' }).click())
+    expect(screen.getByText('Lens').nextElementSibling?.textContent).toBe('30mm')
   })
 
   it('bounds the preview stack while retaining the full selection count and active image', () => {
@@ -135,7 +142,7 @@ describe('inspector metadata loading', () => {
       activeId: files[999].id
     })
     render(<Inspector />)
-    expect(screen.getByText('Info - 1000 images')).toBeTruthy()
+    expect(screen.getByText('1000 images')).toBeTruthy()
     expect(screen.getAllByRole('img')).toHaveLength(3)
     expect(
       screen.getByRole('group').firstElementChild?.querySelector('img')?.getAttribute('alt')

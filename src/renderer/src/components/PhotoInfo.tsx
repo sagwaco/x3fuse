@@ -35,7 +35,7 @@ function PhotoInfoCard({ file }: { file: X3FFileDTO }): React.JSX.Element {
   return (
     <PhotoCard
       rows={Array.isArray(rows) ? rows : []}
-      files={[file]}
+      file={file}
       loading={rows === 'loading'}
       className="w-80"
     />

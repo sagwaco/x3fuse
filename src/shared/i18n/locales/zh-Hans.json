@@ -177,6 +177,8 @@
   "inspector.no_selection": "选择文件以查看其详细信息",
   "inspector.no_preview": "无可用预览",
   "inspector.no_metadata": "无可用元数据",
+  "inspector.copy_value": "点按以复制",
+  "inspector.copied": "已复制",
   "export.title": "导出",
   "export.back": "返回",
   "export.images_heading": "要导出的图像",

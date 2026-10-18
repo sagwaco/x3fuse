@@ -177,6 +177,8 @@
   "inspector.no_selection": "ファイルを選択すると詳細が表示されます",
   "inspector.no_preview": "プレビューを利用できません",
   "inspector.no_metadata": "メタデータがありません",
+  "inspector.copy_value": "クリックしてコピー",
+  "inspector.copied": "コピーしました",
   "export.title": "書き出し",
   "export.back": "戻る",
   "export.images_heading": "書き出す画像",

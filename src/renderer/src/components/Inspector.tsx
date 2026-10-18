@@ -1,7 +1,8 @@
+import { useEffect, useState } from 'react'
 import { ResizablePanel } from './ui/resizablePanel'
 import { displayPreviewUrl, isRenderedPreview } from '@shared/preview'
 import { useShallow } from 'zustand/react/shallow'
-import type { X3FFileDTO } from '@shared/types'
+import type { ExifPair, X3FFileDTO } from '@shared/types'
 import { useQueueStore } from '../stores/queueStore'
 import { useSelectionExif } from '../hooks/useExif'
 import { useDelayedLoading } from '../hooks/useDelayedLoading'
@@ -15,7 +16,7 @@ import { PreviewMinimap } from './PreviewMinimap'
 import { OrientedImage } from './OrientedImage'
 import { PanelSection as Section } from './ui/panelSection'
 import { CullControls } from './CullControls'
-import { PhotoCard } from './PhotoCard'
+import { PhotoInfo } from './PhotoInfo'
 
 /** Selection previews, scopes for a single image, and shared EXIF metadata. */
 export function Inspector(): React.JSX.Element {
@@ -26,15 +27,20 @@ export function Inspector(): React.JSX.Element {
   const activeId = useQueueStore((s) => s.activeId)
   const active = selected.find((file) => file.id === activeId) ?? selected[0]
   const multiple = selected.length > 1
-  const title = multiple ? t('batch.image_count', { count: selected.length }) : active?.fileName
+  const title = multiple ? t('batch.image_count', { count: selected.length }) : t('inspector.title')
 
   return (
     <ResizablePanel kind="inspector">
       <div className="flex h-8 shrink-0 items-center border-b border-ink/10 px-3 font-mono text-xs font-medium uppercase tracking-[0.12em] text-tone-400">
-        <span className="ml-0.5 truncate" title={title}>
-          {t('inspector.title')}
-          {title ? ` - ${title}` : ''}
-        </span>
+        <div className="ml-0.5 flex min-w-0 items-center gap-1.5">
+          {active && !multiple ? (
+            <PhotoInfo file={active} />
+          ) : (
+            <span className="truncate" title={title}>
+              {title}
+            </span>
+          )}
+        </div>
       </div>
 
       {!active ? (
@@ -70,7 +76,7 @@ export function Inspector(): React.JSX.Element {
           </Section>
 
           <Section title={t('inspector.metadata')}>
-            <ExifCard files={selected} />
+            <ExifTable files={selected} />
           </Section>
         </div>
       )}
@@ -114,12 +120,19 @@ function PreviewStack({
   )
 }
 
-function ExifCard({ files }: { files: X3FFileDTO[] }): React.JSX.Element {
+function ExifTable({ files }: { files: X3FFileDTO[] }): React.JSX.Element {
   const data = useSelectionExif(files)
   const showLoading = useDelayedLoading(
     data === 'loading',
     JSON.stringify(files.map((file) => [file.id, file.path]))
   )
+  // The row that was copied last, for a short confirmation. Each copy restarts it.
+  const [copied, setCopied] = useState<ExifPair>()
+  useEffect(() => {
+    if (!copied) return
+    const timer = setTimeout(() => setCopied(undefined), 1200)
+    return () => clearTimeout(timer)
+  }, [copied])
 
   if (data === 'loading') {
     return (
@@ -134,21 +147,51 @@ function ExifCard({ files }: { files: X3FFileDTO[] }): React.JSX.Element {
 
   const values = data.map((rows) => new Map(rows.map(({ label, value }) => [label, value])))
   const labels = [...new Set(data.flatMap((rows) => rows.map((row) => row.label)))]
-  const rows = labels.map((label) => ({
-    label,
-    value: values[0].get(label) ?? '',
-    mixed: values.some((entry) => entry.get(label) !== values[0].get(label))
-  }))
+  const rows = labels.map((label) => {
+    const value = values[0].get(label)
+    const common = value !== undefined && values.every((entry) => entry.get(label) === value)
+    return {
+      label,
+      value: common ? value : t('inspector.multiple_values'),
+      common
+    }
+  })
   if (rows.length === 0) {
     return <p className="text-xs text-tone-600">{t('inspector.no_metadata')}</p>
   }
 
   return (
-    <PhotoCard
-      rows={rows}
-      files={files}
-      details
-      className="rounded-xl border border-ink/15 bg-ink/[0.03] text-xs"
-    />
+    <dl className="space-y-1.5">
+      {rows.map((row) => (
+        <div key={row.label} className="flex items-baseline justify-between gap-3 text-xs">
+          <dt className="shrink-0 text-tone-500">{row.label}</dt>
+          {row.common ? (
+            <dd className="min-w-0 text-right" aria-live="polite">
+              {/* A click copies the value. */}
+              <button
+                type="button"
+                title={`${row.value}\n${t('inspector.copy_value')}`}
+                className="max-w-full cursor-default truncate rounded text-tone-200 hover:text-tone-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/50"
+                onClick={() =>
+                  // Some WebKitGTK versions have no clipboard API.
+                  navigator.clipboard?.writeText(row.value).then(
+                    () => setCopied({ label: row.label, value: row.value }),
+                    () => undefined
+                  )
+                }
+              >
+                {copied?.label === row.label && copied.value === row.value
+                  ? t('inspector.copied')
+                  : row.value}
+              </button>
+            </dd>
+          ) : (
+            <dd className="truncate text-right text-tone-500" title={row.value}>
+              {row.value}
+            </dd>
+          )}
+        </div>
+      ))}
+    </dl>
   )
 }

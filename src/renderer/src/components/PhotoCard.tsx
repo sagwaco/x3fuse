@@ -4,27 +4,20 @@ import { cn } from '../lib/cn'
 import { formatBytes } from '../lib/format'
 import { t } from '../lib/strings'
 
-/**
- * The capture details, in the layout of the Photos app info card. A mixed row
- * has different values in the files. With `details`, the rows that the card
- * does not show come below it.
- */
+/** The capture details of one file, in the layout of the Photos app info card. */
 export function PhotoCard({
   rows,
-  files,
+  file,
   loading = false,
-  details = false,
   className
 }: {
-  rows: readonly (ExifPair & { mixed?: boolean })[]
-  files: readonly Pick<X3FFileDTO, 'fileName' | 'fileSize'>[]
+  rows: readonly ExifPair[]
+  file: Pick<X3FFileDTO, 'fileName' | 'fileSize'>
   loading?: boolean
-  details?: boolean
   className?: string
 }): React.JSX.Element {
   // The labels are the inspector rows from src-tauri/src/metadata.rs.
-  const exif = new Map(rows.filter((row) => !row.mixed).map((row) => [row.label, row.value]))
-  const mixed = new Set(rows.filter((row) => row.mixed).map((row) => row.label))
+  const exif = new Map(rows.map((row) => [row.label, row.value]))
   // ExifTool writes 4.0 for f/4 and 30.0 mm for 30 mm. Show 4 and 30.
   const number = (label: string): number | undefined => {
     const value = parseFloat(exif.get(label)?.replace('f/', '') ?? '')
@@ -45,29 +38,17 @@ export function PhotoCard({
       ['Shutter', exif.has('Shutter') && `${exif.get('Shutter')} s`]
     ] as const
   ).filter(([, text]) => text)
-  // A file size or an extension shows only when it is the same for all files.
-  const extensions = new Set(files.map((file) => file.fileName.split('.').pop()?.toUpperCase()))
-  const extension = extensions.size === 1 ? [...extensions][0] : undefined
-  const fileSize = files.length === 1 ? files[0].fileSize : undefined
-  // The card always shows the camera and the lens.
-  const shown = new Set<string>(['Camera', 'Lens', ...capture.map(([label]) => label)])
-  if (flash) shown.add('Flash')
-  if (metering) shown.add('Metering')
-  if (dimensions) shown.add('Dimensions')
-  const rest = details ? rows.filter((row) => !shown.has(row.label)) : []
-  const multiple = <span className="text-tone-500">{t('inspector.multiple_values')}</span>
+  const extension = file.fileName.split('.').pop()?.toUpperCase()
   return (
     <div className={cn('text-[13px] text-tone-100', className)}>
       <div className="space-y-1 p-3">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <p className="truncate" title={exif.get('Camera')}>
-              {mixed.has('Camera') ? multiple : (exif.get('Camera') ?? '-')}
+              {exif.get('Camera') ?? '-'}
             </p>
             <p className="truncate" title={exif.get('Lens')}>
-              {mixed.has('Lens')
-                ? multiple
-                : (exif.get('Lens') ?? (loading ? '-' : t('editor.noLens')))}
+              {exif.get('Lens') ?? (loading ? '-' : t('editor.noLens'))}
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-2">
@@ -91,7 +72,7 @@ export function PhotoCard({
               </span>
             </>
           )}
-          {fileSize != null && <span>{formatBytes(fileSize)}</span>}
+          {file.fileSize != null && <span>{formatBytes(file.fileSize)}</span>}
           {extension && (
             <span className="rounded bg-tone-500 px-1 text-[10px] font-bold leading-4 text-tone-900">
               {extension}
@@ -105,24 +86,6 @@ export function PhotoCard({
             <span key={label}>{text}</span>
           ))}
         </div>
-      )}
-      {rest.length > 0 && (
-        <dl className="space-y-1 border-t border-ink/15 px-3 py-2">
-          {rest.map((row) => {
-            const value = row.mixed ? t('inspector.multiple_values') : row.value
-            return (
-              <div key={row.label} className="flex items-baseline justify-between gap-3">
-                <dt className="shrink-0 text-tone-500">{row.label}</dt>
-                <dd
-                  className={cn('truncate text-right', row.mixed && 'text-tone-500')}
-                  title={value}
-                >
-                  {value}
-                </dd>
-              </div>
-            )
-          })}
-        </dl>
       )}
     </div>
   )

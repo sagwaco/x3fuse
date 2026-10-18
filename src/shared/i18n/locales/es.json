@@ -177,6 +177,8 @@
   "inspector.no_selection": "Selecciona un archivo para ver sus detalles",
   "inspector.no_preview": "No hay vista previa disponible",
   "inspector.no_metadata": "No hay metadatos disponibles",
+  "inspector.copy_value": "Haz clic para copiar",
+  "inspector.copied": "Copiado",
   "export.title": "Exportar",
   "export.back": "Volver",
   "export.images_heading": "Imágenes para exportar",

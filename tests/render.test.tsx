@@ -104,7 +104,9 @@ describe('renderer smoke', () => {
     const activeId = useQueueStore.getState().activeId
     expect(activeId).toBe(useQueueStore.getState().files[0].id)
     expect(useQueueStore.getState().selectedIds).toEqual(new Set([activeId]))
-    expect(screen.getByText('Info - first.X3F')).toBeTruthy()
+    expect(
+      screen.getByRole('button', { name: 'Photo info' }).previousElementSibling?.textContent
+    ).toBe('first.X3F')
     expect(screen.getByRole('heading', { name: 'Scopes' })).toBeTruthy()
     expect(screen.queryByText('Sigma DP2 Merrill')).toBeNull()
 
@@ -119,7 +121,9 @@ describe('renderer smoke', () => {
     invoke.mockResolvedValueOnce([{ ...file, path: '/photos/second.X3F' }])
     await act(async () => useQueueStore.getState().addFiles(['/photos/second.X3F']))
     expect(useQueueStore.getState().activeId).toBe(activeId)
-    expect(screen.getByText('Info - first.X3F')).toBeTruthy()
+    expect(
+      screen.getByRole('button', { name: 'Photo info' }).previousElementSibling?.textContent
+    ).toBe('first.X3F')
     useQueueStore.setState({ files: [], selectedIds: new Set(), activeId: null })
   })
 
