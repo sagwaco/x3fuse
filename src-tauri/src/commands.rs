@@ -331,11 +331,13 @@ pub fn open_settings(app: &AppHandle) -> Result<(), String> {
     }
     let settings = app.state::<Arc<AppState>>().preferences.get();
     let (pinned, theme, color) = settings.window_theme(crate::system_dark());
-    tauri::WebviewWindowBuilder::new(
+    let builder = tauri::WebviewWindowBuilder::new(
         app,
         "settings",
         tauri::WebviewUrl::App("index.html#settings".into()),
     )
+    // The title stays for the Window menu and accessibility. On macOS the
+    // React titlebar shows it in place of the hidden native title.
     .title(crate::menu::translate("menu.file.settings"))
     .inner_size(540.0, 640.0)
     .min_inner_size(460.0, 420.0)
@@ -346,9 +348,12 @@ pub fn open_settings(app: &AppHandle) -> Result<(), String> {
     .on_navigation(|url| {
         matches!(url.scheme(), "tauri" | "http" | "https")
             && matches!(url.host_str(), Some("localhost" | "tauri.localhost"))
-    })
-    .build()
-    .map_err(|e| e.to_string())?;
+    });
+    #[cfg(target_os = "macos")]
+    let builder = builder
+        .title_bar_style(tauri::TitleBarStyle::Overlay)
+        .hidden_title(true);
+    builder.build().map_err(|e| e.to_string())?;
     Ok(())
 }
 
