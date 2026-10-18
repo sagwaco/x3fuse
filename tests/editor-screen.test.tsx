@@ -156,6 +156,10 @@ vi.mock('../src/renderer/src/components/EditorControls', async () => {
           <details open>
             <summary>Mock section</summary>
             <button>Mock field</button>
+            <details open>
+              <summary>Mock nested section</summary>
+              <button>Mock nested field</button>
+            </details>
           </details>
         </>
       )
@@ -1114,7 +1118,7 @@ it('inverts a negative print on request and shows a tiny scope while the scope i
   vi.unstubAllGlobals()
 })
 
-it('scrolls a focused field out from under the stuck section headers', () => {
+it('scrolls a keyboard focus out from under the stuck section headers', () => {
   editor.setState({ session, documents: { [file.path]: doc }, loading: false, preview: frame })
   render(<EditorScreen />)
   const field = screen.getByRole('button', { name: 'Mock field' })
@@ -1122,30 +1126,34 @@ it('scrolls a focused field out from under the stuck section headers', () => {
   const place = (element: Element, top: number): void => {
     element.getBoundingClientRect = () => ({ top }) as DOMRect
   }
-  const focus = (element: HTMLElement): void => {
+  // As Shift+Tab: a key down, then the focus.
+  const tab = (element: HTMLElement, top: number): void => {
+    place(element, top)
+    fireEvent.keyDown(body, { key: 'Tab', shiftKey: true })
     act(() => element.focus())
     act(() => element.blur())
   }
   place(body, 100)
   body.scrollTop = 500
-  // The headers of a section and of a section in it cover up to 80 px of the body.
+  // Each section around the focus has a stuck header of 40 px.
+  tab(field, 130)
+  expect(body.scrollTop).toBe(490)
+  tab(screen.getByRole('button', { name: 'Mock nested field' }), 130)
+  expect(body.scrollTop).toBe(440)
+  // A nested header goes below the header of its parent only. A top-level header is never under one.
+  tab(screen.getByText('Mock nested section'), 120)
+  expect(body.scrollTop).toBe(420)
+  tab(screen.getByText('Mock section'), 100)
+  expect(body.scrollTop).toBe(420)
+  // A field below the headers stays, and so does a control out of the sections.
+  tab(field, 140)
+  tab(screen.getByRole('tab', { name: 'Entire image' }), 0)
+  expect(body.scrollTop).toBe(420)
+  // A click focus does not scroll, so a click or a drag does not jump.
   place(field, 130)
-  focus(field)
-  expect(body.scrollTop).toBe(450)
-  // A field below them stays.
-  place(field, 180)
-  focus(field)
-  expect(body.scrollTop).toBe(450)
-  // Out of a section, nothing sticks above a control, so the browser scrolls it.
-  const tab = screen.getByRole('tab', { name: 'Entire image' })
-  place(tab, 0)
-  focus(tab)
-  expect(body.scrollTop).toBe(450)
-  // A focus from the pointer is not :focus-visible. It does not scroll, so a drag does not jump.
-  field.matches = () => false
-  place(field, 130)
-  focus(field)
-  expect(body.scrollTop).toBe(450)
+  fireEvent.pointerDown(field)
+  act(() => field.focus())
+  expect(body.scrollTop).toBe(420)
 })
 
 function openPaper(): void {
