@@ -133,6 +133,8 @@ const loaded = (): Promise<void> => act(async () => {})
 const last = (name: string): number => uniforms[name].at(-1)!
 const cover = (): number =>
   Number(document.querySelector('canvas')!.style.getPropertyValue('--cover'))
+const fill = (): number =>
+  Number(document.querySelector('canvas')!.style.getPropertyValue('--fill'))
 const mask = (): string =>
   (document.querySelector('canvas')!.style as { maskImage?: string }).maskImage ?? ''
 const finish = (): void => act(() => fades.at(-1)!.onfinish!())
@@ -200,11 +202,11 @@ it('shows only particles: blank at first, then a cloud that fades into the previ
   expect(canvas.className).toContain('bg-tone-950')
   expect(mask()).toBe('')
   view.rerender(<DevelopingPreview file={file} matching developing ready onDone={done} />)
-  // A radial mask opens the cover from the center while the cloud moves on.
+  // A linear mask opens the cover from the top down while the cloud moves on.
   advance(16)
   expect(fades).toHaveLength(1)
   expect(fades[0].keyframes).toEqual([{ '--cover': 1 }, { '--cover': 0 }])
-  expect(mask()).toMatch(/^radial-gradient\(.*var\(--cover\)/)
+  expect(mask()).toMatch(/^linear-gradient\(.*var\(--cover\).*linear-gradient\(.*var\(--fill\)/)
   expect(fades[0].options).toEqual({ duration: 800, easing: 'ease-in-out', fill: 'forwards' })
   const drawn = called('drawArrays').length
   advance(400)
@@ -319,8 +321,8 @@ it('skips the cloud when the preview is ready before the cloud shows', async () 
   render(<DevelopingPreview file={file} matching developing ready onDone={done} />)
   expect(done).toHaveBeenCalledOnce()
   // A cloud that mounts over a ready preview does not hide it.
-  expect(cover()).toBe(0)
-  expect(mask()).toContain('radial-gradient')
+  expect(fill()).toBe(0)
+  expect(mask()).toContain('var(--fill)')
   cleanup()
   // The canvas is still blank, so nothing fades.
   const late = vi.fn()
@@ -334,6 +336,34 @@ it('skips the cloud when the preview is ready before the cloud shows', async () 
   expect(late).toHaveBeenCalledOnce()
   expect(fades).toHaveLength(0)
   expect(frames.size).toBe(0)
+})
+
+it('covers the preview from the top down in a morph, then reveals it from the top down', async () => {
+  const done = vi.fn()
+  const from = 'x3f-edit://localhost/shown-a'
+  const view = render(
+    <DevelopingPreview file={file} matching developing ready={false} onDone={done} from={from} />
+  )
+  await loaded()
+  // The preview below shows at first. The bottom edge of the canvas moves down.
+  expect(loadSmallPreview.mock.calls[0][0]).toBe(from)
+  expect(fill()).toBe(0)
+  expect(cover()).toBe(1)
+  advance(100)
+  expect(fill()).toBeGreaterThan(0)
+  expect(fill()).toBeLessThan(1)
+  expect(mask()).toContain('var(--fill)')
+  // The top edge then moves down from where the canvas is. The bottom edge stays.
+  view.rerender(
+    <DevelopingPreview file={file} matching developing ready onDone={done} from={from} />
+  )
+  advance(16)
+  const partial = fill()
+  expect(fades[0].keyframes).toEqual([{ '--cover': 1 }, { '--cover': 0 }])
+  advance(100)
+  expect(fill()).toBe(partial)
+  finish()
+  expect(done).toHaveBeenCalledOnce()
 })
 
 it('fades a cloud that barely showed from its opaque background', async () => {

@@ -22,13 +22,15 @@ const FADE_IN = 0.25
 /** Seconds to fade into the preview. */
 const REVEAL = 0.8
 /**
- * The canvas shows outside a soft hole at its center. The soft edge is 40% of
- * the distance to a corner. As `--cover` goes from 1 to 0, the hole grows past
- * the corners. Thus the preview shows from its center out, and its sharp edges
- * show last.
+ * The canvas shows between a soft top edge and a soft bottom edge. Each edge
+ * fades over 40% of the canvas height. Both edges only move down: as `--fill`
+ * goes from 0 to 1, the canvas covers the preview from the top down. As
+ * `--cover` goes from 1 to 0, the preview shows from the top down. The layers
+ * intersect, so the edges can pass each other.
  */
 const MASK =
-  'radial-gradient(transparent calc(100% - 140% * var(--cover)), black calc(140% - 140% * var(--cover)))'
+  'linear-gradient(transparent calc(100% - 140% * var(--cover)), black calc(140% - 140% * var(--cover))), ' +
+  'linear-gradient(black calc(140% * var(--fill) - 40%), transparent calc(140% * var(--fill)))'
 /** Glow strength. */
 const GLOW = 0.7
 
@@ -96,7 +98,9 @@ void main() {
     * sin(home.y * 15.0 - home.x * 8.0 - 0.5 * t);
   float r = fract(13.0 * s.y);
   float shown = twinkle * smoothstep(r - 0.15, r + 0.15, 0.75 + 0.5 * field);
-  v_color = vec4(texture(u_image, home).rgb, u_alpha * mix(1.0, shown, spread));
+  // Particles fade in from the top down.
+  float fade = smoothstep(0.0, 0.3, 1.3 * u_alpha - home.y);
+  v_color = vec4(texture(u_image, home).rgb, fade * mix(1.0, shown, spread));
 }`
 
 const FRAGMENT = `#version 300 es
@@ -411,9 +415,9 @@ export function DevelopingPreview({
     let last = start
     let spread = morph ? 0 : 1
     let alpha = morph ? 1 : 0
-    // How much of the preview the canvas covers. Its background hides the
-    // preview below it.
+    // The edges of the canvas mask. Its background hides the preview below it.
     let cover = Number(canvas.style.getPropertyValue('--cover'))
+    let fill = Number(canvas.style.getPropertyValue('--fill'))
     // A Web Animation of the cover runs the fade into the preview.
     let fade: Animation | undefined
     let frame = 0
@@ -451,10 +455,12 @@ export function DevelopingPreview({
         spread = approach(spread, developing ? 1 : 0, dt, RISE, SETTLE)
         alpha = approach(alpha, shown ? 1 : 0, dt, FADE_IN, FADE_IN)
         cover = approach(cover, 1, dt, FADE_IN, FADE_IN)
+        fill = approach(fill, 1, dt, FADE_IN, FADE_IN)
         canvas.style.setProperty('--cover', String(cover))
+        canvas.style.setProperty('--fill', String(fill))
       }
       // A mask adds a compositing pass, so a full cover has no mask.
-      canvas.style.maskImage = fade || cover < 0.999 ? MASK : ''
+      canvas.style.maskImage = fade || cover < 0.999 || fill < 0.999 ? MASK : ''
       const pixel = window.devicePixelRatio || 1
       const width = Math.round(canvas.clientWidth * pixel)
       const height = Math.round(canvas.clientHeight * pixel)
@@ -474,7 +480,7 @@ export function DevelopingPreview({
       })
       if (!drawn) return setStill(true)
       // Settled particles need no frames until the editor develops again.
-      const settled = spread < 0.001 && alpha > 0.999 && cover > 0.999
+      const settled = spread < 0.001 && alpha > 0.999 && cover > 0.999 && fill > 0.999
       if (!developing && !ready && settled) return
       frame = requestAnimationFrame(step)
     }
@@ -526,7 +532,14 @@ export function DevelopingPreview({
       aria-label={file.fileName}
       data-developing-preview=""
       className="pointer-events-none absolute inset-0 h-full w-full bg-tone-950"
-      style={{ '--cover': covered ? 1 : 0, maskImage: MASK } as React.CSSProperties}
+      style={
+        {
+          '--cover': 1,
+          '--fill': covered ? 1 : 0,
+          maskImage: MASK,
+          maskComposite: 'intersect'
+        } as React.CSSProperties
+      }
     />
   )
 }

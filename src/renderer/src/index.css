@@ -77,7 +77,7 @@ html[data-theme='gray'] {
   background-color: rgb(var(--tone-950));
 }
 
-/* The developing cloud animates its radial cover. A registered number interpolates. */
+/* The developing cloud animates its cover. A registered number interpolates. */
 @property --cover {
   syntax: '<number>';
   inherits: false;
