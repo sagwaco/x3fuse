@@ -214,15 +214,15 @@ it('takes the outer knob outside the rim where the knobs overlap', () => {
 it('gives a press in both knob boxes to the nearer knob', () => {
   render(<Wheels />)
   const midtones = disc('midtones')
-  // At 90%, the outer knob is 5 px from the inner one, inside its 16 px box.
-  fireEvent.pointerDown(midtones, { clientX: 95, clientY: 50, pointerId: 1, button: 0 })
+  // At 75%, the outer knob is 12.5 px from the inner one, inside its 28 px box.
+  fireEvent.pointerDown(midtones, { clientX: 87.5, clientY: 50, pointerId: 1, button: 0 })
   fireEvent.pointerUp(midtones, { pointerId: 1 })
   fireEvent.pointerDown(knob('midtones', 'inner'), { clientX: 99, clientY: 50, pointerId: 1 })
   // The outer knob turns the hue to about 90° and keeps the strength.
   fireEvent.pointerMove(midtones, { clientX: 50, clientY: 1, pointerId: 1 })
   const { x, y } = wheels()!.midtones
   expect(Math.atan2(y, x)).toBeCloseTo(Math.PI / 2, 1)
-  expect(Math.hypot(x, y)).toBeCloseTo(0.9, 3)
+  expect(Math.hypot(x, y)).toBeCloseTo(0.75, 3)
   fireEvent.pointerUp(midtones, { pointerId: 1 })
 })
 
