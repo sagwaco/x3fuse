@@ -30,7 +30,7 @@ const DISC = [
   `conic-gradient(from 90deg, ${[0, 300, 240, 180, 120, 60, 0].map((h) => `hsl(${h} 90% 55%)`).join(', ')})`
 ].join(', ')
 /** The width of a knob box (.wheel-knob in index.css), in pixels. */
-const KNOB_BOX = 28
+const KNOB_BOX = 16
 /** A wheel that the context menu copied, for this session. */
 let copied: Wheel | null = null
 

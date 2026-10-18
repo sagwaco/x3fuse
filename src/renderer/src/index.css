@@ -653,21 +653,22 @@ html[data-theme='gray'] .glass-group {
    (--kx, --ky are fractions of the disc). Its face is a solid dot. On hover and while
    dragged, the face grows into liquid glass, as the switch knob does: its lens holds a
    smaller copy of the disc, centered on the knob position. The disc is the size
-   container, so 100cqw is its width. */
+   container, so 100cqw is its width. Keep the box width equal to KNOB_BOX in
+   ColorWheels.tsx. */
 .wheel-knob {
   position: absolute;
   display: grid;
   place-items: center;
-  width: 28px;
-  height: 28px;
+  width: theme(spacing.4);
+  height: theme(spacing.4);
   translate: -50% -50%;
   border-radius: 9999px;
 }
 
 .wheel-knob-face {
   position: relative;
-  width: 12px;
-  height: 12px;
+  width: theme(spacing.1);
+  height: theme(spacing.1);
   overflow: hidden;
   border-radius: 9999px;
   background-color: #fff;
@@ -681,8 +682,8 @@ html[data-theme='gray'] .glass-group {
 
 /* The outer knob has the color of the hue, in a white ring. */
 .wheel-knob-outer {
-  width: 10px;
-  height: 10px;
+  width: theme(spacing[2.5]);
+  height: theme(spacing[2.5]);
   background-color: var(--dot);
   box-shadow:
     0 0 0 2px #fff,
@@ -703,10 +704,16 @@ html[data-theme='gray'] .glass-group {
 }
 
 .wheel-knob:is(:hover, [data-active]) > .wheel-knob-face {
-  width: 28px;
-  height: 28px;
+  width: theme(spacing.2);
+  height: theme(spacing.2);
   background-color: transparent;
-  box-shadow: 0 1px 3px rgb(0 0 0 / 0.35);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.35);
+}
+
+/* The outer dot is larger, so its glass is too. */
+.wheel-knob:is(:hover, [data-active]) > .wheel-knob-outer {
+  width: theme(spacing[3.5]);
+  height: theme(spacing[3.5]);
 }
 
 .wheel-knob:is(:hover, [data-active]) .wheel-knob-lens {
@@ -719,7 +726,7 @@ html[data-theme='gray'] .glass-group {
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  box-shadow: inset 0 0 4px rgb(255 255 255 / 0.7);
+  box-shadow: inset 0 0 2px rgb(255 255 255 / 0.7);
 }
 
 /* A solid knob that still grows, for reduced transparency and more contrast. */
