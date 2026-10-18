@@ -13,7 +13,8 @@ import { OrientedImage } from './OrientedImage'
 interface Props {
   file: X3FFileDTO
   fullResolution?: boolean
-  onDimensions?: (dimensions: { width: number; height: number }) => void
+  /** Gets the size and the url of each picture when its pixels are on the canvas. */
+  onDimensions?: (dimensions: { width: number; height: number }, url: string) => void
   containerClassName?: string
   className?: string
 }
@@ -51,7 +52,7 @@ function RenderedContent({
         element.height = preview.image.height
         context.drawImage(preview.image, 0, 0)
         element.dataset.previewUrl = url
-        dimensions.current?.({ width: preview.width, height: preview.height })
+        dimensions.current?.({ width: preview.width, height: preview.height }, url)
         setReady(true)
         setFailedUrl(undefined)
       },
@@ -114,7 +115,7 @@ function ImageContent({
           element.width = preview.image.width
           element.height = preview.image.height
           context.drawImage(preview.image, 0, 0)
-          dimensions.current?.({ width: preview.width, height: preview.height })
+          dimensions.current?.({ width: preview.width, height: preview.height }, url)
           setFitReady(true)
         },
         () => {}

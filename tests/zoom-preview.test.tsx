@@ -61,7 +61,7 @@ vi.mock('../src/renderer/src/components/FilmstripImage', async () => {
     }: {
       file: X3FFileDTO
       fullResolution?: boolean
-      onDimensions?: (dimensions: { width: number; height: number }) => void
+      onDimensions?: (dimensions: { width: number; height: number }, url: string) => void
       containerClassName?: string
       className?: string
     }) {
@@ -76,10 +76,13 @@ vi.mock('../src/renderer/src/components/FilmstripImage', async () => {
             data-full-resolution={fullResolution}
             onLoad={(event) => {
               setReady(true)
-              onDimensions?.({
-                width: event.currentTarget.naturalWidth,
-                height: event.currentTarget.naturalHeight
-              })
+              onDimensions?.(
+                {
+                  width: event.currentTarget.naturalWidth,
+                  height: event.currentTarget.naturalHeight
+                },
+                displayPreviewUrl(file, 'full')
+              )
             }}
             onError={() => setReady(false)}
           />
@@ -220,6 +223,7 @@ describe('filmstrip zoom preview', () => {
     expect(onPaint).not.toHaveBeenCalled()
     loadImage()
     expect(onPaint).toHaveBeenCalledOnce()
+    expect(onPaint).toHaveBeenCalledWith(displayPreviewUrl(file, 'full'))
   })
 
   it('uses the saved edited thumbnail for the Info navigator before and during zoom', () => {
@@ -757,6 +761,216 @@ describe('filmstrip zoom preview', () => {
     rerender(<PreviewWithControls key="b" file={{ ...file, id: 'b' }} />)
     expect(usePreviewStore.getState().minimap).toBeNull()
     expect(usePreviewStore.getState().controls).toBeNull()
+  })
+})
+
+describe('image points and regions', () => {
+  type Region = { x: number; y: number; width: number; height: number }
+  function setupRegion() {
+    const onImagePoint = vi.fn()
+    const onImageRegion = vi.fn()
+    const show = (outline?: Region, armed = true): void => {
+      result.rerender(
+        <ZoomablePreview
+          file={file}
+          onImagePoint={armed ? onImagePoint : undefined}
+          onImageRegion={armed ? onImageRegion : undefined}
+          outline={outline}
+        />
+      )
+    }
+    const result = render(
+      <ZoomablePreview file={file} onImagePoint={onImagePoint} onImageRegion={onImageRegion} />
+    )
+    // At Fit, the 1600 × 1200 image fills the 800 × 600 view at scale 0.5.
+    const image = loadImage()
+    const surface = screen.getByRole('region', { name: 'Image preview' })
+    const media = image.parentElement!.parentElement!
+    const place = (left: number, top: number, width: number, height: number): void => {
+      media.getBoundingClientRect = () => ({ left, top, width, height }) as DOMRect
+    }
+    place(0, 0, 800, 600)
+    surface.setPointerCapture = vi.fn()
+    surface.hasPointerCapture = () => true
+    surface.releasePointerCapture = vi.fn()
+    const outline = (): SVGRectElement | null =>
+      media.querySelector('[data-region-outline] rect:last-child')
+    return { surface, media, place, show, outline, onImagePoint, onImageRegion }
+  }
+  const closeTo = (region: Region) =>
+    Object.fromEntries(Object.entries(region).map(([key, value]) => [key, expect.closeTo(value)]))
+
+  it('drags a region at Fit with a live outline inside the image, without a pan or a click', () => {
+    const { surface, media, outline, onImagePoint, onImageRegion } = setupRegion()
+    expect(surface.style.cursor).toBe('crosshair')
+    fireEvent.pointerDown(surface, { button: 0, clientX: 80, clientY: 60 })
+    expect(surface.setPointerCapture).toHaveBeenCalledWith(1)
+    pointerMove(surface, { clientX: 400, clientY: 300 })
+    // In image pixels, with a line of one screen pixel at scale 0.5.
+    expect(Number(outline()?.getAttribute('x'))).toBeCloseTo(160)
+    expect(Number(outline()?.getAttribute('y'))).toBeCloseTo(120)
+    expect(Number(outline()?.getAttribute('width'))).toBeCloseTo(640)
+    expect(Number(outline()?.getAttribute('height'))).toBeCloseTo(480)
+    expect(outline()?.getAttribute('stroke-width')).toBe('2')
+    fireEvent.pointerUp(surface)
+    fireEvent.click(surface, { clientX: 400, clientY: 300, detail: 1 })
+    expect(onImageRegion).toHaveBeenCalledOnce()
+    expect(onImageRegion).toHaveBeenCalledWith(closeTo({ x: 0.1, y: 0.1, width: 0.4, height: 0.4 }))
+    expect(onImagePoint).not.toHaveBeenCalled()
+    expect(outline()).toBeNull()
+    expect(media.style.transform).toBe('translate(0px, 0px) scale(0.5)')
+  })
+
+  it('reports clicks at the image edges as points, but not clicks outside it', () => {
+    const { surface, media, onImagePoint, onImageRegion } = setupRegion()
+    // A small movement is still a click.
+    fireEvent.pointerDown(surface, { button: 0, clientX: 800, clientY: 0 })
+    pointerMove(surface, { clientX: 799, clientY: 1 })
+    fireEvent.pointerUp(surface)
+    fireEvent.click(surface, { clientX: 800, clientY: 0, detail: 1 })
+    expect(onImagePoint).toHaveBeenLastCalledWith(1, 0)
+    fireEvent.click(surface, { clientX: 0, clientY: 600, detail: 1 })
+    expect(onImagePoint).toHaveBeenLastCalledWith(0, 1)
+    fireEvent.click(surface, { clientX: 801, clientY: 300, detail: 1 })
+    fireEvent.click(surface, { clientX: 400, clientY: -1, detail: 1 })
+    expect(onImagePoint).toHaveBeenCalledTimes(2)
+    expect(onImageRegion).not.toHaveBeenCalled()
+    expect(media.style.transform).toBe('translate(0px, 0px) scale(0.5)')
+  })
+
+  it('normalizes reverse drags, clamps them to the image, and drops cancelled drags', () => {
+    const { surface, outline, onImageRegion } = setupRegion()
+    fireEvent.pointerDown(surface, { button: 0, clientX: 600, clientY: 450 })
+    pointerMove(surface, { clientX: -100, clientY: 150 })
+    fireEvent.pointerUp(surface)
+    expect(onImageRegion).toHaveBeenLastCalledWith({ x: 0, y: 0.25, width: 0.75, height: 0.5 })
+    // A cancelled pointer or a lost capture reports nothing and removes the outline.
+    fireEvent.pointerDown(surface, { button: 0, clientX: 100, clientY: 100 })
+    pointerMove(surface, { clientX: 300, clientY: 300 })
+    expect(outline()).not.toBeNull()
+    fireEvent.pointerCancel(surface)
+    expect(outline()).toBeNull()
+    fireEvent.pointerUp(surface)
+    fireEvent.pointerDown(surface, { button: 0, clientX: 100, clientY: 100 })
+    pointerMove(surface, { clientX: 300, clientY: 300 })
+    fireEvent.lostPointerCapture(surface)
+    expect(outline()).toBeNull()
+    pointerMove(surface, { clientX: 400, clientY: 400 })
+    fireEvent.pointerUp(surface)
+    expect(outline()).toBeNull()
+    // A drag along one axis has no area.
+    fireEvent.pointerDown(surface, { button: 0, clientX: 100, clientY: 100 })
+    pointerMove(surface, { clientX: 300, clientY: 100 })
+    fireEvent.pointerUp(surface)
+    expect(onImageRegion).toHaveBeenCalledOnce()
+  })
+
+  it('selects in a zoomed and panned image instead of panning it, and pans again when disarmed', () => {
+    const { surface, media, place, show, outline, onImageRegion } = setupRegion()
+    fireEvent.keyDown(surface, { key: '1' })
+    wheel(surface, { deltaX: 100, deltaY: 50 })
+    expect(media.style.transform).toBe('translate(-100px, -50px) scale(1)')
+    // The 1600 × 1200 image at scale 1, centered in the view and moved by the pan.
+    place(-500, -350, 1600, 1200)
+    fireEvent.pointerDown(surface, { button: 0, clientX: 100, clientY: 100 })
+    pointerMove(surface, { clientX: 420, clientY: 340 })
+    expect(outline()?.getAttribute('stroke-width')).toBe('1')
+    fireEvent.pointerUp(surface)
+    expect(onImageRegion).toHaveBeenCalledWith(
+      closeTo({ x: 0.375, y: 0.375, width: 0.2, height: 0.2 })
+    )
+    expect(media.style.transform).toBe('translate(-100px, -50px) scale(1)')
+    // The stored area stays outlined when disarmed, and a drag pans again.
+    show({ x: 0.375, y: 0.375, width: 0.2, height: 0.2 }, false)
+    expect(Number(outline()?.getAttribute('x'))).toBeCloseTo(600)
+    expect(surface.style.cursor).toBe('grab')
+    fireEvent.pointerDown(surface, { button: 0, clientX: 200, clientY: 200 })
+    pointerMove(surface, { clientX: 250, clientY: 220 })
+    fireEvent.pointerUp(surface)
+    expect(media.style.transform).toBe('translate(-50px, -30px) scale(1)')
+    expect(onImageRegion).toHaveBeenCalledOnce()
+    show(undefined, false)
+    expect(outline()).toBeNull()
+  })
+
+  it('selects with keys: arrows move a point, Shift sizes a rectangle, Return applies', () => {
+    const { surface, outline, show, onImagePoint, onImageRegion } = setupRegion()
+    // At scale 0.5, a step of 8 screen pixels is 16 image pixels: 1/100 and 1/75 of the image.
+    expect(fireEvent.keyDown(surface, { key: 'ArrowRight' })).toBe(false)
+    // The point starts at the center and shows as a square of 8 screen pixels.
+    expect(Number(outline()?.getAttribute('x'))).toBeCloseTo(0.51 * 1600 - 8)
+    expect(outline()?.getAttribute('width')).toBe('16')
+    fireEvent.keyDown(surface, { key: 'Enter' })
+    expect(onImagePoint).toHaveBeenCalledWith(expect.closeTo(0.51), expect.closeTo(0.5))
+    expect(outline()).toBeNull()
+    fireEvent.keyDown(surface, { key: 'ArrowDown' })
+    fireEvent.keyDown(surface, { key: 'ArrowRight', shiftKey: true })
+    fireEvent.keyDown(surface, { key: 'ArrowRight', shiftKey: true })
+    for (let i = 0; i < 3; ++i) fireEvent.keyDown(surface, { key: 'ArrowDown', shiftKey: true })
+    fireEvent.keyDown(surface, { key: 'ArrowUp', shiftKey: true })
+    expect(Number(outline()?.getAttribute('width'))).toBeCloseTo(32)
+    expect(Number(outline()?.getAttribute('height'))).toBeCloseTo(32)
+    fireEvent.keyDown(surface, { key: 'Enter' })
+    expect(onImageRegion).toHaveBeenCalledWith(
+      closeTo({ x: 0.49, y: 0.5, width: 0.02, height: 2 / 75 })
+    )
+    // Escape cancels a key selection. Without one, Escape and Return go to the editor.
+    fireEvent.keyDown(surface, { key: 'ArrowLeft' })
+    expect(fireEvent.keyDown(surface, { key: 'Escape' })).toBe(false)
+    expect(outline()).toBeNull()
+    expect(fireEvent.keyDown(surface, { key: 'Escape' })).toBe(true)
+    expect(fireEvent.keyDown(surface, { key: 'Enter' })).toBe(true)
+    expect(onImagePoint).toHaveBeenCalledOnce()
+    expect(onImageRegion).toHaveBeenCalledOnce()
+    // Disarmed, the arrow keys are left to other shortcuts.
+    fireEvent.keyDown(surface, { key: 'ArrowLeft' })
+    show(undefined, false)
+    expect(outline()).toBeNull()
+    expect(fireEvent.keyDown(surface, { key: 'ArrowLeft' })).toBe(true)
+    expect(outline()).toBeNull()
+  })
+
+  it('lets only the pointer that started a drag end it', () => {
+    const { surface, outline, onImageRegion } = setupRegion()
+    fireEvent.pointerDown(surface, { button: 0, clientX: 80, clientY: 60, pointerId: 1 })
+    pointerMove(surface, { clientX: 400, clientY: 300, pointerId: 1 })
+    fireEvent.pointerUp(surface, { pointerId: 2 })
+    fireEvent.pointerCancel(surface, { pointerId: 2 })
+    fireEvent.lostPointerCapture(surface, { pointerId: 2 })
+    fireEvent.pointerDown(surface, { button: 0, clientX: 0, clientY: 0, pointerId: 2 })
+    pointerMove(surface, { clientX: 700, clientY: 500, pointerId: 2 })
+    expect(onImageRegion).not.toHaveBeenCalled()
+    expect(Number(outline()?.getAttribute('width'))).toBeCloseTo(640)
+    fireEvent.pointerUp(surface, { pointerId: 1 })
+    expect(onImageRegion).toHaveBeenCalledWith(closeTo({ x: 0.1, y: 0.1, width: 0.4, height: 0.4 }))
+  })
+
+  it('cancels a drag on Escape or when the mode ends, without a pan or a click', () => {
+    const { surface, media, place, show, outline, onImagePoint, onImageRegion } = setupRegion()
+    fireEvent.pointerDown(surface, { button: 0, clientX: 80, clientY: 60 })
+    pointerMove(surface, { clientX: 400, clientY: 300 })
+    expect(fireEvent.keyDown(surface, { key: 'Escape' })).toBe(false)
+    expect(outline()).toBeNull()
+    pointerMove(surface, { clientX: 500, clientY: 400 })
+    expect(outline()).toBeNull()
+    fireEvent.pointerUp(surface)
+    fireEvent.click(surface, { clientX: 500, clientY: 400, detail: 1 })
+    expect(onImageRegion).not.toHaveBeenCalled()
+    expect(onImagePoint).not.toHaveBeenCalled()
+    // The mode ends during a drag, as when W arms the white balance picker. Zoomed in,
+    // a drag that stayed active would pan, and the click after it would zoom out.
+    fireEvent.keyDown(surface, { key: '1' })
+    place(-400, -300, 1600, 1200)
+    fireEvent.pointerDown(surface, { button: 0, clientX: 100, clientY: 100 })
+    pointerMove(surface, { clientX: 300, clientY: 300 })
+    expect(outline()).not.toBeNull()
+    show(undefined, false)
+    expect(outline()).toBeNull()
+    pointerMove(surface, { clientX: 350, clientY: 350 })
+    fireEvent.pointerUp(surface)
+    fireEvent.click(surface, { clientX: 350, clientY: 350, detail: 1 })
+    expect(media.style.transform).toBe('translate(0px, 0px) scale(1)')
+    expect(onImageRegion).not.toHaveBeenCalled()
   })
 })
 

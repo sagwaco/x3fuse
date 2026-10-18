@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Skeleton } from '@radix-ui/themes/components/skeleton'
 import '@radix-ui/themes/src/components/skeleton.css'
 import type { ScopeMode } from '@shared/types'
+import type { PreviewRegion } from '@shared/editor'
 import { useScopeImage } from '../hooks/useScopeImage'
 import { useElementWidth } from '../hooks/useElementWidth'
 import { useDelayedLoading } from '../hooks/useDelayedLoading'
@@ -22,12 +23,15 @@ export function ColorScope({
   pending = false,
   mode,
   compact = false,
-  paused = false
+  paused = false,
+  region
 }: {
   url: string | undefined
   aspectRatio?: number
   orientation?: number
   fileId?: string
+  /** Only these pixels, 0 to 1 of the cropped, oriented preview. */
+  region?: PreviewRegion | null
   pending?: boolean
   mode: ScopeMode
   /** A tiny copy without states or labels, for a header. */
@@ -35,7 +39,7 @@ export function ColorScope({
   /** Keep the last scope and start no new renders, as while it is out of view. */
   paused?: boolean
 }): React.JSX.Element {
-  const image = useScopeImage(url, aspectRatio, orientation, fileId)
+  const image = useScopeImage(url, aspectRatio, orientation, fileId, region)
   const container = useRef<HTMLDivElement>(null)
   const canvas = useRef<HTMLCanvasElement>(null)
   const renderer = useRef<ReturnType<typeof createScopeRenderer>>()

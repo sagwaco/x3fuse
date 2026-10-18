@@ -2,11 +2,11 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import type { ReactNode } from 'react'
-import { DEFAULT_FILM, defaultRecipe } from '@shared/editor'
+import { DEFAULT_FILM, defaultRecipe, type PreviewRegion } from '@shared/editor'
 import { displayPreviewUrl, previewUrl } from '@shared/preview'
 import { DEFAULT_SETTINGS, type X3FFileDTO } from '@shared/types'
 import { EditorScreen } from '../src/renderer/src/components/EditorScreen'
-import { useEditorStore as editor } from '../src/renderer/src/stores/editorStore'
+import { useEditorStore as editor, geometryKey } from '../src/renderer/src/stores/editorStore'
 import { useQueueStore as queue } from '../src/renderer/src/stores/queueStore'
 import { useSettingsStore } from '../src/renderer/src/stores/settingsStore'
 import { t } from '../src/renderer/src/lib/strings'
@@ -48,20 +48,32 @@ vi.mock('../src/renderer/src/components/ZoomablePreview', () => ({
   ZoomablePreview: ({
     file,
     onImagePoint,
+    onImageRegion,
+    outline,
     onPaint,
     onViewportChange
   }: {
     file: X3FFileDTO
-    onImagePoint?: unknown
-    onPaint?: () => void
+    onImagePoint?: (x: number, y: number) => void
+    onImageRegion?: (region: PreviewRegion) => void
+    outline?: PreviewRegion | null
+    onPaint?: (url: string) => void
     onViewportChange?: unknown
   }) => (
     <div
       data-editor-frame={displayPreviewUrl(file, 'full')}
       data-picking={!!onImagePoint}
+      data-qualifying={!!onImageRegion}
+      data-outline={outline ? JSON.stringify(outline) : undefined}
       data-viewport={!!onViewportChange}
     >
-      <button data-paint onClick={onPaint} />
+      {/* The real preview paints a frame only after it decodes. */}
+      <button data-paint onClick={() => onPaint?.(displayPreviewUrl(file, 'full'))} />
+      <button data-point onClick={() => onImagePoint?.(0.5, 0.5)} />
+      <button
+        data-drag
+        onClick={() => onImageRegion?.({ x: 0.1, y: 0.2, width: 0.3, height: 0.4 })}
+      />
     </div>
   )
 }))
@@ -76,8 +88,24 @@ vi.mock('../src/renderer/src/components/CropControls', () => ({
   CropControls: () => <div data-crop-controls />
 }))
 vi.mock('../src/renderer/src/components/ColorScope', () => ({
-  ColorScope: ({ url, compact }: { url?: string; compact?: boolean }) => (
-    <div data-scope-url={url} data-compact={compact} />
+  ColorScope: ({
+    url,
+    compact,
+    region,
+    pending
+  }: {
+    url?: string
+    compact?: boolean
+    region?: PreviewRegion | null
+    pending?: boolean
+  }) => (
+    <div
+      data-scope
+      data-scope-url={url}
+      data-compact={compact}
+      data-scope-region={region ? JSON.stringify(region) : undefined}
+      data-pending={pending}
+    />
   )
 }))
 vi.mock('../src/renderer/src/components/EditorControls', async () => {
@@ -89,15 +117,21 @@ vi.mock('../src/renderer/src/components/EditorControls', async () => {
   return {
     EmulsionControls,
     EditorControls: function MockEditorControls({
+      picking,
       setPicking,
       onNavigate
     }: {
+      picking: boolean
       setPicking: (value: boolean) => void
       onNavigate: (page: 'emulsion' | 'paper') => void
     }) {
       return (
         <>
-          <button data-cloud={useContext(DevelopingCloud)} onClick={() => setPicking(true)}>
+          <button
+            data-cloud={useContext(DevelopingCloud)}
+            aria-pressed={picking}
+            onClick={() => setPicking(true)}
+          >
             Pick white balance
           </button>
           <button data-sidebar-page="emulsion" onClick={() => onNavigate('emulsion')}>
@@ -670,6 +704,215 @@ it('toggles the neutral picker with W', () => {
   dialog.remove()
   fireEvent.keyDown(document, { key: 'w' })
   expect(picking()).toBe('true')
+})
+
+function scopeAttribute(name: string): string | null | undefined {
+  return document.querySelector('[data-scope]')?.getAttribute(name)
+}
+function previewAttribute(name: string): string | null | undefined {
+  return document.querySelector('[data-editor-frame]')?.getAttribute(name)
+}
+const selectedScope = (): string | null =>
+  screen.getByRole('tab', { selected: true }).getAttribute('id')
+const renderKey = (value = recipe): string => `${session.sessionId}:${JSON.stringify(value)}`
+
+it('measures the entire image or the visible area, and waits for current pixels while zoomed', () => {
+  editor.setState({
+    session,
+    documents: { [file.path]: doc },
+    loading: false,
+    preview: frame,
+    previewKey: renderKey()
+  })
+  render(<EditorScreen />)
+  const tabs = within(screen.getByRole('tablist', { name: 'Scope area' })).getAllByRole('tab')
+  expect(tabs.map((tab) => tab.getAttribute('aria-label') ?? tab.textContent)).toEqual([
+    'Entire image',
+    'Visible area',
+    'Qualifier'
+  ])
+  expect(selectedScope()).toBe('scope-tab-entire')
+  expect(scopeAttribute('data-scope-url')).toBe(frame.url)
+  expect(scopeAttribute('data-pending')).toBe('false')
+  // Entire image keeps the whole-image preview while zoomed.
+  const region = { x: 0.25, y: 0.25, width: 0.5, height: 0.5 }
+  const tile = {
+    ...frame,
+    url: 'x3f-edit://localhost/tile-a',
+    draft: false,
+    region,
+    viewport: region
+  }
+  act(() => editor.setState({ viewport: region, tile }))
+  expect(scopeAttribute('data-scope-url')).toBe(frame.url)
+  expect(scopeAttribute('data-pending')).toBe('false')
+  // An exposure change while zoomed renders the tile first. The scope gets no stale
+  // pixels and keeps its last paint as pending until prefetch refreshes the preview.
+  const brighter = { ...recipe, exposure: 1 }
+  act(() =>
+    editor.setState({
+      documents: { [file.path]: { ...doc, recipe: brighter } },
+      tile: { ...tile, revision: 2, url: 'x3f-edit://localhost/tile-b' }
+    })
+  )
+  expect(scopeAttribute('data-scope-url')).toBeNull()
+  expect(scopeAttribute('data-pending')).toBe('true')
+  // Also for a new qualified area: it waits for the current preview.
+  fireEvent.click(tabs[2])
+  expect(scopeAttribute('data-scope-url')).toBeNull()
+  expect(scopeAttribute('data-pending')).toBe('true')
+  fireEvent.click(tabs[0])
+  const refreshed = { ...frame, revision: 2, url: 'x3f-edit://localhost/live-b' }
+  act(() => editor.setState({ preview: refreshed, previewKey: renderKey(brighter) }))
+  expect(scopeAttribute('data-scope-url')).toBe(refreshed.url)
+  expect(scopeAttribute('data-pending')).toBe('false')
+
+  fireEvent.click(tabs[1])
+  expect(selectedScope()).toBe('scope-tab-visible')
+  expect(scopeAttribute('data-scope-url')).toBe('x3f-edit://localhost/tile-b')
+  expect(scopeAttribute('data-pending')).toBe('false')
+  // A pan keeps the old tile on screen, but the scope does not measure it.
+  const next = { ...region, x: 0.3 }
+  act(() => editor.setState({ viewport: next }))
+  expect(scopeAttribute('data-scope-url')).toBeNull()
+  expect(scopeAttribute('data-pending')).toBe('true')
+  const panned = { ...tile, url: 'x3f-edit://localhost/tile-c', region: next, viewport: next }
+  act(() => editor.setState({ tile: panned }))
+  expect(scopeAttribute('data-scope-url')).toBe(panned.url)
+  expect(scopeAttribute('data-pending')).toBe('false')
+  // At Fit, the visible area is the whole-image preview.
+  act(() => editor.setState({ viewport: null, tile: null }))
+  expect(scopeAttribute('data-scope-url')).toBe(refreshed.url)
+  expect(scopeAttribute('data-pending')).toBe('false')
+})
+
+it('qualifies a point or a dragged area, apart from the white balance picker', () => {
+  const close = vi.fn(async () => true)
+  editor.setState({
+    session,
+    documents: { [file.path]: doc },
+    loading: false,
+    preview: frame,
+    previewGeometry: geometryKey(recipe),
+    close
+  })
+  const view = render(<EditorScreen />)
+  fireEvent.click(view.container.querySelector('[data-paint]')!)
+  const [entire, visible, qualifier] = within(
+    screen.getByRole('tablist', { name: 'Scope area' })
+  ).getAllByRole('tab')
+  // Tab text uses tone and ink, not the accent, for contrast in every theme.
+  expect(entire.className).toContain('text-tone-300')
+  expect(entire.className).toContain('aria-selected:text-ink')
+  expect(qualifier.className).not.toContain('accent')
+  const picker = (): HTMLElement => screen.getByRole('button', { name: 'Pick white balance' })
+  const qualifying = (): string | null | undefined => previewAttribute('data-qualifying')
+  const region = (): unknown => JSON.parse(scopeAttribute('data-scope-region') ?? 'null')
+  const outline = (): unknown => JSON.parse(previewAttribute('data-outline') ?? 'null')
+  const hint = (): HTMLElement | null => screen.queryByText(t('editor.scopeQualifyHint'))
+
+  // The arrow keys move between the tabs. The Qualifier arms the photo and disarms the picker.
+  fireEvent.click(picker())
+  expect(picker().getAttribute('aria-pressed')).toBe('true')
+  expect(qualifying()).toBe('false')
+  fireEvent.keyDown(visible, { key: 'ArrowRight' })
+  expect(selectedScope()).toBe('scope-tab-qualifier')
+  expect(document.activeElement).toBe(qualifier)
+  expect(qualifying()).toBe('true')
+  expect(picker().getAttribute('aria-pressed')).toBe('false')
+  expect(hint()?.getAttribute('role')).toBe('status')
+  // An armed Qualifier shows a stronger border, not an accent color.
+  expect(qualifier.className).toContain('aria-selected:border-ink/60')
+  expect(qualifier.className).not.toContain('accent')
+  // Without an area, the Qualifier measures the entire image.
+  expect(scopeAttribute('data-scope-url')).toBe(frame.url)
+  expect(region()).toBeNull()
+  // The picker, from its button or from W, disarms the Qualifier.
+  fireEvent.click(picker())
+  expect(qualifying()).toBe('false')
+  expect(hint()).toBeNull()
+  fireEvent.click(qualifier)
+  expect(picker().getAttribute('aria-pressed')).toBe('false')
+  fireEvent.keyDown(document, { key: 'w' })
+  expect(picker().getAttribute('aria-pressed')).toBe('true')
+  expect(qualifying()).toBe('false')
+
+  // A point measures a square of 2 percent of the long edge, in pixels, centered on it.
+  fireEvent.click(qualifier)
+  fireEvent.click(view.container.querySelector('[data-point]')!)
+  expect(qualifying()).toBe('false')
+  const point = region() as PreviewRegion
+  const height = (1024 * 0.02) / 683
+  expect(point.x).toBeCloseTo(0.49)
+  expect(point.width).toBeCloseTo(0.02)
+  expect(point.y).toBeCloseTo(0.5 - height / 2)
+  expect(point.height).toBeCloseTo(height)
+  expect(outline()).toEqual(point)
+
+  // Escape disarms the Qualifier before it closes the editor, and keeps the area.
+  fireEvent.click(qualifier)
+  fireEvent.keyDown(document, { key: 'Escape' })
+  expect(qualifying()).toBe('false')
+  expect(close).not.toHaveBeenCalled()
+  expect(region()).toEqual(point)
+  // A drag measures its rectangle.
+  const drawn = { x: 0.1, y: 0.2, width: 0.3, height: 0.4 }
+  fireEvent.click(qualifier)
+  fireEvent.click(view.container.querySelector('[data-drag]')!)
+  expect(region()).toEqual(drawn)
+  expect(outline()).toEqual(drawn)
+
+  // A geometry change clears the area. A new frame shows only after it decodes, so until
+  // the frame of the new geometry paints, even after its render arrives, a selection on
+  // the photo is ignored and the Qualifier stays armed.
+  const rotated = { ...recipe, rotation: 1 }
+  const paint = (): boolean => fireEvent.click(view.container.querySelector('[data-paint]')!)
+  const drag = (): boolean => fireEvent.click(view.container.querySelector('[data-drag]')!)
+  const change = (value: typeof recipe): void =>
+    act(() => editor.setState({ documents: { [file.path]: { ...doc, recipe: value } } }))
+  const rendered = (value: typeof recipe, url: string): void =>
+    act(() => editor.setState({ preview: { ...frame, url }, previewGeometry: geometryKey(value) }))
+  change(rotated)
+  expect(region()).toBeNull()
+  expect(outline()).toBeNull()
+  fireEvent.click(qualifier)
+  drag()
+  expect(region()).toBeNull()
+  rendered(rotated, 'x3f-edit://localhost/portrait')
+  drag()
+  expect(region()).toBeNull()
+  expect(qualifying()).toBe('true')
+  paint()
+  drag()
+  expect(region()).toEqual(drawn)
+  // An undo: the portrait frame stays on screen until the landscape frame decodes.
+  change(recipe)
+  rendered(recipe, 'x3f-edit://localhost/landscape')
+  expect(region()).toBeNull()
+  fireEvent.click(qualifier)
+  fireEvent.click(view.container.querySelector('[data-point]')!)
+  drag()
+  expect(region()).toBeNull()
+  expect(qualifying()).toBe('true')
+  paint()
+  drag()
+  expect(region()).toEqual(drawn)
+  // Leaving the tab clears the area.
+  fireEvent.click(qualifier)
+  fireEvent.click(view.container.querySelector('[data-drag]')!)
+  expect(region()).toEqual(drawn)
+  fireEvent.click(entire)
+  expect(region()).toBeNull()
+  fireEvent.click(qualifier)
+  expect(region()).toBeNull()
+  // Another photo clears the area and disarms the Qualifier.
+  fireEvent.click(view.container.querySelector('[data-drag]')!)
+  expect(region()).toEqual(drawn)
+  fireEvent.click(qualifier)
+  const other = { ...session, sessionId: 'session-b' }
+  act(() => editor.setState({ session: other, preview: { ...frame, sessionId: 'session-b' } }))
+  expect(region()).toBeNull()
+  expect(qualifying()).toBe('false')
 })
 
 it('inverts a negative print on request and shows a tiny scope while the scope is scrolled away', () => {

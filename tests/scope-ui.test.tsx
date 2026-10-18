@@ -191,6 +191,39 @@ describe('scope preview', () => {
     expect(context.getImageData).toHaveBeenCalledWith(0, 0, w, h)
   })
 
+  it('reads only a region of the shared preview and keeps the last scope while it changes', async () => {
+    const half = { x: 0.25, y: 0.5, width: 0.5, height: 0.25 }
+    const view = render(<ColorScope url={preview} fileId="a" mode="waveform" region={half} />)
+    const canvas = await screen.findByRole('img')
+    expect(context.getImageData).toHaveBeenLastCalledWith(160, 240, 320, 120)
+    // A tiny region still reads one pixel, inside the preview.
+    view.rerender(
+      <ColorScope
+        url={preview}
+        fileId="a"
+        mode="waveform"
+        region={{ x: 1, y: 1, width: 0.0001, height: 0.0001 }}
+      />
+    )
+    expect(screen.getByRole('img')).toBe(canvas)
+    await waitFor(() => expect(context.getImageData).toHaveBeenLastCalledWith(639, 479, 1, 1))
+    // The same values in a new object read no pixels again, and no region reads all of them.
+    const reads = context.getImageData.mock.calls.length
+    view.rerender(<ColorScope url={preview} fileId="a" mode="waveform" region={{ ...half }} />)
+    await screen.findByRole('img')
+    expect(context.getImageData).toHaveBeenCalledTimes(reads)
+    view.rerender(<ColorScope url={preview} fileId="a" mode="waveform" />)
+    await waitFor(() => expect(context.getImageData).toHaveBeenLastCalledWith(0, 0, 640, 480))
+    expect(fetch).toHaveBeenCalledTimes(1)
+    // A withheld, stale source keeps the last paint as pending and reads no pixels.
+    const held = context.getImageData.mock.calls.length
+    view.rerender(<ColorScope url={undefined} fileId="a" mode="waveform" region={half} pending />)
+    expect(screen.getByRole('img')).toBe(canvas)
+    expect(view.container.firstElementChild?.getAttribute('aria-busy')).toBe('true')
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(context.getImageData).toHaveBeenCalledTimes(held)
+  })
+
   it('shows no preview on failure and closes a decoded bitmap if reading pixels fails', async () => {
     context.getImageData.mockImplementationOnce(() => {
       throw new Error('read failed')
