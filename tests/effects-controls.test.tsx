@@ -136,8 +136,7 @@ it('moves all grain channels with the main slider and changes offsets independen
   const offsets = screen
     .getByText(t('editor.grainChannelOffsets'), { selector: 'summary' })
     .closest('details')!
-  expect(offsets.open).toBe(false)
-  offsets.open = true
+  expect(offsets.open).toBe(true)
   adjust(t('editor.red'), 2)
   adjust(t('editor.green'), -3)
   expect(film()?.grainParams).toMatchObject({ rmsBase: 12, rmsGranularity: [14, 9, 12] })
@@ -343,10 +342,6 @@ it.each([
 ] as const)('explains native effect slider %s', async (label, help) => {
   vi.stubGlobal('PointerEvent', MouseEvent)
   render(<Effects initial={{ ...defaultRecipe(), film: { ...DEFAULT_FILM, halation: true } }} />)
-  if (help === 'grainChannelOffsetHelp')
-    screen
-      .getByText(t('editor.grainChannelOffsets'), { selector: 'summary' })
-      .closest('details')!.open = true
   const button = screen.getByRole('button', { name: label() })
   fireEvent.pointerMove(button, { pointerType: 'mouse' })
   expect((await screen.findByRole('tooltip')).textContent).toBe(t(`editor.${help}`))

@@ -36,6 +36,7 @@ import { HelpTooltip, ToggleRow } from './ui/settingsLayout'
 import { LookPicker } from './LookPicker'
 import { SfdRaw, SfdRawInfo } from './SfdRaw'
 import { EffectsSection } from './EffectsControls'
+import { useStoredOpen } from '../hooks/useStoredOpen'
 
 /** Tracks that show which way a slider moves the picture. */
 const TEMPERATURE = 'linear-gradient(to right, #4f7cff, #d4d4d4, #ffb43d)'
@@ -253,23 +254,26 @@ export function Adjustment({
 }
 
 export function Section({
+  id,
   name,
   info,
-  open = false,
   children
 }: {
+  /** Keeps the open state of the section between sessions. Each section has its own. */
+  id: string
   name: string
   /** An icon button after the name, such as an info popover. */
   info?: React.ReactNode
-  open?: boolean
   children: React.ReactNode
 }): React.JSX.Element {
+  const [open, setOpen] = useStoredOpen(id)
   // Sections reach the panel edges, divided by rules; a nested one does too.
   // An open section fades from a faint light under its header to dark by its first
   // field, so its start is easy to see.
   return (
     <details
-      open={open || undefined}
+      open={open}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
       className="border-t border-ink/10 px-4 open:bg-gradient-to-b open:from-ink/[0.03] open:to-transparent open:bg-[length:100%_3rem] open:bg-no-repeat [details_&]:-mx-4"
     >
       <summary className="control-label flex cursor-pointer list-none items-center gap-1.5 rounded py-3 font-bold tracking-[0.16em] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/50 [&::-webkit-details-marker]:hidden">
@@ -399,11 +403,17 @@ export const EditorControls = memo(function EditorControls({
   return (
     <>
       {x3i && (
-        <Section name={t('editor.sfdRaw')} info={!x3i.processed && <SfdRawInfo />} open>
+        <Section id="sfdRaw" name={t('editor.sfdRaw')} info={!x3i.processed && <SfdRawInfo />}>
           <SfdRaw recipe={recipe} />
         </Section>
       )}
-      <div role="tablist" aria-label={t('editor.panels')} className="grid grid-cols-3 gap-1.5 p-3">
+      {/* A toolbar as in macOS settings: the chosen tab sits on a soft fill. Its text is ink,
+          because the accent is below 4.5:1 contrast in the light and gray themes. */}
+      <div
+        role="tablist"
+        aria-label={t('editor.panels')}
+        className="flex justify-center gap-2 px-3 py-2.5"
+      >
         {PANEL_TABS.map(([value, label, Icon], index) => (
           <button
             key={value}
@@ -431,9 +441,9 @@ export const EditorControls = memo(function EditorControls({
               setTab(PANEL_TABS[next][0])
               document.getElementById(`panel-tab-${PANEL_TABS[next][0]}`)?.focus()
             }}
-            className="flex flex-col items-center gap-1 rounded-lg border border-transparent px-0.5 py-1.5 text-[10px] leading-none text-tone-400 hover:bg-ink/5 hover:text-tone-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/50 aria-selected:border-ink/30 aria-selected:bg-ink/10 aria-selected:text-ink disabled:opacity-40"
+            className="flex min-w-[4.5rem] max-w-[7rem] flex-col items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-medium leading-none text-tone-300 hover:bg-ink/[0.03] hover:text-tone-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/70 aria-selected:bg-ink/[0.07] aria-selected:text-ink disabled:opacity-40"
           >
-            <Icon aria-hidden="true" className="h-4 w-4" />
+            <Icon aria-hidden="true" className="h-5 w-5" strokeWidth={1.75} />
             <span className="max-w-full truncate">{t(`editor.${label}`)}</span>
           </button>
         ))}
@@ -442,7 +452,7 @@ export const EditorControls = memo(function EditorControls({
         <div {...inert}>
           {tab === 'raw' && (
             <>
-              <Section name={t('editor.light')} open>
+              <Section id="light" name={t('editor.light')}>
                 {recipe.film ? (
                   <Adjustment
                     label={t('editor.exposure')}
@@ -468,10 +478,10 @@ export const EditorControls = memo(function EditorControls({
                   help: t('editor.fillLightHelp')
                 })}
               </Section>
-              <Section name={t('editor.curves')}>
+              <Section id="curves" name={t('editor.curves')}>
                 <Curves recipe={recipe} />
               </Section>
-              <Section name={t('editor.whiteBalance')} open>
+              <Section id="whiteBalance" name={t('editor.whiteBalance')}>
                 <div className="flex items-center gap-1.5">
                   <Button
                     size="icon"
@@ -547,11 +557,12 @@ export const EditorControls = memo(function EditorControls({
                   onChange={setExtended}
                 />
               </Section>
-              <Section name={t('editor.detail')}>
+              <Section id="detail" name={t('editor.detail')}>
                 {control('sharpen', { min: 0, max: 100 })}
                 {control('denoise', { min: 0, max: 10, help: t('editor.denoiseHelp') })}
                 {recipe.denoise > 0 && (
                   <DenoiseControls
+                    storageId="denoiseAdvanced"
                     value={recipe.denoiseOptions}
                     change={(denoiseOptions, committed) => change({ denoiseOptions }, committed)}
                     commit={commit}
@@ -561,19 +572,22 @@ export const EditorControls = memo(function EditorControls({
             </>
           )}
           {tab === 'film' && (
-            <Section name={t('editor.look')} open>
-              <LookPicker kind="film" recipe={recipe} onOpen={() => onNavigate('emulsion')} />
-              {/* A positive (slide) film is viewed directly. Printing it on negative
-                  paper inverts it, so offer the papers only to undo that. */}
-              {recipe.film && (!positiveFilm(recipe.film) || !recipe.film.negative) && (
-                <LookPicker kind="paper" recipe={recipe} onOpen={() => onNavigate('paper')} />
-              )}
-              {recipe.film && <FilmControls film={recipe.film} />}
-            </Section>
+            <>
+              <Section id="look" name={t('editor.look')}>
+                <LookPicker kind="film" recipe={recipe} onOpen={() => onNavigate('emulsion')} />
+                {/* A positive (slide) film is viewed directly. Printing it on negative
+                    paper inverts it, so offer the papers only to undo that. */}
+                {recipe.film && (!positiveFilm(recipe.film) || !recipe.film.negative) && (
+                  <LookPicker kind="paper" recipe={recipe} onOpen={() => onNavigate('paper')} />
+                )}
+                {recipe.film && <FilmControls film={recipe.film} />}
+              </Section>
+              <EffectsSection recipe={recipe} />
+            </>
           )}
           {tab === 'grading' && (
             <>
-              <Section name={t('editor.color')}>
+              <Section id="color" name={t('editor.color')}>
                 {control('saturation')}
                 {control('vibrance', { help: t('editor.vibranceHelp') })}
                 <p className="control-label pt-2 text-[10px] text-tone-500">
@@ -602,7 +616,6 @@ export const EditorControls = memo(function EditorControls({
                   `linear-gradient(to right, ${hsl(hue, 70, 15)}, ${hsl(hue, 70, 85)})`
                 )}
               </Section>
-              <EffectsSection recipe={recipe} />
             </>
           )}
         </div>

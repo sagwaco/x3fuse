@@ -11,7 +11,9 @@ import {
   pasteRecipe,
   type EditRecipe
 } from '@shared/editor'
+import { defaultDenoiseOptions } from '@shared/denoise'
 import { EditorControls, EmulsionControls } from '../src/renderer/src/components/EditorControls'
+import { DenoiseControls } from '../src/renderer/src/components/DenoiseControls'
 import { LookPicker } from '../src/renderer/src/components/LookPicker'
 import { CropControls } from '../src/renderer/src/components/CropControls'
 import { CropPreview } from '../src/renderer/src/components/CropPreview'
@@ -171,6 +173,7 @@ beforeEach(() => {
 })
 afterEach(() => {
   cleanup()
+  localStorage.clear()
   editor.setState({
     change: originalChange,
     commit: originalCommit,
@@ -200,13 +203,18 @@ it('groups the sidebar into RAW, FILM and GRADING tabs that start on RAW', () =>
     t('denoise.advanced')
   ])
   panelTab('film')
-  expect(sections(view.container)).toEqual([t('editor.look')])
+  expect(sections(view.container)).toEqual([
+    t('editor.look'),
+    t('editor.effects'),
+    t('editor.grainChannelOffsets')
+  ])
   const button = screen.getByText(t('editor.look'), { selector: '[data-sidebar-page] *' })
   const paper = screen.getByText(t('editor.paperStock'), { selector: '[data-sidebar-page] *' })
   expect(button.compareDocumentPosition(paper) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   expect(screen.getByRole('slider', { name: t('editor.gammaFilm') })).toBeTruthy()
   panelTab('grading')
   expect(sections(view.container).slice(0, 1)).toEqual([t('editor.color')])
+  expect(sections(view.container)).not.toContain(t('editor.effects'))
 })
 
 it('supports arrow keys between the panel tabs and shows only the film button without a stock', () => {
@@ -232,12 +240,61 @@ it('supports arrow keys between the panel tabs and shows only the film button wi
   fireEvent.click(tabs[1])
   expect(setPicking).toHaveBeenCalledWith(false)
   act(() => setRecipe({ ...defaultRecipe(), film: null }))
-  expect(sections(view.container)).toEqual([t('editor.look')])
+  expect(sections(view.container)).toEqual([t('editor.look'), t('editor.effects')])
   expect(
     screen.queryByText(t('editor.paperStock'), { selector: '[data-sidebar-page] *' })
   ).toBeNull()
   expect(screen.queryByRole('slider', { name: t('editor.gammaFilm') })).toBeNull()
   expect(change).not.toHaveBeenCalled()
+})
+
+it('opens every section until it is closed, and keeps closed sections closed', async () => {
+  const details = (label: string): HTMLDetailsElement =>
+    screen.getByText(label, { selector: 'summary' }).closest('details')!
+  const advanced = t('denoise.advanced')
+  const raw = [
+    ...['light', 'curves', 'whiteBalance', 'detail'].map((key) => t(`editor.${key}`)),
+    advanced
+  ]
+  const open = (): boolean[] => raw.map((label) => details(label).open)
+  render(<Controls />)
+  expect(open()).toEqual([true, true, true, true, true])
+  // Each write keeps the states that the other sections stored.
+  for (const label of [t('editor.curves'), t('editor.detail'), advanced])
+    fireEvent.click(screen.getByText(label, { selector: 'summary' }))
+  await waitFor(() =>
+    expect(JSON.parse(localStorage.getItem('x3fuse.sections')!)).toEqual({
+      curves: false,
+      detail: false,
+      denoiseAdvanced: false
+    })
+  )
+  cleanup()
+  render(<Controls />)
+  expect(open()).toEqual([true, false, true, false, false])
+  panelTab('film')
+  expect(details(t('editor.look')).open && details(t('editor.effects')).open).toBe(true)
+  panelTab('raw')
+  expect(open()).toEqual([true, false, true, false, false])
+  // A fresh storage, or one that fails, opens every section.
+  cleanup()
+  localStorage.clear()
+  render(<Controls />)
+  expect(open()).toEqual([true, true, true, true, true])
+  const failing = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+    throw new Error('denied')
+  })
+  cleanup()
+  render(<Controls />)
+  expect(open()).toEqual([true, true, true, true, true])
+  failing.mockRestore()
+  // Without a storage id, as in the conversion form, Advanced starts closed and stores nothing.
+  cleanup()
+  render(<DenoiseControls value={defaultDenoiseOptions()} change={vi.fn()} />)
+  expect(details(advanced).open).toBe(false)
+  fireEvent.click(screen.getByText(advanced, { selector: 'summary' }))
+  await waitFor(() => expect(details(advanced).open).toBe(true))
+  expect(localStorage.getItem('x3fuse.sections')).toBeNull()
 })
 
 it('binds Exposure to the film when a stock is chosen and to the digital pipeline for Standard', () => {

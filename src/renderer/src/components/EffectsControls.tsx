@@ -121,7 +121,7 @@ export function EffectsSection({ recipe }: { recipe: EditRecipe }): React.JSX.El
     )
   }
   return (
-    <Section name={t('editor.effects')}>
+    <Section id="effects" name={t('editor.effects')}>
       {header('grain', resetGrain, !!grain)}
       {!grain && <p className="text-xs text-tone-400">{t('editor.legacyFilmEffect')}</p>}
       {grain && fx.grain && (
@@ -159,7 +159,7 @@ export function EffectsSection({ recipe }: { recipe: EditRecipe }): React.JSX.El
             commit={commit}
           />
           {film && !monochrome && (
-            <Section name={t('editor.grainChannelOffsets')}>
+            <Section id="grainChannelOffsets" name={t('editor.grainChannelOffsets')}>
               {(['red', 'green', 'blue'] as const).map((channel, index) => (
                 <Adjustment
                   key={channel}
