@@ -5,15 +5,22 @@ import { act, cleanup, render } from '@testing-library/react'
 import { SfdCube } from '../src/renderer/src/components/SfdCube'
 import { cell, COUNT, fillOrder, SIZE } from '../src/renderer/src/lib/sfdCube'
 
-it('fills the SFD RAW cube from the middle layer outward, one layer at a time', () => {
+it('fills the SFD RAW cube from the middle layer outward, two layers at a time', () => {
   const order = fillOrder()
   expect(new Set(order).size).toBe(COUNT)
   const layers = order.map((index) => cell(index)[2])
-  const blocks = Array.from({ length: SIZE }, (_, i) =>
-    layers.slice(i * SIZE * SIZE, (i + 1) * SIZE * SIZE)
-  )
-  expect(blocks.map((block) => new Set(block).size)).toEqual(Array(SIZE).fill(1))
-  expect(blocks.map((block) => block[0])).toEqual([3, 2, 4, 1, 5, 0, 6])
+  const area = SIZE * SIZE
+  expect(new Set(layers.slice(0, area))).toEqual(new Set([3]))
+  for (const [step, pair] of [
+    [1, [2, 4]],
+    [2, [1, 5]],
+    [3, [0, 6]]
+  ] as const) {
+    const block = layers.slice((2 * step - 1) * area, (2 * step + 1) * area)
+    expect(new Set(block)).toEqual(new Set(pair))
+    // The two layers fill together, not one after the other.
+    expect(new Set(block.slice(0, area))).toEqual(new Set(pair))
+  }
 })
 
 /** Floats per particle in the uploaded data. The last one is the glow. */
@@ -88,45 +95,97 @@ const advance = (seconds: number): void =>
     }
   })
 
-/** The drawn particles: x, y and glow. Gray particles have no glow. */
-const drawn = (): Array<{ x: number; y: number; glow: number }> => {
+type Dot = { x: number; y: number; size: number; glow: number }
+/** The drawn dots: x, y, size and glow. Gray particles and the wireframe have no glow. */
+const dots = (): Dot[] => {
   const data = uploads.at(-1)!
   return Array.from({ length: data.length / STRIDE }, (_, i) => ({
     x: data[i * STRIDE],
     y: data[i * STRIDE + 1],
+    size: data[i * STRIDE + 2],
     glow: data[i * STRIDE + STRIDE - 1]
   }))
 }
+/** Wireframe dots are smaller than any particle. */
+const wire = (): Dot[] => dots().filter(({ size }) => size < 0.6)
+const drawn = (): Dot[] => dots().filter(({ size }) => size >= 0.6)
 const colored = (): number => drawn().filter(({ glow }) => glow > 0).length
 
-it('streams colored particles in one at a time, and each lands with a flash', () => {
+it('outlines the cube with a wireframe', () => {
+  render(<SfdCube fill={0} fusing={false} />)
+  advance(0.1)
+  const box = wire()
+  expect(box.length).toBeGreaterThan(0)
+  for (const axis of ['x', 'y'] as const) {
+    const inside = drawn().map((dot) => dot[axis])
+    const outside = box.map((dot) => dot[axis])
+    expect(Math.max(...outside)).toBeGreaterThan(Math.max(...inside))
+    expect(Math.min(...outside)).toBeLessThan(Math.min(...inside))
+  }
+})
+
+it('hides the gray cube during a merge, and shows each particle as it lands with a flash', () => {
   const view = render(<SfdCube fill={0} fusing={false} />)
+  advance(0.1)
+  expect(drawn()).toHaveLength(COUNT)
+  view.rerender(<SfdCube fill={0} fusing />)
   advance(0.5)
-  expect(colored()).toBe(0)
-  view.rerender(<SfdCube fill={1} fusing={false} />)
+  // The gray particles fade out.
+  expect(drawn()).toHaveLength(0)
+  view.rerender(<SfdCube fill={1} fusing />)
   let flash = 0
   let burst = 0
   let count = 0
+  let gray = 0
   for (let i = 0; i < 400; i++) {
     advance(0.016)
     burst = Math.max(burst, colored() - count)
     count = colored()
+    gray = Math.max(gray, drawn().length - count)
     flash = Math.max(flash, ...drawn().map(({ glow }) => glow))
   }
-  // No more than two arrive in a frame. Every gray particle is replaced.
+  // No more than two arrive in a frame, and no gray particle shows.
   expect(burst).toBeLessThanOrEqual(2)
-  expect(drawn()).toHaveLength(COUNT)
-  expect(colored()).toBe(COUNT)
+  expect(gray).toBe(0)
   expect(flash).toBeGreaterThan(1)
 })
 
-it('drops colored particles straight down while the cube spins on', () => {
+it('brings the gray cube back when a merge stops', () => {
+  const view = render(<SfdCube fill={0} fusing />)
+  advance(0.5)
+  view.rerender(<SfdCube fill={0.2} fusing />)
+  advance(2)
+  expect(colored()).toBeGreaterThan(0)
+  view.rerender(<SfdCube fill={0} fusing={false} />)
+  advance(0.3)
+  // The cube stays empty until the drop ends.
+  expect(drawn().length - colored()).toBe(0)
+  advance(2)
+  expect(drawn()).toHaveLength(COUNT)
+  expect(colored()).toBe(0)
+})
+
+it('fills while the photo changes to the other RAW, and completes when it shows', () => {
+  const view = render(<SfdCube fill={0} fusing={false} />)
+  advance(0.5)
+  view.rerender(<SfdCube fill={1} fusing={false} switching />)
+  advance(1)
+  // Most particles are in, but gray ones wait for the photo.
+  expect(colored()).toBeGreaterThan(COUNT / 2)
+  expect(drawn().length - colored()).toBeGreaterThan(0)
+  view.rerender(<SfdCube fill={1} fusing={false} />)
+  advance(0.3)
+  // Every gray particle is replaced.
+  expect(drawn()).toHaveLength(COUNT)
+  expect(colored()).toBe(COUNT)
+})
+
+it('drops colored particles straight down, then fades the gray cube in from the top', () => {
   const view = render(<SfdCube fill={1} fusing={false} />)
   advance(0.5)
   view.rerender(<SfdCube fill={0} fusing={false} />)
   advance(0.1)
-  // The gray cube is back at once, with the colored particles falling in front.
-  expect(drawn().length - colored()).toBe(COUNT)
+  const gray = (): Array<{ y: number }> => drawn().filter(({ glow }) => glow === 0)
   const falling = (): Array<{ x: number; y: number }> =>
     drawn()
       .filter(({ glow }) => glow > 0)
@@ -138,8 +197,17 @@ it('drops colored particles straight down while the cube spins on', () => {
   expect(after.reduce((sum, { y }) => sum + y, 0)).toBeGreaterThan(
     before.reduce((sum, { y }) => sum + y, 0)
   )
-  advance(1)
+  // The cube stays empty until the drop ends.
+  expect(gray()).toHaveLength(0)
+  advance(0.5)
+  // Then the upper layers come back first. The canvas y points down.
   expect(colored()).toBe(0)
+  const shown = gray()
+  expect(shown.length).toBeGreaterThan(0)
+  expect(shown.length).toBeLessThan(COUNT)
+  expect(shown.reduce((sum, { y }) => sum + y, 0) / shown.length).toBeLessThan(0)
+  advance(1)
+  expect(drawn()).toHaveLength(COUNT)
 })
 
 it('keeps drawing when particles launch again during their drop', () => {

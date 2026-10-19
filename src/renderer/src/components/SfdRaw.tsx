@@ -98,6 +98,7 @@ export function SfdRaw({ recipe }: { recipe: EditRecipe }): React.JSX.Element | 
             key={path}
             fill={running ? (x3i.progress ?? 0) : sfd && x3i.processed ? 1 : 0}
             fusing={running}
+            switching={switching}
             file={file}
           />
         </span>

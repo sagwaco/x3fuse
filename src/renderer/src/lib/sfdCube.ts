@@ -20,17 +20,15 @@ export const cell = (index: number): [number, number, number] => [
 
 /**
  * The particles in the order that they fill: the middle layer first, then
- * one layer at a time outward, the upper layer before the lower one. A layer
- * fills in a fixed random order, so its surface changes all the time. A
- * particle index is `x + SIZE * (z + SIZE * layer)`.
+ * outward two layers at a time, the one above and the one below, so the fill
+ * ripples out from the middle. The particles of a step fill in a fixed random
+ * order, so its surfaces change all the time. A particle index is
+ * `x + SIZE * (z + SIZE * layer)`.
  */
 export function fillOrder(): number[] {
-  const layers = [...Array(SIZE).keys()].sort(
-    (a, b) => Math.abs(a - MIDDLE) - Math.abs(b - MIDDLE) || a - b
-  )
-  return layers.flatMap((layer) =>
-    [...Array(SIZE * SIZE).keys()]
-      .map((spot) => spot + SIZE * SIZE * layer)
+  return [...Array(MIDDLE + 1).keys()].flatMap((distance) =>
+    [...Array(COUNT).keys()]
+      .filter((index) => Math.abs(cell(index)[2] - MIDDLE) === distance)
       .sort((a, b) => hash(a) - hash(b))
   )
 }

@@ -17,21 +17,41 @@ const LIFT = 5
 /** Seconds of a flight. */
 const FLIGHT = 1.2
 /**
- * Particles launch one at a time, at MAX per second. During a merge, they
- * launch fast enough to send the waiting ones in LEAD seconds, about one merge
- * step, but at MIN to MAX per second. Thus they keep a steady stream.
+ * During a merge, particles launch one at a time, fast enough to send the
+ * waiting ones in LEAD seconds, about one merge step, but at MIN to MAX per
+ * second. Thus they keep a steady stream.
  */
 const LEAD = 2
 const MIN = 4
 const MAX = 120
+/**
+ * While the photo changes to the other RAW, particles launch fast enough to
+ * send the waiting ones in SETTLE seconds, and fly for SWITCH seconds. The
+ * stream slows as the cube fills, so the last particles wait for the photo.
+ * When the photo shows, they launch at once, and all land in LAND seconds.
+ */
+const SETTLE = 0.4
+const SWITCH = 0.6
+const LAND = 0.25
 /** Seconds for a landing flash to fade to a third. */
 const FLASH = 0.12
 /** Seconds of a drop, and its fall in CSS pixels per second squared. */
 const DROP = 0.7
 const GRAVITY = 90
-/** Radians per second of the spin, and while a merge runs. */
+/**
+ * Gray particles fade in or out for FADE seconds. During a merge, they fade
+ * out, so the particles appear as they land. When a drop ends, the gray ones
+ * that are not wanted fade back in, each layer STAGGER seconds after the
+ * layer above it.
+ */
+const FADE = 0.25
+const STAGGER = 0.08
+/** The wireframe around the cube, half a spacing out: dots per edge, and their size and alpha. */
+const WIRE = 48
+const WIRE_SIZE = 0.4
+const WIRE_ALPHA = 0.3
+/** Radians per second of the spin. */
 const SPIN = (2 * Math.PI) / 16
-const FUSING = (2 * Math.PI) / 4
 /**
  * The isometric tilt. A still cube shows 15 degrees off the isometric angle:
  * there, particle columns line up and the cube looks like a flat hexagon.
@@ -205,25 +225,31 @@ const token = (name: string): number[] =>
 /**
  * A spinning isometric cube of particles, one layer per X3I frame. Gray
  * particles show the unfused RAW. As `fill` goes from 0 to 1, particles in the
- * colors of the photo preview fly in one at a time on orbits, layer by layer
- * from the middle out, and flash as they replace the gray ones. A full cube
- * shows the SFD RAW. When the fill goes down, colored particles drop. The cube
- * spins faster while `fusing`. Particles flicker, with a bloom and a chromatic
- * aberration. It draws frames only while it is in view. Reduced motion shows
- * a still cube. Without WebGL 2, it shows a layers icon.
+ * colors of the photo preview fly in one at a time on orbits, from the middle
+ * layer out, two layers at a time, and flash as they replace the gray ones. A
+ * full cube shows the SFD RAW. When the fill goes down, colored particles drop
+ * and fade out. Then gray particles fade in, from the top layer down. While
+ * `fusing`, the gray particles fade out, so each particle appears as it lands.
+ * While `switching`, the photo changes to the other RAW, and the cube
+ * completes when the photo shows. A dotted wireframe outlines the cube.
+ * Particles flicker, with a bloom and a chromatic aberration. It draws frames
+ * only while it is in view. Reduced motion shows a still cube. Without WebGL
+ * 2, it shows a layers icon.
  */
 export function SfdCube({
   fill,
   fusing,
+  switching = false,
   file
 }: {
   fill: number
   fusing: boolean
+  switching?: boolean
   file?: X3FFileDTO
 }): React.JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const target = useRef({ fill, fusing })
-  target.current = { fill, fusing }
+  const target = useRef({ fill, fusing, switching })
+  target.current = { fill, fusing, switching }
   const colors = useRef<Float32Array>()
   const wake = useRef<() => void>()
   // StrictMode sets the effect up again at once, so a release of the context waits a task.
@@ -282,7 +308,8 @@ export function SfdCube({
     let visible = true
     const sequence = fillOrder()
     // Cube positions in CSS pixels, with y up, polar coordinates in their
-    // layers, and random values for the flight, the drop and the flicker.
+    // layers, the seconds from a drop to the gray fade-in, and random values
+    // for the flight, the drop and the flicker.
     const home = Array.from({ length: COUNT }, (_, index) => {
       const [x, z, layer] = cell(index).map((value) => (value - MIDDLE) * SPACING)
       const radius = Math.hypot(x, z)
@@ -291,12 +318,21 @@ export function SfdCube({
         y: -layer,
         z,
         radius,
+        wait: DROP + STAGGER * cell(index)[2],
         phase: radius ? Math.atan2(z, x) : 2 * Math.PI * hash(index),
         lift: LIFT * (2 * hash(index + 3000) - 1),
         fall: GRAVITY * (0.7 + 0.6 * hash(index + 2000)),
         turn: Math.PI * (0.9 + 0.8 * hash(index + 4000)),
         rate: 3 + 6 * hash(index + 5000)
       }
+    })
+    // Dots along the 12 edges of the wireframe, as x, y and z.
+    const edge = (MIDDLE + 0.5) * SPACING
+    const wire = Array.from({ length: 12 * WIRE }, (_, i) => {
+      const line = Math.floor(i / WIRE)
+      const point = [line & 1 ? edge : -edge, line & 2 ? edge : -edge]
+      point.splice(Math.floor(line / 4), 0, edge * ((2 * ((i % WIRE) + 0.5)) / WIRE - 1))
+      return point
     })
     // The first `launched` particles of the sequence are colored.
     const wanted = (): number => Math.floor(target.current.fill * COUNT + 1e-6)
@@ -310,20 +346,25 @@ export function SfdCube({
     const dropped = new Float64Array(COUNT).fill(-Infinity)
     const from = new Float32Array(3 * COUNT)
     const turned = new Float64Array(COUNT)
+    // The alpha of each gray particle, and the time from which it waits to fade back in.
+    const veil = new Float32Array(COUNT).fill(1)
+    const reveal = new Float64Array(COUNT).fill(-Infinity)
+    let merging = target.current.fusing
     const spot = [0, 0, 0]
     let gray = token('--tone-500')
     const neutral = [0.75, 0.75, 0.75]
     let angle = REST
-    let speed = target.current.fusing ? FUSING : SPIN
     let time = 0
     let last = 0
     let frame = 0
-    // Gray, colored and dropping particles, sorted from back to front into
-    // `data`. A particle can have all three, when it launches during its drop.
-    const items = new Float32Array(3 * COUNT * STRIDE)
-    const depth = new Float32Array(3 * COUNT)
-    const order = new Uint16Array(3 * COUNT)
-    const data = new Float32Array(3 * COUNT * STRIDE)
+    // Gray, colored and dropping particles and the wireframe, sorted from back
+    // to front into `data`. A particle can have all three, when it launches
+    // during its drop.
+    const capacity = 3 * COUNT + wire.length
+    const items = new Float32Array(capacity * STRIDE)
+    const depth = new Float32Array(capacity)
+    const order = new Uint16Array(capacity)
+    const data = new Float32Array(capacity * STRIDE)
     const tint = [0, 0, 0]
 
     /** Puts a colored particle `amount` of its flight to its place into `spot`. */
@@ -386,9 +427,9 @@ export function SfdCube({
         const noise =
           hash(index * 1013 + tick) * (1 - blend) + hash(index * 1013 + tick + 1) * blend
         const bright = still ? 1 : 0.7 + 0.6 * noise
-        if (amount < 1) {
+        if (amount < 1 && veil[index] > 0) {
           for (let channel = 0; channel < 3; channel++) tint[channel] = gray[channel] * bright
-          add(x, y, z, 2 * RADIUS, 1, 0)
+          add(x, y, z, 2 * RADIUS, veil[index], 0)
         }
         if (amount > 0) {
           const flash = Math.exp(-(time - flashed[index]) / FLASH)
@@ -420,6 +461,8 @@ export function SfdCube({
           )
         }
       }
+      for (let channel = 0; channel < 3; channel++) tint[channel] = gray[channel]
+      for (const [x, y, z] of wire) add(x, y, z, WIRE_SIZE, WIRE_ALPHA, 0)
       order.subarray(0, count).sort((a, b) => depth[a] - depth[b])
       for (let i = 0; i < count; i++)
         data.set(items.subarray(order[i] * STRIDE, (order[i] + 1) * STRIDE), i * STRIDE)
@@ -437,12 +480,19 @@ export function SfdCube({
         clock.fill(-1)
         dropped.fill(-Infinity)
         flashed.fill(-Infinity)
+        veil.fill(1)
+        reveal.fill(-Infinity)
         for (let k = 0; k < launched; k++) clock[sequence[k]] = FLIGHT
       } else {
+        const { fusing, switching } = target.current
+        const pace = fusing ? 1 : FLIGHT / (switching ? SWITCH : LAND)
+        // A merge that stops before the cube is full brings back its gray particles.
+        if (merging && !fusing) reveal.fill(time)
+        merging = fusing
         for (let k = 0; k < launched; k++) {
           const index = sequence[k]
           const before = clock[index]
-          clock[index] += dt
+          clock[index] += dt * pace
           // A particle flashes as it replaces a gray one.
           if (before < FLIGHT && clock[index] >= FLIGHT) flashed[index] = time
         }
@@ -453,22 +503,32 @@ export function SfdCube({
           from.set(spot, 3 * index)
           turned[index] = angle
           dropped[index] = time
+          reveal[index] = time
+          veil[index] = 0
           clock[index] = -1
         }
-        // Wanted particles launch one at a time, each at its own moment in the frame.
-        const rate = target.current.fusing
-          ? Math.max(MIN, Math.min(MAX, (goal - launched) / LEAD))
-          : MAX
-        credit = launched < goal ? credit + rate * dt : 0
-        for (; credit >= 1 && launched < goal; launched++) {
-          credit -= 1
-          clock[sequence[launched]] = credit / rate
+        if (fusing || switching) {
+          // Wanted particles launch one at a time, each at its own moment in the frame.
+          const waiting = goal - launched
+          const rate = fusing ? Math.max(MIN, Math.min(MAX, waiting / LEAD)) : waiting / SETTLE
+          credit = waiting > 0 ? credit + rate * dt : 0
+          for (; credit >= 1 && launched < goal; launched++) {
+            credit -= 1
+            clock[sequence[launched]] = (credit / rate) * pace
+          }
+        } else {
+          // The photo shows its RAW, so the wanted particles launch at once.
+          credit = 0
+          for (; launched < goal; launched++) clock[sequence[launched]] = 0
+        }
+        for (let k = 0; k < COUNT; k++) {
+          const index = sequence[k]
+          if (fusing) veil[index] = Math.max(0, veil[index] - dt / FADE)
+          else if (k >= goal && time >= reveal[index] + home[index].wait)
+            veil[index] = Math.min(1, veil[index] + dt / FADE)
         }
       }
-      if (!still) {
-        speed += ((target.current.fusing ? FUSING : SPIN) - speed) * Math.min(1, dt / 0.8)
-        angle += speed * dt
-      }
+      if (!still) angle += SPIN * dt
       if (!render()) return setFailed(true)
       if (!still && visible) frame = requestAnimationFrame(step)
       else last = 0
@@ -514,7 +574,7 @@ export function SfdCube({
     }
   }, [])
 
-  useEffect(() => wake.current?.(), [fill, fusing])
+  useEffect(() => wake.current?.(), [fill, fusing, switching])
 
   if (failed) return <Layers aria-hidden="true" className="m-3.5 h-4 w-4 text-tone-400" />
   return (
