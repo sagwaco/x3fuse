@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import { cn } from '../../lib/cn'
 import { usePress } from '../../hooks/usePress'
+import { blurOnClick } from '../../lib/commitFocus'
 
 /** Milliseconds that a selection change shows as moving. Keep it at least the
  * slide and the squash durations in index.css (.glass-group[data-moving]). */
@@ -257,7 +258,10 @@ export function GlassGroup<T extends string>({
             aria-keyshortcuts={item.keyshortcuts}
             disabled={disabled || item.disabled}
             data-selected={isSelected || undefined}
-            onClick={() => onValueChange(item.value)}
+            onClick={(event) => {
+              onValueChange(item.value)
+              if (!tabs) blurOnClick(event)
+            }}
             onKeyDown={(event) => move(event, index)}
             className={cn(
               itemClass,

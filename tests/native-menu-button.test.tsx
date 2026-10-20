@@ -7,9 +7,11 @@ vi.mock('../src/renderer/src/lib/ipc', () => ({ ipc: { invoke } }))
 afterEach(() => {
   cleanup()
   vi.resetAllMocks()
+  vi.restoreAllMocks()
 })
 
 it('anchors the OS menu, prevents duplicate opens, and ignores cancelled or disabled results', async () => {
+  vi.spyOn(document, 'hasFocus').mockReturnValue(true)
   const onSelect = vi.fn()
   let choose!: (value: string | null) => void
   invoke.mockImplementation(async (channel) =>
@@ -30,12 +32,13 @@ it('anchors the OS menu, prevents duplicate opens, and ignores cancelled or disa
   )
   const button = screen.getByRole('button', { name: 'Format' })
   button.getBoundingClientRect = () => ({ left: 20, bottom: 64 }) as DOMRect
-  fireEvent.click(button)
+  fireEvent.click(button, { detail: 1 })
   fireEvent.keyDown(button, { key: 'ArrowDown' })
   expect(invoke).toHaveBeenCalledTimes(1)
   expect(invoke).toHaveBeenCalledWith('menu:popup', { id: expect.any(String), x: 20, y: 64, items })
   await act(async () => choose(null))
   expect(onSelect).not.toHaveBeenCalled()
+  expect(document.activeElement).toBe(button)
   fireEvent.keyDown(button, { key: 'Enter' })
   await act(async () => choose('b'))
   expect(onSelect).not.toHaveBeenCalled()
@@ -44,6 +47,11 @@ it('anchors the OS menu, prevents duplicate opens, and ignores cancelled or disa
   expect(onSelect).toHaveBeenCalledTimes(1)
   expect(onSelect).toHaveBeenCalledWith('a')
   expect(button.getAttribute('aria-expanded')).toBe('false')
+  expect(document.activeElement).toBe(button)
+  fireEvent.click(button, { detail: 1 })
+  await act(async () => choose('a'))
+  expect(onSelect).toHaveBeenCalledTimes(2)
+  expect(document.activeElement).toBe(document.body)
 })
 
 it('cancels on unmount and never opens a disabled fieldset control', async () => {

@@ -909,6 +909,7 @@ it('keeps an extended slider extended while a drag brings it into the normal ran
     const root = thumb().closest('[data-orientation]')!.parentElement!.closest('[data-orientation]')
     const track = root ?? thumb().closest('[data-orientation]')!
     fireEvent.pointerDown(track, { clientX: 30, pointerId: 1, button: 0 })
+    expect(document.activeElement).toBe(thumb())
     expect(change.mock.lastCall![0].temperature).toBeLessThan(2000)
     // On the log scale, 41% of the track is about 3300 K. A linear slider would give 6000 K.
     fireEvent.pointerMove(track, { clientX: 40, pointerId: 1 })
@@ -917,6 +918,7 @@ it('keeps an extended slider extended while a drag brings it into the normal ran
     expect(temperature).toBeGreaterThan(2000)
     expect(temperature).toBeLessThan(4000)
     fireEvent.pointerUp(track, { clientX: 41, pointerId: 1 })
+    expect(document.activeElement).toBe(document.body)
     expect(thumb().getAttribute('aria-valuemax')).toBe('12000')
   } finally {
     rect.mockRestore()
@@ -1119,16 +1121,26 @@ it('adjusts color ranges in the color mixer and edits curve points from the keyb
   })
   expect(change.mock.lastCall?.[0].hsl[5]).toEqual({ hue: 40, saturation: 0, luminance: 0 })
   panelTab('raw')
-  fireEvent.click(swatch(t('editor.curveChannel'), t('editor.red')))
+  const red = swatch(t('editor.curveChannel'), t('editor.red'))
+  act(() => red.focus())
+  fireEvent.click(red, { detail: 1 })
+  expect(document.activeElement).toBe(document.body)
   fireEvent.click(screen.getByRole('button', { name: t('editor.addPoint') }))
   const point = screen.getByRole('slider', { name: `${t('editor.curvePoint')} 2` })
+  act(() => point.focus())
   fireEvent.keyDown(point, { key: 'ArrowUp' })
+  expect(document.activeElement).toBe(point)
   expect(change.mock.lastCall?.[0].curves.red[1].y).toBeCloseTo(0.51)
   const curve = screen
     .getByRole('group', { name: t('editor.curves') })
     .querySelector('path[stroke-width="2"]')!
   expect(curve.getAttribute('d')).toContain(' C ')
   expect(curve.getAttribute('d')).toContain('100 98')
+  fireEvent.keyDown(point, { key: 'Enter' })
+  expect(document.activeElement).toBe(document.body)
+  act(() => point.focus())
+  fireEvent.pointerUp(point)
+  expect(document.activeElement).toBe(document.body)
   fireEvent.keyDown(point, { key: 'Delete' })
   expect(change.mock.lastCall?.[0].curves.red).toHaveLength(2)
   fireEvent.click(screen.getByRole('button', { name: t('editor.addPoint') }))

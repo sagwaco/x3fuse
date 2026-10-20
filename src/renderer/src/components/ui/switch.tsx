@@ -1,6 +1,7 @@
 import * as SwitchPrimitive from '@radix-ui/react-switch'
 import { cn } from '../../lib/cn'
 import { usePress } from '../../hooks/usePress'
+import { blurOnClick } from '../../lib/commitFocus'
 
 /** The track look, for the switch and for its copy in the glass lens. */
 const TRACK = cn(
@@ -34,6 +35,7 @@ export function Switch({
       aria-label={label}
       checked={checked}
       onCheckedChange={onCheckedChange}
+      onClick={blurOnClick}
       disabled={disabled}
       className={cn(
         'switch peer inline-flex h-5 w-9 shrink-0 cursor-pointer items-center',

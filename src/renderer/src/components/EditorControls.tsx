@@ -22,6 +22,7 @@ import { t, useLanguage } from '../lib/strings'
 import { withShortcut } from '../lib/shortcut'
 import { Button } from './ui/button'
 import { cn } from '../lib/cn'
+import { blurOnClick, blurOnEnter } from '../lib/commitFocus'
 import { Select } from './ui/select'
 import { GlassGroup } from './ui/glassGroup'
 import { Slider } from './ui/slider'
@@ -219,6 +220,7 @@ export function Adjustment({
         fresh.current = document.activeElement !== event.currentTarget
       }}
       onFocus={(event) => event.currentTarget.select()}
+      onKeyDown={blurOnEnter}
       onMouseUp={(event) => {
         if (fresh.current) event.preventDefault()
         fresh.current = false
@@ -362,7 +364,10 @@ function Swatches<T extends string>({
           aria-checked={option.value === value}
           aria-label={option.label}
           title={option.label}
-          onClick={() => onChange(option.value)}
+          onClick={(event) => {
+            onChange(option.value)
+            blurOnClick(event)
+          }}
           className="h-5 w-5 rounded-full ring-offset-2 ring-offset-tone-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/60 disabled:opacity-40 aria-checked:ring-2 aria-checked:ring-ink"
           style={{ background: option.color }}
         />
@@ -789,13 +794,15 @@ function Curves({ recipe }: { recipe: EditRecipe }): React.JSX.Element {
             move(drag.current, p.x, p.y, false)
           }
         }}
-        onPointerUp={() => {
+        onPointerUp={(event) => {
           drag.current = null
           commit()
+          event.currentTarget.querySelector<SVGElement>('[role="slider"]:focus')?.blur()
         }}
-        onPointerCancel={() => {
+        onPointerCancel={(event) => {
           drag.current = null
           commit()
+          event.currentTarget.querySelector<SVGElement>('[role="slider"]:focus')?.blur()
         }}
         onDoubleClick={(event) => {
           const bounds = event.currentTarget.getBoundingClientRect()
@@ -836,6 +843,7 @@ function Curves({ recipe }: { recipe: EditRecipe }): React.JSX.Element {
             className="outline-none focus-visible:stroke-white"
             onFocus={() => setSelected(index)}
             onKeyDown={(event) => {
+              blurOnEnter(event)
               const step = event.shiftKey ? 0.1 : 0.01
               const [dx, dy] =
                 {

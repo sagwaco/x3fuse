@@ -42,10 +42,11 @@ export function NativeMenuButton({
     }
   }, [id, disabled])
 
-  async function show(button: HTMLButtonElement): Promise<void> {
+  async function show(button: HTMLButtonElement, pointer: boolean): Promise<void> {
     if (pending.current || button.matches(':disabled') || items.length === 0) return
     const bounds = button.getBoundingClientRect()
     const request = {}
+    let selected = false
     pending.current = request
     setOpen(true)
     button.focus()
@@ -62,8 +63,10 @@ export function NativeMenuButton({
             button.isConnected &&
             !button.matches(':disabled') &&
             isEnabled(latest.current.items, value)
-          )
+          ) {
+            selected = true
             latest.current.onSelect(value)
+          }
         }
       )
     } catch (error) {
@@ -73,7 +76,8 @@ export function NativeMenuButton({
         pending.current = null
         if (button.isConnected) {
           setOpen(false)
-          if (!button.matches(':disabled') && document.hasFocus()) button.focus()
+          if (selected && pointer) button.blur()
+          else if (!button.matches(':disabled') && document.hasFocus()) button.focus()
         }
       }
     }
@@ -87,13 +91,13 @@ export function NativeMenuButton({
       disabled={disabled}
       aria-haspopup="menu"
       aria-expanded={open}
-      onClick={(event) => void show(event.currentTarget)}
+      onClick={(event) => void show(event.currentTarget, event.detail > 0)}
       onKeyDown={(event) => {
         // Other keys reach the screen, so its shortcuts work while the button has focus.
         if (['ArrowDown', 'ArrowUp', 'Enter', ' '].includes(event.key)) {
           event.stopPropagation()
           event.preventDefault()
-          void show(event.currentTarget)
+          void show(event.currentTarget, false)
         }
       }}
     />

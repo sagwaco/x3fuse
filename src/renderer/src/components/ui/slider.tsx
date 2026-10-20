@@ -3,6 +3,7 @@ import * as SliderPrimitive from '@radix-ui/react-slider'
 import { cn } from '../../lib/cn'
 import { ipc } from '../../lib/ipc'
 import { detent } from '../../lib/detent'
+import { blurOnEnter } from '../../lib/commitFocus'
 
 /** How close (in pixels) a drag must come to a detent to snap onto it. */
 const SNAP_PX = 4
@@ -75,6 +76,7 @@ export function Slider({
   const drag = useRef<{ last: number; tolerance: number } | null>(null)
   const endDrag = (): void => {
     drag.current = null
+    root.current?.querySelector<HTMLElement>('[role="slider"]')?.blur()
   }
   return (
     <SliderPrimitive.Root
@@ -127,6 +129,7 @@ export function Slider({
         }}
         // The keyboard way to reset, as double-click is for the pointer.
         onKeyDown={(event) => {
+          blurOnEnter(event)
           if (disabled || !onReset || (event.key !== 'Delete' && event.key !== 'Backspace')) return
           event.preventDefault()
           onReset()

@@ -78,6 +78,7 @@ it('drags the Midtones dot inside the disc, commits on release and resets it', (
   render(<Wheels />)
   const midtones = disc('midtones')
   fireEvent.pointerDown(midtones, { clientX: 80, clientY: 30, pointerId: 1, button: 0 })
+  expect(document.activeElement).toBe(midtones)
   expect(change).toHaveBeenLastCalledWith(
     { wheels: expect.objectContaining({ midtones: { x: 0.6, y: 0.4, luminance: 0 } }) },
     false
@@ -91,6 +92,7 @@ it('drags the Midtones dot inside the disc, commits on release and resets it', (
   expect(commit).not.toHaveBeenCalled()
   fireEvent.pointerUp(midtones, { pointerId: 1 })
   expect(commit).toHaveBeenCalledTimes(1)
+  expect(document.activeElement).toBe(document.body)
   expect(screen.getByText(/°, 100%$/)).toBeTruthy()
   fireEvent.click(label('midtones'), { shiftKey: true })
   expect(wheels()!.midtones).toEqual({ x: 0, y: 0, luminance: 0 })
@@ -250,9 +252,11 @@ it('resets, copies and pastes wheels from the context menu', async () => {
   render(<Wheels />)
   fireEvent.pointerDown(disc('shadows'), { clientX: 75, clientY: 50, pointerId: 1, button: 0 })
   fireEvent.pointerUp(disc('shadows'), { pointerId: 1 })
+  act(() => disc('shadows').focus())
   await act(async () => {
     fireEvent.contextMenu(disc('shadows'), { clientX: 10, clientY: 20 })
   })
+  expect(document.activeElement).toBe(document.body)
   expect(invoke).toHaveBeenLastCalledWith(
     'menu:popup',
     expect.objectContaining({
@@ -277,6 +281,11 @@ it('resets, copies and pastes wheels from the context menu', async () => {
   })
   expect(wheels()!.shadows).toEqual(DEFAULT_WHEELS.shadows)
   expect(wheels()!.highlights).toEqual(DEFAULT_WHEELS.highlights)
+  act(() => disc('highlights').focus())
+  await act(async () => {
+    fireEvent.keyDown(disc('highlights'), { key: 'ContextMenu' })
+  })
+  expect(document.activeElement).toBe(disc('highlights'))
 })
 
 it('drags only with the primary button of one pointer', () => {
@@ -328,6 +337,7 @@ it('ends a drag when the wheel turns off or unmounts', () => {
 
 it('turns the hue and changes the strength with the keys, and writes Balance', () => {
   render(<Wheels />)
+  act(() => disc('shadows').focus())
   // At zero strength, the wheel keeps the hue that the keys turn to.
   fireEvent.keyDown(disc('shadows'), { key: 'ArrowRight', shiftKey: true })
   expect(wheels()!.shadows).toEqual({ x: 0, y: 0, luminance: 0, hue: 0.1745 })
@@ -346,6 +356,9 @@ it('turns the hue and changes the strength with the keys, and writes Balance', (
   })
   expect(wheels()!.balance).toBe(-40)
   expect(wheels()!.shadows).toEqual({ x: 0.02, y: 0, luminance: 0 })
+  expect(document.activeElement).toBe(disc('shadows'))
+  fireEvent.keyDown(disc('shadows'), { key: 'Enter' })
+  expect(document.activeElement).toBe(document.body)
 })
 
 it('turns off only the hue discs for black-and-white looks', () => {

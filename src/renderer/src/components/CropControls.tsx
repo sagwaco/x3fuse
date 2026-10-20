@@ -9,6 +9,7 @@ import {
 import type { EditRecipe } from '@shared/editor'
 import { useEditorStore } from '../stores/editorStore'
 import { t } from '../lib/strings'
+import { blurOnClick } from '../lib/commitFocus'
 import { PRESETS, FULL, centeredCrop, fitCrop, outputRatio, ratioCrop } from '../lib/cropGeometry'
 import { level, upright } from '../lib/upright'
 import { useScopeImage } from '../hooks/useScopeImage'
@@ -173,12 +174,11 @@ export function CropControls({
               aria-label={t(`editor.${name}`)}
               title={t(`editor.${name}`)}
               disabled={!W || !H || Math.abs(current - 1) < 0.001}
-              onClick={() =>
-                !checked &&
-                W &&
-                H &&
-                change(withFit({ crop: ratioCrop(1 / current, rotation, W, H) }))
-              }
+              onClick={(event) => {
+                if (!checked && W && H)
+                  change(withFit({ crop: ratioCrop(1 / current, rotation, W, H) }))
+                blurOnClick(event)
+              }}
               className="flex h-6 w-7 items-center justify-center rounded-md text-tone-400 hover:text-tone-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/50 disabled:opacity-40 aria-pressed:bg-ink/15 aria-pressed:text-ink"
             >
               <Icon aria-hidden="true" className="h-4 w-4" />
@@ -199,7 +199,10 @@ export function CropControls({
             aria-checked={option.value === aspect}
             disabled={!W || !H}
             title={option.value === '65:24' ? 'XPan 65:24' : option.label}
-            onClick={() => choose(option.value)}
+            onClick={(event) => {
+              choose(option.value)
+              blurOnClick(event)
+            }}
             className="flex flex-col items-center gap-1 rounded-lg border border-transparent px-0.5 py-1.5 font-mono text-[12px] leading-none text-tone-400 hover:bg-ink/5 hover:text-tone-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/50 disabled:opacity-40 aria-checked:border-ink/30 aria-checked:bg-ink/10 aria-checked:text-ink"
           >
             <Shape ratio={option.ratio} dashed={option.dashed} />

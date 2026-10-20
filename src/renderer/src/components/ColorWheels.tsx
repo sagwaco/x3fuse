@@ -15,6 +15,7 @@ import { invalidateNativeMenu, showNativeMenu } from '../lib/nativeMenu'
 import { t } from '../lib/strings'
 import { Slider } from './ui/slider'
 import { cn } from '../lib/cn'
+import { blurOnEnter } from '../lib/commitFocus'
 import { Adjustment, ResetLabel } from './EditorControls'
 
 type Zone = 'shadows' | 'midtones' | 'highlights'
@@ -61,7 +62,7 @@ export function ColorWheels({ recipe }: { recipe: EditRecipe }): React.JSX.Eleme
   const menuId = useId()
   const session = useEditorStore((state) => state.session?.sessionId)
   useEffect(() => () => invalidateNativeMenu(menuId), [menuId, session, disabled])
-  const menu = (zone: Zone, x: number, y: number): void => {
+  const menu = (zone: Zone, x: number, y: number, pointerTarget?: HTMLElement): void => {
     const items = [
       { value: 'reset', label: t('editor.resetWheel') },
       { value: 'resetAll', label: t('editor.resetWheels') },
@@ -78,6 +79,7 @@ export function ColorWheels({ recipe }: { recipe: EditRecipe }): React.JSX.Eleme
         set({ shadows, midtones, highlights })
       } else if (value === 'copy') copied = now[zone]
       else if (value === 'paste' && copied) set({ [zone]: copied })
+      pointerTarget?.blur()
     }).catch((error: unknown) => console.error('Could not open native context menu', error))
   }
   const wheel = (zone: Zone): React.JSX.Element => (
@@ -88,7 +90,7 @@ export function ColorWheels({ recipe }: { recipe: EditRecipe }): React.JSX.Eleme
       colorless={colorless}
       change={(value, save) => update({ [zone]: value }, save)}
       commit={commit}
-      menu={(x, y) => menu(zone, x, y)}
+      menu={(x, y, pointerTarget) => menu(zone, x, y, pointerTarget)}
     />
   )
   return (
@@ -135,7 +137,7 @@ function WheelControl({
   change: (value: Wheel, save: boolean) => void
   commit: () => void
   /** Opens the wheel's context menu at this point of the window. */
-  menu: (x: number, y: number) => void
+  menu: (x: number, y: number, pointerTarget?: HTMLElement) => void
 }): React.JSX.Element {
   // The drag of the pointer that pressed first. Other pointers do nothing until it lets go.
   const drag = useRef<WheelDrag | null>(null)
@@ -183,8 +185,11 @@ function WheelControl({
     drag.current = null
     commit()
   }, [commit])
-  const release = (event: React.PointerEvent): void => {
-    if (event.pointerId === drag.current?.pointer) end()
+  const release = (event: React.PointerEvent<HTMLElement>): void => {
+    if (event.pointerId === drag.current?.pointer) {
+      end()
+      event.currentTarget.blur()
+    }
   }
   // A drag also ends when the wheel turns off or unmounts.
   useEffect(() => end, [off, end])
@@ -265,7 +270,7 @@ function WheelControl({
           aria-label={label}
           aria-describedby={description}
           aria-disabled={off || undefined}
-          aria-keyshortcuts="ArrowLeft ArrowRight ArrowUp ArrowDown Delete Shift+Delete"
+          aria-keyshortcuts="ArrowLeft ArrowRight ArrowUp ArrowDown Delete Shift+Delete Enter"
           className="relative aspect-square w-full max-w-[90px] touch-none rounded-full [container-type:inline-size] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/60"
           style={{ background: DISC, '--disc': DISC } as React.CSSProperties}
           onPointerDown={(event) => {
@@ -310,10 +315,11 @@ function WheelControl({
           }}
           onContextMenu={(event) => {
             event.preventDefault()
-            if (!disabled) menu(event.clientX, event.clientY)
+            if (!disabled) menu(event.clientX, event.clientY, event.currentTarget)
           }}
           onKeyDown={(event) => {
             if (disabled) return
+            blurOnEnter(event)
             if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
               event.preventDefault()
               const box = event.currentTarget.getBoundingClientRect()
