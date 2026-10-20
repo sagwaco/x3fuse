@@ -153,7 +153,8 @@ function updateQueue(path: string, edit: EditRecord): void {
 const renderKey = (sessionId: string, recipe: EditRecipe): string =>
   `${sessionId}:${JSON.stringify(pixelRecipe(recipe))}`
 
-function asShotRecipe(session: EditorSession | null, seed: number): EditRecipe {
+/** The recipe that Reset gives: the camera's look and framing, without adjustments. */
+export function asShotRecipe(session: EditorSession | null, seed: number): EditRecipe {
   return {
     ...defaultRecipe(),
     film: null,
