@@ -839,6 +839,27 @@ describe('image points and regions', () => {
     expect(media.style.transform).toBe('translate(0px, 0px) scale(0.5)')
   })
 
+  it('opens a context menu with the image point under the pointer, or none from the keyboard', () => {
+    const onContextMenu = vi.fn()
+    const { rerender } = render(<ZoomablePreview file={file} />)
+    const image = loadImage()
+    const preview = screen.getByRole('region', { name: 'Image preview' })
+    const media = image.parentElement!.parentElement!
+    media.getBoundingClientRect = () => ({ left: 0, top: 0, width: 800, height: 600 }) as DOMRect
+    preview.getBoundingClientRect = () => ({ left: 5, top: 7, width: 800, height: 600 }) as DOMRect
+    // Without a menu, the right-click keeps its default.
+    expect(fireEvent.contextMenu(preview, { clientX: 200, clientY: 450 })).toBe(true)
+    rerender(<ZoomablePreview file={file} onContextMenu={onContextMenu} />)
+    expect(fireEvent.contextMenu(preview, { clientX: 200, clientY: 450 })).toBe(false)
+    expect(onContextMenu).toHaveBeenLastCalledWith({ x: 0.25, y: 0.75 }, 200, 450)
+    fireEvent.contextMenu(preview, { clientX: 801, clientY: 10 })
+    expect(onContextMenu).toHaveBeenLastCalledWith(null, 801, 10)
+    fireEvent.keyDown(preview, { key: 'F10', shiftKey: true })
+    expect(onContextMenu).toHaveBeenLastCalledWith(null, 5, 7)
+    fireEvent.keyDown(preview, { key: 'ContextMenu' })
+    expect(onContextMenu).toHaveBeenCalledTimes(4)
+  })
+
   it('normalizes reverse drags, clamps them to the image, and drops cancelled drags', () => {
     const { surface, outline, onImageRegion } = setupRegion()
     fireEvent.pointerDown(surface, { button: 0, clientX: 600, clientY: 450 })
