@@ -69,7 +69,7 @@ it('opens at the pointer after row selection and removes the clicked file', asyn
     x: 120,
     y: 80,
     items: [
-      { value: 'edit', label: t('context.edit_photo'), accelerator: 'D', disabled: false },
+      { value: 'edit', label: t('menu.file.edit_photo'), accelerator: 'D', disabled: false },
       { value: 'flag', separatorBefore: true },
       { value: 'rating' },
       { value: 'copy', accelerator: 'CmdOrCtrl+Shift+C', separatorBefore: true, disabled: true },
@@ -85,7 +85,7 @@ it('opens at the pointer after row selection and removes the clicked file', asyn
   expect(flag.map((item) => item.accelerator)).toEqual(['Z', 'X', 'U'])
   expect(rating.map((item) => item.accelerator)).toEqual(['0', '1', '2', '3', '4', '5'])
   expect(request().items[5].items).toMatchObject([
-    { value: 'export:screen', label: t('context.export_dialog'), accelerator: 'CmdOrCtrl+Shift+E' },
+    { value: 'export:screen', label: t('menu.file.export'), accelerator: 'CmdOrCtrl+Shift+E' },
     { value: 'export:previous', accelerator: 'CmdOrCtrl+Alt+Shift+E', disabled: true },
     { value: 'export:jpeg', separatorBefore: true },
     { value: 'export:embeddedJpg' },

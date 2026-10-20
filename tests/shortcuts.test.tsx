@@ -1,12 +1,16 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { readFileSync } from 'node:fs'
 import shortcuts from '@shared/shortcuts.json'
+import type { MenuCommand } from '@shared/ipc'
 import { DEFAULT_SETTINGS, type QueueViewMode, type X3FFileDTO } from '@shared/types'
 import { HELP_URL, registerCommands, runCommand } from '../src/renderer/src/lib/commands'
 import { useShortcuts } from '../src/renderer/src/hooks/useShortcuts'
 import { useQueueSelection } from '../src/renderer/src/hooks/useQueueSelection'
 import { formatAccelerator, withShortcut } from '../src/renderer/src/lib/shortcut'
+import { labelOf } from '../src/renderer/src/lib/menuActions'
+import { t } from '../src/renderer/src/lib/strings'
 import { appInfo } from '../src/renderer/src/lib/appInfo'
 import { NO_FILTER } from '../src/renderer/src/lib/culling'
 import { useQueueStore as queue } from '../src/renderer/src/stores/queueStore'
@@ -379,6 +383,16 @@ it('formats the keys for the platform', () => {
   expect(withShortcut('List view', 'viewList')).toBe('List view')
 })
 
+it('labels the commands with the text of the menu bar', () => {
+  const menu = readFileSync('src-tauri/src/menu.rs', 'utf8')
+  const items = [...menu.matchAll(/item\(\s*"(\w+)",\s*"([\w.]+)",?\s*\)/g)]
+  const checked = items.filter(([, name]) => name in shortcuts)
+  expect(checked.length).toBeGreaterThan(30)
+  for (const [, name, key] of checked) expect(labelOf(name as MenuCommand)).toBe(t(key))
+  expect(labelOf('showInFinder')).toBe(t('menu.file.show_in_file_manager'))
+  expect(labelOf('rate3')).toBe('★★★')
+})
+
 it('lists every command with a key in the shortcut sheet, which Escape closes', async () => {
   render(<ShortcutSheet />)
   const field = document.body.appendChild(document.createElement('input'))
@@ -394,7 +408,7 @@ it('lists every command with a key in the shortcut sheet, which Escape closes', 
   expect(keys('pick')).toEqual(['Z', 'P'])
   expect(keys('copyEdits')).toEqual(['Ctrl+Shift+C', 'Ctrl+C'])
   // Every label has a translation.
-  expect(dialog.textContent).not.toMatch(/(shortcuts|editor|cull|view)\.\w/)
+  expect(dialog.textContent).not.toMatch(/(shortcuts|editor|cull|view|menu)\.\w/)
   // The sheet takes the keys while it is open.
   expect(runCommand('selectAll')).toBe(false)
   expect(document.activeElement).not.toBe(field)

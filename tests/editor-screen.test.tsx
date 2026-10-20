@@ -1414,7 +1414,7 @@ it('opens a preview context menu that acts on the open photo', async () => {
   expect(request().items).toMatchObject([
     {
       value: 'compare',
-      label: t('context.before_after'),
+      label: t('editor.compare'),
       checked: false,
       accelerator: key('compare')
     },
@@ -1427,7 +1427,7 @@ it('opens a preview context menu that acts on the open photo', async () => {
     },
     { value: 'whiteBalance', separatorBefore: true, disabled: false },
     { value: 'crop', accelerator: key('crop'), disabled: false },
-    { value: 'rotateLeft', accelerator: key('rotateLeft') },
+    { value: 'rotateLeft', label: t('menu.photo.rotate_left'), accelerator: key('rotateLeft') },
     { value: 'rotateRight', accelerator: key('rotateRight') },
     { value: 'copyEdits', separatorBefore: true, accelerator: key('copyEdits') },
     { value: 'pasteEdits', disabled: true },

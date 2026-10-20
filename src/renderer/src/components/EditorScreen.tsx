@@ -52,7 +52,7 @@ import { cn } from '../lib/cn'
 import { withShortcut } from '../lib/shortcut'
 import type { MenuCommand } from '@shared/ipc'
 import { invalidateNativeMenu } from '../lib/nativeMenu'
-import { cullActions, keyOf, showActions, type MenuAction } from '../lib/menuActions'
+import { cullActions, keyOf, labelOf, showActions, type MenuAction } from '../lib/menuActions'
 import { registerCommands, runCommand } from '../lib/commands'
 
 type SidebarPage = 'edit' | 'emulsion' | 'paper'
@@ -493,9 +493,9 @@ export function EditorScreen(): React.JSX.Element {
   const previewMenu = (point: { x: number; y: number } | null, x: number, y: number): void => {
     if (editor.cropping || editor.closing || !file) return
     const session = editor.session?.sessionId
-    const command = (name: MenuCommand, label: string, item?: Partial<MenuAction>): MenuAction => ({
+    const command = (name: MenuCommand, item?: Partial<MenuAction>): MenuAction => ({
       value: name,
-      label,
+      label: labelOf(name),
       accelerator: keyOf(name),
       run: () => runCommand(name, { source: 'context' }),
       ...item
@@ -505,15 +505,15 @@ export function EditorScreen(): React.JSX.Element {
       x,
       y,
       [
-        command('compare', t('context.before_after'), {
-          checked: editor.before,
-          disabled: unavailable
-        }),
+        command('compare', { checked: editor.before, disabled: unavailable }),
         {
           value: 'zoom',
           label: t('context.zoom'),
           run: () => {},
-          items: [command('zoomFit', t('preview.fit')), command('zoomActual', '100%')]
+          items: [
+            command('zoomFit', { label: t('preview.fit') }),
+            command('zoomActual', { label: '100%' })
+          ]
         },
         {
           value: 'whiteBalance',
@@ -525,17 +525,12 @@ export function EditorScreen(): React.JSX.Element {
             if (point) void editor.pickWhiteBalance(point.x, point.y)
           }
         },
-        command('crop', t('editor.crop'), { disabled: unavailable || x3iPending }),
-        command('rotateLeft', t('context.rotate_left'), { disabled: unavailable }),
-        command('rotateRight', t('context.rotate_right'), { disabled: unavailable }),
-        command('copyEdits', t('context.copy_adjustments'), {
-          separatorBefore: true,
-          disabled: unavailable
-        }),
-        command('pasteEdits', t('context.paste_adjustments'), {
-          disabled: unavailable || !editor.clipboard
-        }),
-        command('resetEdits', t('context.reset_adjustments'), { disabled: unavailable }),
+        command('crop', { disabled: unavailable || x3iPending }),
+        command('rotateLeft', { disabled: unavailable }),
+        command('rotateRight', { disabled: unavailable }),
+        command('copyEdits', { separatorBefore: true, disabled: unavailable }),
+        command('pasteEdits', { disabled: unavailable || !editor.clipboard }),
+        command('resetEdits', { disabled: unavailable }),
         ...cullActions([file]),
         {
           value: 'export',
@@ -544,12 +539,12 @@ export function EditorScreen(): React.JSX.Element {
           disabled: unavailable,
           run: () => {},
           items: [
-            command('exportJpeg', t('batch.export_jpeg')),
-            command('exportTiff', t('batch.export_tiff')),
-            command('exportSelected', t('context.export_dialog'))
+            command('exportJpeg', { label: t('batch.export_jpeg') }),
+            command('exportTiff', { label: t('batch.export_tiff') }),
+            command('exportSelected')
           ]
         },
-        command('showInFinder', t('context.show_in_finder'))
+        command('showInFinder')
       ],
       () => {
         const now = useEditorStore.getState()

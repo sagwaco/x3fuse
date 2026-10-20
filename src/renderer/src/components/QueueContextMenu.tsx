@@ -3,7 +3,7 @@ import type { MenuCommand } from '@shared/ipc'
 import type { OutputFormat } from '@shared/types'
 import { ipc } from '../lib/ipc'
 import { invalidateNativeMenu } from '../lib/nativeMenu'
-import { cullActions, keyOf, showActions, type MenuAction } from '../lib/menuActions'
+import { cullActions, keyOf, labelOf, showActions, type MenuAction } from '../lib/menuActions'
 import { t } from '../lib/strings'
 import { shownFiles, useQueueStore } from '../stores/queueStore'
 import { useSettingsStore } from '../stores/settingsStore'
@@ -45,7 +45,7 @@ export function QueueContextMenu({
     if (active)
       actions.push({
         value: 'edit',
-        label: t('context.edit_photo'),
+        label: labelOf('editPhoto'),
         accelerator: keyOf('editPhoto'),
         disabled: busy || !!active.pending,
         run: () => {
@@ -63,7 +63,7 @@ export function QueueContextMenu({
       actions.push(
         {
           value: 'copy',
-          label: t('context.copy_adjustments'),
+          label: labelOf('copyEdits'),
           accelerator: keyOf('copyEdits'),
           separatorBefore: true,
           // Copy takes the active photo's adjustments.
@@ -72,7 +72,7 @@ export function QueueContextMenu({
         },
         {
           value: 'paste',
-          label: t('context.paste_adjustments'),
+          label: labelOf('pasteEdits'),
           accelerator: keyOf('pasteEdits'),
           disabled: busy || !useEditorStore.getState().clipboard,
           run: () => void useEditorStore.getState().paste(selected)
@@ -88,7 +88,7 @@ export function QueueContextMenu({
       items: [
         {
           value: 'export:screen',
-          label: t('context.export_dialog'),
+          label: labelOf('exportSelected'),
           accelerator: keyOf('exportSelected'),
           run: () => (selected.length ? store().openExport(ids) : store().convertAllMenu())
         },
@@ -113,7 +113,7 @@ export function QueueContextMenu({
     if (isProcessing && !isCancelling) {
       actions.push({
         value: 'stop',
-        label: t('context.stop_conversion'),
+        label: labelOf('stop'),
         accelerator: keyOf('stop'),
         run: () => store().stop()
       })
@@ -122,7 +122,7 @@ export function QueueContextMenu({
       actions.push({
         value: 'reveal',
         separatorBefore: true,
-        label: t('context.show_in_finder'),
+        label: labelOf('showInFinder'),
         accelerator: keyOf('showInFinder'),
         run: () =>
           selected.forEach((file) => {
@@ -141,7 +141,7 @@ export function QueueContextMenu({
     if (selected.length)
       actions.push({
         value: 'deselect',
-        label: t('context.deselect_all'),
+        label: labelOf('deselectAll'),
         accelerator: keyOf('deselectAll'),
         run: () => store().deselectAll()
       })
