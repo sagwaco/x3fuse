@@ -38,8 +38,9 @@ import { ColorWheels } from './ColorWheels'
 /** Tracks that show which way a slider moves the picture. */
 const TEMPERATURE = 'linear-gradient(to right, #4f7cff, #d4d4d4, #ffb43d)'
 const TINT = 'linear-gradient(to right, #3fbf5a, #d4d4d4, #e14fd0)'
-/** Grey to a full spectrum, for Saturation and Vibrance. */
-const RAINBOW = 'linear-gradient(to right, #d4d4d4, #f87171, #facc15, #4ade80, #60a5fa, #c084fc)'
+/** Saturation and Vibrance fade from dark gray to color. */
+const RAINBOW =
+  'linear-gradient(to right, #525252, #737373 40%, #60a5fa 55%, #4ade80 70%, #facc15 85%, #f87171)'
 /** White balance presets in kelvin at zero tint. As shot is the camera's own. */
 const WHITE_BALANCE = [
   ['asShot', null],
