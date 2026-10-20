@@ -8,6 +8,7 @@ import {
   filmGrainDefaults,
   type EditRecipe
 } from '@shared/editor'
+import stocks from '@shared/film-stocks.json'
 import type { NativeMenuRequest } from '@shared/ipc'
 import { EDITOR_SECTIONS, resetSection, type SectionId } from '@shared/editorSections'
 import { EditorControls, Section } from '../src/renderer/src/components/EditorControls'
@@ -114,8 +115,6 @@ describe('editor sections', () => {
     })
     const withEffects = { ...camera, ...EDITOR_SECTIONS.effects.take(from, camera) }
     expect(changed(camera, withEffects)).toEqual(['effects'])
-    // A film look on a camera look brings its exposure and effects along.
-    expect(EDITOR_SECTIONS.look.take(from, camera).film).toEqual(from.film)
     expect(changed(camera, { ...camera, ...EDITOR_SECTIONS.light.take(from, camera) })).toEqual([
       'blacks',
       'contrast',
@@ -125,6 +124,61 @@ describe('editor sections', () => {
       'shadows',
       'whites'
     ])
+  })
+
+  it('pastes a look and keeps the film exposure, effects, and filter of the target', () => {
+    const paste = (source: EditRecipe, target: EditRecipe): EditRecipe => ({
+      ...target,
+      ...EDITOR_SECTIONS.look.take(source, target)
+    })
+    const camera: EditRecipe = {
+      ...to,
+      film: null,
+      effects: { ...DEFAULT_EFFECTS, grain: true },
+      monochrome: { filter: 'green' }
+    }
+    const target: EditRecipe = { ...to, film: { ...DEFAULT_FILM, evFilm: 1.5, grain: false } }
+    // Film on a camera look: the stock comes, and the exposure and effects of the target stay.
+    const filmOnCamera = paste(from, camera)
+    expect(filmOnCamera.film).toEqual({
+      ...from.film,
+      evFilm: DEFAULT_FILM.evFilm,
+      ...camera.effects
+    })
+    expect(filmOnCamera.monochrome).toEqual({ filter: 'green' })
+    // A camera look on a film: the grain and halation of the film become the camera effects.
+    const cameraOnFilm = paste({ ...camera, cameraProfile: 'Vivid' }, target)
+    expect(cameraOnFilm).toMatchObject({
+      cameraProfile: 'Vivid',
+      film: null,
+      monochrome: { filter: 'neutral' },
+      effects: {
+        grain: false,
+        grainParams: DEFAULT_FILM.grainParams,
+        halation: DEFAULT_FILM.halation,
+        halationParams: DEFAULT_FILM.halationParams
+      }
+    })
+    // Two camera looks do not write the effects.
+    expect(EDITOR_SECTIONS.look.take(camera, { ...camera, effects: null })).not.toHaveProperty(
+      'effects'
+    )
+    // Film on film.
+    expect(paste(from, target).film).toMatchObject({
+      film: from.film!.film,
+      evFilm: 1.5,
+      grain: false
+    })
+  })
+
+  it('pastes only the filters that a black-and-white stock can use', () => {
+    const stock = stocks.find((item) => !item.isPaper && item.monochrome)!
+    const film: EditRecipe = { ...to, film: { ...DEFAULT_FILM, film: stock.index } }
+    const blue: EditRecipe = { ...to, film: null, monochrome: { filter: 'blue' } }
+    expect(EDITOR_SECTIONS.filter.take(blue, film)).toEqual({ monochrome: { filter: 'neutral' } })
+    expect(EDITOR_SECTIONS.filter.take(blue, to)).toEqual({ monochrome: { filter: 'blue' } })
+    const look = EDITOR_SECTIONS.look.take({ ...film, monochrome: { filter: 'red' } }, blue)
+    expect(look.monochrome).toEqual({ filter: 'neutral' })
   })
 
   it('resets Light with a film look and keeps the stock, paper, and effects', () => {
@@ -151,10 +205,17 @@ describe('editor sections', () => {
     expect(resetSection(EDITOR_SECTIONS.effects, from, defaults)).not.toHaveProperty('effects')
     const camera = { ...to, film: null, effects: DEFAULT_EFFECTS }
     expect(resetSection(EDITOR_SECTIONS.effects, camera, defaults)).toEqual({ effects: null })
+    // The effects of the film stay as the effects of the camera look.
     expect(resetSection(EDITOR_SECTIONS.look, recipe, defaults)).toEqual({
       cameraProfile: 'Standard',
       monochrome: null,
-      film: null
+      film: null,
+      effects: {
+        grain: recipe.film.grain,
+        grainParams: recipe.film.grainParams,
+        halation: recipe.film.halation,
+        halationParams: recipe.film.halationParams
+      }
     })
   })
 })

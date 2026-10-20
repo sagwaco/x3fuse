@@ -2,11 +2,14 @@ import {
   DEFAULT_EFFECTS,
   DEFAULT_FILM,
   DEFAULT_WHEELS,
+  FILM_MONOCHROME_FILTERS,
   filmGrainDefaults,
   filmHalationDefaults,
+  monochromeFilm,
   type EditRecipe,
   type EffectsSettings,
-  type FilmSettings
+  type FilmSettings,
+  type MonochromeFilter
 } from './editor'
 
 /** The monochrome mixer adds `warmth` and `toneMixer`. The type works with and without them. */
@@ -57,6 +60,35 @@ function effectsOf({ film, effects }: Recipe): EffectsSettings {
   )
 }
 
+/** The filter, or neutral when the film cannot use it. Black-and-white stocks have no blue filter. */
+const allowedFilter = (filter: MonochromeFilter, film: FilmSettings | null): MonochromeFilter =>
+  !monochromeFilm(film) || FILM_MONOCHROME_FILTERS.includes(filter) ? filter : 'neutral'
+
+/** Grain and halation, of the film stock or of the look without one. */
+const effects: EditorSection = {
+  take: (from, to) =>
+    to.film
+      ? {
+          film: {
+            ...to.film,
+            ...(from.film ? pick(from.film, FILM_EFFECTS) : effectsOf(from))
+          }
+        }
+      : { effects: effectsOf(from) },
+  // The defaults of the film stock, or no effects.
+  reset: ({ film }) =>
+    film
+      ? {
+          film: {
+            ...film,
+            ...pick(DEFAULT_FILM, FILM_EFFECTS),
+            ...filmHalationDefaults(film.film),
+            grainParams: filmGrainDefaults(film.film)
+          }
+        }
+      : { effects: null }
+}
+
 /**
  * The editor panel sections by id. A section changes only the settings that its controls
  * change, also inside `film`. The SFD RAW section has no settings to copy.
@@ -81,39 +113,23 @@ export const EDITOR_SECTIONS = {
   whiteBalance: { take: (from) => pick(from, ['temperature', 'tint']) },
   detail: { take: (from) => pick(from, ['sharpen', 'denoise', 'denoiseOptions']) },
   look: {
-    // The stock, the paper, and the print. The film exposure and the effects stay.
+    // The camera look or the film stock, the paper, and the print. The film exposure, the
+    // effects, and the filter belong to other sections. They keep the values of `to`.
+    take: (from, to) => {
+      const look = pick(from, ['cameraProfile', 'monochrome', 'film'])
+      if (look.film) look.film.evFilm = to.film?.evFilm ?? DEFAULT_FILM.evFilm
+      if (look.monochrome)
+        look.monochrome.filter = allowedFilter(to.monochrome?.filter ?? 'neutral', look.film)
+      // Two camera looks keep `effects` as it is.
+      return to.film || look.film ? { ...look, ...effects.take(to, { ...to, ...look }) } : look
+    }
+  },
+  effects,
+  filter: {
     take: (from, to) => ({
-      ...pick(from, ['cameraProfile', 'monochrome', 'film']),
-      ...(from.film &&
-        to.film && {
-          film: { ...structuredClone(from.film), ...pick(to.film, ['evFilm', ...FILM_EFFECTS]) }
-        })
+      monochrome: { filter: allowedFilter(from.monochrome?.filter ?? 'neutral', to.film) }
     })
   },
-  effects: {
-    take: (from, to) =>
-      to.film
-        ? {
-            film: {
-              ...to.film,
-              ...(from.film ? pick(from.film, FILM_EFFECTS) : effectsOf(from))
-            }
-          }
-        : { effects: effectsOf(from) },
-    // The defaults of the film stock, or no effects.
-    reset: ({ film }) =>
-      film
-        ? {
-            film: {
-              ...film,
-              ...pick(DEFAULT_FILM, FILM_EFFECTS),
-              ...filmHalationDefaults(film.film),
-              grainParams: filmGrainDefaults(film.film)
-            }
-          }
-        : { effects: null }
-  },
-  filter: { take: (from) => ({ monochrome: { filter: from.monochrome?.filter ?? 'neutral' } }) },
   color: { take: (from) => pick(from, ['saturation', 'vibrance', 'warmth']) },
   toneMixer: { take: (from) => pick(from, ['toneMixer']) },
   colorMixer: { take: (from) => pick(from, ['hsl']) },
