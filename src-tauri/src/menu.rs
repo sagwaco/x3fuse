@@ -159,11 +159,12 @@ fn build(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         menu.item(&application)
     };
 
+    // The same text as the Export submenu of the photo context menu.
     let export_as = SubmenuBuilder::new(app, translate("menu.file.export_as"))
-        .item(&labeled("exportJpeg", "JPEG".into())?)
-        .item(&labeled("exportTiff", "TIFF".into())?)
-        .item(&labeled("exportDng", "DNG".into())?)
-        .item(&labeled("exportEmbeddedJpg", "Embedded JPG".into())?)
+        .item(&item("exportJpeg", "batch.export_jpeg")?)
+        .item(&item("exportTiff", "batch.export_tiff")?)
+        .item(&item("exportDng", "batch.export_dng")?)
+        .item(&item("exportEmbeddedJpg", "editor.exportEmbeddedJpeg")?)
         .build()?;
     let reveal = if cfg!(target_os = "macos") {
         "context.show_in_finder"
@@ -242,9 +243,10 @@ fn build(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         .item(&item("compare", "editor.compare")?)
         .item(&item("negativePreview", "menu.view.negative_preview")?);
     if cfg!(target_os = "macos") {
-        view = view
-            .separator()
-            .item(&PredefinedMenuItem::fullscreen(app, None)?);
+        view = view.separator().item(&PredefinedMenuItem::fullscreen(
+            app,
+            Some(&translate("menu.view.full_screen")),
+        )?);
     }
 
     let flag = SubmenuBuilder::new(app, translate("menu.photo.set_flag"))
@@ -288,7 +290,10 @@ fn build(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     if cfg!(target_os = "macos") {
         window = window
             .separator()
-            .item(&PredefinedMenuItem::bring_all_to_front(app, None)?);
+            .item(&PredefinedMenuItem::bring_all_to_front(
+                app,
+                Some(&translate("menu.window.bring_all_to_front")),
+            )?);
     }
     let help = SubmenuBuilder::with_id(app, HELP_SUBMENU_ID, title("menu.help.title", 'H'))
         .item(&item("help", "menu.help.X3Fuse_help")?)
