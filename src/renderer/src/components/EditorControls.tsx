@@ -585,7 +585,7 @@ export const EditorControls = memo(function EditorControls({
                     size="icon"
                     className="h-7 w-7 shrink-0"
                     aria-label={t('editor.picker')}
-                    title={withShortcut(t('editor.picker'), 'W')}
+                    title={withShortcut(t('editor.picker'), 'whiteBalancePicker')}
                     aria-keyshortcuts="W"
                     aria-pressed={picking}
                     onClick={() => setPicking(!picking)}

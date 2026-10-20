@@ -2,6 +2,7 @@ import { ChevronDown, ZoomIn, ZoomOut } from 'lucide-react'
 import { usePreviewStore } from '../stores/previewStore'
 import { t } from '../lib/strings'
 import { cn } from '../lib/cn'
+import { withShortcut } from '../lib/shortcut'
 import { Button } from './ui/button'
 import { NativeMenuButton } from './ui/nativeMenuButton'
 
@@ -24,7 +25,7 @@ export function ZoomControls(): React.JSX.Element {
         className={loadingClass}
         disabled={!controls || controls.scale <= controls.minZoom}
         aria-label={t('preview.zoom_out')}
-        title={t('preview.zoom_out')}
+        title={withShortcut(t('preview.zoom_out'), 'zoomOut')}
         onClick={() => controls?.zoomTo((zoom) => zoom / 1.25)}
       >
         <ZoomOut className="h-4 w-4" aria-hidden="true" />
@@ -35,7 +36,7 @@ export function ZoomControls(): React.JSX.Element {
         className={loadingClass}
         disabled={!controls || controls.scale >= controls.maxZoom}
         aria-label={t('preview.zoom_in')}
-        title={t('preview.zoom_in')}
+        title={withShortcut(t('preview.zoom_in'), 'zoomIn')}
         onClick={() => controls?.zoomTo((zoom) => zoom * 1.25)}
       >
         <ZoomIn className="h-4 w-4" aria-hidden="true" />

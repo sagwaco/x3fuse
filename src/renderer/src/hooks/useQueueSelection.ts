@@ -4,6 +4,7 @@ import { useQueueStore } from '../stores/queueStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useNavStore } from '../stores/navStore'
 import { arrowTargetIndex, type ArrowNav } from '../lib/queueNavigation'
+import { runCommand } from '../lib/commands'
 
 export interface QueueSelection {
   handleItemClick: (e: MouseEvent, id: string, index: number) => void
@@ -17,6 +18,7 @@ export interface QueueSelection {
  * Shared selection + interaction behavior for every queue view (list, grid,
  * filmstrip): selection, context menus, and arrow-key navigation. Double-click
  * opens list/grid items in the filmstrip; filmstrip cells open batch settings.
+ * Return in the list or the grid opens the editor.
  *
  * `ordered` is the files in their on-screen order (post-sort); shift-range, the
  * anchor, and arrow movement are computed against it. `nav` describes how arrow
@@ -121,6 +123,17 @@ export function useQueueSelection(ordered: X3FFileDTO[], nav?: ArrowNav): QueueS
       // A child that used the key, such as the crop canvas nudging its frame, keeps it.
       if (e.defaultPrevented) return
       const store = useQueueStore.getState()
+      const mode = navRef.current?.mode
+      // Return in the list or the grid opens the photo in the editor, as D does.
+      if (
+        e.key === 'Enter' &&
+        e.target === e.currentTarget &&
+        (mode === 'vertical' || mode === 'grid') &&
+        !(e.metaKey || e.ctrlKey || e.altKey || e.shiftKey)
+      ) {
+        if (e.repeat || runCommand('editPhoto', { source: 'key' })) e.preventDefault()
+        return
+      }
       if ((e.key === 'Backspace' || e.key === 'Delete') && store.selectedIds.size > 0) {
         e.preventDefault()
         store.removeSelected()

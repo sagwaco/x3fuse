@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import type { ReactNode } from 'react'
-import { DEFAULT_FILM, defaultRecipe, type PreviewRegion } from '@shared/editor'
+import { DEFAULT_FILM, defaultRecipe, negativePrint, type PreviewRegion } from '@shared/editor'
 import { displayPreviewUrl, previewUrl } from '@shared/preview'
 import { DEFAULT_SETTINGS, type X3FFileDTO } from '@shared/types'
 import { EditorScreen } from '../src/renderer/src/components/EditorScreen'
@@ -10,9 +10,16 @@ import { useEditorStore as editor, geometryKey } from '../src/renderer/src/store
 import { useQueueStore as queue } from '../src/renderer/src/stores/queueStore'
 import { useSettingsStore } from '../src/renderer/src/stores/settingsStore'
 import { t } from '../src/renderer/src/lib/strings'
-import { registerCommands } from '../src/renderer/src/lib/commands'
+import { registerCommands, runCommand } from '../src/renderer/src/lib/commands'
 import { acceleratorsOf } from '../src/renderer/src/lib/shortcut'
 import type { CommandOptions, MenuCommand, NativeMenuRequest } from '@shared/ipc'
+import { useNavStore } from '../src/renderer/src/stores/navStore'
+import { useShortcuts } from '../src/renderer/src/hooks/useShortcuts'
+
+function Keys(): null {
+  useShortcuts()
+  return null
+}
 
 vi.mock('../src/renderer/src/components/FileFilmstrip', () => ({
   FileFilmstrip: ({ preview }: { preview: ReactNode }) => <main>{preview}</main>
@@ -231,12 +238,16 @@ beforeEach(() => {
     isPreparing: false
   })
   useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS }, loaded: true })
+  // The main window listens for the keys of the editor commands.
+  useNavStore.setState({ screen: 'editor' })
+  render(<Keys />)
 })
 afterEach(() => {
   cleanup()
   editor.setState(initialEditor, true)
   queue.setState(initialQueue, true)
   useSettingsStore.setState(initialSettings, true)
+  useNavStore.setState({ screen: 'queue' })
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
   real.preview = false
@@ -457,16 +468,16 @@ it('swaps the toolbar for crop actions and cancels back to the geometry crop mod
     t('button.convert')
   ]
   for (const name of normal) expect(screen.getByRole('button', { name })).toBeTruthy()
-  // Command-C and Control-V copy and paste adjustments, with or without Shift.
-  fireEvent.keyDown(document.body, { key: 'c', metaKey: true })
+  // Control-C and Control-V (Command on macOS) copy and paste adjustments, with or without Shift.
+  fireEvent.keyDown(document.body, { key: 'c', ctrlKey: true })
   fireEvent.keyDown(document.body, { key: 'v', ctrlKey: true })
-  fireEvent.keyDown(document.body, { key: 'C', metaKey: true, shiftKey: true })
+  fireEvent.keyDown(document.body, { key: 'C', ctrlKey: true, shiftKey: true })
   expect(copy).toHaveBeenCalledTimes(2)
   expect(paste).toHaveBeenCalledTimes(1)
   // A focused number field keeps its own copy and paste.
   const field = document.createElement('input')
   document.body.append(field)
-  fireEvent.keyDown(field, { key: 'c', metaKey: true })
+  fireEvent.keyDown(field, { key: 'c', ctrlKey: true })
   field.remove()
   expect(copy).toHaveBeenCalledTimes(2)
   copy.mockClear()
@@ -486,8 +497,8 @@ it('swaps the toolbar for crop actions and cancels back to the geometry crop mod
   // Reset lives at the top of the crop section (editor-controls tests).
   expect(screen.queryByRole('button', { name: t('editor.resetCrop') })).toBeNull()
   // Hidden actions keep their shortcuts quiet while cropping.
-  fireEvent.keyDown(document.body, { key: 'c', metaKey: true })
-  fireEvent.keyDown(document.body, { key: 'v', metaKey: true })
+  fireEvent.keyDown(document.body, { key: 'c', ctrlKey: true })
+  fireEvent.keyDown(document.body, { key: 'v', ctrlKey: true })
   fireEvent.keyDown(document.body, { key: '\\' })
   expect(copy).not.toHaveBeenCalled()
   expect(paste).not.toHaveBeenCalled()
@@ -555,6 +566,46 @@ it('keeps crop mode safe from compare, paste, held Escape and lost focus', () =>
   act(() => editor.setState({ preview: { ...frame, sourceWidth: 6000, sourceHeight: 4000 } }))
   expect(document.activeElement).toBe(button)
   expect(editor.getState().session).not.toBeNull()
+})
+
+it('runs the editor commands as its buttons do', () => {
+  const change = vi.fn()
+  const reset = vi.fn()
+  const compare = vi.fn()
+  const frame3x2 = { ...frame, sourceWidth: 6000, sourceHeight: 4000 }
+  editor.setState({
+    session,
+    documents: { [file.path]: doc },
+    loading: false,
+    preview: frame3x2,
+    change,
+    reset,
+    compare
+  })
+  const view = render(<EditorScreen />)
+  // Control-] and Control-[ (Command on macOS) rotate as the crop toolbar buttons do.
+  fireEvent.keyDown(document.body, { key: ']', ctrlKey: true })
+  expect(change).toHaveBeenLastCalledWith({ rotation: 1 })
+  expect(runCommand('rotateLeft')).toBe(true)
+  expect(change).toHaveBeenLastCalledWith({ rotation: 3 })
+  expect(runCommand('resetEdits')).toBe(true)
+  expect(reset).toHaveBeenCalledOnce()
+  expect(runCommand('compare')).toBe(true)
+  expect(compare).toHaveBeenLastCalledWith(true)
+  // The negative view applies only to a negative print.
+  expect(runCommand('negativePreview')).toBe(negativePrint(doc.recipe.film))
+  // R enters crop mode, and R again applies the crop.
+  fireEvent.keyDown(document.body, { key: 'r' })
+  expect(editor.getState().cropping).toBe(true)
+  act(() => editor.setState({ preview: frame3x2 }))
+  // Crop mode's Cancel could not undo a reset or a pick.
+  expect(runCommand('resetEdits')).toBe(false)
+  expect(runCommand('whiteBalancePicker')).toBe(false)
+  fireEvent.keyDown(document.body, { key: 'r' })
+  expect(editor.getState().cropping).toBe(false)
+  // The editor commands go away with the editor.
+  view.unmount()
+  expect(runCommand('rotateLeft')).toBe(false)
 })
 
 it('ends crop mode when the editor screen goes away, as for Export', () => {
@@ -678,7 +729,7 @@ it('puts a divider before Done, then the Export menu and the panel toggle', asyn
   act(() => editor.setState({ undo }))
   fireEvent.keyDown(screen.getByRole('button', { name: t('batch.convert_options') }), {
     key: 'z',
-    metaKey: true
+    ctrlKey: true
   })
   expect(undo).toHaveBeenCalled()
   act(() =>
@@ -1331,14 +1382,6 @@ it('opens a preview context menu that acts on the open photo', async () => {
   ;(window as unknown as { x3f: unknown }).x3f = { invoke, on: () => () => {} }
   const ran: string[] = []
   const commands: MenuCommand[] = ['compare', 'crop', 'resetEdits', 'exportTiff', 'showInFinder']
-  const unregister = registerCommands(
-    Object.fromEntries(
-      commands.map((name) => [
-        name,
-        ({ source }: CommandOptions) => ran.push(`${name}:${source}`) > 0
-      ])
-    )
-  )
   const pickWhiteBalance = vi.fn(async () => {})
   editor.setState({
     session,
@@ -1348,6 +1391,15 @@ it('opens a preview context menu that acts on the open photo', async () => {
     pickWhiteBalance
   })
   const view = render(<EditorScreen />)
+  // Register after the screen, so these spies run before its own handlers.
+  const unregister = registerCommands(
+    Object.fromEntries(
+      commands.map((name) => [
+        name,
+        ({ source }: CommandOptions) => ran.push(`${name}:${source}`) > 0
+      ])
+    )
+  )
   const request = (): NativeMenuRequest =>
     invoke.mock.calls
       .filter(([channel]) => channel === 'menu:popup')

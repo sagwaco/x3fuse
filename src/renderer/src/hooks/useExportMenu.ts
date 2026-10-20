@@ -6,14 +6,27 @@ import { t } from '../lib/strings'
 /** The overflow submenu value that opens the Export screen. */
 export const EXPORT_SCREEN = 'screen'
 
+/**
+ * Exports at once with a preset (`jpeg`, `embeddedJpg`, `dng`, `tiff`) or with the
+ * previous settings (`previous`). The default files are the selection.
+ */
+export function exportWith(
+  value: string | undefined,
+  ids?: Set<string>,
+  returnScreen?: 'queue' | 'editor'
+): void {
+  const queue = useQueueStore.getState()
+  if (value === 'previous') void queue.convertPrevious(ids, returnScreen)
+  else if (value === 'jpeg' || value === 'embeddedJpg' || value === 'dng' || value === 'tiff')
+    void queue.exportPreset(value, ids, returnScreen)
+}
+
 /** The export presets of the split button, and what choosing one does. */
 export function useExportMenu(
   ids?: Set<string>,
   returnScreen?: 'queue' | 'editor'
 ): { items: NativeMenuItem[]; select: (value?: string) => void; openScreen: () => void } {
   const openExport = useQueueStore((s) => s.openExport)
-  const convertPrevious = useQueueStore((s) => s.convertPrevious)
-  const exportPreset = useQueueStore((s) => s.exportPreset)
   const hasPrevious = useSettingsStore((s) => s.settings.hasPreviousConversion)
   return {
     items: [
@@ -28,11 +41,7 @@ export function useExportMenu(
       { value: 'tiff', label: t('batch.export_tiff') },
       { value: 'previous', label: t('batch.convert_previous'), disabled: !hasPrevious }
     ],
-    select: (value) => {
-      if (value === 'previous') void convertPrevious(ids, returnScreen)
-      else if (value === 'jpeg' || value === 'embeddedJpg' || value === 'dng' || value === 'tiff')
-        void exportPreset(value, ids, returnScreen)
-    },
+    select: (value) => exportWith(value, ids, returnScreen),
     openScreen: () => openExport(ids, returnScreen)
   }
 }

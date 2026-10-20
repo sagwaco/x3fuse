@@ -53,7 +53,7 @@ import { withShortcut } from '../lib/shortcut'
 import type { MenuCommand } from '@shared/ipc'
 import { invalidateNativeMenu } from '../lib/nativeMenu'
 import { cullActions, keyOf, showActions, type MenuAction } from '../lib/menuActions'
-import { runCommand } from '../lib/commands'
+import { registerCommands, runCommand } from '../lib/commands'
 
 type SidebarPage = 'edit' | 'emulsion' | 'paper'
 
@@ -243,7 +243,9 @@ export function EditorScreen(): React.JSX.Element {
   useEffect(() => {
     if (sidebarPage === 'edit') return
     const back = (event: KeyboardEvent): void => {
-      if (event.key !== 'Escape') return
+      // An open dialog, such as the shortcut sheet, closes first.
+      if (event.key !== 'Escape' || document.querySelector('[role="dialog"][data-state="open"]'))
+        return
       event.preventDefault()
       event.stopPropagation()
       if (!event.repeat) navigateSidebar('edit')
@@ -252,42 +254,16 @@ export function EditorScreen(): React.JSX.Element {
     return () => window.removeEventListener('keydown', back, true)
   }, [sidebarPage, navigateSidebar])
   useEffect(() => {
+    // The other keys of the editor are in `shortcuts.json` (see the commands below).
     const keydown = (event: KeyboardEvent): void => {
-      if (isTextEditing(event.target) || event.defaultPrevented) return
-      const modifier = event.metaKey || event.ctrlKey
-      if (modifier && event.key.toLowerCase() === 'z') {
-        event.preventDefault()
-        if (!busy) {
-          if (event.shiftKey) editor.redo()
-          else editor.undo()
-        }
-      } else if (event.key === 'Escape') {
-        event.preventDefault()
-        // Holding Escape must not cancel crop mode and then close the editor.
-        if (event.repeat) return
-        if (picking) setPicking(false)
-        else if (qualifying) setQualifying(false)
-        else if (editor.cropping) cancelCrop()
-        else if (!busy) void editor.close()
-      } else if (editor.cropping) {
-        // Crop mode hides copy, paste and compare; their shortcuts wait too.
-      } else if (modifier && event.key.toLowerCase() === 'c') {
-        event.preventDefault()
-        editor.copy()
-      } else if (modifier && event.key.toLowerCase() === 'v') {
-        event.preventDefault()
-        if (!busy) void editor.paste()
-      } else if (!modifier && event.key === '\\') {
-        event.preventDefault()
-        if (!event.repeat) editor.compare(!editor.before)
-      } else if (
-        !modifier &&
-        event.key.toLowerCase() === 'w' &&
-        !document.querySelector('[role="dialog"][data-state="open"]')
-      ) {
-        event.preventDefault()
-        if (!event.repeat && (picking || canPick.current)) setPicking(!picking)
-      }
+      if (isTextEditing(event.target) || event.defaultPrevented || event.key !== 'Escape') return
+      event.preventDefault()
+      // Holding Escape must not cancel crop mode and then close the editor.
+      if (event.repeat) return
+      if (picking) setPicking(false)
+      else if (qualifying) setQualifying(false)
+      else if (editor.cropping) cancelCrop()
+      else if (!busy) void editor.close()
     }
     document.addEventListener('keydown', keydown)
     return () => document.removeEventListener('keydown', keydown)
@@ -352,6 +328,47 @@ export function EditorScreen(): React.JSX.Element {
   }, [previewShown])
   const unavailable = !doc || !displayFile || editor.loading || busy
   canPick.current = !unavailable && !editor.before && !cloudFile
+  // The editor commands of the menu bar and the keys, as the toolbar buttons do. They
+  // register again after each render, so that they read the current state.
+  const rotate = (turns: number): boolean => {
+    if (unavailable || !doc || editor.before) return false
+    change({ rotation: (doc.recipe.rotation + turns) % 4 })
+    return true
+  }
+  useEffect(() =>
+    registerCommands({
+      compare: () => {
+        if (unavailable || editor.cropping) return false
+        editor.compare(!editor.before)
+        return true
+      },
+      negativePreview: () => {
+        if (!doc || !negativePrint(doc.recipe.film)) return false
+        useEditorStore.setState({ negativePreview: !editor.negativePreview })
+        return true
+      },
+      // A second Crop applies the crop, as the Crop button of crop mode does.
+      crop: () => {
+        if (unavailable || (x3iPending && !editor.cropping)) return false
+        if (editor.cropping) setCropping(false)
+        else enterCrop()
+        return true
+      },
+      whiteBalancePicker: () => {
+        if (editor.cropping || !(picking || canPick.current)) return false
+        setPicking(!picking)
+        return true
+      },
+      rotateLeft: () => rotate(3),
+      rotateRight: () => rotate(1),
+      // Crop mode's Cancel could not undo a reset.
+      resetEdits: () => {
+        if (unavailable || editor.cropping || editor.before) return false
+        editor.reset()
+        return true
+      }
+    })
+  )
   // The toolbar lags behind crop mode while its buttons animate out and in.
   const swap = useToolbarSwap(editor.cropping)
   const inert = swap.leaving ? { inert: '' } : {}
@@ -547,7 +564,7 @@ export function EditorScreen(): React.JSX.Element {
           variant="ghost"
           size="icon"
           aria-label={t('editor.undo')}
-          title={withShortcut(t('editor.undo'), 'Mod+Z')}
+          title={withShortcut(t('editor.undo'), 'undoEdit')}
           disabled={unavailable || !doc?.past.length}
           onClick={editor.undo}
         >
@@ -559,7 +576,7 @@ export function EditorScreen(): React.JSX.Element {
           variant="ghost"
           size="icon"
           aria-label={t('editor.redo')}
-          title={withShortcut(t('editor.redo'), 'Mod+Shift+Z')}
+          title={withShortcut(t('editor.redo'), 'redoEdit')}
           disabled={unavailable || !doc?.future.length}
           onClick={editor.redo}
         >
@@ -674,7 +691,7 @@ export function EditorScreen(): React.JSX.Element {
                 variant="ghost"
                 size="icon"
                 aria-label={t('editor.rotateLeft')}
-                title={t('editor.rotateLeft')}
+                title={withShortcut(t('editor.rotateLeft'), 'rotateLeft')}
                 disabled={unavailable || !doc}
                 onClick={() => doc && change({ rotation: (doc.recipe.rotation + 3) % 4 })}
               >
@@ -684,7 +701,7 @@ export function EditorScreen(): React.JSX.Element {
                 variant="ghost"
                 size="icon"
                 aria-label={t('editor.rotate')}
-                title={t('editor.rotate')}
+                title={withShortcut(t('editor.rotate'), 'rotateRight')}
                 disabled={unavailable || !doc}
                 onClick={() => doc && change({ rotation: (doc.recipe.rotation + 1) % 4 })}
               >
@@ -725,7 +742,7 @@ export function EditorScreen(): React.JSX.Element {
                   variant="ghost"
                   size="icon"
                   aria-label={t('editor.copy')}
-                  title={withShortcut(t('editor.copy'), 'Mod+C')}
+                  title={withShortcut(t('editor.copy'), 'copyEdits')}
                   disabled={unavailable}
                   onClick={editor.copy}
                 >
@@ -737,7 +754,7 @@ export function EditorScreen(): React.JSX.Element {
                   variant="ghost"
                   size="icon"
                   aria-label={t('editor.paste')}
-                  title={withShortcut(t('editor.paste'), 'Mod+V')}
+                  title={withShortcut(t('editor.paste'), 'pasteEdits')}
                   disabled={unavailable || !editor.clipboard}
                   onClick={() => void editor.paste()}
                 >
@@ -757,7 +774,7 @@ export function EditorScreen(): React.JSX.Element {
                   variant="ghost"
                   size="icon"
                   aria-label={t('editor.reset')}
-                  title={t('editor.reset')}
+                  title={withShortcut(t('editor.reset'), 'resetEdits')}
                   disabled={unavailable}
                   onClick={editor.reset}
                 >
@@ -770,7 +787,7 @@ export function EditorScreen(): React.JSX.Element {
                   variant="ghost"
                   size="icon"
                   aria-label={t('editor.compare')}
-                  title={withShortcut(t('editor.compare'), '\\')}
+                  title={withShortcut(t('editor.compare'), 'compare')}
                   aria-pressed={editor.before}
                   disabled={unavailable}
                   onClick={() => editor.compare(!editor.before)}
@@ -783,6 +800,7 @@ export function EditorScreen(): React.JSX.Element {
                   ref={cropButton}
                   variant="ghost"
                   size="md"
+                  title={withShortcut(t('editor.crop'), 'crop')}
                   disabled={unavailable || x3iPending}
                   onClick={enterCrop}
                 >
@@ -818,7 +836,7 @@ export function EditorScreen(): React.JSX.Element {
                 <Button
                   variant="ghost"
                   size="icon"
-                  title={t('editor.togglePanel')}
+                  title={withShortcut(t('editor.togglePanel'), 'togglePanel')}
                   aria-label={t('editor.togglePanel')}
                   aria-pressed={panelOpen}
                   // The same gap as in the browser toolbar.
