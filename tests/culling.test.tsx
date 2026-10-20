@@ -16,7 +16,7 @@ const listeners = new Map<string, (payload: unknown) => void>()
 const { useQueueStore: store } = await import('../src/renderer/src/stores/queueStore')
 const { useSettingsStore } = await import('../src/renderer/src/stores/settingsStore')
 const { useNavStore } = await import('../src/renderer/src/stores/navStore')
-const { useCullingKeys } = await import('../src/renderer/src/hooks/useCulling')
+const { useShortcuts } = await import('../src/renderer/src/hooks/useShortcuts')
 const { useEditorStore } = await import('../src/renderer/src/stores/editorStore')
 const { StarPicker } = await import('../src/renderer/src/components/CullControls')
 const { useIpcEvents } = await import('../src/renderer/src/hooks/useIpcEvents')
@@ -28,7 +28,7 @@ const files: X3FFileDTO[] = ['a', 'b', 'c', 'd'].map((id) => ({
 }))
 
 function Keys(): null {
-  useCullingKeys()
+  useShortcuts()
   return null
 }
 

@@ -320,7 +320,7 @@ describe('renderer smoke', () => {
     expect(screen.queryByTitle('Settings')).toBeNull()
   })
 
-  it('copies and pastes adjustments with Command-C and Command-V while browsing', async () => {
+  it('copies and pastes adjustments with Control-C and Control-V while browsing on Linux', async () => {
     const { MainWindow } = await import('../src/renderer/src/components/MainWindow')
     const { useEditorStore } = await import('../src/renderer/src/stores/editorStore')
     const { useNavStore } = await import('../src/renderer/src/stores/navStore')
@@ -332,13 +332,15 @@ describe('renderer smoke', () => {
       await act(async () => {
         render(<MainWindow />)
       })
-      fireEvent.keyDown(document.body, { key: 'c', metaKey: true })
+      fireEvent.keyDown(document.body, { key: 'c', ctrlKey: true })
       fireEvent.keyDown(document.body, { key: 'v', ctrlKey: true })
       fireEvent.keyDown(document.body, { key: 'v' })
+      // Command is not the shortcut key outside macOS.
+      fireEvent.keyDown(document.body, { key: 'c', metaKey: true })
       expect(copy).toHaveBeenCalledTimes(1)
       expect(paste).toHaveBeenCalledTimes(1)
       act(() => useNavStore.setState({ screen: 'export' }))
-      fireEvent.keyDown(document.body, { key: 'c', metaKey: true })
+      fireEvent.keyDown(document.body, { key: 'c', ctrlKey: true })
       expect(copy).toHaveBeenCalledTimes(1)
     } finally {
       useEditorStore.setState(initial, true)

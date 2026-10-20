@@ -8,6 +8,7 @@ import { ZoomablePreview } from '../src/renderer/src/components/ZoomablePreview'
 import { ZoomControls } from '../src/renderer/src/components/ZoomControls'
 import { PreviewMinimap } from '../src/renderer/src/components/PreviewMinimap'
 import { usePreviewStore } from '../src/renderer/src/stores/previewStore'
+import { runCommand } from '../src/renderer/src/lib/commands'
 
 const { invoke, loadFrame } = vi.hoisted(() => ({ invoke: vi.fn(), loadFrame: vi.fn() }))
 vi.mock('../src/renderer/src/lib/ipc', () => ({ ipc: { invoke } }))
@@ -594,6 +595,28 @@ describe('filmstrip zoom preview', () => {
     expect(media.style.transform).toContain('scale(0.1)')
     fireEvent.keyDown(surface, { key: '0' })
     expect(screen.getByRole('button', { name: 'Zoom level' }).textContent).toBe('Fit')
+  })
+
+  it('zooms from the menu commands, and leaves keys with modifiers to them', () => {
+    const { surface, media } = setup()
+    const run = (name: Parameters<typeof runCommand>[0]): boolean => {
+      let ran = false
+      act(() => void (ran = runCommand(name)))
+      return ran
+    }
+    expect(run('zoomActual')).toBe(true)
+    expect(media.style.transform).toContain('scale(1)')
+    expect(run('zoomIn')).toBe(true)
+    expect(media.style.transform).toContain('scale(1.25)')
+    expect(run('zoomOut')).toBe(true)
+    expect(media.style.transform).toContain('scale(1)')
+    // ⌥⌘0 is Actual Size, not the 0 key of the preview, which fits.
+    fireEvent.keyDown(surface, { key: '0', ctrlKey: true, altKey: true })
+    expect(media.style.transform).toContain('scale(1)')
+    expect(run('zoomFit')).toBe(true)
+    expect(screen.getByRole('button', { name: 'Zoom level' }).textContent).toBe('Fit')
+    cleanup()
+    expect(run('zoomFit')).toBe(false)
   })
 
   it('disables controls until a preview loads, including pending and failed previews', () => {

@@ -6,6 +6,7 @@ import { usePreviewStore } from '../stores/previewStore'
 import type { PreviewRegion } from '@shared/editor'
 import type { PreviewCache } from '../lib/previewTiles'
 import { loadFrame } from '../lib/frames'
+import { registerCommands } from '../lib/commands'
 
 type View = { zoom: number | null; x: number; y: number }
 type ZoomOptions = { x?: number; y?: number; animate?: boolean; center?: boolean }
@@ -196,6 +197,21 @@ export function ZoomablePreview({
     },
     [ready, constrain, fit, minZoom, interruptZoom, updateView]
   )
+
+  // The zoom commands of the menu bar and the keys act on the preview on screen.
+  useEffect(() => {
+    if (!ready) return
+    const zoom = (target: Parameters<typeof zoomTo>[0]) => (): boolean => {
+      zoomTo(target)
+      return true
+    }
+    return registerCommands({
+      zoomIn: zoom((scale) => scale * 1.25),
+      zoomOut: zoom((scale) => scale / 1.25),
+      zoomFit: zoom(null),
+      zoomActual: zoom(1)
+    })
+  }, [ready, zoomTo])
 
   const pan = useCallback(
     (x: number, y: number): void => {
@@ -469,7 +485,9 @@ export function ZoomablePreview({
             onSelectionCancel?.()
             return
           }
-          if (!['+', '=', '-', ...(digitZoom ? ['0', '1'] : [])].includes(event.key)) return
+          // With a modifier, the key is a shortcut, such as ⌥⌘0 for Actual Size.
+          if (!plain || !['+', '=', '-', ...(digitZoom ? ['0', '1'] : [])].includes(event.key))
+            return
           event.preventDefault()
           event.stopPropagation()
           if (event.key === '0') zoomTo(null)

@@ -15,7 +15,7 @@ import { ZoomControls } from './ZoomControls'
 import { useSettingsStore } from '../stores/settingsStore'
 import { cn } from '../lib/cn'
 import { NativeMenuButton } from './ui/nativeMenuButton'
-import { useEditorStore } from '../stores/editorStore'
+import { runCommand } from '../lib/commands'
 import { useToolbarSwap } from '../hooks/useToolbarSwap'
 import { isFiltering } from '../lib/culling'
 import { withShortcut } from '../lib/shortcut'
@@ -53,11 +53,7 @@ export function Toolbar(): React.JSX.Element {
     !isPreparing &&
     !hasDraft
 
-  const edit = (): void => {
-    const file =
-      selected.find((file) => file.id === useQueueStore.getState().activeId) ?? selected[0]
-    if (file) void useEditorStore.getState().open(file)
-  }
+  const edit = (): void => void runCommand('editPhoto')
   const toggleInspector = (): void => void updateSettings({ inspectorOpen: !inspectorOpen })
   // In toolbar order.
   const actions: OverflowAction[] = [
@@ -113,7 +109,13 @@ export function Toolbar(): React.JSX.Element {
         <BatchProgress />
         {folded.has('edit') && overflow}
         {!folded.has('edit') && (
-          <Button variant="ghost" size="md" disabled={!canConvert} onClick={edit}>
+          <Button
+            variant="ghost"
+            size="md"
+            title={withShortcut(t('editor.edit'), 'editPhoto')}
+            disabled={!canConvert}
+            onClick={edit}
+          >
             <SwatchBook className="h-4 w-4" aria-hidden="true" />
             {t('editor.edit')}
           </Button>
@@ -123,7 +125,7 @@ export function Toolbar(): React.JSX.Element {
           <Button
             variant="ghost"
             size="icon"
-            title={t('inspector.toggle')}
+            title={withShortcut(t('inspector.toggle'), 'togglePanel')}
             aria-label={t('inspector.toggle')}
             aria-pressed={inspectorOpen}
             className={inspectorOpen ? 'bg-ink/15 text-tone-100' : ''}
@@ -167,7 +169,7 @@ export function FilterButton({
       variant="ghost"
       size="icon"
       disabled={disabled}
-      title={shortcut ? withShortcut(label, '\\') : label}
+      title={shortcut ? withShortcut(label, 'toggleFilterBar') : label}
       aria-label={label}
       aria-keyshortcuts={shortcut ? '\\' : undefined}
       aria-pressed={filterOpen}
@@ -204,7 +206,7 @@ export function ExportButton({
         className="px-2 rounded-r-none text-xs border-l border-t border-b border-ink/10"
         disabled={disabled}
         onClick={() => openExport(ids, returnScreen)}
-        title={t('toolbar.convert_selected')}
+        title={withShortcut(t('toolbar.convert_selected'), 'exportSelected')}
       >
         {t('button.convert')}
       </Button>

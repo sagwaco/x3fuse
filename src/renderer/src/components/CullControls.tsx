@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Flag as FlagIcon, FlagOff, Star } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
+import type { MenuCommand } from '@shared/ipc'
 import { cull, cullTargets } from '../hooks/useCulling'
 import { cn } from '../lib/cn'
 import { withShortcut } from '../lib/shortcut'
@@ -33,7 +34,7 @@ export function StarPicker({
             key={stars}
             type="button"
             aria-label={label}
-            title={shortcuts ? withShortcut(label, String(stars)) : label}
+            title={shortcuts ? withShortcut(label, `rate${stars}` as MenuCommand) : label}
             aria-keyshortcuts={shortcuts ? String(stars) : undefined}
             aria-pressed={value === stars}
             onClick={() => onChange(value === stars ? 0 : stars)}
@@ -75,7 +76,7 @@ export function CullControls(): React.JSX.Element | null {
               key={value}
               type="button"
               aria-label={t(`cull.${value}`)}
-              title={withShortcut(t(`cull.${value}`), key)}
+              title={withShortcut(t(`cull.${value}`), value)}
               aria-keyshortcuts={key}
               aria-pressed={flag === value}
               onClick={() => cull({ flag: value }, { toggle: true })}
