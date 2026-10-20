@@ -98,9 +98,10 @@ it('slides only with the main button', () => {
   root.setPointerCapture = vi.fn()
   root.getBoundingClientRect = () => new DOMRect(0, 0, 100, 20)
   // jsdom has no PointerEvent. A MouseEvent carries the button.
-  const press = (button: number): boolean =>
-    fireEvent(root, new MouseEvent('pointerdown', { bubbles: true, button, clientX: 20 }))
+  const press = (button: number, ctrlKey = false): boolean =>
+    fireEvent(root, new MouseEvent('pointerdown', { bubbles: true, button, ctrlKey, clientX: 20 }))
   press(2)
+  press(0, true)
   expect(change).not.toHaveBeenCalled()
   press(0)
   expect(change).toHaveBeenCalledWith(20)

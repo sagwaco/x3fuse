@@ -82,8 +82,9 @@ export function Slider({
     <SliderPrimitive.Root
       ref={root}
       onPointerDown={(event) => {
-        // Radix slides for any button. A right-click only opens a menu.
-        if (event.button !== 0) return event.preventDefault()
+        // Radix slides for any button. A right-click only opens a menu. On macOS,
+        // Control-click is a right-click with the main button.
+        if (event.button !== 0 || event.ctrlKey) return event.preventDefault()
         const width = root.current?.getBoundingClientRect().width || 1
         drag.current = { last: value, tolerance: (SNAP_PX / width) * (max - min) }
       }}
