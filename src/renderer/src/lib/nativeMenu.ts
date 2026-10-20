@@ -2,11 +2,21 @@ import { LogicalPosition } from '@tauri-apps/api/dpi'
 import { Menu } from '@tauri-apps/api/menu'
 import type { Image } from '@tauri-apps/api/image'
 import type { NativeMenuItem, NativeMenuRequest } from '@shared/ipc'
+import { isTextEditing } from '../stores/editorStore'
 import { menuIcon } from './menuIcon'
 
 type MenuItems = NonNullable<NonNullable<Parameters<typeof Menu.new>[0]>['items']>
 
 let active: { id: string; valid: boolean } | undefined
+
+/**
+ * Stops the WebKit menu (Reload, Inspect Element) where the app shows no menu of its own.
+ * Text fields and selected text keep it, for Cut, Copy, and Paste.
+ */
+export function suppressDefaultMenu(event: MouseEvent): void {
+  if (isTextEditing(event.target) || !(window.getSelection()?.isCollapsed ?? true)) return
+  event.preventDefault()
+}
 
 /** Invalidation suppresses stale actions; the OS dismisses the visible popup. */
 export function invalidateNativeMenu(id: string): void {

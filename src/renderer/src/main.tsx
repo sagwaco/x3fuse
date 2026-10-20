@@ -6,7 +6,11 @@ import './index.css'
 import { initializeIpc, ipc } from './lib/ipc'
 import { appInfo } from './lib/appInfo'
 import { applyTheme } from './lib/theme'
+import { suppressDefaultMenu } from './lib/nativeMenu'
 import { useSettingsStore } from './stores/settingsStore'
+
+// On the window, so it runs after the React handlers that show their own menus.
+window.addEventListener('contextmenu', suppressDefaultMenu)
 
 async function start(): Promise<void> {
   const [, info] = await Promise.all([initializeIpc(), ipc.invoke('app:info')])
