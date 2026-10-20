@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   Copy,
   ClipboardPaste,
@@ -50,6 +50,10 @@ import { OverflowMenu, type OverflowAction } from './ui/overflowMenu'
 import { FilterBar } from './FilterBar'
 import { cn } from '../lib/cn'
 import { withShortcut } from '../lib/shortcut'
+import type { MenuCommand } from '@shared/ipc'
+import { invalidateNativeMenu } from '../lib/nativeMenu'
+import { cullActions, keyOf, showActions, type MenuAction } from '../lib/menuActions'
+import { runCommand } from '../lib/commands'
 
 type SidebarPage = 'edit' | 'emulsion' | 'paper'
 
@@ -463,6 +467,79 @@ export function EditorScreen(): React.JSX.Element {
     const hidden = body.getBoundingClientRect().top + band - target.getBoundingClientRect().top
     if (hidden > 0) body.scrollTop -= hidden
   }
+  // The preview's context menu acts on the open photo. It closes when another photo opens.
+  const previewMenuId = useId()
+  useEffect(
+    () => () => invalidateNativeMenu(previewMenuId),
+    [previewMenuId, editor.session?.sessionId, editor.cropping]
+  )
+  const previewMenu = (point: { x: number; y: number } | null, x: number, y: number): void => {
+    if (editor.cropping || editor.closing || !file) return
+    const session = editor.session?.sessionId
+    const command = (name: MenuCommand, label: string, item?: Partial<MenuAction>): MenuAction => ({
+      value: name,
+      label,
+      accelerator: keyOf(name),
+      run: () => runCommand(name, { source: 'context' }),
+      ...item
+    })
+    showActions(
+      previewMenuId,
+      x,
+      y,
+      [
+        command('compare', t('context.before_after'), {
+          checked: editor.before,
+          disabled: unavailable
+        }),
+        {
+          value: 'zoom',
+          label: t('context.zoom'),
+          run: () => {},
+          items: [command('zoomFit', t('preview.fit')), command('zoomActual', '100%')]
+        },
+        {
+          value: 'whiteBalance',
+          label: t('context.pick_white_balance'),
+          separatorBefore: true,
+          disabled: !point || !canPick.current,
+          run: () => {
+            setPicking(false)
+            if (point) void editor.pickWhiteBalance(point.x, point.y)
+          }
+        },
+        command('crop', t('editor.crop'), { disabled: unavailable || x3iPending }),
+        command('rotateLeft', t('context.rotate_left'), { disabled: unavailable }),
+        command('rotateRight', t('context.rotate_right'), { disabled: unavailable }),
+        command('copyEdits', t('context.copy_adjustments'), {
+          separatorBefore: true,
+          disabled: unavailable
+        }),
+        command('pasteEdits', t('context.paste_adjustments'), {
+          disabled: unavailable || !editor.clipboard
+        }),
+        command('resetEdits', t('context.reset_adjustments'), { disabled: unavailable }),
+        ...cullActions([file]),
+        {
+          value: 'export',
+          label: t('context.convert'),
+          separatorBefore: true,
+          disabled: unavailable,
+          run: () => {},
+          items: [
+            command('exportJpeg', t('batch.export_jpeg')),
+            command('exportTiff', t('batch.export_tiff')),
+            command('exportSelected', t('context.export_dialog'))
+          ]
+        },
+        command('showInFinder', t('context.show_in_finder'))
+      ],
+      () => {
+        const now = useEditorStore.getState()
+        return now.session?.sessionId !== session || now.cropping || now.closing
+      }
+    )
+  }
   const history = (
     <>
       {!folded.has('undo') && (
@@ -828,6 +905,7 @@ export function EditorScreen(): React.JSX.Element {
                     onImageRegion={qualifying && displayFile ? qualify : undefined}
                     outline={displayFile ? scopeRegion : null}
                     selectionKey={shownArea}
+                    onContextMenu={previewMenu}
                   />
                 ) : cloudFile ? null : (
                   <div

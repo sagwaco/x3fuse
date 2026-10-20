@@ -10,6 +10,9 @@ import { useEditorStore as editor, geometryKey } from '../src/renderer/src/store
 import { useQueueStore as queue } from '../src/renderer/src/stores/queueStore'
 import { useSettingsStore } from '../src/renderer/src/stores/settingsStore'
 import { t } from '../src/renderer/src/lib/strings'
+import { registerCommands } from '../src/renderer/src/lib/commands'
+import { acceleratorsOf } from '../src/renderer/src/lib/shortcut'
+import type { CommandOptions, MenuCommand, NativeMenuRequest } from '@shared/ipc'
 
 vi.mock('../src/renderer/src/components/FileFilmstrip', () => ({
   FileFilmstrip: ({ preview }: { preview: ReactNode }) => <main>{preview}</main>
@@ -69,7 +72,8 @@ vi.mock('../src/renderer/src/components/ZoomablePreview', async () => {
     onImageRegion,
     outline,
     onPaint,
-    onViewportChange
+    onViewportChange,
+    onContextMenu
   }: Props): React.JSX.Element {
     return (
       <div
@@ -85,6 +89,10 @@ vi.mock('../src/renderer/src/components/ZoomablePreview', async () => {
         <button
           data-drag
           onClick={() => onImageRegion?.({ x: 0.1, y: 0.2, width: 0.3, height: 0.4 })}
+        />
+        <button
+          data-menu
+          onClick={(event) => onContextMenu?.(event.detail ? { x: 0.25, y: 0.75 } : null, 10, 20)}
         />
       </div>
     )
@@ -1313,4 +1321,88 @@ it('returns to adjustments when undo removes the film from the paper page', () =
   )
   expect(screen.queryByRole('heading', { name: t('editor.paperStock') })).toBeNull()
   expect(screen.getByRole('button', { name: 'Pick white balance' })).toBeTruthy()
+})
+
+it('opens a preview context menu that acts on the open photo', async () => {
+  let choose: (value: string | null) => void = () => {}
+  const invoke = vi.fn((channel: string, _payload?: unknown) =>
+    channel === 'menu:popup' ? new Promise((resolve) => (choose = resolve)) : Promise.resolve(null)
+  )
+  ;(window as unknown as { x3f: unknown }).x3f = { invoke, on: () => () => {} }
+  const ran: string[] = []
+  const commands: MenuCommand[] = ['compare', 'crop', 'resetEdits', 'exportTiff', 'showInFinder']
+  const unregister = registerCommands(
+    Object.fromEntries(
+      commands.map((name) => [
+        name,
+        ({ source }: CommandOptions) => ran.push(`${name}:${source}`) > 0
+      ])
+    )
+  )
+  const pickWhiteBalance = vi.fn(async () => {})
+  editor.setState({
+    session,
+    documents: { [file.path]: doc },
+    loading: false,
+    preview: frame,
+    pickWhiteBalance
+  })
+  const view = render(<EditorScreen />)
+  const request = (): NativeMenuRequest =>
+    invoke.mock.calls
+      .filter(([channel]) => channel === 'menu:popup')
+      .at(-1)![1] as NativeMenuRequest
+  const menu = async (value: string | null, point = true): Promise<void> => {
+    fireEvent.click(view.container.querySelector('[data-menu]')!, { detail: point ? 1 : 0 })
+    await act(async () => choose(value))
+  }
+  await menu(null)
+  expect(request()).toMatchObject({ x: 10, y: 20 })
+  const key = (name: MenuCommand): string => acceleratorsOf(name)[0]
+  expect(request().items).toMatchObject([
+    {
+      value: 'compare',
+      label: t('context.before_after'),
+      checked: false,
+      accelerator: key('compare')
+    },
+    {
+      value: 'zoom',
+      items: [
+        { value: 'zoomFit', label: t('preview.fit'), accelerator: key('zoomFit') },
+        { value: 'zoomActual', label: '100%', accelerator: key('zoomActual') }
+      ]
+    },
+    { value: 'whiteBalance', separatorBefore: true, disabled: false },
+    { value: 'crop', accelerator: key('crop'), disabled: false },
+    { value: 'rotateLeft', accelerator: key('rotateLeft') },
+    { value: 'rotateRight', accelerator: key('rotateRight') },
+    { value: 'copyEdits', separatorBefore: true, accelerator: key('copyEdits') },
+    { value: 'pasteEdits', disabled: true },
+    { value: 'resetEdits', accelerator: key('resetEdits') },
+    { value: 'flag', separatorBefore: true },
+    { value: 'rating' },
+    {
+      value: 'export',
+      separatorBefore: true,
+      items: [{ value: 'exportJpeg' }, { value: 'exportTiff' }, { value: 'exportSelected' }]
+    },
+    { value: 'showInFinder', accelerator: key('showInFinder') }
+  ])
+  for (const name of ['compare', 'crop', 'resetEdits', 'exportTiff', 'showInFinder'])
+    await menu(name)
+  expect(ran).toEqual(commands.map((name) => `${name}:context`))
+  await menu('whiteBalance')
+  expect(pickWhiteBalance).toHaveBeenCalledWith(0.25, 0.75)
+  // Outside the image, there is no point to pick.
+  await menu(null, false)
+  expect(request().items[2]).toMatchObject({ value: 'whiteBalance', disabled: true })
+  await menu('flag:reject')
+  expect(queue.getState().files[0].flag).toBe('reject')
+  // A menu that opened for another photo does nothing.
+  fireEvent.click(view.container.querySelector('[data-menu]')!)
+  act(() => editor.setState({ session: { ...session, sessionId: 'session-b' } }))
+  await act(async () => choose('compare'))
+  expect(ran).toHaveLength(commands.length)
+  unregister()
 })

@@ -127,6 +127,8 @@ export interface NativeMenuItem {
   checked?: boolean
   /** Drawn before the label. A checked item shows its check mark instead. */
   icon?: LucideIcon
+  /** A key to show, as a Tauri accelerator. A popup's keys act only while it is open. */
+  accelerator?: string
   separatorBefore?: boolean
   /** Items of a submenu. A submenu item is not selected itself. */
   items?: NativeMenuItem[]
