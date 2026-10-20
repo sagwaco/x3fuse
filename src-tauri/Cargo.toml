@@ -42,6 +42,10 @@ bytemuck = "1"
 objc2 = "0.6"
 rayon = "1.12"
 
+[dev-dependencies]
+# Tests parse the menu keys with the parser that Tauri uses.
+muda = { version = "0.19", default-features = false }
+
 # RAW processing needs optimization even when the desktop app is being debugged.
 [profile.dev.package.x3f-core]
 opt-level = 3

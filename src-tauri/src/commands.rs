@@ -314,6 +314,58 @@ pub async fn dialog_pick_files(
 }
 
 #[tauri::command]
+pub async fn dialog_pick_folder(
+    app: AppHandle,
+    window: WebviewWindow,
+    state: State<'_, Arc<AppState>>,
+) -> Result<Vec<PathBuf>, String> {
+    main_window(&window)?;
+    let state = state.inner().clone();
+    let title = crate::menu::translate("dialog.select_folders.title");
+    tauri::async_runtime::spawn_blocking(move || {
+        let last = state.preferences.get().last_import_directory;
+        let mut dialog = app.dialog().file().set_parent(&window).set_title(title);
+        if let Some(last) = last {
+            dialog = dialog.set_directory(last);
+        }
+        let folders = dialog
+            .blocking_pick_folders()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|p| p.into_path().map_err(|e| e.to_string()))
+            .collect::<Result<Vec<_>, _>>()?;
+        if let Some(parent) = folders.first().and_then(|p| p.parent()) {
+            state
+                .preferences
+                .set(json!({"lastImportDirectory":parent}))?;
+        }
+        folder_sources(&folders)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// The X3F and X3I files directly inside the folders, sorted by path. Hidden files,
+/// such as the "._" files that macOS writes on memory cards, are not photos.
+fn folder_sources(folders: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
+    let mut paths = Vec::new();
+    for folder in folders {
+        let entries =
+            std::fs::read_dir(folder).map_err(|e| format!("{}: {e}", folder.display()))?;
+        for path in entries.flatten().map(|entry| entry.path()) {
+            let hidden = path
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with('.'));
+            if !hidden && path.is_file() && path.extension().is_some_and(is_source_extension) {
+                paths.push(path);
+            }
+        }
+    }
+    paths.sort();
+    Ok(paths)
+}
+
+#[tauri::command]
 pub async fn dialog_pick_output_dir(
     app: AppHandle,
     window: WebviewWindow,
@@ -862,5 +914,20 @@ mod tests {
             assert_eq!(current.batch.output_format, OutputFormat::Tiff);
             assert!(current.has_previous_conversion);
         }
+    }
+
+    #[test]
+    fn folder_sources_lists_photos_directly_inside() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        std::fs::create_dir_all(root.join("sub")).unwrap();
+        std::fs::create_dir_all(root.join("folder.X3F")).unwrap();
+        for name in ["b.x3i", "a.X3F", "c.jpg", "._a.X3F", "sub/d.x3f"] {
+            std::fs::write(root.join(name), b"x3f").unwrap();
+        }
+        assert_eq!(
+            folder_sources(&[root.to_path_buf()]).unwrap(),
+            [root.join("a.X3F"), root.join("b.x3i")]
+        );
     }
 }

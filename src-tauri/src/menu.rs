@@ -2,9 +2,15 @@ use crate::{commands, AppState};
 use serde_json::{json, Value};
 use std::sync::{Arc, OnceLock, RwLock};
 use tauri::{
-    menu::{Menu, MenuBuilder, MenuItem, PredefinedMenuItem, SubmenuBuilder},
+    menu::{
+        Menu, MenuBuilder, MenuItem, PredefinedMenuItem, SubmenuBuilder, HELP_SUBMENU_ID,
+        WINDOW_SUBMENU_ID,
+    },
     Emitter, Manager,
 };
+
+/// Command keys. The renderer uses the same table.
+const SHORTCUTS: &str = include_str!("../../src/shared/shortcuts.json");
 
 const LOCALES: [(&str, &str); 6] = [
     ("en", include_str!("../../src/shared/i18n/locales/en.json")),
@@ -83,11 +89,48 @@ pub fn translate(key: &str) -> String {
         .to_string()
 }
 
+/// The key of a menu item: the first `shortcuts.json` entry of its command. Keys
+/// without a modifier stay with the renderer: macOS sends a key that the page does
+/// not handle to the menu, so a held X that the renderer ignores would reject photo
+/// after photo. Only macOS registers the keys. GTK and Win32 run menu keys before the
+/// webview, so that Ctrl+A or Ctrl+Z would not reach a text field. There the renderer
+/// handles every key.
+fn accelerator(command: &str) -> Option<String> {
+    static TABLE: OnceLock<Value> = OnceLock::new();
+    if !cfg!(target_os = "macos") {
+        return None;
+    }
+    let table = TABLE.get_or_init(|| serde_json::from_str(SHORTCUTS).unwrap());
+    let keys = &table[command];
+    let key = keys.get(0).unwrap_or(keys).as_str()?;
+    key.contains('+').then(|| key.to_string())
+}
+
+/// Translates a top-level title. Windows and Linux show a mnemonic: the first letter
+/// of a Latin title, or the English initial after other titles, as in "ファイル(&F)".
+fn title(key: &str, initial: char) -> String {
+    let text = translate(key);
+    if cfg!(target_os = "macos") {
+        text
+    } else if text.starts_with(|c: char| c.is_ascii_alphabetic()) {
+        format!("&{text}")
+    } else {
+        format!("{text}(&{initial})")
+    }
+}
+
 fn build(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
-    let item = |id: &str, key: &str, accelerator: Option<&str>| {
-        MenuItem::with_id(app, id, translate(key), true, accelerator)
-    };
-    let settings = item("settings", "menu.file.settings", Some("CmdOrCtrl+,"))?;
+    // Item ids are renderer command names (`MenuCommand`), except for the items that
+    // `install` handles.
+    let labeled = |id: &str, text: String| MenuItem::with_id(app, id, text, true, accelerator(id));
+    let item = |id: &str, key: &str| labeled(id, translate(key));
+    let settings = MenuItem::with_id(
+        app,
+        "settings",
+        format!("{}…", translate("menu.file.settings")),
+        true,
+        Some("CmdOrCtrl+,"),
+    )?;
     // Keep the native label, but route Quit through ExitRequested so exports drain.
     let quit = MenuItem::with_id(
         app,
@@ -96,19 +139,12 @@ fn build(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         true,
         Some("CmdOrCtrl+Q"),
     )?;
-    let updates = MenuItem::with_id(
-        app,
-        "updates",
-        translate("updates.check_for_updates"),
-        cfg!(target_os = "macos"),
-        None::<&str>,
-    )?;
     let menu = MenuBuilder::new(app);
     #[cfg(target_os = "macos")]
     let menu = {
         let application = SubmenuBuilder::new(app, "X3Fuse")
             .item(&PredefinedMenuItem::about(app, None, None)?)
-            .item(&updates)
+            .item(&item("updates", "updates.check_for_updates")?)
             .separator()
             .item(&settings)
             .separator()
@@ -122,109 +158,150 @@ fn build(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             .build()?;
         menu.item(&application)
     };
-    let mut file = SubmenuBuilder::new(app, "File").item(&item(
-        "addFiles",
-        "menu.file.add_x3f_files",
-        Some("CmdOrCtrl+O"),
-    )?);
-    if !cfg!(target_os = "macos") {
-        file = file
-            .separator()
-            .item(&settings)
-            .item(&updates)
-            .separator()
-            .item(&quit);
-    }
-    let edit = SubmenuBuilder::new(app, "Edit")
-        .item(&PredefinedMenuItem::undo(app, None)?)
-        .item(&PredefinedMenuItem::redo(app, None)?)
+
+    let export_as = SubmenuBuilder::new(app, translate("menu.file.export_as"))
+        .item(&labeled("exportJpeg", "JPEG".into())?)
+        .item(&labeled("exportTiff", "TIFF".into())?)
+        .item(&labeled("exportDng", "DNG".into())?)
+        .item(&labeled("exportEmbeddedJpg", "Embedded JPG".into())?)
+        .build()?;
+    let reveal = if cfg!(target_os = "macos") {
+        "context.show_in_finder"
+    } else if cfg!(windows) {
+        "menu.file.show_in_explorer"
+    } else {
+        "menu.file.show_in_file_manager"
+    };
+    let mut file = SubmenuBuilder::new(app, title("menu.file.title", 'F'))
+        .item(&item("addFiles", "menu.file.add_photos")?)
+        .item(&item("addFolder", "menu.file.add_folder")?)
         .separator()
-        .item(&item("undoEdit", "editor.undo", None)?)
-        .item(&item("redoEdit", "editor.redo", None)?)
-        .item(&item(
-            "copyEdits",
-            "editor.copy",
-            Some("CmdOrCtrl+Shift+C"),
+        .item(&item("editPhoto", "menu.file.edit_photo")?)
+        .separator()
+        .item(&item("exportSelected", "menu.file.export")?)
+        .item(&item("exportPrevious", "batch.convert_previous")?)
+        .item(&export_as)
+        .item(&item("convertAll", "context.convert_all")?)
+        .item(&item("stop", "menu.file.stop_export")?)
+        .separator()
+        .item(&item("showInFinder", reveal)?)
+        .separator()
+        .item(&item("removeSelected", "menu.file.remove_from_queue")?)
+        .item(&item("clearQueue", "menu.file.clear_queue")?);
+    if !cfg!(target_os = "macos") {
+        file = file.separator().item(&settings).separator().item(&quit);
+    }
+
+    // The native Undo and Redo undo typing in a text field. Elsewhere the renderer takes
+    // Cmd+Z for adjustments before the menu gets the key.
+    let edit = SubmenuBuilder::new(app, title("menu.edit.title", 'E'))
+        .item(&PredefinedMenuItem::undo(
+            app,
+            Some(&translate("menu.edit.undo")),
         )?)
-        .item(&item(
-            "pasteEdits",
-            "editor.paste",
-            Some("CmdOrCtrl+Shift+V"),
+        .item(&PredefinedMenuItem::redo(
+            app,
+            Some(&translate("menu.edit.redo")),
         )?)
         .separator()
         .item(&PredefinedMenuItem::cut(app, None)?)
         .item(&PredefinedMenuItem::copy(app, None)?)
         .item(&PredefinedMenuItem::paste(app, None)?)
+        .item(&item("copyEdits", "menu.edit.copy_adjustments")?)
+        .item(&item("pasteEdits", "menu.edit.paste_adjustments")?)
+        .item(&item("resetEdits", "menu.edit.reset_adjustments")?)
         .separator()
-        .item(&item(
-            "selectAll",
-            "menu.edit.select_all_files",
-            Some("CmdOrCtrl+A"),
-        )?)
-        .item(&item(
-            "deselectAll",
-            "menu.edit.deselect_all_files",
-            Some("CmdOrCtrl+D"),
-        )?)
-        .item(&item(
-            "removeSelected",
-            "menu.edit.remove_selected_files",
-            None,
-        )?)
+        .item(&item("selectAll", "menu.edit.select_all")?)
+        .item(&item("deselectAll", "context.deselect_all")?)
+        .item(&item("invertSelection", "menu.edit.invert_selection")?)
         .build()?;
-    // The renderer handles the single-key culling shortcuts. Native key equivalents
-    // without a modifier could also take keys typed in text fields.
-    let mut photo = SubmenuBuilder::new(app, translate("menu.photo.title"))
-        .item(&item("pick", "cull.pick", None)?)
-        .item(&item("reject", "cull.reject", None)?)
-        .item(&item("unflag", "cull.unflagged", None)?)
+
+    let sort = SubmenuBuilder::new(app, translate("menu.view.sort_by"))
+        .item(&item("sortByName", "queue.column.name")?)
+        .item(&item("sortByDate", "queue.column.date")?)
+        .item(&item("sortBySize", "queue.column.size")?)
         .separator()
-        .item(&item("rate0", "cull.no_rating", None)?);
-    for stars in 1..=5 {
-        photo = photo.item(&MenuItem::with_id(
-            app,
-            format!("rate{stars}"),
-            "★".repeat(stars),
-            true,
-            None::<&str>,
-        )?);
+        .item(&item("sortAscending", "menu.view.ascending")?)
+        .item(&item("sortDescending", "menu.view.descending")?)
+        .build()?;
+    let mut view = SubmenuBuilder::new(app, title("menu.view.title", 'V'))
+        .item(&item("viewList", "menu.view.list")?)
+        .item(&item("viewGrid", "menu.view.grid")?)
+        .item(&item("viewFilmstrip", "menu.view.filmstrip")?)
+        .item(&item("viewSurvey", "menu.view.survey")?)
+        .separator()
+        .item(&sort)
+        .separator()
+        .item(&item("toggleFilterBar", "menu.view.filter_bar")?)
+        .item(&item("togglePanel", "menu.view.info_panel")?)
+        .separator()
+        .item(&item("zoomIn", "menu.view.zoom_in")?)
+        .item(&item("zoomOut", "menu.view.zoom_out")?)
+        .item(&item("zoomFit", "menu.view.zoom_fit")?)
+        .item(&item("zoomActual", "menu.view.actual_size")?)
+        .item(&item("compare", "editor.compare")?)
+        .item(&item("negativePreview", "menu.view.negative_preview")?);
+    if cfg!(target_os = "macos") {
+        view = view
+            .separator()
+            .item(&PredefinedMenuItem::fullscreen(app, None)?);
     }
-    let conversion = SubmenuBuilder::new(app, translate("menu.conversion.title"))
-        .item(&item(
-            "convertAll",
-            "menu.conversion.convert_all_files",
-            Some("CmdOrCtrl+R"),
-        )?)
-        .item(&item(
-            "stop",
-            "menu.conversion.stop_conversion",
-            Some("CmdOrCtrl+S"),
-        )?)
+
+    let flag = SubmenuBuilder::new(app, translate("menu.photo.set_flag"))
+        .item(&item("pick", "cull.pick")?)
+        .item(&item("reject", "cull.reject")?)
+        .item(&item("unflag", "cull.unflagged")?)
+        .build()?;
+    let mut rating = SubmenuBuilder::new(app, translate("menu.photo.set_rating"))
+        .item(&item("rate0", "menu.photo.no_rating")?);
+    for stars in 1..=5 {
+        rating = rating.item(&labeled(&format!("rate{stars}"), "★".repeat(stars))?);
+    }
+    let rating = rating
         .separator()
+        .item(&item("ratingUp", "menu.photo.increase_rating")?)
+        .item(&item("ratingDown", "menu.photo.decrease_rating")?)
+        .build()?;
+    let photo = SubmenuBuilder::new(app, title("menu.photo.title", 'P'))
+        .item(&item("previousPhoto", "menu.photo.previous")?)
+        .item(&item("nextPhoto", "menu.photo.next")?)
+        .separator()
+        .item(&flag)
+        .item(&rating)
+        .separator()
+        .item(&item("rotateLeft", "menu.photo.rotate_left")?)
+        .item(&item("rotateRight", "menu.photo.rotate_right")?)
+        .item(&item("crop", "editor.crop")?)
         .item(&item(
-            "clearQueue",
-            "menu.conversion.clear_queue",
-            Some("CmdOrCtrl+K"),
+            "whiteBalancePicker",
+            "menu.photo.white_balance_picker",
         )?)
         .build()?;
-    let window = SubmenuBuilder::new(app, "Window")
-        .item(&PredefinedMenuItem::minimize(app, None)?)
-        .item(&PredefinedMenuItem::maximize(app, None)?)
-        .item(&PredefinedMenuItem::close_window(app, None)?)
-        .build()?;
-    let help = SubmenuBuilder::new(app, "Help")
-        .item(&item(
-            "showLogs",
-            "menu.help.show_debug_logs",
-            Some("CmdOrCtrl+Shift+L"),
-        )?)
-        .item(&item("clearLogs", "menu.help.clear_debug_logs", None)?)
+
+    // With these ids, Tauri makes the menus the macOS Window and Help menus, so that
+    // macOS adds the window list, the tiling items, and the Help search field.
+    let mut window =
+        SubmenuBuilder::with_id(app, WINDOW_SUBMENU_ID, title("menu.window.title", 'W'))
+            .item(&PredefinedMenuItem::minimize(app, None)?)
+            .item(&PredefinedMenuItem::maximize(app, None)?)
+            .item(&PredefinedMenuItem::close_window(app, None)?);
+    if cfg!(target_os = "macos") {
+        window = window
+            .separator()
+            .item(&PredefinedMenuItem::bring_all_to_front(app, None)?);
+    }
+    let help = SubmenuBuilder::with_id(app, HELP_SUBMENU_ID, title("menu.help.title", 'H'))
+        .item(&item("help", "menu.help.X3Fuse_help")?)
+        .item(&item("shortcuts", "menu.help.keyboard_shortcuts")?)
+        .separator()
+        .item(&item("showLogs", "menu.help.show_debug_logs")?)
+        .item(&item("clearLogs", "menu.help.clear_debug_logs")?)
         .build()?;
     menu.item(&file.build()?)
         .item(&edit)
-        .item(&photo.build()?)
-        .item(&conversion)
-        .item(&window)
+        .item(&view.build()?)
+        .item(&photo)
+        .item(&window.build()?)
         .item(&help)
         .build()
 }
@@ -274,13 +351,21 @@ pub fn install(app: &tauri::AppHandle) -> tauri::Result<()> {
                 });
                 Ok(())
             }
-            name @ ("addFiles" | "selectAll" | "deselectAll" | "removeSelected" | "convertAll"
-            | "stop" | "clearQueue" | "undoEdit" | "redoEdit" | "copyEdits"
-            | "pasteEdits" | "pick" | "reject" | "unflag" | "rate0" | "rate1" | "rate2"
-            | "rate3" | "rate4" | "rate5") => app
-                .emit_to("main", "menu:command", json!({"name":name}))
-                .map_err(|e| e.to_string()),
-            _ => Ok(()),
+            name => {
+                let other = (name == "selectAll")
+                    .then(|| {
+                        app.webview_windows().into_values().find(|window| {
+                            window.label() != "main" && window.is_focused().unwrap_or(false)
+                        })
+                    })
+                    .flatten();
+                match other {
+                    // Select All in another window, such as Settings, selects its text.
+                    Some(window) => window.eval("document.execCommand('selectAll')"),
+                    None => app.emit_to("main", "menu:command", json!({"name":name})),
+                }
+                .map_err(|e| e.to_string())
+            }
         };
         if let Err(e) = result {
             let logs = state.logs.clone();
@@ -299,10 +384,27 @@ mod tests {
         assert!(set_language("ja"));
         assert!(!set_language("ja"));
         assert_eq!(translate("menu.file.settings"), "設定");
+        assert_eq!(translate("menu.window.title"), "ウインドウ");
         // A key without a translation uses English, then the key itself.
         assert_eq!(translate("missing.key"), "missing.key");
         assert!(set_language("en"));
         assert_eq!(translate("menu.file.settings"), "Settings");
         assert!(set_language("auto"));
+    }
+
+    #[test]
+    fn shortcut_table_parses_as_menu_keys() {
+        let table: serde_json::Map<String, Value> = serde_json::from_str(SHORTCUTS).unwrap();
+        for (command, keys) in table {
+            let keys = keys.as_array().cloned().unwrap_or_else(|| vec![keys]);
+            assert!(!keys.is_empty(), "{command}");
+            for key in keys {
+                let key = key.as_str().unwrap();
+                assert!(
+                    key.parse::<muda::accelerator::Accelerator>().is_ok(),
+                    "{command}: {key}"
+                );
+            }
+        }
     }
 }
