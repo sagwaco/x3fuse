@@ -51,6 +51,7 @@ export async function showNativeMenu(
         : {
             text: item.label,
             enabled: !item.disabled,
+            ...(item.accelerator ? { accelerator: item.accelerator } : {}),
             ...(item.checked === undefined ? {} : { checked: item.checked }),
             ...(icons.has(item) ? { icon: icons.get(item) } : {}),
             action: () => {
