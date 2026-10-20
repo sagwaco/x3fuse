@@ -6216,6 +6216,7 @@ dependencies = [
  "bytemuck",
  "cc",
  "chrono",
+ "muda",
  "objc2",
  "percent-encoding",
  "rayon",
