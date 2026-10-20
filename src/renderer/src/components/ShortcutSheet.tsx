@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import type { MenuCommand } from '@shared/ipc'
 import { registerCommands } from '../lib/commands'
@@ -126,10 +126,13 @@ function label(name: MenuCommand): string {
 /** Lists the keys of `shortcuts.json` by menu (Help > Keyboard Shortcuts, ⌘/). */
 export function ShortcutSheet(): React.JSX.Element {
   const [open, setOpen] = useState(false)
+  // The sheet has no trigger button. Focus goes back to the element that had it.
+  const opener = useRef<Element | null>(null)
   useEffect(
     () =>
       registerCommands({
         shortcuts: () => {
+          opener.current = document.activeElement
           setOpen(true)
           return true
         }
@@ -152,6 +155,10 @@ export function ShortcutSheet(): React.JSX.Element {
         <Dialog.Overlay className="fixed inset-0 z-40 bg-black/40 backdrop-blur-[1px]" />
         <Dialog.Content
           aria-describedby={undefined}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault()
+            if (opener.current instanceof HTMLElement) opener.current.focus()
+          }}
           className="fixed left-1/2 top-1/2 z-50 flex max-h-[85vh] w-[680px] max-w-[calc(100vw-32px)] -translate-x-1/2 -translate-y-1/2 flex-col gap-4 rounded-xl border border-ink/10 bg-tone-900 p-5 shadow-2xl focus:outline-none"
         >
           <Dialog.Title className="text-base font-semibold text-tone-50">

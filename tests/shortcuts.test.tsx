@@ -379,8 +379,10 @@ it('formats the keys for the platform', () => {
   expect(withShortcut('List view', 'viewList')).toBe('List view')
 })
 
-it('lists every command with a key in the shortcut sheet, which Escape closes', () => {
+it('lists every command with a key in the shortcut sheet, which Escape closes', async () => {
   render(<ShortcutSheet />)
+  const field = document.body.appendChild(document.createElement('input'))
+  field.focus()
   act(() => void runCommand('shortcuts'))
   const dialog = screen.getByRole('dialog', { name: 'Keyboard Shortcuts' })
   const listed = [...dialog.querySelectorAll('[data-command]')].map((row) =>
@@ -395,6 +397,11 @@ it('lists every command with a key in the shortcut sheet, which Escape closes', 
   expect(dialog.textContent).not.toMatch(/(shortcuts|editor|cull|view)\.\w/)
   // The sheet takes the keys while it is open.
   expect(runCommand('selectAll')).toBe(false)
+  expect(document.activeElement).not.toBe(field)
   fireEvent.keyDown(dialog, { key: 'Escape' })
   expect(screen.queryByRole('dialog')).toBeNull()
+  // Focus goes back to where it was.
+  await act(settle)
+  expect(document.activeElement).toBe(field)
+  field.remove()
 })
