@@ -201,6 +201,11 @@ describe('runCommand', () => {
     dialog.setAttribute('role', 'dialog')
     dialog.dataset.state = 'open'
     expect(runCommand('undoEdit', { source: 'menu' })).toBe(false)
+    // A text field in the dialog keeps its text actions.
+    dialog.appendChild(input).focus()
+    expect(runCommand('undoEdit', { source: 'menu' })).toBe(true)
+    expect(execCommand).toHaveBeenLastCalledWith('undo')
+    expect(undo).toHaveBeenCalledOnce()
     dialog.remove()
   })
 })

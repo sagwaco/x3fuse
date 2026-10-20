@@ -193,17 +193,12 @@ fn build(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         file = file.separator().item(&settings).separator().item(&quit);
     }
 
-    // The native Undo and Redo undo typing in a text field. Elsewhere the renderer takes
-    // Cmd+Z for adjustments before the menu gets the key.
+    // The renderer undoes an adjustment, or the typing in a focused text field. So a click
+    // on Undo also undoes adjustments. Linux has no native Undo and Redo, and the native
+    // Redo of Windows sends Ctrl+Y, which the renderer does not use.
     let edit = SubmenuBuilder::new(app, title("menu.edit.title", 'E'))
-        .item(&PredefinedMenuItem::undo(
-            app,
-            Some(&translate("menu.edit.undo")),
-        )?)
-        .item(&PredefinedMenuItem::redo(
-            app,
-            Some(&translate("menu.edit.redo")),
-        )?)
+        .item(&item("undoEdit", "menu.edit.undo")?)
+        .item(&item("redoEdit", "menu.edit.redo")?)
         .separator()
         .item(&PredefinedMenuItem::cut(app, None)?)
         .item(&PredefinedMenuItem::copy(app, None)?)
@@ -357,16 +352,23 @@ pub fn install(app: &tauri::AppHandle) -> tauri::Result<()> {
                 Ok(())
             }
             name => {
-                let other = (name == "selectAll")
-                    .then(|| {
-                        app.webview_windows().into_values().find(|window| {
+                let text = match name {
+                    "selectAll" => Some("selectAll"),
+                    "undoEdit" => Some("undo"),
+                    "redoEdit" => Some("redo"),
+                    _ => None,
+                };
+                let other = text.and_then(|text| {
+                    app.webview_windows()
+                        .into_values()
+                        .find(|window| {
                             window.label() != "main" && window.is_focused().unwrap_or(false)
                         })
-                    })
-                    .flatten();
+                        .map(|window| (window, text))
+                });
                 match other {
-                    // Select All in another window, such as Settings, selects its text.
-                    Some(window) => window.eval("document.execCommand('selectAll')"),
+                    // In another window, such as Settings, these items act on its text.
+                    Some((window, text)) => window.eval(format!("document.execCommand('{text}')")),
                     None => app.emit_to("main", "menu:command", json!({"name":name})),
                 }
                 .map_err(|e| e.to_string())

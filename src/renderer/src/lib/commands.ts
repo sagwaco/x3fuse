@@ -76,18 +76,18 @@ export function registerCommands(entries: Partial<Record<MenuCommand, Handler>>)
  * command applied, so that a key handler can prevent the default action only then.
  */
 export function runCommand(name: MenuCommand, options: CommandOptions = {}): boolean {
-  const editor = useEditorStore.getState()
-  // A modal dialog owns the keys and the menu bar until it closes.
-  if (editor.closing || document.querySelector('[role="dialog"][data-state="open"]')) return false
-  // In a text field, Undo, Redo, and Select All act on the text. A key keeps its default
-  // action. On macOS the menu item gets the key when the page does not use it, and then
-  // does the text action.
+  // In a text field, also in a dialog, Undo, Redo, and Select All act on the text. A key
+  // keeps its default action. On macOS the menu item gets the key when the page does not
+  // use it, and then does the text action.
   const text = TEXT_ACTIONS[name]
   if (text && isTextEditing(document.activeElement)) {
     if (options.source !== 'menu') return false
     document.execCommand(text)
     return true
   }
+  const editor = useEditorStore.getState()
+  // A modal dialog owns the keys and the menu bar until it closes.
+  if (editor.closing || document.querySelector('[role="dialog"][data-state="open"]')) return false
   for (const handler of handlers.get(name) ?? []) if (handler(options)) return true
   return runDefault(name, options)
 }
