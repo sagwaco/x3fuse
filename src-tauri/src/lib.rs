@@ -412,6 +412,7 @@ pub fn run() {
             commands::convert_stop,
             commands::exif_full,
             commands::dialog_pick_files,
+            commands::dialog_pick_folder,
             commands::dialog_pick_output_dir,
             commands::shell_reveal,
             commands::window_open_settings,

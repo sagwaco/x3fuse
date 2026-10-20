@@ -17,6 +17,7 @@
   "footer.alongside_original": "Junto al archivo original",
   "dialog.select_x3f_files.title": "Seleccionar archivos X3F",
   "dialog.select_x3f_files.message": "Elige los archivos X3F que quieres exportar",
+  "dialog.select_folders.title": "Seleccionar carpetas",
   "dialog.select_output_directory.title": "Seleccionar directorio de salida",
   "dialog.select_output_directory.message": "Elige dónde se guardarán los archivos exportados",
   "alert.setup_issues.title": "Problemas de configuración",

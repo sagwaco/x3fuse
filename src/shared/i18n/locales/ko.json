@@ -17,6 +17,7 @@
   "footer.alongside_original": "원본 파일과 같은 위치",
   "dialog.select_x3f_files.title": "X3F 파일 선택",
   "dialog.select_x3f_files.message": "내보낼 X3F 파일을 선택하세요",
+  "dialog.select_folders.title": "폴더 선택",
   "dialog.select_output_directory.title": "출력 디렉토리 선택",
   "dialog.select_output_directory.message": "내보낸 파일이 저장될 위치를 선택하세요",
   "alert.setup_issues.title": "설정 문제",

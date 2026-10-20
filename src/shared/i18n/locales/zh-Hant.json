@@ -17,6 +17,7 @@
   "footer.alongside_original": "與原始檔案並排",
   "dialog.select_x3f_files.title": "選擇 X3F 檔案",
   "dialog.select_x3f_files.message": "選擇要匯出的 X3F 檔案",
+  "dialog.select_folders.title": "選擇資料夾",
   "dialog.select_output_directory.title": "選擇輸出目錄",
   "dialog.select_output_directory.message": "選擇匯出後檔案的儲存位置",
   "alert.setup_issues.title": "設定問題",
