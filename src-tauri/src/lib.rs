@@ -283,9 +283,10 @@ pub fn run() {
                 cancel: Arc::new(AtomicBool::new(false)),
                 shutdown: AtomicU8::new(0),
             }));
+            let settings = app.state::<Arc<AppState>>().preferences.get();
+            menu::set_language(&settings.language);
             menu::install(app.handle())?;
             // The page's first IPC call needs the managed state, so the window is built last.
-            let settings = app.state::<Arc<AppState>>().preferences.get();
             if build_main_window(app.handle(), &settings).is_none() {
                 return Err(std::io::Error::other("Could not create the main window").into());
             }

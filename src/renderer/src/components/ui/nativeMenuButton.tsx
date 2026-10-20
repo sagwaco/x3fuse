@@ -6,6 +6,16 @@ import { Button, type ButtonProps } from './button'
 interface NativeMenuButtonProps extends Omit<ButtonProps, 'onSelect' | 'onClick'> {
   items: NativeMenuItem[]
   onSelect: (value: string) => void
+  buttonRef?: React.Ref<HTMLButtonElement>
+}
+
+/** Whether an item with this value exists and is enabled, also inside submenus. */
+function isEnabled(items: NativeMenuItem[], value: string): boolean {
+  return items.some((item) =>
+    item.items
+      ? !item.disabled && isEnabled(item.items, value)
+      : item.value === value && !item.disabled
+  )
 }
 
 /** The OS owns menu rendering, keyboard navigation, and outside-click dismissal. */
@@ -13,6 +23,7 @@ export function NativeMenuButton({
   items,
   onSelect,
   disabled,
+  buttonRef,
   ...props
 }: NativeMenuButtonProps): React.JSX.Element {
   const id = useId()
@@ -50,7 +61,7 @@ export function NativeMenuButton({
           if (
             button.isConnected &&
             !button.matches(':disabled') &&
-            latest.current.items.some((item) => item.value === value && !item.disabled)
+            isEnabled(latest.current.items, value)
           )
             latest.current.onSelect(value)
         }
@@ -71,6 +82,7 @@ export function NativeMenuButton({
   return (
     <Button
       {...props}
+      ref={buttonRef}
       type="button"
       disabled={disabled}
       aria-haspopup="menu"

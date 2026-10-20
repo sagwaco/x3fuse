@@ -1,6 +1,7 @@
 /** Data models serialized by the Rust backend and used by the renderer. */
 import type { EditRecord, X3iSource } from './editor'
 import { defaultDenoiseOptions, type DenoiseOptions } from './denoise'
+import type { Locale } from './i18n/detect'
 
 export type ConversionStatus = 'queued' | 'processing' | 'completed' | 'failed' | 'warning'
 
@@ -61,6 +62,9 @@ export type AppearanceMode = 'auto' | 'light' | 'dark'
 /** A color theme. Each one can serve the light or the dark appearance. */
 export type ThemeName = 'dark' | 'light' | 'gray'
 
+/** 'auto' follows the system language. */
+export type LanguageSetting = 'auto' | Locale
+
 /** Application preferences persisted and validated by the Rust backend. */
 export interface ConversionSettings {
   rendering: 'original' | 'rendered'
@@ -113,6 +117,7 @@ export interface ConversionSettings {
   previewCacheEnabled: boolean
   /** Size limit of the preview cache in bytes (decimal units, as shown). */
   previewCacheLimit: number
+  language: LanguageSetting
 }
 
 export const DEFAULT_SETTINGS: ConversionSettings = {
@@ -144,11 +149,12 @@ export const DEFAULT_SETTINGS: ConversionSettings = {
   listColumnWidths: { name: 0, date: 220, size: 110 },
   inspectorScopeMode: 'rgbParade',
   lastImportDirectory: null,
-  appearanceMode: 'auto',
+  appearanceMode: 'dark',
   lightTheme: 'light',
   darkTheme: 'dark',
   previewCacheEnabled: true,
-  previewCacheLimit: 1_000_000_000
+  previewCacheLimit: 1_000_000_000,
+  language: 'auto'
 }
 
 /**

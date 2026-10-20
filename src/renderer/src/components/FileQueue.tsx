@@ -10,7 +10,7 @@ import { useScrollToActive } from '../hooks/useScrollToActive'
 import { useElementWidth } from '../hooks/useElementWidth'
 import { useShownFiles } from '../hooks/useCulling'
 import { formatBytes, formatDateWithOrdinal } from '../lib/format'
-import { t } from '../lib/strings'
+import { t, useLanguage } from '../lib/strings'
 import { cn } from '../lib/cn'
 import { QueueContextMenu } from './QueueContextMenu'
 import { Thumbnail } from './Thumbnail'
@@ -93,7 +93,7 @@ export function FileQueue({ draft }: { draft?: ExportDraft }): React.JSX.Element
         content = 36 + measure(file.fileName)
         if (file.edit && file.edit.revision > 0) content += 20
         if ((file.flag ?? 'unflagged') !== 'unflagged' || file.rating)
-          content += 24 + measure('★'.repeat(file.rating ?? 0), 11)
+          content += 24 + measure('★'.repeat(file.rating ?? 0), 12)
       } else if (column.key === 'date') {
         content = measure(
           file.capturedDate ? formatDateWithOrdinal(file.capturedDate) : t('placeholder.dash')
@@ -132,7 +132,7 @@ export function FileQueue({ draft }: { draft?: ExportDraft }): React.JSX.Element
             <div
               className={cn(
                 GRID,
-                'sticky top-0 z-10 h-8 border-b border-ink/10 bg-tone-950 font-mono text-xs font-medium text-tone-400'
+                'sticky top-0 z-10 h-8 border-b border-ink/10 bg-tone-950 text-xs font-medium text-tone-400'
               )}
             >
               {COLUMNS.map((column) => (
@@ -217,6 +217,8 @@ const Row = memo(function Row({
   translateY: number
   sel: QueueSelection
 }): React.JSX.Element {
+  // Memo skips the parent's render, so this renders again for a new language.
+  useLanguage()
   return (
     <div
       style={{

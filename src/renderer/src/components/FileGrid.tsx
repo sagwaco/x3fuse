@@ -12,6 +12,7 @@ import { EditedBadge } from './EditedBadge'
 import { CullBadge } from './CullBadge'
 import { StackBadge } from './StackBadge'
 import { QueueContextMenu } from './QueueContextMenu'
+import { useLanguage } from '../lib/strings'
 
 const PADDING = 12
 const GAP = 12
@@ -109,6 +110,8 @@ const GridCell = memo(function GridCell({
   active: boolean
   sel: QueueSelection
 }): React.JSX.Element {
+  // Memo skips the parent's render, so this renders again for a new language.
+  useLanguage()
   return (
     <div
       onClick={(e) => sel.handleItemClick(e, file.id, index)}

@@ -106,9 +106,26 @@ function picker(caption: string): HTMLElement {
   )
   return screen.getByRole('group', { name: caption })
 }
+const GROUPS = [
+  'cameraMatching',
+  'negativeFilm',
+  'slideFilm',
+  'cinemaFilm',
+  'bwFilm',
+  'fullSpectrum'
+]
+/** A look button of the gallery, which shows one group at a time. */
+function look(name: string): HTMLElement {
+  for (const group of GROUPS) {
+    const found = screen.queryByRole('button', { name })
+    if (found) return found
+    fireEvent.click(screen.getByRole('button', { name: t(`editor.${group}`) }))
+  }
+  return screen.getByRole('button', { name })
+}
 function chooseFilm(name: string): void {
   picker(t('editor.filmStock'))
-  fireEvent.click(screen.getByRole('button', { name }))
+  fireEvent.click(look(name))
   back()
 }
 function reset(label: string): void {
@@ -121,7 +138,7 @@ function adjust(label: string, value: number): void {
 }
 const film = (): EditRecipe['film'] => change.mock.lastCall?.[0].film
 const swatch = (group: string, name: string): HTMLElement => {
-  if (group === t('editor.filter')) picker(t('editor.filmStock'))
+  if (group === t('editor.filter')) panelTab('grading')
   return within(screen.getByRole('radiogroup', { name: group })).getByRole('radio', { name })
 }
 
@@ -297,6 +314,23 @@ it('opens every section until it is closed, and keeps closed sections closed', a
   expect(localStorage.getItem('x3fuse.sections')).toBeNull()
 })
 
+it('resets the advanced denoise options from the header icon without toggling the group', () => {
+  const change = vi.fn()
+  const value = { ...defaultDenoiseOptions(), algorithm: 'bm3d' as const, strength: 2.5 }
+  render(<DenoiseControls value={value} change={change} />)
+  const details = screen.getByText(t('denoise.advanced'), { selector: 'summary' }).parentElement
+  // jsdom has no animate. Without it, the summary would not toggle either way.
+  HTMLElement.prototype.animate = vi.fn(() => ({ cancel: vi.fn() }) as unknown as Animation)
+  try {
+    fireEvent.click(screen.getByRole('button', { name: t('denoise.reset') }))
+  } finally {
+    delete (HTMLElement.prototype as Partial<HTMLElement>).animate
+  }
+  // The algorithm is outside Advanced, so it stays.
+  expect(change).toHaveBeenCalledWith({ ...defaultDenoiseOptions(), algorithm: 'bm3d' })
+  expect((details as HTMLDetailsElement).open).toBe(false)
+})
+
 it('keeps section headers at the top of the sidebar while their sections scroll', () => {
   const summary = (label: string): string[] =>
     screen.getByText(label, { selector: 'summary' }).className.split(' ')
@@ -371,27 +405,33 @@ it('previews every film stock on the photo and pairs each with its print paper',
   vi.stubGlobal('PointerEvent', MouseEvent)
   render(<Controls />)
   panelTab('film')
-  fireEvent.pointerMove(screen.getByRole('button', { name: t('editor.look') }), {
-    pointerType: 'mouse'
-  })
-  expect((await screen.findByRole('tooltip')).textContent).toBe(t('editor.filmHelp'))
+  expect(screen.queryByRole('tooltip')).toBeNull()
   expect(renderThumbnail).not.toHaveBeenCalled()
   const gallery = picker(t('editor.filmStock'))
   expect(screen.queryByRole('dialog')).toBeNull()
-  expect(screen.getByRole('heading', { name: t('editor.cameraMatching') })).toBeTruthy()
-  await waitFor(() => expect(renderThumbnail).toHaveBeenCalledTimes(24))
+  // The gallery opens on the group of the selected look and renders only its thumbnails.
+  const groupButton = (group: string): HTMLElement =>
+    screen.getByRole('button', { name: t(`editor.${group}`) })
+  expect(groupButton('negativeFilm').ariaPressed).toBe('true')
+  expect(screen.queryAllByRole('heading')).toHaveLength(0)
+  expect(screen.queryByRole('button', { name: t('editor.standard') })).toBeNull()
+  fireEvent.click(groupButton('cameraMatching'))
+  await waitFor(() => expect(renderThumbnail).toHaveBeenCalledTimes(2))
   expect(renderThumbnail.mock.calls[0][0].film).toBeNull()
   expect(renderThumbnail.mock.calls[1][0].monochrome).toEqual({ filter: 'neutral' })
-  await waitFor(() => expect(gallery.querySelectorAll('img')).toHaveLength(24))
-  expect(screen.getByText(t('editor.slideFilm'))).toBeTruthy()
-  expect(screen.getByText(t('editor.bwFilm'))).toBeTruthy()
-  fireEvent.click(screen.getByRole('button', { name: 'Kodak Vision3 250D' }))
+  await waitFor(() => expect(gallery.querySelectorAll('img')).toHaveLength(2))
+  expect(screen.queryByRole('button', { name: 'Kodak Vision3 250D' })).toBeNull()
+  fireEvent.click(groupButton('cinemaFilm'))
+  expect(groupButton('cinemaFilm').ariaPressed).toBe('true')
+  expect(groupButton('cameraMatching').ariaPressed).toBe('false')
+  expect(screen.queryByRole('button', { name: t('editor.standard') })).toBeNull()
+  fireEvent.click(look('Kodak Vision3 250D'))
   expect(film()).toMatchObject({ film: 9, paper: 5, negative: false })
   // Slides are scanned directly, so they show the film itself.
-  fireEvent.click(screen.getByRole('button', { name: 'Fujifilm Velvia 100' }))
+  fireEvent.click(look('Fujifilm Velvia 100'))
   expect(film()).toMatchObject({ film: 18, paper: 5, negative: true })
-  expect(screen.getByRole('button', { name: 'Fujifilm Velvia 100' }).ariaPressed).toBe('true')
-  fireEvent.click(screen.getByRole('button', { name: t('editor.standard') }))
+  expect(look('Fujifilm Velvia 100').ariaPressed).toBe('true')
+  fireEvent.click(look(t('editor.standard')))
   expect(change).toHaveBeenLastCalledWith({
     film: null,
     monochrome: null,
@@ -405,7 +445,7 @@ it('previews every film stock on the photo and pairs each with its print paper',
 it('offers black-and-white looks with their own filters, papers and darkroom', () => {
   render(<Controls />)
   const filters = (): Array<string | null> => {
-    picker(t('editor.filmStock'))
+    panelTab('grading')
     return within(screen.getByRole('radiogroup', { name: t('editor.filter') }))
       .getAllByRole('radio')
       .map((radio) => radio.getAttribute('aria-label'))
@@ -600,25 +640,25 @@ it('selects the logged camera profile and separates camera matching from film st
   expect(screen.getByText('FOV Blue')).toBeTruthy()
   picker(t('editor.filmStock'))
   expect(screen.getByRole('button', { name: 'FOV Blue' }).ariaPressed).toBe('true')
-  expect(screen.getAllByRole('heading').map((node) => node.textContent)).toEqual([
-    t('editor.cameraMatching'),
-    t('editor.negativeFilm'),
-    t('editor.slideFilm'),
-    t('editor.cinemaFilm'),
-    t('editor.bwFilm'),
-    t('editor.fullSpectrum')
-  ])
   fireEvent.click(screen.getByRole('button', { name: 'Forest Green' }))
   expect(change).toHaveBeenLastCalledWith({
     cameraProfile: 'ForestGreen',
     film: null,
     monochrome: null
   })
-  fireEvent.click(screen.getByRole('button', { name: 'Kodak Portra 400' }))
+  fireEvent.click(look('Kodak Portra 400'))
   expect(change.mock.lastCall?.[0].cameraProfile).toBeNull()
 })
 
-it('selects and restores Aerochrome with the existing camera and film recipe', () => {
+/** Hover the Aerochrome thumbnail and return its tooltip text. */
+async function aerochromeHelp(): Promise<string> {
+  vi.stubGlobal('PointerEvent', MouseEvent)
+  const button = look(t('editor.aerochrome'))
+  fireEvent.pointerMove(button.parentElement!, { pointerType: 'mouse' })
+  return (await screen.findByRole('tooltip')).textContent!
+}
+
+it('selects and restores Aerochrome with the existing camera and film recipe', async () => {
   editor.setState({
     session: {
       ...editor.getState().session!,
@@ -658,8 +698,8 @@ it('selects and restores Aerochrome with the existing camera and film recipe', (
     screen.getByText(t('editor.aerochrome'), { selector: '[data-sidebar-page] *' })
   ).toBeTruthy()
   picker(t('editor.filmStock'))
-  expect(screen.getByRole('button', { name: t('editor.aerochrome') }).ariaPressed).toBe('true')
-  expect(screen.getByText(t('editor.aerochromeHelp'))).toBeTruthy()
+  expect(look(t('editor.aerochrome')).ariaPressed).toBe('true')
+  expect(await aerochromeHelp()).toContain(t('editor.aerochromeHelp'))
   // Selecting the active look keeps the user's white balance and grain edits.
   act(() =>
     setRecipe({
@@ -669,7 +709,7 @@ it('selects and restores Aerochrome with the existing camera and film recipe', (
       film: { ...pasted.film!, grainParams: { ...pasted.film!.grainParams!, blur: 2 } }
     })
   )
-  fireEvent.click(screen.getByRole('button', { name: t('editor.aerochrome') }))
+  fireEvent.click(look(t('editor.aerochrome')))
   expect(change.mock.lastCall?.[0]).toMatchObject({
     temperature: 1500,
     tint: -210,
@@ -689,20 +729,24 @@ it('does not offer an uncalibrated Aerochrome preview when FCBlue is missing', a
   editor.setState({ session: { ...editor.getState().session!, sessionId: 'no-fcblue' } })
   render(<Controls />)
   picker(t('editor.filmStock'))
-  const button = screen.getByRole('button', { name: t('editor.aerochrome') }) as HTMLButtonElement
+  const button = look(t('editor.aerochrome')) as HTMLButtonElement
   expect(button.disabled).toBe(true)
-  expect(screen.getByText(t('editor.aerochromeHelp'), { exact: false }).textContent).toContain(
+  // The disabled button cannot take focus, so its wrapper does and shows the tooltip.
+  act(() => button.parentElement!.focus())
+  expect((await screen.findByRole('tooltip')).textContent).toContain(
     t('editor.aerochromeUnavailable')
   )
+  expect(await aerochromeHelp()).toContain(t('editor.aerochromeUnavailable'))
   fireEvent.click(button)
   expect(change).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('button', { name: t('editor.cameraMatching') }))
   await waitFor(() => expect(renderThumbnail).toHaveBeenCalled())
   expect(renderThumbnail.mock.calls.some(([recipe]) => recipe.cameraProfile === 'FCBlue')).toBe(
     false
   )
 })
 
-it('identifies saved Aerochrome edits and explains the fallback on a camera without FCBlue', () => {
+it('identifies saved Aerochrome edits and explains the fallback on a camera without FCBlue', async () => {
   const pasted = pasteRecipe(
     {
       ...defaultRecipe(),
@@ -717,12 +761,10 @@ it('identifies saved Aerochrome edits and explains the fallback on a camera with
     screen.getByText(t('editor.aerochrome'), { selector: '[data-sidebar-page] *' })
   ).toBeTruthy()
   picker(t('editor.filmStock'))
-  const button = screen.getByRole('button', { name: t('editor.aerochrome') }) as HTMLButtonElement
+  const button = look(t('editor.aerochrome')) as HTMLButtonElement
   expect(button.ariaPressed).toBe('true')
   expect(button.disabled).toBe(true)
-  expect(screen.getByText(t('editor.aerochromeHelp'), { exact: false }).textContent).toContain(
-    t('editor.aerochromeUnavailable')
-  )
+  expect(await aerochromeHelp()).toContain(t('editor.aerochromeUnavailable'))
 })
 
 const whiteBalance = (): HTMLElement =>
@@ -1352,4 +1394,22 @@ it('shows Standard when a copied camera profile is unavailable in the photo', ()
     'true'
   )
   expect(screen.queryByRole('button', { name: 'FOV Blue' })).toBeNull()
+})
+
+it('selects the value of a slider field on focus', () => {
+  render(<Controls />)
+  const field = screen.getByRole('spinbutton', {
+    name: t('editor.temperature')
+  }) as HTMLInputElement
+  const select = vi.spyOn(field, 'select')
+  fireEvent.focus(field)
+  expect(select).toHaveBeenCalled()
+})
+
+it('shows the filter colors on the grading tab only for a monochrome look', () => {
+  render(<Controls initial={{ ...defaultRecipe(), monochrome: { filter: 'red' } }} />)
+  panelTab('grading')
+  expect(screen.getByRole('radiogroup', { name: t('editor.filter') })).toBeTruthy()
+  act(() => setRecipe({ ...defaultRecipe(), monochrome: null }))
+  expect(screen.queryByRole('radiogroup', { name: t('editor.filter') })).toBeNull()
 })

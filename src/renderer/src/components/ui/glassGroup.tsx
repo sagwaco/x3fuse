@@ -155,13 +155,14 @@ export function GlassGroup<T extends string>({
   // Each item, and its copy in the lens. The selected text is ink, because the
   // accent is below 4.5:1 contrast in the light and gray themes.
   const itemClass = cn(
-    'flex items-center justify-center text-tone-300 data-[selected]:text-ink',
+    'flex items-center justify-center font-mono text-tone-300 data-[selected]:text-ink',
     radius,
-    display === 'label' && 'gap-1.5 font-mono font-medium uppercase tracking-[0.1em]',
-    display === 'label' && (size === 'sm' ? 'h-6 px-2 text-[10px]' : 'h-7 px-2.5 text-[11px]'),
+    display === 'label' && 'gap-1.5 text-[12px] font-medium uppercase tracking-[0.1em]',
+    display === 'label' && (size === 'sm' ? 'h-6 px-2' : 'h-7 px-2.5'),
     display === 'icon' && (size === 'sm' ? 'h-6 w-6' : 'h-7 w-7'),
-    stacked && 'flex-col font-mono text-[10px] uppercase leading-none tracking-[0.14em]',
-    stacked && (size === 'sm' ? 'min-w-[4.5rem] gap-2 p-3' : 'min-w-[72px] gap-1.5 px-2.5 py-1.5'),
+    stacked && 'flex-col text-[12px] uppercase leading-none tracking-[0.14em]',
+    stacked &&
+      (size === 'sm' ? 'min-w-[4.5rem] gap-2 px-2 py-3' : 'min-w-[72px] gap-1.5 px-2.5 py-1.5'),
     stacked && size === 'sm' && !split && 'max-w-[7rem]',
     split && 'min-w-0 flex-1'
   )

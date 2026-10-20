@@ -120,3 +120,19 @@ it('does not persist queued fields superseded by a committed batch', async () =>
   expect(invoke).toHaveBeenLastCalledWith('settings:set', { outputFormat: 'dng' })
   expect(store.getState().settings.outputFormat).toBe('dng')
 })
+
+it('loads again after pending saves when the other window changes a setting', async () => {
+  const { useSettingsStore: store } = await import('../src/renderer/src/stores/settingsStore')
+  const save = deferred()
+  invoke
+    .mockReturnValueOnce(save.promise)
+    .mockResolvedValueOnce({ ...DEFAULT_SETTINGS, inspectorOpen: true, language: 'ja' })
+  const saving = store.getState().update({ inspectorOpen: true })
+  await store.getState().load()
+  expect(invoke).toHaveBeenCalledTimes(1)
+  // The save response is older than the change from the other window.
+  save.resolve({ ...DEFAULT_SETTINGS, inspectorOpen: true })
+  await saving
+  await vi.waitFor(() => expect(store.getState().settings.language).toBe('ja'))
+  expect(invoke).toHaveBeenLastCalledWith('settings:get')
+})

@@ -16,6 +16,7 @@ import { t } from '../lib/strings'
 import { RotateCcw } from 'lucide-react'
 import { Button } from './ui/button'
 import { Switch } from './ui/switch'
+import { AdvancedDetails } from './ui/advancedDetails'
 import { HelpTooltip } from './ui/settingsLayout'
 import { Adjustment, HIDE_WHILE_RESETTING, ResetLabel, Section } from './EditorControls'
 
@@ -89,7 +90,7 @@ export function EffectsSection({ recipe }: { recipe: EditRecipe }): React.JSX.El
   ): React.JSX.Element => {
     const resetLabel = t(effect === 'grain' ? 'editor.resetGrain' : 'editor.resetHalation')
     return (
-      <div className="group/reset flex items-center justify-between gap-3 py-2">
+      <div className="group/reset flex items-center justify-between gap-3 pt-2 [&+.adjustment]:!mt-0">
         <span className="flex min-w-0 items-center gap-1.5">
           <ResetLabel label={t(`editor.${effect}`)} disabled={disabled} reset={reset} />
           <HelpTooltip
@@ -159,12 +160,20 @@ export function EffectsSection({ recipe }: { recipe: EditRecipe }): React.JSX.El
             commit={commit}
           />
           {film && !monochrome && (
-            <Section id="grainChannelOffsets" name={t('editor.grainChannelOffsets')}>
+            <AdvancedDetails
+              id="grainChannelOffsets"
+              name={t('editor.grainChannelOffsets')}
+              info={
+                <HelpTooltip
+                  label={t('editor.grainChannelOffsets')}
+                  text={t('editor.grainChannelOffsetHelp')}
+                />
+              }
+            >
               {(['red', 'green', 'blue'] as const).map((channel, index) => (
                 <Adjustment
                   key={channel}
                   label={t(`editor.${channel}`)}
-                  help={t('editor.grainChannelOffsetHelp')}
                   value={offsets[index]}
                   min={-base}
                   max={100 - base}
@@ -174,7 +183,7 @@ export function EffectsSection({ recipe }: { recipe: EditRecipe }): React.JSX.El
                   commit={commit}
                 />
               ))}
-            </Section>
+            </AdvancedDetails>
           )}
           {(
             [

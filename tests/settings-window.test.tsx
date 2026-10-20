@@ -4,7 +4,9 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { DEFAULT_SETTINGS } from '@shared/types'
 import { SettingsWindow } from '../src/renderer/src/components/SettingsWindow'
 import { useSettingsStore } from '../src/renderer/src/stores/settingsStore'
-import { t } from '../src/renderer/src/lib/strings'
+import { memo } from 'react'
+import { t, useLanguage } from '../src/renderer/src/lib/strings'
+import { applyLanguage } from '../src/renderer/src/i18n/config'
 
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }))
 vi.mock('../src/renderer/src/lib/ipc', () => ({ ipc: { invoke, on: () => () => {} } }))
@@ -44,9 +46,7 @@ it.each([
   ['dark', 'theme.dark']
 ] as const)('writes the %s appearance mode', (mode, label) => {
   const group = screen.getByRole('group', { name: t('settings.appearance.mode') })
-  expect(within(group).getByRole('button', { pressed: true }).textContent).toBe(
-    t('settings.appearance.auto')
-  )
+  expect(within(group).getByRole('button', { pressed: true }).textContent).toBe(t('theme.dark'))
   fireEvent.click(within(group).getByRole('button', { name: t(label) }))
   expect(update).toHaveBeenCalledWith({ appearanceMode: mode })
 })
@@ -70,6 +70,38 @@ it.each([
     })
   )
   await waitFor(() => expect(update).toHaveBeenCalledWith({ [key]: 'gray' }))
+})
+
+it('writes the language through its menu, with each language in its own name', async () => {
+  const select = screen.getByRole('button', { name: t('settings.language') })
+  expect(select.textContent).toBe(t('settings.language.auto'))
+  invoke.mockResolvedValueOnce('ko')
+  fireEvent.keyDown(select, { key: 'ArrowDown' })
+  expect(invoke).toHaveBeenCalledWith(
+    'menu:popup',
+    expect.objectContaining({
+      items: [
+        { value: 'auto', label: t('settings.language.auto'), checked: true },
+        ...['English', 'Español', '日本語', '한국어', '简体中文', '繁體中文'].map((label) =>
+          expect.objectContaining({ label, checked: false })
+        )
+      ]
+    })
+  )
+  await waitFor(() => expect(update).toHaveBeenCalledWith({ language: 'ko' }))
+})
+
+it('renders memo components again in a new language', async () => {
+  const Label = memo(function Label() {
+    useLanguage()
+    return <p>{t('settings.language')}</p>
+  })
+  const { container } = render(<Label />)
+  await act(() => applyLanguage('ja'))
+  expect(container.textContent).toBe('言語')
+  expect(document.documentElement.lang).toBe('ja')
+  await act(() => applyLanguage('auto'))
+  expect(container.textContent).toBe('Language')
 })
 
 const tabNames = ['appearance', 'cache', 'advanced', 'updates', 'about'].map((key) =>

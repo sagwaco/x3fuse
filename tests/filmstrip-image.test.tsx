@@ -248,7 +248,7 @@ it('tells the zoomable editor preview which frame painted, only after the frame 
   const portrait = { ...file, displayPreviewUrl: 'x3f-edit://localhost/portrait' }
   const view = render(<ZoomablePreview file={portrait} onPaint={onPaint} />)
   act(() => decoding[0](fit))
-  expect(onPaint).toHaveBeenLastCalledWith(portrait.displayPreviewUrl)
+  expect(onPaint).toHaveBeenLastCalledWith(portrait.displayPreviewUrl, expect.any(Object))
   // The render of an undone rotation arrives. Its frame decodes later, and the
   // portrait frame stays on the canvas until then.
   const landscape = { ...portrait, displayPreviewUrl: 'x3f-edit://localhost/landscape' }
@@ -258,5 +258,5 @@ it('tells the zoomable editor preview which frame painted, only after the frame 
   expect(onPaint).toHaveBeenCalledOnce()
   act(() => decoding[1](fit))
   expect(canvas.dataset.previewUrl).toBe(landscape.displayPreviewUrl)
-  expect(onPaint).toHaveBeenLastCalledWith(landscape.displayPreviewUrl)
+  expect(onPaint).toHaveBeenLastCalledWith(landscape.displayPreviewUrl, expect.any(Object))
 })

@@ -4,7 +4,7 @@ import type { ConversionSettings, ThemeName } from '@shared/types'
 export const THEME_SURFACE: Record<ThemeName, [number, number, number]> = {
   dark: [10, 10, 10],
   light: [250, 250, 250],
-  gray: [133, 133, 133]
+  gray: [160, 160, 160]
 }
 
 export function resolveTheme(
@@ -13,6 +13,14 @@ export function resolveTheme(
 ): ThemeName {
   const dark = settings.appearanceMode === 'auto' ? systemDark : settings.appearanceMode === 'dark'
   return dark ? settings.darkTheme : settings.lightTheme
+}
+
+/** Whether the native menus are dark. The window appearance decides, not the theme surface. */
+export function isNativeDark(
+  settings: Pick<ConversionSettings, 'appearanceMode'>,
+  systemDark: boolean
+): boolean {
+  return settings.appearanceMode === 'auto' ? systemDark : settings.appearanceMode === 'dark'
 }
 
 export function applyTheme(settings: ConversionSettings): void {

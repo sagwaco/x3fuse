@@ -18,6 +18,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
   let revision = 0
   let loadId = 0
   let saving = false
+  // A refresh asked for during saves. Their responses can be older than the other window's change.
+  let reload = false
   const acceptedAt: Partial<Record<keyof ConversionSettings, number>> = {}
 
   function currentPatch(change: Change): Partial<ConversionSettings> {
@@ -56,6 +58,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
       change.finish()
     }
     saving = false
+    if (reload) {
+      reload = false
+      void get().load()
+    }
   }
 
   return {
@@ -63,7 +69,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
     loaded: false,
 
     async load() {
-      if (pending.length) return
+      if (pending.length) {
+        reload = true
+        return
+      }
       const currentLoad = ++loadId
       const currentRevision = revision
       try {

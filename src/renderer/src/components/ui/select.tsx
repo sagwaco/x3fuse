@@ -33,7 +33,7 @@ export function Select<T extends string>({
       disabled={disabled}
       aria-label={label}
       className={cn(
-        'h-7 min-w-[8rem] justify-between gap-2 px-2.5 text-[11px] font-normal text-tone-100',
+        'h-7 min-w-[8rem] justify-between gap-2 px-2.5 text-[12px] font-normal text-tone-100',
         card && 'h-auto w-full rounded-xl px-3 py-2.5 text-left text-[13px] tracking-[0.12em]',
         className
       )}
@@ -46,7 +46,7 @@ export function Select<T extends string>({
         className={cn(
           'min-w-0 truncate',
           card &&
-            'before:mb-1 before:block before:text-[10px] before:tracking-[0.14em] before:text-tone-500 before:content-[attr(data-caption)]'
+            'before:mb-1 before:block before:text-[12px] before:tracking-[0.14em] before:text-tone-500 before:content-[attr(data-caption)]'
         )}
       >
         {options.find((option) => option.value === value)?.label ?? value}

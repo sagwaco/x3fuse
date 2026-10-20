@@ -330,9 +330,7 @@ it('shows every slider for a monochrome camera look', () => {
 
 it.each([
   [() => t('editor.grainRmsGranularity'), 'grainRmsGranularityHelp'],
-  [() => t('editor.red'), 'grainChannelOffsetHelp'],
-  [() => t('editor.green'), 'grainChannelOffsetHelp'],
-  [() => t('editor.blue'), 'grainChannelOffsetHelp'],
+  [() => t('editor.grainChannelOffsets'), 'grainChannelOffsetHelp'],
   [() => t('editor.grainBlur'), 'grainBlurHelp'],
   [() => t('editor.grainSharpen'), 'grainSharpenHelp'],
   [() => t('editor.scatterAmount'), 'scatterAmountHelp'],
@@ -345,6 +343,12 @@ it.each([
   const button = screen.getByRole('button', { name: label() })
   fireEvent.pointerMove(button, { pointerType: 'mouse' })
   expect((await screen.findByRole('tooltip')).textContent).toBe(t(`editor.${help}`))
+})
+
+it('explains the channel offsets once, beside their title', () => {
+  render(<Effects initial={defaultRecipe()} />)
+  for (const channel of ['red', 'green', 'blue'])
+    expect(screen.queryByRole('button', { name: t(`editor.${channel}`) })).toBeNull()
 })
 
 it.each(['grain', 'halation'] as const)(
@@ -390,7 +394,9 @@ it('loads stock grain defaults and preserves adjustments when selecting the acti
     )
   }
   render(<Both />)
-  const choose = (name: string): void => {
+  // The gallery shows one group of looks at a time.
+  const choose = (name: string, group?: string): void => {
+    if (group) fireEvent.click(screen.getByRole('button', { name: t(`editor.${group}`) }))
     fireEvent.click(screen.getByRole('button', { name }))
   }
   choose('Kodak Portra 400')
@@ -399,9 +405,9 @@ it('loads stock grain defaults and preserves adjustments when selecting the acti
   expect(film()?.grainParams?.rmsGranularity).toEqual([5, 5, 5])
   expect(film()?.grainParams?.rmsBase).toBeUndefined()
   expect(film()?.grainParams).toMatchObject({ blur: 1.2, multUsmAmount: 0 })
-  choose('Kodak Vision3 500T')
+  choose('Kodak Vision3 500T', 'cinemaFilm')
   expect(film()?.grainParams?.rmsGranularity).toEqual([9, 13, 30])
-  choose('Kodak Tri-X 7266')
+  choose('Kodak Tri-X 7266', 'bwFilm')
   expect(film()?.grainParams?.rmsGranularity).toEqual([44, 44, 44])
   expect(screen.queryByRole('slider', { name: t('editor.green') })).toBeNull()
   adjust(t('editor.grainRmsGranularity'), 25)

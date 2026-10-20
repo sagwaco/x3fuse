@@ -106,7 +106,7 @@ export function SfdRaw({ recipe }: { recipe: EditRecipe }): React.JSX.Element | 
           {running ? (
             <>
               <p className="text-shimmer truncate text-xs">{t('editor.x3iMerging')}</p>
-              <p aria-hidden="true" className="text-[11px] tabular-nums text-tone-500">
+              <p aria-hidden="true" className="text-[12px] tabular-nums text-tone-500">
                 {percent}%
               </p>
             </>
@@ -117,7 +117,7 @@ export function SfdRaw({ recipe }: { recipe: EditRecipe }): React.JSX.Element | 
                 {t('editor.sfdFused')}
               </p>
               {x3i.bytes !== undefined && (
-                <p className="text-[11px] text-tone-500">{formatBytes(x3i.bytes)}</p>
+                <p className="text-[12px] text-tone-500">{formatBytes(x3i.bytes)}</p>
               )}
             </>
           ) : (

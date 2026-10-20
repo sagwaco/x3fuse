@@ -1,47 +1,89 @@
 use crate::{commands, AppState};
 use serde_json::{json, Value};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, OnceLock, RwLock};
 use tauri::{
-    menu::{MenuBuilder, MenuItem, PredefinedMenuItem, SubmenuBuilder},
+    menu::{Menu, MenuBuilder, MenuItem, PredefinedMenuItem, SubmenuBuilder},
     Emitter, Manager,
 };
 
-pub fn translate(key: &str) -> String {
-    static STRINGS: OnceLock<(Value, Value)> = OnceLock::new();
-    let (local, en) = STRINGS.get_or_init(|| {
+const LOCALES: [(&str, &str); 6] = [
+    ("en", include_str!("../../src/shared/i18n/locales/en.json")),
+    ("es", include_str!("../../src/shared/i18n/locales/es.json")),
+    ("ja", include_str!("../../src/shared/i18n/locales/ja.json")),
+    ("ko", include_str!("../../src/shared/i18n/locales/ko.json")),
+    (
+        "zh-Hans",
+        include_str!("../../src/shared/i18n/locales/zh-Hans.json"),
+    ),
+    (
+        "zh-Hant",
+        include_str!("../../src/shared/i18n/locales/zh-Hant.json"),
+    ),
+];
+
+/// The locale that the `language` setting selects. None follows the system.
+static LANGUAGE: RwLock<Option<&str>> = RwLock::new(None);
+
+fn system_locale() -> &'static str {
+    static LOCALE: OnceLock<&str> = OnceLock::new();
+    LOCALE.get_or_init(|| {
         let locale = sys_locale::get_locale().unwrap_or_default().to_lowercase();
-        let en = include_str!("../../src/shared/i18n/locales/en.json");
-        let text = if locale.starts_with("es") {
-            include_str!("../../src/shared/i18n/locales/es.json")
-        } else if locale.starts_with("ja") {
-            include_str!("../../src/shared/i18n/locales/ja.json")
-        } else if locale.starts_with("ko") {
-            include_str!("../../src/shared/i18n/locales/ko.json")
-        } else if locale.starts_with("zh") {
+        if locale.starts_with("zh") {
             if ["hant", "tw", "hk", "mo"]
                 .iter()
                 .any(|v| locale.contains(v))
             {
-                include_str!("../../src/shared/i18n/locales/zh-Hant.json")
+                "zh-Hant"
             } else {
-                include_str!("../../src/shared/i18n/locales/zh-Hans.json")
+                "zh-Hans"
             }
         } else {
-            en
-        };
-        (
-            serde_json::from_str(text).unwrap(),
-            serde_json::from_str(en).unwrap(),
-        )
+            ["es", "ja", "ko"]
+                .into_iter()
+                .find(|name| locale.starts_with(name))
+                .unwrap_or("en")
+        }
+    })
+}
+
+/// Sets the locale of native text from the `language` setting ("auto" or a locale).
+/// Returns true when the locale changes.
+pub fn set_language(setting: &str) -> bool {
+    let next = LOCALES
+        .iter()
+        .find(|(name, _)| *name == setting)
+        .map(|(name, _)| *name);
+    let mut language = LANGUAGE
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    std::mem::replace(&mut *language, next) != next
+}
+
+pub fn translate(key: &str) -> String {
+    static STRINGS: OnceLock<Vec<(&str, Value)>> = OnceLock::new();
+    let strings = STRINGS.get_or_init(|| {
+        LOCALES
+            .iter()
+            .map(|(name, text)| (*name, serde_json::from_str(text).unwrap()))
+            .collect()
     });
-    local[key]
-        .as_str()
-        .or_else(|| en[key].as_str())
+    let locale = LANGUAGE
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .unwrap_or_else(system_locale);
+    let text = |name: &str| {
+        strings
+            .iter()
+            .find(|(locale, _)| *locale == name)
+            .and_then(|(_, value)| value[key].as_str())
+    };
+    text(locale)
+        .or_else(|| text("en"))
         .unwrap_or(key)
         .to_string()
 }
 
-pub fn install(app: &tauri::AppHandle) -> tauri::Result<()> {
+fn build(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let item = |id: &str, key: &str, accelerator: Option<&str>| {
         MenuItem::with_id(app, id, translate(key), true, accelerator)
     };
@@ -178,15 +220,26 @@ pub fn install(app: &tauri::AppHandle) -> tauri::Result<()> {
         )?)
         .item(&item("clearLogs", "menu.help.clear_debug_logs", None)?)
         .build()?;
-    app.set_menu(
-        menu.item(&file.build()?)
-            .item(&edit)
-            .item(&photo.build()?)
-            .item(&conversion)
-            .item(&window)
-            .item(&help)
-            .build()?,
-    )?;
+    menu.item(&file.build()?)
+        .item(&edit)
+        .item(&photo.build()?)
+        .item(&conversion)
+        .item(&window)
+        .item(&help)
+        .build()
+}
+
+/// Builds the menu again in the current language.
+pub fn refresh(app: &tauri::AppHandle) -> tauri::Result<()> {
+    app.set_menu(build(app)?)?;
+    if let Some(window) = app.get_webview_window("settings") {
+        window.set_title(&translate("menu.file.settings"))?;
+    }
+    Ok(())
+}
+
+pub fn install(app: &tauri::AppHandle) -> tauri::Result<()> {
+    app.set_menu(build(app)?)?;
     app.on_menu_event(|app, event| {
         let state = app.state::<Arc<AppState>>();
         let result = match event.id().as_ref() {
@@ -235,4 +288,21 @@ pub fn install(app: &tauri::AppHandle) -> tauri::Result<()> {
         }
     });
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn language_setting_selects_native_text() {
+        assert!(set_language("ja"));
+        assert!(!set_language("ja"));
+        assert_eq!(translate("menu.file.settings"), "設定");
+        // A key without a translation uses English, then the key itself.
+        assert_eq!(translate("missing.key"), "missing.key");
+        assert!(set_language("en"));
+        assert_eq!(translate("menu.file.settings"), "Settings");
+        assert!(set_language("auto"));
+    }
 }

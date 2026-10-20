@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import type { LanguageSetting } from '@shared/types'
 import { HardDrive, Info, Palette, RefreshCw, Settings2 } from 'lucide-react'
 import { MAX_CONCURRENCY } from '@shared/concurrency'
 import type { LogSizes } from '@shared/ipc'
@@ -23,6 +24,15 @@ const TABS = [
 ] as const
 type Tab = (typeof TABS)[number][0]
 const TAB_KEY = 'x3fuse.settingsTab'
+/** Each language shows its own name. */
+const LANGUAGES: [LanguageSetting, string][] = [
+  ['en', 'English'],
+  ['es', 'Español'],
+  ['ja', '日本語'],
+  ['ko', '한국어'],
+  ['zh-Hans', '简体中文'],
+  ['zh-Hant', '繁體中文']
+]
 
 function savedTab(): Tab {
   try {
@@ -84,6 +94,16 @@ export function SettingsWindow(): React.JSX.Element {
       >
         {tab === 'appearance' && (
           <Section title={t('settings.section.appearance')}>
+            <Row label={t('settings.language')}>
+              <Select
+                aria-label={t('settings.language')}
+                value={settings.language}
+                options={[['auto', t('settings.language.auto')] as const, ...LANGUAGES].map(
+                  ([value, label]) => ({ value, label })
+                )}
+                onValueChange={(v) => void update({ language: v })}
+              />
+            </Row>
             <Row label={t('settings.appearance.mode')}>
               <GlassGroup
                 aria-label={t('settings.appearance.mode')}
@@ -257,11 +277,14 @@ function SettingsTitlebar({
           appInfo.platform === 'darwin' ? 'px-[78px]' : 'px-3'
         )}
       >
-        <h1 data-tauri-drag-region className="truncate text-[13px] font-bold text-tone-100">
+        <h1
+          data-tauri-drag-region
+          className="truncate font-sans text-[13px] font-bold text-tone-100"
+        >
           {t(`settings.section.${tab}`)}
         </h1>
       </div>
-      <div data-tauri-drag-region className="flex justify-center px-3 pb-2">
+      <div data-tauri-drag-region className="flex justify-center px-3 pb-3 pt-1">
         {/* The selected tab sits on the macOS glass material, or in a ring. The gray
             accent is below 3:1 on the gray surface, so there the selected icon keeps
             the label color. */}
@@ -279,7 +302,7 @@ function SettingsTitlebar({
             icon,
             label: t(`settings.section.${value}`)
           }))}
-          className="[&_[data-selected]>svg]:text-accent [html[data-theme=gray]_&_[data-selected]>svg]:text-inherit"
+          className="[&_[data-selected]>svg]:text-accent [html[data-theme=gray]_&_[data-selected]>svg]:text-inherit p-1"
         />
       </div>
     </header>

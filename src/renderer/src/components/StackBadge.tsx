@@ -21,8 +21,8 @@ export function StackBadge({
       className={cn(
         'inline-flex shrink-0 items-center gap-0.5 leading-none tabular-nums',
         overlay
-          ? 'absolute right-1 top-1 rounded bg-tone-950/80 p-1 text-[9px] font-medium text-tone-100'
-          : 'text-[11px] text-tone-400'
+          ? 'absolute right-1 top-1 rounded bg-tone-950/80 p-1 text-[12px] font-medium text-tone-100'
+          : 'text-[12px] text-tone-400'
       )}
     >
       <Layers aria-hidden="true" className="h-3 w-3" />

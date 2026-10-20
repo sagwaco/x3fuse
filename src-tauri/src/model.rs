@@ -191,6 +191,9 @@ pub struct Settings {
     /// The size limit of the preview cache in bytes.
     #[serde(default = "default_preview_cache_limit")]
     pub preview_cache_limit: u64,
+    /// The interface language: "auto" follows the system, or a locale name.
+    #[serde(default = "default_language")]
+    pub language: String,
 }
 
 /// Decimal units, as the Settings window shows sizes.
@@ -200,8 +203,12 @@ fn default_preview_cache_limit() -> u64 {
     1_000_000_000
 }
 
-fn default_appearance_mode() -> String {
+fn default_language() -> String {
     "auto".into()
+}
+
+fn default_appearance_mode() -> String {
+    "dark".into()
 }
 
 fn default_light_theme() -> String {
@@ -240,6 +247,7 @@ impl Default for Settings {
             dark_theme: default_dark_theme(),
             preview_cache_enabled: true,
             preview_cache_limit: default_preview_cache_limit(),
+            language: default_language(),
         }
     }
 }
@@ -262,6 +270,8 @@ impl Settings {
             || !["auto", "light", "dark"].contains(&self.appearance_mode.as_str())
             || !["dark", "light", "gray"].contains(&self.light_theme.as_str())
             || !["dark", "light", "gray"].contains(&self.dark_theme.as_str())
+            || !["auto", "en", "es", "ja", "ko", "zh-Hans", "zh-Hant"]
+                .contains(&self.language.as_str())
             || !["histogram", "rgbParade", "waveform", "vectorscope"]
                 .contains(&self.inspector_scope_mode.as_str())
             || self
@@ -293,7 +303,7 @@ impl Settings {
         };
         let value = match theme {
             "light" => 250,
-            "gray" => 133,
+            "gray" => 160,
             _ => 10,
         };
         (
@@ -495,7 +505,7 @@ mod tests {
         fields.remove("lightTheme");
         fields.remove("darkTheme");
         let mut settings: Settings = serde_json::from_value(wire).unwrap();
-        assert_eq!(settings.appearance_mode, "auto");
+        assert_eq!(settings.appearance_mode, "dark");
         assert_eq!(settings.light_theme, "light");
         assert_eq!(settings.dark_theme, "dark");
         assert!(settings.validate().is_ok());
@@ -506,6 +516,19 @@ mod tests {
         assert!(settings.validate().is_err());
         settings.dark_theme = "dark".into();
         settings.appearance_mode = "night".into();
+        assert!(settings.validate().is_err());
+    }
+
+    #[test]
+    fn language_setting_migrates_and_validates() {
+        let mut wire = serde_json::to_value(Settings::default()).unwrap();
+        wire.as_object_mut().unwrap().remove("language");
+        let mut settings: Settings = serde_json::from_value(wire).unwrap();
+        assert_eq!(settings.language, "auto");
+        assert!(settings.validate().is_ok());
+        settings.language = "zh-Hant".into();
+        assert!(settings.validate().is_ok());
+        settings.language = "fr".into();
         assert!(settings.validate().is_err());
     }
 
@@ -527,9 +550,10 @@ mod tests {
 
     #[test]
     fn window_theme_follows_or_pins_appearance() {
-        let gray = tauri::window::Color(133, 133, 133, 255);
+        let gray = tauri::window::Color(160, 160, 160, 255);
         let light = tauri::window::Color(250, 250, 250, 255);
         let mut settings = Settings {
+            appearance_mode: "auto".into(),
             dark_theme: "gray".into(),
             ..Settings::default()
         };

@@ -153,9 +153,7 @@ export function CropControls({
         </Button>
       </div>
       <div className="flex items-center justify-between gap-2">
-        <span className="control-label text-[10px] text-tone-500">
-          {t('editor.aspectRatio')}
-        </span>
+        <span className="control-label text-tone-500">{t('editor.aspectRatio')}</span>
         {/* Choosing the other orientation swaps the frame's sides. A square frame has neither. */}
         <div
           role="group"
@@ -202,7 +200,7 @@ export function CropControls({
             disabled={!W || !H}
             title={option.value === '65:24' ? 'XPan 65:24' : option.label}
             onClick={() => choose(option.value)}
-            className="flex flex-col items-center gap-1 rounded-lg border border-transparent px-0.5 py-1.5 text-[10px] leading-none text-tone-400 hover:bg-ink/5 hover:text-tone-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/50 disabled:opacity-40 aria-checked:border-ink/30 aria-checked:bg-ink/10 aria-checked:text-ink"
+            className="flex flex-col items-center gap-1 rounded-lg border border-transparent px-0.5 py-1.5 font-mono text-[12px] leading-none text-tone-400 hover:bg-ink/5 hover:text-tone-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/50 disabled:opacity-40 aria-checked:border-ink/30 aria-checked:bg-ink/10 aria-checked:text-ink"
           >
             <Shape ratio={option.ratio} dashed={option.dashed} />
             <span className="max-w-full truncate">{option.label}</span>
@@ -242,13 +240,11 @@ export function CropControls({
         </Button>
       </div>
       {status && (
-        <p role="status" className="text-[11px] leading-snug text-tone-400">
+        <p role="status" className="text-[12px] leading-snug text-tone-400">
           {status}
         </p>
       )}
-      <p className="control-label pt-1 text-[10px] font-bold text-tone-500">
-        {t('editor.perspective')}
-      </p>
+      <p className="control-label pt-1 font-bold text-tone-500">{t('editor.perspective')}</p>
       <Adjustment
         label={t('editor.perspectiveVertical')}
         help={t('editor.perspectiveVerticalHelp')}
@@ -271,7 +267,7 @@ export function CropControls({
         reset={() => change(withFit({ yaw: 0 }))}
         commit={release}
       />
-      <p className="text-[11px] leading-snug text-tone-500">{t('editor.cropCanvas')}</p>
+      <p className="text-[12px] leading-snug text-tone-500">{t('editor.cropCanvas')}</p>
     </div>
   )
 }

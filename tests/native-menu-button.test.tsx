@@ -107,3 +107,29 @@ it('uses current callbacks and options when an open menu finishes after a rerend
   await act(async () => choose('a'))
   expect(nextSelect).toHaveBeenCalledOnce()
 })
+
+it('accepts submenu values after a rerender, but not from a disabled submenu', async () => {
+  let choose!: (value: string) => void
+  invoke.mockImplementation(async () => new Promise((resolve) => (choose = resolve)))
+  const onSelect = vi.fn()
+  const menu = (disabled: boolean): React.JSX.Element => (
+    <NativeMenuButton
+      items={[{ value: 'x', label: 'X', disabled, items: [{ value: 'x:a', label: 'A' }] }]}
+      onSelect={onSelect}
+    >
+      Menu
+    </NativeMenuButton>
+  )
+  const view = render(menu(false))
+  const button = screen.getByRole('button', { name: 'Menu' })
+  fireEvent.click(button)
+  view.rerender(menu(false))
+  await act(async () => choose('x:a'))
+  expect(onSelect).toHaveBeenCalledWith('x:a')
+  onSelect.mockClear()
+  view.rerender(menu(true))
+  fireEvent.click(button)
+  view.rerender(menu(true))
+  await act(async () => choose('x:a'))
+  expect(onSelect).not.toHaveBeenCalled()
+})

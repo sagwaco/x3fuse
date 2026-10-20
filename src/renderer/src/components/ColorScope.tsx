@@ -15,6 +15,10 @@ import {
   scopeRenderKey,
   type RenderedScope
 } from '../lib/scopeRender'
+import { scopeLabels } from '../lib/scopeRenderer'
+import { SCOPE_PALETTES } from '../lib/scopes'
+
+const ANCHOR = { left: '0', center: '-50%', right: '-100%' }
 
 export function ColorScope({
   url,
@@ -119,11 +123,13 @@ export function ColorScope({
     <div
       ref={container}
       aria-busy={loading}
-      className={
+      className={cn(
         compact
-          ? 'relative h-5 w-10 shrink-0 overflow-hidden rounded-sm bg-tone-950/60'
-          : 'relative h-[200px] overflow-hidden rounded bg-tone-950/60'
-      }
+          ? 'relative h-5 w-10 shrink-0 overflow-hidden rounded-sm'
+          : 'relative h-[200px] overflow-hidden rounded',
+        // In dark mode, the scope is on the panel itself.
+        theme !== 'dark' && 'bg-tone-950/60'
+      )}
     >
       <canvas
         ref={canvas}
@@ -136,6 +142,20 @@ export function ColorScope({
         aria-hidden={compact || !visible || undefined}
         aria-label={t(`inspector.scope_${mode}`)}
       />
+      {/* The labels are dim until the pointer is on one. The canvas has the accessible name. */}
+      {!compact && visible && (
+        <div aria-hidden="true" style={{ color: SCOPE_PALETTES[theme].label }}>
+          {scopeLabels(mode, width).map((label) => (
+            <span
+              key={label.text}
+              className={`absolute font-mono text-[9px] leading-none transition-opacity hover:opacity-100 ${theme === 'gray' ? 'opacity-75' : 'opacity-50'}`}
+              style={{ left: label.x, top: label.y, translate: `${ANCHOR[label.align]} -50%` }}
+            >
+              {label.text}
+            </span>
+          ))}
+        </div>
+      )}
       {compact
         ? null
         : !visible &&

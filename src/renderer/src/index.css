@@ -2,10 +2,31 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Kode Mono variable font (SIL OFL 1.1), from github.com/isaozler/kode-mono. */
+@font-face {
+  font-family: 'Kode Mono';
+  src: url('./assets/fonts/KodeMono-Variable.woff2') format('woff2');
+  font-weight: 400 700;
+  font-stretch: 75% 125%;
+  font-display: block;
+}
+
+/* Titles and section headings use the monospace font. */
+@layer base {
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    @apply font-mono;
+  }
+}
+
 /* Camera-style control caption: monospace, uppercase, wide tracking. */
 @layer components {
   .control-label {
-    @apply font-mono text-[11px] uppercase leading-tight tracking-[0.12em] text-tone-300;
+    @apply font-mono text-[12px] uppercase leading-tight tracking-[0.12em] text-tone-300;
   }
 
   .export-settings .control-label:not(button, summary, h1, h2, h3, h4, h5, h6) {
@@ -83,10 +104,10 @@ html[data-theme='light'] {
 
 html[data-theme='gray'] {
   color-scheme: light;
-  --tone-950: 133 133 133;
-  --tone-900: 126 126 126;
-  --tone-800: 116 116 116;
-  --tone-700: 106 106 106;
+  --tone-950: 160 160 160;
+  --tone-900: 153 153 153;
+  --tone-800: 143 143 143;
+  --tone-700: 133 133 133;
   --tone-600: 60 60 60;
   --tone-500: 46 46 46;
   --tone-400: 34 34 34;
@@ -121,14 +142,6 @@ body,
 }
 
 body {
-  font-family:
-    system-ui,
-    -apple-system,
-    'Segoe UI',
-    Roboto,
-    'Helvetica Neue',
-    Arial,
-    sans-serif;
   -webkit-font-smoothing: antialiased;
   /* The whole app is a desktop chrome; never rubber-band / text-select chrome. */
   user-select: none;
@@ -496,6 +509,32 @@ html[data-platform='darwin'] .window-toolbar {
 html[data-theme='gray'] .glass-group {
   --glass-track: rgb(255 255 255 / 0.06);
   --glass-fill: rgb(255 255 255 / 0.25);
+}
+
+/* Glass and split have no track in the dark theme. In the light and gray themes they
+   get a tint and a ring, because the bare buttons are hard to see on a light surface. */
+html:is([data-theme='light'], [data-theme='gray'])
+  .glass-group:is([data-variant='glass'], [data-variant='split']) {
+  --glass-tint: rgb(var(--ink) / 0.07);
+  --glass-ring: rgb(var(--ink) / 0.3);
+}
+
+html:is([data-theme='light'], [data-theme='gray']) .glass-group[data-variant='glass'] {
+  background-color: var(--glass-tint);
+  box-shadow: inset 0 0 0 1px var(--glass-ring);
+}
+
+html:is([data-theme='light'], [data-theme='gray'])
+  .glass-group[data-variant='split']
+  > button:not([data-selected]) {
+  --tw-ring-color: var(--glass-ring);
+  background-color: var(--glass-tint);
+}
+
+html:is([data-theme='light'], [data-theme='gray'])
+  .glass-group[data-variant='split']
+  > button[data-selected] {
+  --tw-ring-color: rgb(var(--ink) / 0.45);
 }
 
 .glass-group-indicator {

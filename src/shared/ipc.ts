@@ -1,5 +1,6 @@
 /** Shared command payloads and events for the renderer and Rust backend. */
 
+import type { LucideIcon } from 'lucide-react'
 import type {
   ConversionSettings,
   ConversionStatus,
@@ -71,6 +72,8 @@ export interface NativeMenuItem {
   label: string
   disabled?: boolean
   checked?: boolean
+  /** Drawn before the label. A checked item shows its check mark instead. */
+  icon?: LucideIcon
   separatorBefore?: boolean
   /** Items of a submenu. A submenu item is not selected itself. */
   items?: NativeMenuItem[]

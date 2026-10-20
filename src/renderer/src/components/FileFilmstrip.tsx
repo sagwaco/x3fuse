@@ -1,9 +1,22 @@
-import { memo, useContext, useEffect, useMemo, useRef, type ReactNode } from 'react'
+import {
+  memo,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode
+} from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useScrollToActive } from '../hooks/useScrollToActive'
 import type { X3FFileDTO } from '@shared/types'
+import type { PreviewRegion } from '@shared/editor'
+import { displayPreviewUrl } from '@shared/preview'
 import { useQueueStore, type ExportDraft } from '../stores/queueStore'
 import { useEditorStore } from '../stores/editorStore'
+import { useScopeSourceStore } from '../stores/scopeSourceStore'
+import { qualifySquare } from '../lib/qualifySquare'
 import { useFileDrop } from '../hooks/useFileDrop'
 import { useQueueSelection, type QueueSelection } from '../hooks/useQueueSelection'
 import { useShownFiles } from '../hooks/useCulling'
@@ -15,6 +28,7 @@ import { StackBadge } from './StackBadge'
 import { ZoomablePreview } from './ZoomablePreview'
 import { QueueContextMenu } from './QueueContextMenu'
 import { DevelopingCloud } from '../lib/developingCloud'
+import { useLanguage } from '../lib/strings'
 
 /** Filmstrip view: a large preview of the active file above a scrollable strip. */
 export function FileFilmstrip({
@@ -54,6 +68,57 @@ export function FileFilmstrip({
   // Focus the surface on mount so arrow-key navigation works without a click.
   useEffect(() => rootRef.current?.focus(), [])
 
+  // The inspector scope measures this preview: its visible part and the Qualifier area.
+  const shownId = active?.id
+  // Only a painted preview of the one selected photo takes Visible and Qualifier. Its size
+  // gives the Qualifier point its shape, also for an edited preview of other geometry.
+  // The paint counts only for the preview that the inspector measures. A new preview of the
+  // same photo, as after a paste of edits, waits for its own paint.
+  const [painted, setPainted] = useState<{
+    id: string
+    source: string
+    url: string
+    width: number
+    height: number
+  } | null>(null)
+  const source = active ? displayPreviewUrl(active) : undefined
+  const size = painted?.id === shownId && painted.source === source ? painted : null
+  const zoomable = !preview && !!active && !active.pending && !!size && selectedIds.size <= 1
+  const paintedUrl = size?.url
+  // A new preview clears the Qualifier area, which belongs to the pixels that it was set on.
+  useEffect(() => {
+    if (!zoomable) return
+    const { setPreview } = useScopeSourceStore.getState()
+    setPreview(shownId ?? null)
+    return () => setPreview(null)
+  }, [zoomable, shownId, paintedUrl])
+  const qualifying = useScopeSourceStore((s) => s.qualifying && s.previewId === shownId)
+  const qualified = useScopeSourceStore((s) =>
+    s.source === 'qualifier' && s.qualified?.id === shownId ? s.qualified.region : null
+  )
+  const onViewportChange = useCallback(
+    (region: PreviewRegion | null) => {
+      if (shownId) useScopeSourceStore.getState().setViewport(shownId, region)
+    },
+    [shownId]
+  )
+  const qualify = useCallback(
+    (region: PreviewRegion) => {
+      if (shownId) useScopeSourceStore.getState().qualify(shownId, region)
+    },
+    [shownId]
+  )
+  const disarm = useScopeSourceStore.getState().disarm
+  // Escape disarms the Qualifier.
+  useEffect(() => {
+    if (!qualifying) return
+    const keydown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape' && !event.defaultPrevented) useScopeSourceStore.getState().disarm()
+    }
+    window.addEventListener('keydown', keydown)
+    return () => window.removeEventListener('keydown', keydown)
+  }, [qualifying])
+
   return (
     <QueueContextMenu disabled={!!draft || preview !== undefined}>
       <div
@@ -71,7 +136,30 @@ export function FileFilmstrip({
           {preview ??
             (active ? (
               // On the queue screen, digits rate the photo as in Lightroom. Click and +/- zoom.
-              <ZoomablePreview key={active.id} file={active} digitZoom={!!draft} />
+              <ZoomablePreview
+                key={active.id}
+                file={active}
+                digitZoom={!!draft}
+                onViewportChange={draft ? undefined : onViewportChange}
+                onPaint={(url, { width, height }) =>
+                  setPainted({
+                    id: active.id,
+                    source: displayPreviewUrl(active),
+                    url,
+                    width,
+                    height
+                  })
+                }
+                onSelectionCancel={disarm}
+                onImagePoint={
+                  qualifying && size
+                    ? (x, y) => qualify(qualifySquare(x, y, size.width / size.height))
+                    : undefined
+                }
+                onImageRegion={qualifying ? qualify : undefined}
+                outline={qualified}
+                selectionKey={active.id}
+              />
             ) : null)}
         </div>
 
@@ -169,6 +257,8 @@ const FilmstripCell = memo(function FilmstripCell({
   active: boolean
   sel: StripHandlers
 }): React.JSX.Element {
+  // Memo skips the parent's render, so this renders again for a new language.
+  useLanguage()
   return (
     <div
       onClick={(e) => sel.handleItemClick(e, file.id, index)}

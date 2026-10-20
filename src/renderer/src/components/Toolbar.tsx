@@ -1,4 +1,11 @@
-import { ChevronDown, ListFilter, PanelRight, SwatchBook, TriangleAlert } from 'lucide-react'
+import {
+  ChevronDown,
+  ListFilter,
+  PanelRight,
+  SwatchBook,
+  TriangleAlert,
+  Upload
+} from 'lucide-react'
 import { useQueueStore } from '../stores/queueStore'
 import { t } from '../lib/strings'
 import { BatchProgress } from './BatchProgress'
@@ -12,6 +19,11 @@ import { useEditorStore } from '../stores/editorStore'
 import { useToolbarSwap } from '../hooks/useToolbarSwap'
 import { isFiltering } from '../lib/culling'
 import { withShortcut } from '../lib/shortcut'
+import { EXPORT_SCREEN, useExportMenu } from '../hooks/useExportMenu'
+import { useToolbarOverflow } from '../hooks/useToolbarOverflow'
+import { OverflowMenu, type OverflowAction } from './ui/overflowMenu'
+
+const OVERFLOW_ORDER = ['inspector', 'edit', 'export']
 
 /** Browsing controls, export status, and the split Export button. */
 export function Toolbar(): React.JSX.Element {
@@ -28,6 +40,10 @@ export function Toolbar(): React.JSX.Element {
   const updateSettings = useSettingsStore((s) => s.update)
   // Nothing swaps here: the buttons only scale in when the screen opens, as in the editor.
   const { ref } = useToolbarSwap(false)
+  // Narrow windows move the least important buttons into a menu, in this order.
+  const hidden = useToolbarOverflow(ref, OVERFLOW_ORDER.length)
+  const folded = new Set(OVERFLOW_ORDER.slice(0, hidden))
+  const exportMenu = useExportMenu(undefined, undefined)
 
   const canConvert =
     loaded &&
@@ -36,6 +52,42 @@ export function Toolbar(): React.JSX.Element {
     !isProcessing &&
     !isPreparing &&
     !hasDraft
+
+  const edit = (): void => {
+    const file =
+      selected.find((file) => file.id === useQueueStore.getState().activeId) ?? selected[0]
+    if (file) void useEditorStore.getState().open(file)
+  }
+  const toggleInspector = (): void => void updateSettings({ inspectorOpen: !inspectorOpen })
+  // In toolbar order.
+  const actions: OverflowAction[] = [
+    {
+      id: 'edit',
+      label: t('editor.edit'),
+      icon: SwatchBook,
+      disabled: !canConvert,
+      onSelect: edit
+    },
+    {
+      id: 'export',
+      label: t('button.convert'),
+      icon: Upload,
+      disabled: !canConvert,
+      items: [{ value: EXPORT_SCREEN, label: t('toolbar.convert_selected') }, ...exportMenu.items],
+      onSelect: (value) =>
+        value === EXPORT_SCREEN ? exportMenu.openScreen() : exportMenu.select(value)
+    },
+    {
+      id: 'inspector',
+      label: t('inspector.toggle'),
+      icon: PanelRight,
+      pressed: inspectorOpen,
+      onSelect: toggleInspector
+    }
+  ]
+  // The overflow menu takes the place of the first folded button: the inspector toggle at
+  // the end, then Edit, which folds before Export.
+  const overflow = <OverflowMenu actions={actions.filter((action) => folded.has(action.id))} />
 
   return (
     <div
@@ -59,31 +111,28 @@ export function Toolbar(): React.JSX.Element {
 
       <div data-swap className="flex min-w-0 items-center gap-2">
         <BatchProgress />
-        <Button
-          variant="ghost"
-          size="md"
-          disabled={!canConvert}
-          onClick={() => {
-            const file =
-              selected.find((file) => file.id === useQueueStore.getState().activeId) ?? selected[0]
-            if (file) void useEditorStore.getState().open(file)
-          }}
-        >
-          <SwatchBook className="h-4 w-4" aria-hidden="true" />
-          {t('editor.edit')}
-        </Button>
-        <ExportButton disabled={!canConvert} />
-        <Button
-          variant="ghost"
-          size="icon"
-          title={t('inspector.toggle')}
-          aria-label={t('inspector.toggle')}
-          aria-pressed={inspectorOpen}
-          className={inspectorOpen ? 'bg-ink/15 text-tone-100' : ''}
-          onClick={() => void updateSettings({ inspectorOpen: !inspectorOpen })}
-        >
-          <PanelRight className="h-4 w-4" aria-hidden="true" />
-        </Button>
+        {folded.has('edit') && overflow}
+        {!folded.has('edit') && (
+          <Button variant="ghost" size="md" disabled={!canConvert} onClick={edit}>
+            <SwatchBook className="h-4 w-4" aria-hidden="true" />
+            {t('editor.edit')}
+          </Button>
+        )}
+        {!folded.has('export') && <ExportButton disabled={!canConvert} />}
+        {!folded.has('inspector') && (
+          <Button
+            variant="ghost"
+            size="icon"
+            title={t('inspector.toggle')}
+            aria-label={t('inspector.toggle')}
+            aria-pressed={inspectorOpen}
+            className={inspectorOpen ? 'bg-ink/15 text-tone-100' : ''}
+            onClick={toggleInspector}
+          >
+            <PanelRight className="h-4 w-4" aria-hidden="true" />
+          </Button>
+        )}
+        {!folded.has('edit') && overflow}
       </div>
     </div>
   )
@@ -142,9 +191,7 @@ export function ExportButton({
   returnScreen?: 'queue' | 'editor'
 }): React.JSX.Element {
   const openExport = useQueueStore((s) => s.openExport)
-  const convertPrevious = useQueueStore((s) => s.convertPrevious)
-  const exportPreset = useQueueStore((s) => s.exportPreset)
-  const hasPrevious = useSettingsStore((s) => s.settings.hasPreviousConversion)
+  const { items, select } = useExportMenu(ids, returnScreen)
   return (
     <div
       role="group"
@@ -167,28 +214,8 @@ export function ExportButton({
         className="w-6 rounded-l-none border-r border-t border-b border-ink/10"
         disabled={disabled}
         aria-label={t('batch.convert_options')}
-        items={[
-          { value: 'jpeg', label: t('batch.export_jpeg') },
-          // The editor offers only formats that include the edit.
-          ...(returnScreen === 'editor'
-            ? []
-            : [
-                { value: 'embeddedJpg', label: t('editor.exportEmbeddedJpeg') },
-                { value: 'dng', label: t('batch.export_dng') }
-              ]),
-          { value: 'tiff', label: t('batch.export_tiff') },
-          { value: 'previous', label: t('batch.convert_previous'), disabled: !hasPrevious }
-        ]}
-        onSelect={(value) => {
-          if (value === 'previous') void convertPrevious(ids, returnScreen)
-          else if (
-            value === 'jpeg' ||
-            value === 'embeddedJpg' ||
-            value === 'dng' ||
-            value === 'tiff'
-          )
-            void exportPreset(value, ids, returnScreen)
-        }}
+        items={items}
+        onSelect={select}
       >
         <ChevronDown className="h-4 w-4" aria-hidden="true" />
       </NativeMenuButton>

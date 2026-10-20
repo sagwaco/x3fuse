@@ -223,7 +223,7 @@ describe('filmstrip zoom preview', () => {
     expect(onPaint).not.toHaveBeenCalled()
     loadImage()
     expect(onPaint).toHaveBeenCalledOnce()
-    expect(onPaint).toHaveBeenCalledWith(displayPreviewUrl(file, 'full'))
+    expect(onPaint).toHaveBeenCalledWith(displayPreviewUrl(file, 'full'), expect.any(Object))
   })
 
   it('uses the saved edited thumbnail for the Info navigator before and during zoom', () => {

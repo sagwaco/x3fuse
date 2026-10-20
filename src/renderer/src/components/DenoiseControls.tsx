@@ -1,10 +1,11 @@
 import { defaultDenoiseOptions, type DenoiseOptions } from '@shared/denoise'
+import { RotateCcw } from 'lucide-react'
 import { t } from '../lib/strings'
-import { cn } from '../lib/cn'
+import { Button } from './ui/button'
 import { Select } from './ui/select'
 import { Slider } from './ui/slider'
 import { Row, ToggleRow } from './ui/settingsLayout'
-import { useStoredOpen } from '../hooks/useStoredOpen'
+import { AdvancedDetails } from './ui/advancedDetails'
 
 /** The same sensor controls are used for conversion and editor preparation. */
 export function DenoiseControls({
@@ -22,7 +23,6 @@ export function DenoiseControls({
    */
   storageId?: string
 }): React.JSX.Element {
-  const [open, setOpen] = useStoredOpen(storageId)
   const update = (patch: Partial<DenoiseOptions>, committed = true): void =>
     change({ ...value, ...patch }, committed)
   const window = (
@@ -59,21 +59,24 @@ export function DenoiseControls({
       {value.algorithm === 'bm3d' && (
         <p className="text-xs text-tone-500">{t('denoise.bm3dHelp')}</p>
       )}
-      <details
-        open={open}
-        onToggle={(event) => setOpen(event.currentTarget.open)}
-        className="space-y-3 text-xs text-tone-300"
+      <AdvancedDetails
+        id={storageId}
+        name={t('denoise.advanced')}
+        action={
+          <Button
+            variant="ghost"
+            size="icon"
+            // The negative margins keep the summary height and line up the icon with the
+            // controls below.
+            className="-my-1 -mr-1 h-5 w-5"
+            aria-label={t('denoise.reset')}
+            title={t('denoise.reset')}
+            onClick={() => change({ ...defaultDenoiseOptions(), algorithm: value.algorithm })}
+          >
+            <RotateCcw className="h-3 w-3" aria-hidden="true" />
+          </Button>
+        }
       >
-        <summary
-          className={cn(
-            'control-label cursor-pointer select-none font-bold text-tone-400',
-            // Below the section header, as a nested section. The margins keep the layout at rest.
-            storageId &&
-              'sticky top-10 z-[1] -mx-4 -my-2 bg-[color:color-mix(in_srgb,rgb(var(--tone-900))_30%,rgb(var(--tone-950)))] px-4 py-2'
-          )}
-        >
-          {t('denoise.advanced')}
-        </summary>
         <ToggleRow
           label={t('denoise.luminance')}
           checked={value.luminance}
@@ -86,7 +89,8 @@ export function DenoiseControls({
         />
         <p className="text-tone-500">{t('denoise.channelsHelp')}</p>
         <div className="space-y-2">
-          <span className="control-label">
+          {/* The label of a Row, so that it looks the same in the editor and in export. */}
+          <span className="font-sans text-[13px] text-tone-300">
             {t('denoise.strength')} ({value.strength.toFixed(1)}×)
           </span>
           <Slider
@@ -108,14 +112,7 @@ export function DenoiseControls({
             <p className="text-tone-500">{t('denoise.windowsHelp')}</p>
           </>
         )}
-        <button
-          type="button"
-          className="control-label text-tone-500 hover:text-tone-100"
-          onClick={() => change({ ...defaultDenoiseOptions(), algorithm: value.algorithm })}
-        >
-          {t('denoise.reset')}
-        </button>
-      </details>
+      </AdvancedDetails>
     </div>
   )
 }

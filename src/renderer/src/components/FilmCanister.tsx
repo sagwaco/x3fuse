@@ -40,7 +40,8 @@ export function FilmCanister({
         textAnchor="middle"
         dominantBaseline="central"
         fill={ink}
-        fontSize={Math.min(12, 28 / (0.62 * text.length))}
+        // 13.2 units is 12 px at the 40 px size. Bold system glyphs are about 0.62 em wide.
+        fontSize={Math.min(13.2, 28 / (0.62 * text.length))}
         fontWeight="800"
         fontFamily="inherit"
       >

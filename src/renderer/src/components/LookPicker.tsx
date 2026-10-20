@@ -1,5 +1,15 @@
 import { Fragment, useEffect, useState } from 'react'
-import { ChevronRight } from 'lucide-react'
+import {
+  Camera,
+  ChevronRight,
+  Clapperboard,
+  Contrast,
+  Film,
+  Info,
+  Projector,
+  Rainbow,
+  type LucideIcon
+} from 'lucide-react'
 import {
   DEFAULT_FILM,
   FILM_MONOCHROME_FILTERS,
@@ -10,7 +20,8 @@ import {
 import stocks from '@shared/film-stocks.json'
 import { useEditorStore } from '../stores/editorStore'
 import { t } from '../lib/strings'
-import { HelpTooltip } from './ui/settingsLayout'
+import { GlassGroup } from './ui/glassGroup'
+import { Tooltip } from './ui/tooltip'
 import { FilmCanister } from './FilmCanister'
 
 type Stock = (typeof stocks)[number]
@@ -48,9 +59,20 @@ const canister = (
   return { color, ink, text: aerochrome ? 'IR' : (stock.name.match(/\d{2,}[A-Z]?/)?.[0] ?? '') }
 }
 
+/** The icon of each look group. */
+const GROUP_ICONS: Record<string, LucideIcon> = {
+  cameraMatching: Camera,
+  negativeFilm: Film,
+  slideFilm: Projector,
+  cinemaFilm: Clapperboard,
+  bwFilm: Contrast,
+  fullSpectrum: Rainbow
+}
+
 interface Look {
   id: string
   name: string
+  /** The i18n key suffix of the group, such as `slideFilm`. */
   group?: string
   disabled?: boolean
   recipe: EditRecipe
@@ -110,6 +132,30 @@ function useThumbnails(looks: Look[]): [Record<string, string | undefined>, (id:
   return [thumbnails, forget]
 }
 
+/** A tooltip on a gallery item. The span takes the hover when the item is disabled. */
+function LookTip({
+  text,
+  focusable,
+  children
+}: {
+  text: string | false
+  focusable?: boolean
+  children: React.ReactElement
+}): React.JSX.Element {
+  if (!text) return children
+  // A disabled button cannot take focus, so the span does, to reach the tooltip.
+  return (
+    <Tooltip text={text} side="bottom">
+      <span
+        className="block self-start rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/60"
+        {...(focusable && { tabIndex: 0, role: 'group', 'aria-label': text })}
+      >
+        {children}
+      </span>
+    </Tooltip>
+  )
+}
+
 /** Film or print paper, picked from previews of the current photo. */
 export function LookPicker({
   kind,
@@ -150,7 +196,7 @@ export function LookPicker({
           ].map((profile) => ({
             id: profile.id,
             name: profile.name,
-            group: t('editor.cameraMatching'),
+            group: 'cameraMatching',
             recipe: {
               ...recipe,
               film: null,
@@ -161,7 +207,7 @@ export function LookPicker({
           ...FILMS.map((stock) => ({
             id: stock.key,
             name: stock.name,
-            group: t(`editor.${family(stock)}`),
+            group: family(stock),
             recipe: {
               ...recipe,
               // Film stocks use their own color response, without a camera look.
@@ -193,7 +239,7 @@ export function LookPicker({
           {
             id: 'aerochrome',
             name: t('editor.aerochrome'),
-            group: t('editor.fullSpectrum'),
+            group: 'fullSpectrum',
             disabled: !hasFCBlue,
             recipe: {
               ...recipe,
@@ -253,7 +299,20 @@ export function LookPicker({
           : looks.some((look) => look.id === cameraProfile)
             ? cameraProfile
             : 'Standard'
-  const [thumbnails, forget] = useThumbnails(gallery ? looks : [])
+  // The gallery shows one group. It opens on the group of the selected look, else the first.
+  const [chosenGroup, setChosenGroup] = useState('')
+  const groups = [...new Set(looks.map((look) => look.group))].filter((g): g is string => !!g)
+  const shownGroup = groups.includes(chosenGroup)
+    ? chosenGroup
+    : (looks.find((look) => look.id === selected)?.group ?? groups[0])
+  const filters = groups.map((group) => ({
+    value: group,
+    label: t(`editor.${group}`),
+    icon: GROUP_ICONS[group]
+  }))
+  // Only the shown looks render thumbnails.
+  const shown = groups.length ? looks.filter((look) => look.group === shownGroup) : looks
+  const [thumbnails, forget] = useThumbnails(gallery ? shown : [])
   const caption = t(
     kind === 'film' ? (gallery ? 'editor.filmStock' : 'editor.look') : 'editor.paperStock'
   )
@@ -261,51 +320,71 @@ export function LookPicker({
   if (gallery)
     return (
       <div role="group" aria-label={caption} className="grid grid-cols-3 gap-x-2 gap-y-3 p-4">
-        {looks.map((look, index) => (
+        {/* Two groups of three act as one choice: a value of the other row selects nothing here. */}
+        {groups.length > 0 && (
+          <div role="group" aria-label={t('editor.filmGroups')} className="col-span-3 space-y-1.5">
+            {[filters.slice(0, 3), filters.slice(3)].map((row) => (
+              <GlassGroup
+                key={row[0].value}
+                variant="split"
+                display="stacked"
+                size="sm"
+                aria-label={row.map((item) => item.label).join(', ')}
+                value={shownGroup}
+                onValueChange={setChosenGroup}
+                items={row}
+              />
+            ))}
+          </div>
+        )}
+        {shown.map((look) => (
           <Fragment key={look.id}>
-            {look.group && look.group !== looks[index - 1]?.group && (
-              <h2 className="control-label col-span-3 pt-1 text-[10px] font-bold text-tone-400">
-                {look.group}
-              </h2>
-            )}
-            {look.id === 'aerochrome' && (
-              <p className="col-span-3 text-xs leading-relaxed text-tone-400">
-                {t('editor.aerochromeHelp')}
-                {!hasFCBlue && ` ${t('editor.aerochromeUnavailable')}`}
-              </p>
-            )}
-            <button
-              type="button"
-              disabled={look.disabled}
-              aria-pressed={look.id === selected}
-              onClick={() =>
-                change({
-                  film: look.recipe.film,
-                  monochrome: look.recipe.monochrome,
-                  cameraProfile: look.recipe.cameraProfile,
-                  ...(look.id === 'aerochrome' && {
-                    temperature: look.recipe.temperature,
-                    tint: look.recipe.tint
-                  })
-                })
+            <LookTip
+              focusable={look.disabled}
+              text={
+                look.id === 'aerochrome' &&
+                `${t('editor.aerochromeHelp')}${hasFCBlue ? '' : ` ${t('editor.aerochromeUnavailable')}`}`
               }
-              className="group self-start rounded-md text-left focus-visible:outline-none disabled:opacity-50"
             >
-              <span className="look-thumbnail relative block aspect-[3/2] overflow-hidden rounded-md bg-ink/[0.06] group-hover:ring-1 group-hover:ring-ink/30 group-focus-visible:ring-2 group-focus-visible:ring-ink/60 group-aria-pressed:ring-2 group-aria-pressed:ring-ink">
-                {thumbnails[look.id] && (
-                  <img
-                    src={thumbnails[look.id]}
-                    alt=""
-                    draggable={false}
-                    className="h-full w-full object-cover"
-                    onError={() => forget(look.id)}
-                  />
-                )}
-              </span>
-              <span className="mt-1 line-clamp-2 block text-[10px] leading-tight text-tone-300 group-aria-pressed:text-ink">
-                {look.name}
-              </span>
-            </button>
+              <button
+                type="button"
+                disabled={look.disabled}
+                aria-pressed={look.id === selected}
+                onClick={() =>
+                  change({
+                    film: look.recipe.film,
+                    monochrome: look.recipe.monochrome,
+                    cameraProfile: look.recipe.cameraProfile,
+                    ...(look.id === 'aerochrome' && {
+                      temperature: look.recipe.temperature,
+                      tint: look.recipe.tint
+                    })
+                  })
+                }
+                className="group self-start rounded-md text-left font-mono focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50"
+              >
+                <span className="look-thumbnail relative block aspect-[3/2] overflow-hidden rounded-md bg-ink/[0.06] group-hover:ring-1 group-hover:ring-ink/30 group-focus-visible:ring-2 group-focus-visible:ring-ink/60 group-aria-pressed:ring-2 group-aria-pressed:ring-ink">
+                  {look.id === 'aerochrome' && (
+                    <Info
+                      aria-hidden="true"
+                      className="absolute right-1 top-1 h-3.5 w-3.5 text-white drop-shadow"
+                    />
+                  )}
+                  {thumbnails[look.id] && (
+                    <img
+                      src={thumbnails[look.id]}
+                      alt=""
+                      draggable={false}
+                      className="h-full w-full object-cover"
+                      onError={() => forget(look.id)}
+                    />
+                  )}
+                </span>
+                <span className="mt-1 line-clamp-2 block text-[12px] leading-tight text-tone-300 group-aria-pressed:text-ink">
+                  {look.name}
+                </span>
+              </button>
+            </LookTip>
           </Fragment>
         ))}
       </div>
@@ -318,30 +397,13 @@ export function LookPicker({
         type="button"
         data-sidebar-page={kind === 'film' ? 'emulsion' : 'paper'}
         onClick={onOpen}
-        className="min-w-0 flex-1 text-left after:absolute after:inset-0 after:rounded-xl focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-ink/50"
+        className="min-w-0 flex-1 text-left font-mono after:absolute after:inset-0 after:rounded-xl focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-ink/50"
       >
-        <span className="control-label block text-[10px] tracking-[0.14em] text-tone-500">
-          {caption}
-        </span>
-        <span className="block truncate text-[13px] text-tone-100">
+        <span className="control-label block tracking-[0.14em] text-tone-500">{caption}</span>
+        <span className="block truncate font-sans text-[13px] text-tone-100">
           {looks.find((look) => look.id === selected)?.name}
         </span>
       </button>
-      {kind === 'film' && (
-        // Positioned after the button, so it sits above the button's ::after.
-        <span className="relative">
-          <HelpTooltip
-            label={caption}
-            text={t(
-              aerochrome
-                ? hasFCBlue
-                  ? 'editor.aerochromeHelp'
-                  : 'editor.aerochromeUnavailable'
-                : 'editor.filmHelp'
-            )}
-          />
-        </span>
-      )}
       <ChevronRight aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-tone-500" />
     </div>
   )

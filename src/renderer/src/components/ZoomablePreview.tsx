@@ -53,6 +53,7 @@ export function ZoomablePreview({
   onViewportChange,
   onViewportMove,
   onPaint,
+  onSelectionCancel,
   digitZoom = true
 }: {
   file: X3FFileDTO
@@ -76,8 +77,10 @@ export function ZoomablePreview({
   onViewportChange?: (region: PreviewRegion | null) => void
   /** Called for each change of a view that has not rested yet. */
   onViewportMove?: () => void
-  /** Called after the image paints its pixels, with their url. */
-  onPaint?: (url: string) => void
+  /** Called after the image paints its pixels, with their url and size. */
+  onPaint?: (url: string, size: { width: number; height: number }) => void
+  /** Called when Escape ends a selection in progress. */
+  onSelectionCancel?: () => void
   /** False leaves 0 and 1 for other shortcuts, such as star ratings. */
   digitZoom?: boolean
 }): React.JSX.Element {
@@ -355,7 +358,7 @@ export function ZoomablePreview({
   const painted = useCallback(
     (size: { width: number; height: number }, url: string): void => {
       onDimensions(size)
-      paint.current?.(url)
+      paint.current?.(url, size)
     },
     [onDimensions]
   )
@@ -463,6 +466,7 @@ export function ZoomablePreview({
             event.preventDefault()
             event.stopPropagation()
             cancelSelection()
+            onSelectionCancel?.()
             return
           }
           if (!['+', '=', '-', ...(digitZoom ? ['0', '1'] : [])].includes(event.key)) return

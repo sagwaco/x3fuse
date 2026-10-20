@@ -19,11 +19,15 @@ afterEach(() => {
 
 describe('resolveTheme', () => {
   it('uses the dark theme for auto with a dark system appearance', () => {
-    expect(resolveTheme({ ...DEFAULT_SETTINGS, darkTheme: 'gray' }, true)).toBe('gray')
+    expect(
+      resolveTheme({ ...DEFAULT_SETTINGS, appearanceMode: 'auto', darkTheme: 'gray' }, true)
+    ).toBe('gray')
   })
 
   it('uses the light theme for auto with a light system appearance', () => {
-    expect(resolveTheme({ ...DEFAULT_SETTINGS, lightTheme: 'gray' }, false)).toBe('gray')
+    expect(
+      resolveTheme({ ...DEFAULT_SETTINGS, appearanceMode: 'auto', lightTheme: 'gray' }, false)
+    ).toBe('gray')
   })
 
   it('uses the light theme when light appearance is pinned', () => {
@@ -38,7 +42,7 @@ describe('resolveTheme', () => {
 describe('applyTheme', () => {
   it('follows the system with a dark fallback when matchMedia is unavailable', () => {
     vi.stubGlobal('matchMedia', undefined)
-    applyTheme(DEFAULT_SETTINGS)
+    applyTheme({ ...DEFAULT_SETTINGS, appearanceMode: 'auto' })
     expect(document.documentElement.dataset.theme).toBe('dark')
     expect(setTheme).toHaveBeenCalledWith(null)
     expect(setBackgroundColor).toHaveBeenCalledWith([10, 10, 10])
@@ -49,6 +53,6 @@ describe('applyTheme', () => {
     applyTheme({ ...DEFAULT_SETTINGS, appearanceMode: 'light', lightTheme: 'gray' })
     expect(document.documentElement.dataset.theme).toBe('gray')
     expect(setTheme).toHaveBeenCalledWith('light')
-    expect(setBackgroundColor).toHaveBeenCalledWith([133, 133, 133])
+    expect(setBackgroundColor).toHaveBeenCalledWith([160, 160, 160])
   })
 })

@@ -22,8 +22,8 @@ export const BANDS = [
 /** Each tab edits one band property. It has a label key and track colors for a band's hue. */
 const TABS = [
   ['hue', 'hue', (hue: number) => [hsl(hue - 30), hsl(hue), hsl(hue + 30)]],
-  ['saturation', 'saturation', (hue: number) => [hsl(hue, 0), hsl(hue, 100, 50)]],
-  ['luminance', 'lightness', (hue: number) => [hsl(hue, 70, 15), hsl(hue, 70, 85)]]
+  ['saturation', 'sat', (hue: number) => [hsl(hue, 0), hsl(hue, 100, 50)]],
+  ['luminance', 'val', (hue: number) => [hsl(hue, 70, 15), hsl(hue, 70, 85)]]
 ] as const
 
 /** One slider per color band for the property of the selected tab. */

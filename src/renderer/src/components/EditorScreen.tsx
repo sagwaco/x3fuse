@@ -12,9 +12,7 @@ import {
   SquareSplitHorizontal,
   ArrowLeft,
   PanelRight,
-  Pipette,
-  RectangleHorizontal,
-  Scan
+  Upload
 } from 'lucide-react'
 import { negativePrint, type EditRecipe, type PreviewRegion } from '@shared/editor'
 import {
@@ -28,7 +26,7 @@ import { useQueueStore } from '../stores/queueStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { t } from '../lib/strings'
 import { Button } from './ui/button'
-import { GlassGroup } from './ui/glassGroup'
+import { ScopeSourceControls, type ScopeSource } from './ScopeSourceControls'
 import { ResizablePanel } from './ui/resizablePanel'
 import { useToolbarSwap } from '../hooks/useToolbarSwap'
 import { ZoomControls } from './ZoomControls'
@@ -46,18 +44,28 @@ import { FULL, matchAspect } from '../lib/cropGeometry'
 import { DevelopingPreview } from './DevelopingPreview'
 import { DevelopingCloud } from '../lib/developingCloud'
 import { CullError, ExportButton, FilterButton } from './Toolbar'
+import { EXPORT_SCREEN, useExportMenu } from '../hooks/useExportMenu'
+import { useToolbarOverflow } from '../hooks/useToolbarOverflow'
+import { OverflowMenu, type OverflowAction } from './ui/overflowMenu'
 import { FilterBar } from './FilterBar'
 import { cn } from '../lib/cn'
 import { withShortcut } from '../lib/shortcut'
 
 type SidebarPage = 'edit' | 'emulsion' | 'paper'
-/** The pixels that the scope measures. */
-const SCOPE_SOURCES = [
-  ['entire', 'scopeEntire', RectangleHorizontal],
-  ['visible', 'scopeVisible', Scan],
-  ['qualifier', 'scopeQualifier', Pipette]
-] as const
-type ScopeSource = (typeof SCOPE_SOURCES)[number][0]
+
+// Collapse order of the edit toolbar into the overflow menu, least important first.
+const OVERFLOW_ORDER = [
+  'copy',
+  'paste',
+  'reset',
+  'compare',
+  'redo',
+  'undo',
+  'crop',
+  'panel',
+  'done',
+  'export'
+]
 
 export function EditorScreen(): React.JSX.Element {
   const editor = useEditorStore()
@@ -149,6 +157,7 @@ export function EditorScreen(): React.JSX.Element {
   // The photo's geometry when crop mode opened; Cancel puts it back.
   const entry = useRef<{ path: string; geometry: Partial<EditRecipe> }>()
   const cropButton = useRef<HTMLButtonElement>(null)
+  const overflowButton = useRef<HTMLButtonElement>(null)
   const enterCrop = (): void => {
     setPicking(false)
     setQualifying(false)
@@ -342,6 +351,11 @@ export function EditorScreen(): React.JSX.Element {
   // The toolbar lags behind crop mode while its buttons animate out and in.
   const swap = useToolbarSwap(editor.cropping)
   const inert = swap.leaving ? { inert: '' } : {}
+  // Narrow windows move edit buttons into a menu, least important first. Crop mode keeps its own.
+  const hidden = useToolbarOverflow(swap.ref, swap.shown ? 0 : OVERFLOW_ORDER.length)
+  const folded = new Set(OVERFLOW_ORDER.slice(0, hidden))
+  const exportIds = useMemo(() => (file ? new Set([file.id]) : undefined), [file?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  const exportMenu = useExportMenu(exportIds, 'editor')
   // Give focus back to the Crop button when crop mode ends. The button stays
   // disabled until the next preview arrives, so wait for it, and only take focus
   // that nothing else has.
@@ -352,8 +366,10 @@ export function EditorScreen(): React.JSX.Element {
     if (editor.cropping) refocus.current = false
     wasCropping.current = editor.cropping
     const free = !document.activeElement || document.activeElement === document.body
-    if (refocus.current && !unavailable && cropButton.current && free) {
-      cropButton.current.focus({ preventScroll: true })
+    // A folded Crop button has no element, so focus goes to the overflow menu button.
+    const target = cropButton.current ?? overflowButton.current
+    if (refocus.current && !unavailable && target && free) {
+      target.focus({ preventScroll: true })
       refocus.current = false
     }
   }, [editor.cropping, unavailable, swap.shown])
@@ -449,28 +465,112 @@ export function EditorScreen(): React.JSX.Element {
   }
   const history = (
     <>
-      <Button
-        variant="ghost"
-        size="icon"
-        aria-label={t('editor.undo')}
-        title={withShortcut(t('editor.undo'), 'Mod+Z')}
-        disabled={unavailable || !doc?.past.length}
-        onClick={editor.undo}
-      >
-        <Undo2 className="h-4 w-4" />
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon"
-        aria-label={t('editor.redo')}
-        title={withShortcut(t('editor.redo'), 'Mod+Shift+Z')}
-        disabled={unavailable || !doc?.future.length}
-        onClick={editor.redo}
-      >
-        <Redo2 className="h-4 w-4" />
-      </Button>
+      {!folded.has('undo') && (
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label={t('editor.undo')}
+          title={withShortcut(t('editor.undo'), 'Mod+Z')}
+          disabled={unavailable || !doc?.past.length}
+          onClick={editor.undo}
+        >
+          <Undo2 className="h-4 w-4" />
+        </Button>
+      )}
+      {!folded.has('redo') && (
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label={t('editor.redo')}
+          title={withShortcut(t('editor.redo'), 'Mod+Shift+Z')}
+          disabled={unavailable || !doc?.future.length}
+          onClick={editor.redo}
+        >
+          <Redo2 className="h-4 w-4" />
+        </Button>
+      )}
     </>
   )
+  // In toolbar order.
+  const actions: OverflowAction[] = [
+    {
+      id: 'copy',
+      label: t('editor.copy'),
+      icon: Copy,
+      disabled: unavailable,
+      onSelect: editor.copy
+    },
+    {
+      id: 'paste',
+      label: t('editor.paste'),
+      icon: ClipboardPaste,
+      disabled: unavailable || !editor.clipboard,
+      onSelect: () => void editor.paste()
+    },
+    {
+      id: 'reset',
+      label: t('editor.reset'),
+      icon: RotateCcw,
+      disabled: unavailable,
+      onSelect: editor.reset
+    },
+    {
+      id: 'undo',
+      label: t('editor.undo'),
+      icon: Undo2,
+      disabled: unavailable || !doc?.past.length,
+      onSelect: editor.undo
+    },
+    {
+      id: 'redo',
+      label: t('editor.redo'),
+      icon: Redo2,
+      disabled: unavailable || !doc?.future.length,
+      onSelect: editor.redo
+    },
+    {
+      id: 'compare',
+      label: t('editor.compare'),
+      icon: SquareSplitHorizontal,
+      disabled: unavailable,
+      pressed: editor.before,
+      onSelect: () => editor.compare(!editor.before)
+    },
+    {
+      id: 'crop',
+      label: t('editor.crop'),
+      icon: Crop,
+      disabled: unavailable || x3iPending,
+      onSelect: enterCrop
+    },
+    {
+      id: 'done',
+      label: t('editor.done'),
+      icon: ArrowLeft,
+      disabled: busy,
+      onSelect: () => void editor.close()
+    },
+    {
+      id: 'export',
+      label: t('button.convert'),
+      icon: Upload,
+      disabled: unavailable || !file,
+      items: [{ value: EXPORT_SCREEN, label: t('toolbar.convert_selected') }, ...exportMenu.items],
+      onSelect: (value) =>
+        value === EXPORT_SCREEN ? exportMenu.openScreen() : exportMenu.select(value)
+    },
+    {
+      id: 'panel',
+      label: t('editor.togglePanel'),
+      icon: PanelRight,
+      pressed: panelOpen,
+      onSelect: () => void useSettingsStore.getState().update({ editorPanelOpen: !panelOpen })
+    }
+  ]
+  const shows = (...ids: string[]): boolean => ids.some((id) => !folded.has(id))
+  // Copy folds first, so the overflow menu takes its place at the start of the toolbar.
+  const copyGroup = folded.size > 0 || shows('copy', 'paste')
+  const editGroup = shows('reset', 'undo', 'redo', 'compare', 'crop')
   const content = (
     <div className="flex h-full min-h-0 flex-col bg-tone-950">
       <div
@@ -528,101 +628,131 @@ export function EditorScreen(): React.JSX.Element {
                 {t('button.cancel')}
               </Button>
               <Button
-                variant="prominent"
+                variant="ghost"
+                className="export-action"
                 size="sm"
                 disabled={unavailable}
                 onClick={() => setCropping(false)}
               >
-                {t('editor.applyCrop')}
+                {t('editor.crop')}
               </Button>
             </div>
           ) : (
             <div key="edit" data-swap className="contents" {...inert}>
-              <Button
-                variant="ghost"
-                size="icon"
-                aria-label={t('editor.copy')}
-                title={withShortcut(t('editor.copy'), 'Mod+C')}
-                disabled={unavailable}
-                onClick={editor.copy}
-              >
-                <Copy className="h-4 w-4" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                aria-label={t('editor.paste')}
-                title={withShortcut(t('editor.paste'), 'Mod+V')}
-                disabled={unavailable || !editor.clipboard}
-                onClick={() => void editor.paste()}
-              >
-                <ClipboardPaste className="h-4 w-4" />
-              </Button>
-              <div
-                role="separator"
-                aria-orientation="vertical"
-                className="mx-1 h-5 w-px bg-ink/15"
+              <OverflowMenu
+                triggerRef={overflowButton}
+                actions={actions.filter((action) => folded.has(action.id))}
               />
+              {!folded.has('copy') && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label={t('editor.copy')}
+                  title={withShortcut(t('editor.copy'), 'Mod+C')}
+                  disabled={unavailable}
+                  onClick={editor.copy}
+                >
+                  <Copy className="h-4 w-4" />
+                </Button>
+              )}
+              {!folded.has('paste') && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label={t('editor.paste')}
+                  title={withShortcut(t('editor.paste'), 'Mod+V')}
+                  disabled={unavailable || !editor.clipboard}
+                  onClick={() => void editor.paste()}
+                >
+                  <ClipboardPaste className="h-4 w-4" />
+                </Button>
+              )}
+              {copyGroup && editGroup && (
+                <div
+                  role="separator"
+                  aria-orientation="vertical"
+                  className="mx-1 h-5 w-px bg-ink/15"
+                />
+              )}
               {/* Resets every adjustment; crop mode's Cancel could not undo it. */}
-              <Button
-                variant="ghost"
-                size="icon"
-                aria-label={t('editor.reset')}
-                title={t('editor.reset')}
-                disabled={unavailable}
-                onClick={editor.reset}
-              >
-                <RotateCcw className="h-4 w-4" />
-              </Button>
+              {!folded.has('reset') && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label={t('editor.reset')}
+                  title={t('editor.reset')}
+                  disabled={unavailable}
+                  onClick={editor.reset}
+                >
+                  <RotateCcw className="h-4 w-4" />
+                </Button>
+              )}
               {history}
-              <Button
-                variant="ghost"
-                size="icon"
-                aria-label={t('editor.compare')}
-                title={withShortcut(t('editor.compare'), '\\')}
-                aria-pressed={editor.before}
-                disabled={unavailable}
-                onClick={() => editor.compare(!editor.before)}
-              >
-                <SquareSplitHorizontal className="h-4 w-4" />
-              </Button>
-              <Button
-                ref={cropButton}
-                variant="ghost"
-                size="md"
-                disabled={unavailable || x3iPending}
-                onClick={enterCrop}
-              >
-                <Crop className="h-4 w-4" aria-hidden="true" />
-                {t('editor.crop')}
-              </Button>
-              <div
-                role="separator"
-                aria-orientation="vertical"
-                className="mx-1 h-5 w-px bg-ink/15"
-              />
-              <Button variant="ghost" size="md" disabled={busy} onClick={() => void editor.close()}>
-                {t('editor.done')}
-              </Button>
-              <ExportButton
-                disabled={unavailable || !file}
-                ids={file && new Set([file.id])}
-                returnScreen="editor"
-              />
-              <Button
-                variant="ghost"
-                size="icon"
-                title={t('editor.togglePanel')}
-                aria-label={t('editor.togglePanel')}
-                aria-pressed={panelOpen}
-                // The same gap as in the browser toolbar.
-                className={cn('ml-1', panelOpen && 'bg-ink/15 text-tone-100')}
-                onClick={() =>
-                  void useSettingsStore.getState().update({ editorPanelOpen: !panelOpen })
-                }
-              >
-                <PanelRight className="h-4 w-4" aria-hidden="true" />
-              </Button>
+              {!folded.has('compare') && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label={t('editor.compare')}
+                  title={withShortcut(t('editor.compare'), '\\')}
+                  aria-pressed={editor.before}
+                  disabled={unavailable}
+                  onClick={() => editor.compare(!editor.before)}
+                >
+                  <SquareSplitHorizontal className="h-4 w-4" />
+                </Button>
+              )}
+              {!folded.has('crop') && (
+                <Button
+                  ref={cropButton}
+                  variant="ghost"
+                  size="md"
+                  disabled={unavailable || x3iPending}
+                  onClick={enterCrop}
+                >
+                  <Crop className="h-4 w-4" aria-hidden="true" />
+                  {t('editor.crop')}
+                </Button>
+              )}
+              {(copyGroup || editGroup) && shows('done', 'export', 'panel') && (
+                <div
+                  role="separator"
+                  aria-orientation="vertical"
+                  className="mx-1 h-5 w-px bg-ink/15"
+                />
+              )}
+              {!folded.has('done') && (
+                <Button
+                  variant="ghost"
+                  size="md"
+                  disabled={busy}
+                  onClick={() => void editor.close()}
+                >
+                  {t('editor.done')}
+                </Button>
+              )}
+              {!folded.has('export') && (
+                <ExportButton
+                  disabled={unavailable || !file}
+                  ids={exportIds}
+                  returnScreen="editor"
+                />
+              )}
+              {!folded.has('panel') && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  title={t('editor.togglePanel')}
+                  aria-label={t('editor.togglePanel')}
+                  aria-pressed={panelOpen}
+                  // The same gap as in the browser toolbar.
+                  className={cn('ml-1', panelOpen && 'bg-ink/15 text-tone-100')}
+                  onClick={() =>
+                    void useSettingsStore.getState().update({ editorPanelOpen: !panelOpen })
+                  }
+                >
+                  <PanelRight className="h-4 w-4" aria-hidden="true" />
+                </Button>
+              )}
             </div>
           )}
         </div>
@@ -816,23 +946,9 @@ export function EditorScreen(): React.JSX.Element {
               <div hidden={sidebarPage !== 'edit'}>
                 <div ref={scopeBox} className="p-3">
                   <div className="mb-2 flex items-center justify-between gap-2">
-                    {/* Shifted so the text lines up with the scope below. */}
-                    <ScopeMenu className="-ml-1" />
-                    <GlassGroup
-                      kind="tabs"
-                      id="scope"
-                      panelId={() => 'scope-panel'}
-                      display="icon"
-                      size="sm"
-                      aria-label={t('editor.scopeArea')}
-                      value={scopeSource}
-                      items={SCOPE_SOURCES.map(([value, label, icon]) => ({
-                        value,
-                        label: t(`editor.${label}`),
-                        icon
-                      }))}
-                      onValueChange={chooseScope}
-                    />
+                    {/* Shifted so the text lines up with the file name above. */}
+                    <ScopeMenu className="-ml-2 h-7 px-2.5" />
+                    <ScopeSourceControls value={scopeSource} onChange={chooseScope} />
                   </div>
                   {/* While out of view, only the header scope renders. */}
                   <div
@@ -842,8 +958,9 @@ export function EditorScreen(): React.JSX.Element {
                   >
                     <ColorScope {...scopeProps} paused={scopeHidden} />
                   </div>
+                  {/* For screen readers only: it gives the keyboard instructions. */}
                   {qualifying && (
-                    <p role="status" className="control-label mt-2 text-[10px] text-tone-100">
+                    <p role="status" className="sr-only">
                       {t('editor.scopeQualifyHint')}
                     </p>
                   )}
@@ -853,7 +970,7 @@ export function EditorScreen(): React.JSX.Element {
                     {doc.storage === 'backup' && (
                       <p
                         role="status"
-                        className="control-label px-4 py-1.5 text-[10px] text-tone-500"
+                        className="control-label px-4 py-1.5 text-tone-500"
                         title={doc.storagePath}
                       >
                         {t('editor.savedBackup')}

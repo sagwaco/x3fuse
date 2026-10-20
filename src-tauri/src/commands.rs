@@ -34,7 +34,7 @@ pub async fn settings_set(
     state: State<'_, Arc<AppState>>,
     payload: Value,
 ) -> Result<Settings, String> {
-    let settings = write_settings(state.inner().clone(), payload).await?;
+    let settings = write_settings(window.app_handle(), state.inner().clone(), payload).await?;
     for (label, other) in window.app_handle().webview_windows() {
         if label != window.label() {
             let _ = other.emit_to(label, "settings:changed", ());
@@ -43,10 +43,15 @@ pub async fn settings_set(
     Ok(settings)
 }
 
-async fn write_settings(state: Arc<AppState>, payload: Value) -> Result<Settings, String> {
+async fn write_settings(
+    app: &AppHandle,
+    state: Arc<AppState>,
+    payload: Value,
+) -> Result<Settings, String> {
     // Save and apply in one critical section, so that an older save cannot apply its
     // values after a newer one.
     static APPLY: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let _apply = APPLY
             .lock()
@@ -60,6 +65,11 @@ async fn write_settings(state: Arc<AppState>, payload: Value) -> Result<Settings
             .previews
             .disk
             .configure(next.preview_cache_enabled, next.preview_cache_limit);
+        if crate::menu::set_language(&next.language) {
+            if let Err(error) = crate::menu::refresh(&app) {
+                state.logs.write("error", error.to_string());
+            }
+        }
         Ok(next)
     })
     .await
@@ -206,7 +216,7 @@ pub async fn convert_start(
             return Err("Export cancelled".into());
         }
         let settings = batch_settings_patch(&payload.settings)?;
-        payload.settings.concurrency = write_settings(state.clone(), settings)
+        payload.settings.concurrency = write_settings(&app, state.clone(), settings)
             .await?
             .batch
             .concurrency;
@@ -360,7 +370,7 @@ pub fn open_settings(app: &AppHandle) -> Result<(), String> {
     // The title stays for the Window menu and accessibility. On macOS the
     // React titlebar shows it in place of the hidden native title.
     .title(crate::menu::translate("menu.file.settings"))
-    .inner_size(540.0, 640.0)
+    .inner_size(600.0, 640.0)
     .min_inner_size(460.0, 420.0)
     .theme(pinned)
     .background_color(color)

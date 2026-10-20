@@ -20,6 +20,49 @@ export interface ScopeRenderRequest {
 
 type Context = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D
 
+const TOP = 15
+const PLOT_HEIGHT = 166
+// The waveform scale is absolute, in 10-bit levels.
+const LEVELS = [0, 256, 512, 768, 1024]
+const levelY = (value: number): number => TOP + (1 - value / 1024) * (PLOT_HEIGHT - 1)
+
+/** The left edge and the width of the plot of a waveform, a parade or a histogram. */
+function plotArea(mode: ScopeMode, width: number): { left: number; plotWidth: number } {
+  // The histogram has no left axis, so its left margin is the same as its right margin.
+  const left = mode === 'histogram' ? 8 : 36
+  return { left, plotWidth: Math.max(1, Math.floor(width - left - 8)) }
+}
+
+export interface ScopeLabel {
+  text: string
+  /** The anchor in CSS pixels. `y` is the middle of the text. */
+  x: number
+  y: number
+  align: 'left' | 'center' | 'right'
+}
+
+/**
+ * The axis labels of a scope. The scope shows them over its canvas, so that they can
+ * change on hover without a new render.
+ */
+export function scopeLabels(mode: ScopeMode, width: number): ScopeLabel[] {
+  if (mode === 'vectorscope') return []
+  const { left, plotWidth } = plotArea(mode, width)
+  if (mode === 'histogram')
+    return [0, 64, 128, 192, 255].map((value) => ({
+      text: String(value),
+      x: left + (value / 255) * (plotWidth - 1),
+      y: 192,
+      align: value === 0 ? 'left' : value === 255 ? 'right' : 'center'
+    }))
+  return LEVELS.map((value) => ({
+    text: String(value),
+    x: left - 5,
+    y: levelY(value),
+    align: 'right'
+  }))
+}
+
 /** Identical drawing on the worker and on older webviews, with yield points for the latter. */
 export function* drawScope(
   ctx: Context,
@@ -27,7 +70,8 @@ export function* drawScope(
 ): Generator<void> {
   const palette = SCOPE_PALETTES[theme]
   ctx.scale(pixelRatio, pixelRatio)
-  ctx.font = '9px system-ui'
+  // The weight and width match the font variation settings in tailwind.config.ts.
+  ctx.font = '500 semi-condensed 12px "Kode Mono", monospace'
   ctx.lineWidth = 0.5
   if (mode === 'vectorscope') {
     const size = Math.max(1, Math.floor(Math.min(width - 24, 176)))
@@ -82,34 +126,22 @@ export function* drawScope(
     return
   }
 
-  const left = mode === 'histogram' ? 29 : 36
-  const top = 15
-  const plotWidth = Math.max(1, Math.floor(width - left - 8))
-  const plotHeight = 166
-  ctx.textBaseline = 'middle'
-  for (const value of [0, 25, 50, 75, 100]) {
-    const y = top + (1 - value / 100) * (plotHeight - 1)
-    ctx.strokeStyle = palette.grid
-    line(ctx, left, y, left + plotWidth - 1, y)
-    if (mode !== 'histogram') {
-      ctx.fillStyle = palette.label
-      ctx.textAlign = 'right'
-      ctx.fillText(`${value}%`, left - 5, y)
-    }
-  }
+  const { left, plotWidth } = plotArea(mode, width)
+  ctx.strokeStyle = palette.grid
+  for (const value of LEVELS) line(ctx, left, levelY(value), left + plotWidth - 1, levelY(value))
   if (mode === 'histogram') {
     const bins = histogram(image)
     const max = Math.max(1, ...bins.map((channel) => Math.max(...channel)))
     bins.forEach((channel, c) => {
       ctx.beginPath()
-      ctx.moveTo(left, top + plotHeight - 1)
+      ctx.moveTo(left, TOP + PLOT_HEIGHT - 1)
       for (let i = 0; i < 256; i++) {
         ctx.lineTo(
           left + (i / 255) * (plotWidth - 1),
-          top + (1 - channel[i] / max) * (plotHeight - 1)
+          TOP + (1 - channel[i] / max) * (PLOT_HEIGHT - 1)
         )
       }
-      ctx.lineTo(left + plotWidth - 1, top + plotHeight - 1)
+      ctx.lineTo(left + plotWidth - 1, TOP + PLOT_HEIGHT - 1)
       ctx.closePath()
       ctx.fillStyle = palette.channels[c]
       ctx.globalAlpha = 0.25
@@ -119,11 +151,6 @@ export function* drawScope(
       ctx.stroke()
       ctx.globalAlpha = 1
     })
-    ctx.fillStyle = palette.label
-    for (const value of [0, 64, 128, 192, 255]) {
-      ctx.textAlign = value === 0 ? 'left' : value === 255 ? 'right' : 'center'
-      ctx.fillText(String(value), left + (value / 255) * (plotWidth - 1), 192)
-    }
     return
   }
 
@@ -131,7 +158,7 @@ export function* drawScope(
   const channelWidth =
     mode === 'rgbParade' ? Math.max(1, Math.floor((plotWidth - gap * 2) / 3)) : plotWidth
   const densityWidth = Math.max(1, Math.round(channelWidth * pixelRatio))
-  const densityHeight = Math.max(1, Math.round(plotHeight * pixelRatio))
+  const densityHeight = Math.max(1, Math.round(PLOT_HEIGHT * pixelRatio))
   const layers = yield* scopeDensitySteps(image, mode, densityWidth, densityHeight)
   for (const [c, layer] of layers.entries()) {
     const x = left + (mode === 'rgbParade' ? c * (channelWidth + gap) : 0)
@@ -141,7 +168,7 @@ export function* drawScope(
       densityWidth,
       densityHeight,
       x,
-      top,
+      TOP,
       pixelRatio,
       palette.channels[c],
       palette,

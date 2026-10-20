@@ -14,7 +14,7 @@ import {
 import { useQueueStore, type BatchFileResult } from '../stores/queueStore'
 import { ipc } from '../lib/ipc'
 import { basename } from '../lib/path'
-import { t } from '../lib/strings'
+import { t, useLanguage } from '../lib/strings'
 import { Button } from './ui/button'
 
 const statusIcons = {
@@ -201,6 +201,8 @@ const ConversionRow = memo(function ConversionRow({
   total: number
   translateY: number
 }): React.JSX.Element {
+  // Memo skips the parent's render, so this renders again for a new language.
+  useLanguage()
   const fileName = r.outputPath ? basename(r.outputPath) : r.outputFileName
   const StatusIcon = statusIcons[r.status]
   const statusText = [t(`batch.status.${r.status}`), r.message].filter(Boolean).join(': ')

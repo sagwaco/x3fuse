@@ -127,14 +127,16 @@ describe('scope menu', () => {
 
 describe('scope preview', () => {
   it.each(['waveform', 'rgbParade'] as const)(
-    'keeps percent signs on the %s axis tick labels',
+    'labels the %s axis in absolute 10-bit levels, over the canvas',
     async (mode) => {
-      render(<ColorScope url={preview} mode={mode} />)
+      const view = render(<ColorScope url={preview} mode={mode} />)
       await screen.findByRole('img')
-      for (const label of ['0%', '25%', '50%', '75%', '100%']) {
-        expect(context.fillText).toHaveBeenCalledWith(label, expect.any(Number), expect.any(Number))
-      }
-      expect(context.fillText.mock.calls.some(([label]) => label === '%')).toBe(false)
+      const labels = (): Array<string | null> =>
+        [...view.container.querySelectorAll('[aria-hidden="true"] > span')].map(
+          (label) => label.textContent
+        )
+      await waitFor(() => expect(labels()).toEqual(['0', '256', '512', '768', '1024']))
+      expect(context.fillText).not.toHaveBeenCalled()
     }
   )
 

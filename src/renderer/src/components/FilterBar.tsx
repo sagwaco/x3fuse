@@ -69,7 +69,7 @@ export function FilterBar(): React.JSX.Element {
         <ChevronDown className="h-3 w-3" aria-hidden="true" />
       </NativeMenuButton>
       <StarPicker value={filter.rating} onChange={(rating) => setFilter({ rating })} />
-      <span className="ml-auto font-mono tabular-nums">{t('filter.count', { shown, total })}</span>
+      <span className="ml-auto tabular-nums">{t('filter.count', { shown, total })}</span>
       {isFiltering(filter) && (
         <Button variant="ghost" size="sm" onClick={() => setFilter(NO_FILTER)}>
           {t('filter.clear')}

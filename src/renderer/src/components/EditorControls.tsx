@@ -1,15 +1,6 @@
 import { memo, useContext, useEffect, useRef, useState } from 'react'
 import { DenoiseControls } from './DenoiseControls'
-import {
-  ChevronDown,
-  Aperture,
-  Film,
-  Palette,
-  RotateCcw,
-  Pipette,
-  Plus,
-  Trash2
-} from 'lucide-react'
+import { ChevronDown, Aperture, Film, Blend, RotateCcw, Pipette, Plus, Trash2 } from 'lucide-react'
 import {
   DEFAULT_FILM,
   FILM_MONOCHROME_FILTERS,
@@ -27,7 +18,7 @@ import { curvePath, evaluateCurve } from '@shared/curves'
 import { needsX3iMerge, useEditorStore } from '../stores/editorStore'
 import { DevelopingCloud } from '../lib/developingCloud'
 import { useQueueStore } from '../stores/queueStore'
-import { t } from '../lib/strings'
+import { t, useLanguage } from '../lib/strings'
 import { withShortcut } from '../lib/shortcut'
 import { Button } from './ui/button'
 import { cn } from '../lib/cn'
@@ -39,12 +30,15 @@ import { LookPicker } from './LookPicker'
 import { SfdRaw, SfdRawInfo } from './SfdRaw'
 import { EffectsSection } from './EffectsControls'
 import { useStoredOpen } from '../hooks/useStoredOpen'
+import { animateDetails } from '../lib/animateDetails'
 import { ColorMixer } from './ColorMixer'
 import { ColorWheels } from './ColorWheels'
 
 /** Tracks that show which way a slider moves the picture. */
 const TEMPERATURE = 'linear-gradient(to right, #4f7cff, #d4d4d4, #ffb43d)'
 const TINT = 'linear-gradient(to right, #3fbf5a, #d4d4d4, #e14fd0)'
+/** Grey to a full spectrum, for Saturation and Vibrance. */
+const RAINBOW = 'linear-gradient(to right, #d4d4d4, #f87171, #facc15, #4ade80, #60a5fa, #c084fc)'
 /** White balance presets in kelvin at zero tint. As shot is the camera's own. */
 const WHITE_BALANCE = [
   ['asShot', null],
@@ -71,7 +65,7 @@ const TINT_SCALE: Scale = {
 const PANEL_TABS = [
   ['raw', 'tabRaw', Aperture],
   ['film', 'tabFilm', Film],
-  ['grading', 'tabGrading', Palette]
+  ['grading', 'tabGrading', Blend]
 ] as const
 const hsl = (hue: number, saturation = 75, lightness = 55): string =>
   `hsl(${hue} ${saturation}% ${lightness}%)`
@@ -201,6 +195,7 @@ export function Adjustment({
   const fit = (value: number): number =>
     Math.max(range.min, Math.min(range.max, Math.round(value / range.step) * range.step))
   const map = range.scale
+  const fresh = useRef(false)
   const input = (
     <input
       aria-label={label}
@@ -215,9 +210,19 @@ export function Adjustment({
       className={cn(
         'h-6 shrink-0 rounded-md border font-sans border-transparent bg-transparent text-right text-xs tabular-nums text-tone-400 [appearance:textfield] focus:border-ink/40 focus:bg-ink/[0.03] focus:text-tone-100 focus:outline-none disabled:opacity-40 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none',
         short
-          ? 'w-full px-0 text-[11px]'
+          ? 'w-full px-0 text-[12px]'
           : 'w-14 translate-x-2.5 px-2 transition-transform focus:translate-x-0 motion-reduce:transition-none'
       )}
+      // Select on focus so typing replaces the value. WebKit clears the selection on the
+      // mouseup of the click that focused the field, so that mouseup is cancelled.
+      onMouseDown={(event) => {
+        fresh.current = document.activeElement !== event.currentTarget
+      }}
+      onFocus={(event) => event.currentTarget.select()}
+      onMouseUp={(event) => {
+        if (fresh.current) event.preventDefault()
+        fresh.current = false
+      }}
       onChange={(event) => {
         const value = event.currentTarget.valueAsNumber
         if (Number.isFinite(value)) change(fit(value), true)
@@ -255,9 +260,9 @@ export function Adjustment({
   if (short) {
     // The slider and the value carry the full name. Shift-click on the letter resets.
     // The label and value columns have the same width, so the slider is centered. They
-    // are narrow and have no gap: at 11 px, -100 just fits, and most values are shorter.
+    // are narrow and have no gap: at 12 px, -100 just fits, and most values are shorter.
     return (
-      <div className="grid grid-cols-[1.875rem_minmax(0,1fr)_1.875rem] items-center py-1" {...hold}>
+      <div className="adjustment grid grid-cols-[1.875rem_minmax(0,1fr)_1.875rem] items-center py-0.5" {...hold}>
         <span
           aria-hidden="true"
           title={label}
@@ -274,7 +279,7 @@ export function Adjustment({
     )
   }
   return (
-    <div className="space-y-1.5 py-2" {...hold}>
+    <div className="adjustment space-y-px py-0.5" {...hold}>
       <div className="group/reset flex items-center justify-between gap-2">
         <span className="flex min-w-0 items-center gap-1.5">
           <ResetLabel
@@ -318,15 +323,18 @@ export function Section({
       onToggle={(event) => setOpen(event.currentTarget.open)}
       className="border-t border-ink/10 px-4 open:bg-gradient-to-b open:from-ink/[0.03] open:to-transparent open:bg-[length:100%_3rem] open:bg-no-repeat [details_&]:-mx-4"
     >
-      <summary className="control-label sticky top-0 z-[2] -mx-4 flex h-10 cursor-pointer list-none items-center gap-1.5 bg-[color:color-mix(in_srgb,rgb(var(--tone-900))_30%,rgb(var(--tone-950)))] px-4 font-bold tracking-[0.16em] focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ink/50 [details[open]>&]:bg-[linear-gradient(rgb(var(--ink)/0.03),transparent_3rem)] [details_details>&]:top-10 [details_details>&]:z-[1] [&::-webkit-details-marker]:hidden">
+      <summary
+        onClick={animateDetails}
+        className="control-label sticky top-0 z-[2] -mx-4 flex h-10 cursor-pointer list-none items-center gap-1.5 bg-[color:color-mix(in_srgb,rgb(var(--tone-900))_30%,rgb(var(--tone-950)))] px-4 font-bold tracking-[0.16em] focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ink/50 [details[open]>&]:bg-[linear-gradient(rgb(var(--ink)/0.03),transparent_3rem)] [details_details>&]:top-10 [details_details>&]:z-[1] [&::-webkit-details-marker]:hidden"
+      >
         {name}
         {info}
         <ChevronDown
           aria-hidden="true"
-          className="ml-auto h-3.5 w-3.5 text-tone-500 transition-transform [details[open]>summary>&]:rotate-180"
+          className="ml-auto h-3.5 w-3.5 text-tone-500 transition-transform [details[open]:not([data-closing])>summary>&]:rotate-180"
         />
       </summary>
-      <div className="space-y-2 pb-3">{children}</div>
+      <div className="space-y-3 pb-3 [&>.adjustment+.adjustment]:mt-1">{children}</div>
     </details>
   )
 }
@@ -375,6 +383,8 @@ export const EditorControls = memo(function EditorControls({
   setPicking: (value: boolean) => void
   onNavigate: (page: 'emulsion' | 'paper') => void
 }): React.JSX.Element {
+  // Memo skips the parent's render, so this renders again for a new language.
+  useLanguage()
   const [tab, setPanelTab] = useState<(typeof PANEL_TABS)[number][0]>('raw')
   // The white balance picker lives on RAW, so leaving it disarms the picker.
   const setTab = (next: (typeof PANEL_TABS)[number][0]): void => {
@@ -591,9 +601,32 @@ export const EditorControls = memo(function EditorControls({
           )}
           {tab === 'grading' && (
             <>
+              {recipe.monochrome && (
+                <Section
+                  id="filter"
+                  name={t('editor.filter')}
+                  info={
+                    <HelpTooltip label={t('editor.filter')} text={t('editor.monochromeHelp')} />
+                  }
+                >
+                  <Swatches
+                    label={t('editor.filter')}
+                    value={recipe.monochrome.filter}
+                    options={(monochromeFilm(recipe.film)
+                      ? FILM_MONOCHROME_FILTERS
+                      : MONOCHROME_FILTERS
+                    ).map((filter) => ({
+                      value: filter,
+                      label: t(`editor.${filter}`),
+                      color: FILTER_COLORS[filter]
+                    }))}
+                    onChange={(filter) => change({ monochrome: { filter } })}
+                  />
+                </Section>
+              )}
               <Section id="color" name={t('editor.color')}>
-                {control('saturation')}
-                {control('vibrance', { help: t('editor.vibranceHelp') })}
+                {control('saturation', { track: RAINBOW })}
+                {control('vibrance', { track: RAINBOW, help: t('editor.vibranceHelp') })}
               </Section>
               <Section id="colorMixer" name={t('editor.colorMixer')}>
                 <ColorMixer recipe={recipe} />
@@ -610,35 +643,7 @@ export const EditorControls = memo(function EditorControls({
 })
 
 export function EmulsionControls({ recipe }: { recipe: EditRecipe }): React.JSX.Element {
-  const change = useEditorStore((state) => state.change)
-  return (
-    <>
-      <LookPicker kind="film" recipe={recipe} gallery />
-      <div className="px-4">
-        {recipe.monochrome && (
-          <p className="control-label flex items-center gap-1.5 pt-2 text-[10px] text-tone-500">
-            {t('editor.filter')}
-            <HelpTooltip label={t('editor.filter')} text={t('editor.monochromeHelp')} />
-          </p>
-        )}
-        {recipe.monochrome && (
-          <Swatches
-            label={t('editor.filter')}
-            value={recipe.monochrome.filter}
-            options={(monochromeFilm(recipe.film)
-              ? FILM_MONOCHROME_FILTERS
-              : MONOCHROME_FILTERS
-            ).map((filter) => ({
-              value: filter,
-              label: t(`editor.${filter}`),
-              color: FILTER_COLORS[filter]
-            }))}
-            onChange={(filter) => change({ monochrome: { filter } })}
-          />
-        )}
-      </div>
-    </>
-  )
+  return <LookPicker kind="film" recipe={recipe} gallery />
 }
 
 const CHANNELS = {
@@ -849,7 +854,7 @@ function Curves({ recipe }: { recipe: EditRecipe }): React.JSX.Element {
           />
         ))}
       </svg>
-      <p className="text-[11px] leading-snug text-tone-500">{t('editor.curveHint')}</p>
+      <p className="text-[12px] leading-snug text-tone-500">{t('editor.curveHint')}</p>
     </>
   )
 }

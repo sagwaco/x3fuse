@@ -3,7 +3,7 @@ import { Skeleton } from '@radix-ui/themes/components/skeleton'
 import '@radix-ui/themes/src/components/skeleton.css'
 import type { X3FFileDTO } from '@shared/types'
 import { displayPreviewUrl, isRenderedPreview } from '@shared/preview'
-import { t } from '../lib/strings'
+import { t, useLanguage } from '../lib/strings'
 import { subscribeFitPreview } from '../lib/fitPreviews'
 import { subscribeFullPreview } from '../lib/previewImages'
 import { cn } from '../lib/cn'
@@ -21,6 +21,8 @@ interface Props {
 
 /** Keep the decoded Fit canvas in place throughout every full-resolution upgrade. */
 export function FilmstripImage(props: Props): React.JSX.Element {
+  // A parent can cache this element, so this renders again for a new language.
+  useLanguage()
   const Content = isRenderedPreview(props.file) ? RenderedContent : ImageContent
   return <Content key={JSON.stringify([props.file.id, props.file.path])} {...props} />
 }

@@ -74,7 +74,7 @@ export function PhotoCard({
           )}
           {file.fileSize != null && <span>{formatBytes(file.fileSize)}</span>}
           {extension && (
-            <span className="rounded bg-tone-500 px-1 text-[10px] font-bold leading-4 text-tone-900">
+            <span className="rounded bg-tone-500 px-1 text-[12px] font-bold leading-4 text-tone-900">
               {extension}
             </span>
           )}

@@ -67,7 +67,7 @@ it('edits one band property per tab with a slider for each color', () => {
     'tab'
   )
   expect(tabs.map((tab) => tab.textContent)).toEqual(
-    ['hue', 'saturation', 'lightness'].map((key) => t(`editor.${key}`))
+    ['hue', 'sat', 'val'].map((key) => t(`editor.${key}`))
   )
   expect(screen.getAllByRole('slider').map((slider) => slider.getAttribute('aria-label'))).toEqual(
     COLORS.map((color) => t(`editor.${color}`))

@@ -6,7 +6,7 @@ import type { X3FFileDTO } from '@shared/types'
 import { displayPreviewUrl, isRenderedPreview } from '@shared/preview'
 import { cachedSmallPreview, loadSmallPreview } from '../lib/previewImages'
 import { cn } from '../lib/cn'
-import { t } from '../lib/strings'
+import { t, useLanguage } from '../lib/strings'
 import { useDelayedLoading } from '../hooks/useDelayedLoading'
 
 type Status = 'loading' | 'ok' | 'error'
@@ -21,6 +21,8 @@ interface ImageProps {
 
 /** Shared, correctly oriented small preview for thumbnails and cold-load fallback. */
 export function OrientedImage(props: ImageProps): React.JSX.Element {
+  // A parent can cache this element, so this renders again for a new language.
+  useLanguage()
   const { file, maxEdge } = props
   const key = JSON.stringify([
     file.id,

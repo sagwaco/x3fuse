@@ -316,11 +316,11 @@ it('gives focus back to Crop after the toolbar exit animation ends', async () =>
     await act(async () => finishers.splice(0).forEach((finish) => finish()))
     // Entering crop mode clears the preview; the next render brings it back.
     act(() => editor.setState({ preview: { ...frame, sourceWidth: 6000, sourceHeight: 4000 } }))
-    const apply = screen.getByRole('button', { name: t('editor.applyCrop') })
+    const apply = screen.getByRole('button', { name: t('editor.crop') })
     apply.focus()
     fireEvent.click(apply)
     // The crop toolbar stays, inert, until its exit ends.
-    expect(screen.queryByRole('button', { name: t('editor.crop') })).toBeNull()
+    expect(screen.queryByRole('button', { name: t('editor.done') })).toBeNull()
     await act(async () => finishers.splice(0).forEach((finish) => finish()))
     // Crop stays disabled, and keeps no focus, until the next preview arrives.
     act(() => editor.setState({ preview: frame }))
@@ -329,6 +329,35 @@ it('gives focus back to Crop after the toolbar exit animation ends', async () =>
     // @ts-expect-error remove the mock again
     delete Element.prototype.animate
     vi.unstubAllGlobals()
+  }
+})
+
+it('gives focus to the overflow menu button when Crop is folded', () => {
+  // The toolbar is 500 px wide and every button 100 px, so Crop folds into the menu.
+  vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(500)
+  vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get').mockImplementation(function (
+    this: HTMLElement
+  ) {
+    return this.tagName === 'BUTTON' ? 100 : this.querySelectorAll('button').length * 100
+  })
+  try {
+    editor.setState({
+      session: { ...session, asShotCrop: null },
+      documents: { [file.path]: doc },
+      preview: frame,
+      loading: false
+    })
+    render(<EditorScreen />)
+    expect(screen.queryByRole('button', { name: t('editor.crop') })).toBeNull()
+    // The menu takes the place of the folded buttons, before the buttons that still show.
+    const more = screen.getByRole('button', { name: t('toolbar.more') })
+    const done = screen.getByRole('button', { name: t('editor.done') })
+    expect(more.compareDocumentPosition(done) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    act(() => editor.setState({ cropping: true }))
+    act(() => editor.setState({ cropping: false }))
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: t('toolbar.more') }))
+  } finally {
+    vi.restoreAllMocks()
   }
 })
 
@@ -355,9 +384,9 @@ it('replaces the old session immediately on selection and uses embedded pixels o
   expect(
     view.container.querySelector('[data-editor-frame], [data-crop-preview], [data-scope-url]')
   ).toBeNull()
-  expect((screen.getByRole('button', { name: 'Apply crop' }) as HTMLButtonElement).disabled).toBe(
-    true
-  )
+  expect(
+    (screen.getByRole('button', { name: t('editor.crop') }) as HTMLButtonElement).disabled
+  ).toBe(true)
 })
 
 it('develops every photo, but trusts saved pixels only when they show the current edit', () => {
@@ -440,7 +469,7 @@ it('swaps the toolbar for crop actions and cancels back to the geometry crop mod
   expect(compare).toHaveBeenCalledWith(false)
   compare.mockClear()
   act(() => editor.setState({ preview: frame3x2 }))
-  for (const name of [...normal, t('editor.crop'), t('editor.done')])
+  for (const name of [...normal, t('editor.done')])
     expect(screen.queryByRole('button', { name })).toBeNull()
   fireEvent.click(screen.getByRole('button', { name: t('editor.rotate') }))
   expect(change).toHaveBeenLastCalledWith({ rotation: 1 })
@@ -484,7 +513,7 @@ it('swaps the toolbar for crop actions and cancels back to the geometry crop mod
     editor.setState({ preview: frame3x2 })
   })
   change.mockClear()
-  fireEvent.click(screen.getByRole('button', { name: t('editor.applyCrop') }))
+  fireEvent.click(screen.getByRole('button', { name: t('editor.crop') }))
   expect(change).not.toHaveBeenCalled()
   expect(editor.getState().cropping).toBe(false)
 })
@@ -754,13 +783,18 @@ it('measures the entire image or the visible area, and waits for current pixels 
   // has no menu.
   const tablist = screen.getByRole('tablist', { name: 'Scope area' })
   const tabs = within(tablist).getAllByRole('tab')
-  expect(tablist.parentElement!.firstElementChild).toBe(screen.getByText('Scope view'))
+  expect(tablist.parentElement!.parentElement!.firstElementChild).toBe(
+    screen.getByText('Scope view')
+  )
   expect(view.container.querySelectorAll('[data-scope-menu]')).toHaveLength(1)
   expect(tabs.map((tab) => [tab.getAttribute('aria-label'), tab.getAttribute('title')])).toEqual([
     ['Entire image', 'Entire image'],
-    ['Visible area', 'Visible area'],
-    ['Qualifier', 'Qualifier']
+    ['Visible area', 'Visible area']
   ])
+  // The Qualifier is a toggle button beside the group.
+  expect(screen.getByRole('button', { name: 'Qualifier' }).getAttribute('aria-pressed')).toBe(
+    'false'
+  )
   expect(selectedScope()).toBe('scope-tab-entire')
   expect(scopeAttribute('data-scope-url')).toBe(frame.url)
   expect(scopeAttribute('data-pending')).toBe('false')
@@ -788,7 +822,7 @@ it('measures the entire image or the visible area, and waits for current pixels 
   expect(scopeAttribute('data-scope-url')).toBeNull()
   expect(scopeAttribute('data-pending')).toBe('true')
   // Also for a new qualified area: it waits for the current preview.
-  fireEvent.click(tabs[2])
+  fireEvent.click(screen.getByRole('button', { name: 'Qualifier' }))
   expect(scopeAttribute('data-scope-url')).toBeNull()
   expect(scopeAttribute('data-pending')).toBe('true')
   fireEvent.click(tabs[0])
@@ -828,9 +862,8 @@ it('qualifies a point or a dragged area, apart from the white balance picker', (
   })
   const view = render(<EditorScreen />)
   fireEvent.click(view.container.querySelector('[data-paint]')!)
-  const [entire, visible, qualifier] = within(
-    screen.getByRole('tablist', { name: 'Scope area' })
-  ).getAllByRole('tab')
+  const [entire] = within(screen.getByRole('tablist', { name: 'Scope area' })).getAllByRole('tab')
+  const qualifier = screen.getByRole('button', { name: 'Qualifier' })
   const picker = (): HTMLElement => screen.getByRole('button', { name: 'Pick white balance' })
   const qualifying = (): string | null | undefined => previewAttribute('data-qualifying')
   const region = (): unknown => JSON.parse(scopeAttribute('data-scope-region') ?? 'null')
@@ -841,9 +874,13 @@ it('qualifies a point or a dragged area, apart from the white balance picker', (
   fireEvent.click(picker())
   expect(picker().getAttribute('aria-pressed')).toBe('true')
   expect(qualifying()).toBe('false')
-  fireEvent.keyDown(visible, { key: 'ArrowRight' })
-  expect(selectedScope()).toBe('scope-tab-qualifier')
-  expect(document.activeElement).toBe(qualifier)
+  fireEvent.click(qualifier)
+  expect(qualifier.getAttribute('aria-pressed')).toBe('true')
+  expect(
+    within(screen.getByRole('tablist', { name: 'Scope area' })).queryAllByRole('tab', {
+      selected: true
+    })
+  ).toHaveLength(0)
   expect(qualifying()).toBe('true')
   expect(picker().getAttribute('aria-pressed')).toBe('false')
   expect(hint()?.getAttribute('role')).toBe('status')
@@ -855,7 +892,7 @@ it('qualifies a point or a dragged area, apart from the white balance picker', (
   expect(qualifying()).toBe('false')
   expect(hint()).toBeNull()
   // A click on the selected Qualifier arms it again.
-  expect(selectedScope()).toBe('scope-tab-qualifier')
+  expect(qualifier.getAttribute('aria-pressed')).toBe('true')
   fireEvent.click(qualifier)
   expect(qualifying()).toBe('true')
   expect(hint()).not.toBeNull()
@@ -960,7 +997,7 @@ it('keeps a qualified point square through an undo and a redo before the frames 
     act(() => editor.setState({ preview, previewGeometry: geometryKey(value) }))
   const region = (): unknown => JSON.parse(scopeAttribute('data-scope-region') ?? 'null')
   fireEvent.click(view.container.querySelector('[data-paint]')!)
-  fireEvent.click(screen.getByRole('tab', { name: 'Qualifier' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Qualifier' }))
   // An undo: the landscape render arrives, but its frame does not paint yet.
   change(recipe)
   rendered(recipe, { ...frame, url: 'x3f-edit://localhost/landscape' })
@@ -1034,7 +1071,7 @@ it('drops a drag that began on a frame of other geometry when the next frame pai
     fireEvent.pointerDown(surface, { button: 0, clientX: 80, clientY: 60 })
     fireEvent.pointerMove(surface, { clientX: 400, clientY: 300 })
   }
-  fireEvent.click(screen.getByRole('tab', { name: 'Qualifier' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Qualifier' }))
 
   // An undone rotation renders. Its landscape frame still decodes, so the portrait
   // frame stays on screen, and a drag begins on it.
@@ -1176,7 +1213,7 @@ it('returns from the stock pages with focus and scroll restored', () => {
   fireEvent.click(screen.getByRole('button', { name: 'Choose emulsion' }))
   expect(screen.queryByRole('dialog')).toBeNull()
   expect(screen.queryByRole('button', { name: 'Pick white balance' })).toBeNull()
-  expect(screen.getByRole('heading', { name: t('editor.cameraMatching') })).toBeTruthy()
+  expect(screen.getByRole('button', { name: t('editor.cameraMatching') })).toBeTruthy()
   const back = screen.getByRole('button', { name: t('editor.backToAdjustments') })
   expect(document.activeElement).toBe(back)
   expect(back.closest('.overflow-y-auto')).toBeNull()
