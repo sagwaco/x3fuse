@@ -134,6 +134,30 @@ html[data-theme='gray'] {
   initial-value: 1;
 }
 
+/* The fade of an editor section. It shows while the pointer or the focus is in the
+   section, and is brighter while the pointer is on its header. A registered number
+   interpolates. Each section sets its own value, so a nested section does not use
+   the value of its parent. */
+@property --section-glow {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 0;
+}
+
+.editor-section {
+  --section-glow: 0;
+  transition: --section-glow 200ms ease-out;
+}
+
+.editor-section:hover,
+.editor-section:focus-within {
+  --section-glow: 1;
+}
+
+.editor-section:has(> summary:hover) {
+  --section-glow: 2;
+}
+
 html,
 body,
 #root {
