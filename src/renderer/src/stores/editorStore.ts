@@ -62,7 +62,8 @@ interface EditorState {
   redo: () => void
   reset: () => void
   compare: (before: boolean) => void
-  copy: () => void
+  /** Copies the saved adjustments of `file`, else of the open photo or the active photo. */
+  copy: (file?: X3FFileDTO) => void
   paste: (files?: X3FFileDTO[]) => Promise<void>
   flush: () => Promise<boolean>
   close: () => Promise<boolean>
@@ -724,12 +725,12 @@ export const useEditorStore = create<EditorState>((set, get) => {
       set({ before, tile: null, cache: null })
       get().render()
     },
-    copy() {
+    copy(target) {
       if (get().closing || get().loading) return
       const path = get().session?.path
       const queue = useQueueStore.getState()
-      const file = queue.files.find((item) => item.id === queue.activeId)
-      const recipe = path ? get().documents[path]?.recipe : file?.edit?.recipe
+      const file = queue.files.find((item) => item.id === (target?.id ?? queue.activeId))
+      const recipe = path && !target ? get().documents[path]?.recipe : file?.edit?.recipe
       if (recipe) set({ clipboard: structuredClone(recipe) })
     },
     async paste(files) {

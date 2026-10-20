@@ -7,7 +7,7 @@ import { useQueueSelection } from '../src/renderer/src/hooks/useQueueSelection'
 import { useQueueStore } from '../src/renderer/src/stores/queueStore'
 import { useSettingsStore } from '../src/renderer/src/stores/settingsStore'
 import { useEditorStore } from '../src/renderer/src/stores/editorStore'
-import { registerCommands } from '../src/renderer/src/lib/commands'
+import { useNavStore } from '../src/renderer/src/stores/navStore'
 import { t } from '../src/renderer/src/lib/strings'
 import { defaultRecipe } from '@shared/editor'
 import { DEFAULT_SETTINGS } from '@shared/types'
@@ -167,15 +167,32 @@ it('supports keyboard invocation, busy states, and invalidation when disabled or
 })
 
 it('edits, copies, pastes, and exports the photos fixed when the menu opened', async () => {
-  const edited = files.map((file) => ({ ...file, edit: { recipe: defaultRecipe(), revision: 1 } }))
+  const edited = files.map((file, index) => ({
+    ...file,
+    edit: { recipe: { ...defaultRecipe(), exposure: index }, revision: 1 }
+  }))
   const editor = useEditorStore.getState()
   const queue = useQueueStore.getState()
-  const open = vi.fn(async () => {})
+  const nav = useNavStore.getState()
   const paste = vi.fn(async () => {})
   const exportPreset = vi.fn(async () => {})
-  const copies: unknown[] = []
-  const unregister = registerCommands({ copyEdits: (options) => copies.push(options) > 0 })
-  useEditorStore.setState({ open, paste, clipboard: defaultRecipe() })
+  invoke.mockImplementation(async (channel, payload) =>
+    channel === 'menu:popup'
+      ? new Promise((resolve) => {
+          choose = resolve
+        })
+      : channel === 'editor:open'
+        ? {
+            sessionId: 'session',
+            path: payload.path,
+            recipe: defaultRecipe(),
+            revision: 0,
+            storage: 'none',
+            sourceRevision: 'source'
+          }
+        : undefined
+  )
+  useEditorStore.setState({ paste, clipboard: defaultRecipe() })
   useQueueStore.setState({ files: edited, exportPreset })
   render(<Surface />)
   const menu = (): void => {
@@ -187,18 +204,20 @@ it('edits, copies, pastes, and exports the photos fixed when the menu opened', a
   menu()
   expect(request().items.find((item) => item.value === 'copy')?.disabled).toBe(false)
   expect(request().items.find((item) => item.value === 'paste')?.disabled).toBe(false)
-  await act(async () => choose('edit'))
-  expect(open).toHaveBeenCalledWith(edited[1])
+  await act(async () => choose('copy'))
+  expect(useEditorStore.getState().clipboard).toEqual(edited[1].edit.recipe)
   menu()
   await act(async () => choose('paste'))
   expect(paste).toHaveBeenCalledWith(edited)
   menu()
-  await act(async () => choose('copy'))
-  expect(copies).toEqual([{ source: 'context' }])
-  menu()
   await act(async () => choose('export:tiff'))
   expect(exportPreset).toHaveBeenCalledWith('tiff', new Set(['a', 'b']))
-  unregister()
-  useEditorStore.setState({ open: editor.open, paste: editor.paste, clipboard: null })
+  // The editor opens the photo of the menu, which is the active photo that it shows.
+  menu()
+  await act(async () => choose('edit'))
+  expect(useEditorStore.getState().session?.path).toBe(edited[1].path)
+  expect(useQueueStore.getState().activeId).toBe('b')
+  useEditorStore.setState(editor, true)
   useQueueStore.setState({ exportPreset: queue.exportPreset })
+  useNavStore.setState(nav, true)
 })

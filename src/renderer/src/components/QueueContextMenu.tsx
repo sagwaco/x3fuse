@@ -4,7 +4,6 @@ import type { OutputFormat } from '@shared/types'
 import { ipc } from '../lib/ipc'
 import { invalidateNativeMenu } from '../lib/nativeMenu'
 import { cullActions, keyOf, showActions, type MenuAction } from '../lib/menuActions'
-import { runCommand } from '../lib/commands'
 import { t } from '../lib/strings'
 import { shownFiles, useQueueStore } from '../stores/queueStore'
 import { useSettingsStore } from '../stores/settingsStore'
@@ -49,7 +48,12 @@ export function QueueContextMenu({
         label: t('context.edit_photo'),
         accelerator: keyOf('editPhoto'),
         disabled: busy || !!active.pending,
-        run: () => void useEditorStore.getState().open(active)
+        run: () => {
+          // The editor shows the active photo, and the selection can change while the menu
+          // is open.
+          store().setSelection(new Set([...store().selectedIds, active.id]), active.id)
+          void useEditorStore.getState().open(active)
+        }
       })
     // Flags and ratings apply to the same photos as the culling keys.
     const culled = cullTargets(store(), useSettingsStore.getState().settings.queueViewMode, 'queue')
@@ -64,7 +68,7 @@ export function QueueContextMenu({
           separatorBefore: true,
           // Copy takes the active photo's adjustments.
           disabled: busy || !active?.edit,
-          run: () => runCommand('copyEdits', { source: 'context' })
+          run: () => useEditorStore.getState().copy(active)
         },
         {
           value: 'paste',

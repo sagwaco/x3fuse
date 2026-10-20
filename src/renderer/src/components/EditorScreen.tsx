@@ -592,7 +592,7 @@ export function EditorScreen(): React.JSX.Element {
       label: t('editor.copy'),
       icon: Copy,
       disabled: unavailable,
-      onSelect: editor.copy
+      onSelect: () => editor.copy()
     },
     {
       id: 'paste',
@@ -744,7 +744,7 @@ export function EditorScreen(): React.JSX.Element {
                   aria-label={t('editor.copy')}
                   title={withShortcut(t('editor.copy'), 'copyEdits')}
                   disabled={unavailable}
-                  onClick={editor.copy}
+                  onClick={() => editor.copy()}
                 >
                   <Copy className="h-4 w-4" />
                 </Button>
