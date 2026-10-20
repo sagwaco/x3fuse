@@ -220,6 +220,7 @@
   "shortcuts.zoomPreview": "Acercar o alejar la vista previa activa",
   "shortcuts.peek": "Mantener pulsada para ver en grande una foto de la comparación",
   "shortcuts.escape": "Cancelar o cerrar el editor",
+  "shortcuts.backToGrid": "Volver a la cuadrícula desde la tira de imágenes",
   "survey.empty": "Selecciona fotos para compararlas",
   "survey.too_many": "Selecciona hasta {{max}} fotos para compararlas",
   "survey.remove": "Quitar de la comparación",

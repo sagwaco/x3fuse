@@ -220,6 +220,7 @@
   "shortcuts.zoomPreview": "缩放当前预览",
   "shortcuts.peek": "按住以放大显示筛选中的照片",
   "shortcuts.escape": "取消，或关闭编辑器",
+  "shortcuts.backToGrid": "从胶片返回网格",
   "survey.empty": "请选择要筛选的照片",
   "survey.too_many": "最多可筛选 {{max}} 张照片",
   "survey.remove": "从筛选视图中移除",

@@ -100,6 +100,26 @@ it('arms the qualifier on the filmstrip preview and disarms after one use or Esc
   expect(zoom.current.outline).toEqual(region)
 })
 
+it('goes back to the grid with Escape after the Qualifier and outside text fields', () => {
+  const update = vi.fn(async () => {})
+  useSettingsStore.setState({
+    settings: { ...DEFAULT_SETTINGS, queueViewMode: 'filmstrip' },
+    update
+  })
+  view()
+  paint()
+  fireEvent.click(screen.getByRole('button', { name: 'Qualifier' }))
+  expect(zoom.current.onImagePoint).toBeDefined()
+  fireEvent.keyDown(document.body, { key: 'Escape' })
+  expect(zoom.current.onImagePoint).toBeUndefined()
+  const input = document.body.appendChild(document.createElement('input'))
+  fireEvent.keyDown(input, { key: 'Escape' })
+  input.remove()
+  expect(update).not.toHaveBeenCalled()
+  fireEvent.keyDown(document.body, { key: 'Escape' })
+  expect(update).toHaveBeenCalledWith({ queueViewMode: 'grid' })
+})
+
 it('drops the area when the photo changes and comes back', () => {
   view()
   paint()

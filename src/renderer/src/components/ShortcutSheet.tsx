@@ -73,7 +73,8 @@ const FOCUS_KEYS: [string, string[]][] = [
   ['menu.file.remove_from_queue', ['Backspace']],
   ['shortcuts.zoomPreview', ['Equal', 'Minus']],
   ['shortcuts.peek', ['Space']],
-  ['shortcuts.escape', ['Escape']]
+  ['shortcuts.escape', ['Escape']],
+  ['shortcuts.backToGrid', ['Escape']]
 ]
 
 /** The menu bar text. Without their submenu, the rating items need more words. */

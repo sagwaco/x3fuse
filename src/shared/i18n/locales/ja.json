@@ -220,6 +220,7 @@
   "shortcuts.zoomPreview": "選択中のプレビューを拡大・縮小",
   "shortcuts.peek": "押している間、サーベイの写真を大きく表示",
   "shortcuts.escape": "キャンセル、またはエディタを閉じる",
+  "shortcuts.backToGrid": "フィルムストリップからグリッドに戻る",
   "survey.empty": "サーベイする写真を選択してください",
   "survey.too_many": "サーベイできる写真は {{max}} 枚までです",
   "survey.remove": "サーベイから外す",

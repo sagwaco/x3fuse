@@ -220,6 +220,7 @@
   "shortcuts.zoomPreview": "Zoom the focused preview",
   "shortcuts.peek": "Hold to show a survey photo large",
   "shortcuts.escape": "Cancel, or close the editor",
+  "shortcuts.backToGrid": "Go back to the grid from the filmstrip",
   "survey.empty": "Select photos to survey",
   "survey.too_many": "Select up to {{max}} photos to survey",
   "survey.remove": "Remove from survey",
