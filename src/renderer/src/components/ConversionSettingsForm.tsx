@@ -1,4 +1,3 @@
-import { useEffect, useRef } from 'react'
 import {
   COLOR_MODES,
   shouldShowCineonOption,
@@ -11,17 +10,15 @@ import {
   type ColorProfile,
   type OutputFormat
 } from '@shared/types'
-import { MAX_CONCURRENCY } from '@shared/concurrency'
 import type { X3iSource } from '@shared/editor'
-import { appInfo } from '../lib/appInfo'
 import { ipc } from '../lib/ipc'
 import { basename } from '../lib/path'
 import { t } from '../lib/strings'
 import { Button } from './ui/button'
 import { Slider } from './ui/slider'
 import { Select } from './ui/select'
-import { Divider, Row, ToggleRow } from './ui/settingsLayout'
-import { PanelSection as Section } from './ui/panelSection'
+import { Row, ToggleRow } from './ui/settingsLayout'
+import { Adjustment, Section } from './EditorControls'
 import { DenoiseControls } from './DenoiseControls'
 
 const FORMAT_OPTIONS: { value: OutputFormat; label: string }[] = [
@@ -37,37 +34,26 @@ const COLOR_OPTIONS: { value: ColorProfile; label: string }[] = [
   { value: 'none', label: 'None' }
 ]
 
-// The Rust backend reports the actual automatic worker count.
-function concurrencyOptions(): { value: string; label: string }[] {
-  const auto = appInfo.autoConcurrency
-  return [
-    { value: '0', label: `${t('settings.concurrency.auto')} (${auto})` },
-    ...Array.from({ length: MAX_CONCURRENCY }, (_, i) => ({
-      value: String(i + 1),
-      label: String(i + 1)
-    }))
-  ]
-}
-
 /**
  * Edits only the current export draft; persistence happens on commit.
  */
 export function ConversionSettingsForm({
   settings,
   update,
-  renderedOnly = false
+  renderedOnly = false,
+  hasX3i = false,
+  partialX3i = false,
+  cameraModels = [],
+  disabled = false
 }: {
   settings: BatchConversionSettings
   renderedOnly?: boolean
+  hasX3i?: boolean
+  partialX3i?: boolean
+  cameraModels?: readonly (string | undefined)[]
+  disabled?: boolean
   update: (patch: Partial<BatchConversionSettings>) => void
 }): React.JSX.Element {
-  // Remember the last non-zero denoise intensity so toggling Off→On restores it.
-  const lastDenoise = useRef(settings.denoiseIntensity > 0 ? settings.denoiseIntensity : 10)
-
-  useEffect(() => {
-    if (settings.denoiseIntensity > 0) lastDenoise.current = settings.denoiseIntensity
-  }, [settings.denoiseIntensity])
-
   const format = settings.outputFormat
   const rendered = settings.rendering === 'rendered'
   const saveAlongside = settings.outputDirectory === null
@@ -85,18 +71,10 @@ export function ConversionSettingsForm({
     }
   }
 
-  function setDenoiseEnabled(enabled: boolean): void {
-    if (enabled) update({ denoiseIntensity: lastDenoise.current || 10 })
-    else {
-      lastDenoise.current = settings.denoiseIntensity
-      update({ denoiseIntensity: 0 })
-    }
-  }
-
   return (
     <>
       {/* Output */}
-      <Section title={t('settings.section.output')}>
+      <Section id="export-output" name={t('settings.section.output')}>
         <div className="flex flex-col gap-3">
           <ToggleRow
             label={t('settings.save_alongside_original')}
@@ -109,10 +87,12 @@ export function ConversionSettingsForm({
               <span className="control-label">{t('settings.output_location')}</span>
               <div className="flex min-w-0 items-center gap-2">
                 <span
-                  className="truncate font-mono text-xs text-tone-400"
+                  className="truncate text-xs text-tone-400"
                   title={settings.outputDirectory ?? ''}
                 >
-                  {settings.outputDirectory ? basename(settings.outputDirectory) : '—'}
+                  {settings.outputDirectory
+                    ? basename(settings.outputDirectory)
+                    : t('placeholder.dash')}
                 </span>
                 <Button variant="bordered" size="sm" onClick={() => void pickOutputDir()}>
                   {t('button.browse')}
@@ -124,7 +104,7 @@ export function ConversionSettingsForm({
       </Section>
 
       {/* Conversion */}
-      <Section title={t('settings.section.conversion')}>
+      <Section id="export-conversion" name={t('settings.section.conversion')}>
         <div className="flex flex-col gap-3">
           {!renderedOnly && (
             <Row label={t('editor.exportRendering')}>
@@ -177,10 +157,15 @@ export function ConversionSettingsForm({
             />
           )}
 
-          {!rendered && shouldShowDngHighlightRecoveryOption(format) && (
+          {!rendered && shouldShowDngHighlightRecoveryOption(format, cameraModels) && (
             <ToggleRow
               label={t('settings.dng_highlight_recovery')}
               help={t('settings.dng_highlight_recovery.warning')}
+              warning={
+                cameraModels.some((model) => !shouldShowDngHighlightRecoveryOption(format, [model]))
+                  ? t('export.partial_highlight_recovery')
+                  : undefined
+              }
               checked={settings.dngHighlightRecovery}
               onChange={(v) => update({ dngHighlightRecovery: v })}
             />
@@ -228,20 +213,6 @@ export function ConversionSettingsForm({
             </Row>
           )}
 
-          {!rendered && format !== 'embeddedJpg' && (
-            <Row label={t('editor.x3iSource')} help={t('settings.x3i_source.help')}>
-              <Select<X3iSource>
-                aria-label={t('editor.x3iSource')}
-                value={settings.x3iSource ?? 'merge'}
-                options={[
-                  { value: 'merge', label: t('editor.x3iSourceMerge') },
-                  { value: 'middle_exposure', label: t('editor.x3iSourceMiddle') }
-                ]}
-                onValueChange={(x3iSource) => update({ x3iSource })}
-              />
-            </Row>
-          )}
-
           {rendered && format === 'jpeg' && (
             <div className="space-y-2">
               <span className="control-label">
@@ -256,53 +227,48 @@ export function ConversionSettingsForm({
               />
             </div>
           )}
-          {!rendered && (
-            <>
-              <Divider />
-
-              <ToggleRow
-                label={t('settings.denoise')}
-                help={t('settings.denoise.help')}
-                checked={settings.denoiseIntensity > 0}
-                onChange={setDenoiseEnabled}
-              />
-              {settings.denoiseIntensity > 0 && (
-                <div className="flex flex-col gap-1.5">
-                  <span className="control-label">{t('settings.denoise.intensity')}</span>
-                  <Slider
-                    value={settings.denoiseIntensity}
-                    min={1}
-                    max={10}
-                    onValueChange={(v) => update({ denoiseIntensity: v })}
-                  />
-                  <div className="control-label flex justify-between text-[10px] text-tone-500">
-                    <span>{t('settings.denoise.intensity.less')}</span>
-                    <span>{t('settings.denoise.intensity.more')}</span>
-                  </div>
-                  <DenoiseControls
-                    value={settings.denoiseOptions}
-                    change={(denoiseOptions) => update({ denoiseOptions })}
-                  />
-                </div>
-              )}
-            </>
-          )}
-          {!rendered && (
-            <>
-              <Divider />
-
-              <Row label={t('settings.concurrency')} help={t('settings.concurrency.help')}>
-                <Select
-                  aria-label={t('settings.concurrency')}
-                  value={String(settings.concurrency)}
-                  options={concurrencyOptions()}
-                  onValueChange={(v) => update({ concurrency: Number(v) })}
-                />
-              </Row>
-            </>
-          )}
         </div>
       </Section>
+      {hasX3i && !rendered && format !== 'embeddedJpg' && (
+        <Section id="export-sfd" name={t('editor.x3iSourceMerge')}>
+          <Row
+            label={t('editor.x3iSource')}
+            help={t('settings.x3i_source.help')}
+            warning={partialX3i ? t('export.partial_sfd_source') : undefined}
+          >
+            <Select<X3iSource>
+              aria-label={t('editor.x3iSource')}
+              value={settings.x3iSource ?? 'merge'}
+              options={[
+                { value: 'merge', label: t('editor.x3iSourceMerge') },
+                { value: 'middle_exposure', label: t('editor.x3iSourceMiddle') }
+              ]}
+              onValueChange={(x3iSource) => update({ x3iSource })}
+            />
+          </Row>
+        </Section>
+      )}
+
+      {!rendered && format !== 'embeddedJpg' && (
+        <Section id="export-denoise" name={t('editor.detail')}>
+          <Adjustment
+            label={t('editor.denoise')}
+            value={settings.denoiseIntensity}
+            min={0}
+            max={10}
+            disabled={disabled}
+            help={t('settings.denoise.help')}
+            change={(denoiseIntensity) => update({ denoiseIntensity })}
+            reset={() => update({ denoiseIntensity: 10 })}
+          />
+          {settings.denoiseIntensity > 0 && (
+            <DenoiseControls
+              value={settings.denoiseOptions}
+              change={(denoiseOptions) => update({ denoiseOptions })}
+            />
+          )}
+        </Section>
+      )}
     </>
   )
 }

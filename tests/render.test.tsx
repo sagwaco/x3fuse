@@ -387,8 +387,9 @@ describe('renderer smoke', () => {
     const { MainWindow } = await import('../src/renderer/src/components/MainWindow')
     render(<MainWindow />)
     expect(screen.getByRole('button', { name: 'Export' })).toBeTruthy()
-    expect(screen.getByText('Images to export')).toBeTruthy()
-    expect(screen.getByText('Output & export settings')).toBeTruthy()
+    expect(screen.queryByText('Images to export')).toBeNull()
+    expect(screen.queryByText('Output & export settings')).toBeNull()
+    expect(screen.getAllByText('Export format')).toHaveLength(2)
   })
 
   it('mounts the Settings window with its sections', async () => {
@@ -400,7 +401,7 @@ describe('renderer smoke', () => {
     render(<SettingsWindow />)
     expect(screen.queryByText('Output settings')).toBeNull()
     expect(screen.queryByText('Export settings')).toBeNull()
-    expect(screen.getByRole('tab', { name: 'Debug' })).toBeTruthy()
+    expect(screen.getByRole('tab', { name: 'Advanced' })).toBeTruthy()
   })
 
   it('refreshes an existing Settings window on focus and unsubscribes on unmount', async () => {

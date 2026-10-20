@@ -957,7 +957,7 @@ it('resets a slider on Shift-click of its label, which reads Reset while Shift i
   expect(
     screen.queryByRole('button', { name: `${t('editor.reset')} ${t('editor.tint')}` })
   ).toBeNull()
-  const name = screen.getByText(t('editor.tint'), { selector: '.control-label > span' })
+  const name = screen.getByText(t('editor.tint'), { selector: '.slider-label > span' })
   const label = name.parentElement!
   // Both texts stay in the label, so its width cannot change under the pointer.
   const resetText = within(label).getByText(t('editor.reset'))

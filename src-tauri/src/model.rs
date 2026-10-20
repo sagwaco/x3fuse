@@ -329,11 +329,19 @@ pub struct ConvertFile {
     pub id: String,
     pub path: PathBuf,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settings: Option<BatchSettings>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recipe: Option<x3f_render::EditRecipe>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub revision: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_revision: Option<String>,
+}
+
+impl ConvertFile {
+    pub fn effective_settings<'a>(&'a self, fallback: &'a BatchSettings) -> &'a BatchSettings {
+        self.settings.as_ref().unwrap_or(fallback)
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -452,6 +460,32 @@ pub fn concurrency(setting: u8) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn per_file_settings_are_optional_and_use_camel_case() {
+        let mut file: ConvertFile = serde_json::from_value(serde_json::json!({
+            "id": "photo",
+            "path": "photo.X3F"
+        }))
+        .unwrap();
+        let fallback = BatchSettings::default();
+        assert!(std::ptr::eq(file.effective_settings(&fallback), &fallback));
+        assert!(serde_json::to_value(&file)
+            .unwrap()
+            .get("settings")
+            .is_none());
+        file.settings = Some(BatchSettings {
+            output_format: OutputFormat::Tiff,
+            ..Default::default()
+        });
+        let wire = serde_json::to_value(&file).unwrap();
+        assert_eq!(wire["settings"]["outputFormat"], "tiff");
+        let restored: ConvertFile = serde_json::from_value(wire).unwrap();
+        assert_eq!(
+            restored.effective_settings(&fallback).output_format,
+            OutputFormat::Tiff
+        );
+    }
 
     #[test]
     fn appearance_settings_migrate_and_validate() {

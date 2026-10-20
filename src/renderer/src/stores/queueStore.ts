@@ -1,14 +1,16 @@
 import { create } from 'zustand'
 import {
   batchSettings,
+  cameraModel,
   DEFAULT_SETTINGS,
+  shouldShowDngHighlightRecoveryOption,
   type BatchConversionSettings,
   type ConversionStatus,
   type Flag,
   type OutputFormat,
   type X3FFileDTO
 } from '@shared/types'
-import type { BatchSummary, IpcEventMap, OutputConflict } from '@shared/ipc'
+import type { BatchSummary, ConvertFile, IpcEventMap, OutputConflict } from '@shared/ipc'
 import { ipc } from '../lib/ipc'
 import { basename } from '../lib/path'
 import { outputFileName } from '../lib/outputName'
@@ -22,8 +24,47 @@ const newPlaceholderId = (): string => crypto.randomUUID()
 
 export interface ExportDraft {
   files: X3FFileDTO[]
+  /** Batch defaults follow the last settings change, not the selection. */
   settings: BatchConversionSettings
+  fileSettings?: Record<string, BatchConversionSettings>
   returnScreen?: 'queue' | 'editor'
+}
+
+export function exportSettings(draft: ExportDraft, id: string): BatchConversionSettings {
+  return draft.fileSettings?.[id] ?? draft.settings
+}
+
+export function hasMixedExportSettings(draft: ExportDraft, ids: Set<string>): boolean {
+  const selected = draft.files.filter((file) => ids.has(file.id))
+  const first = selected[0]
+  if (!first) return false
+  const settings = JSON.stringify(exportSettings(draft, first.id))
+  return selected.some((file) => JSON.stringify(exportSettings(draft, file.id)) !== settings)
+}
+
+function conversionFiles(draft: ExportDraft): ConvertFile[] {
+  const fallback = JSON.stringify(draft.settings)
+  return draft.files.map((file) => {
+    const { id, path, edit, sourceRevision } = file
+    const captured = exportSettings(draft, id)
+    const settings =
+      captured.outputFormat === 'dng' &&
+      !shouldShowDngHighlightRecoveryOption('dng', [cameraModel(file)])
+        ? { ...captured, dngHighlightRecovery: false }
+        : captured
+    return {
+      id,
+      path,
+      ...(JSON.stringify(settings) !== fallback ? { settings } : {}),
+      ...(settings.rendering === 'rendered'
+        ? {
+            recipe: edit?.recipe,
+            revision: edit?.revision ?? 0,
+            sourceRevision: sourceRevision ?? edit?.sourceRevision
+          }
+        : {})
+    }
+  })
 }
 
 export interface BatchFileResult {
@@ -69,6 +110,7 @@ interface QueueState {
   clearQueue: () => void
   openExport: (ids?: Set<string>, returnScreen?: 'queue' | 'editor') => void
   updateDraft: (patch: Partial<BatchConversionSettings>) => void
+  resolveDraftSettings: (overwrite: boolean) => void
   cancelExport: () => void
   commitExport: () => Promise<void>
   convertPrevious: (ids?: Set<string>, returnScreen?: 'queue' | 'editor') => Promise<void>
@@ -158,9 +200,10 @@ export const useQueueStore = create<QueueState>((set, get) => {
   }
 
   async function prepareRendered(draft: ExportDraft): Promise<ExportDraft> {
-    if (draft.settings.rendering !== 'rendered') return draft
     const files = await Promise.all(
       draft.files.map(async (file) => {
+        const settings = exportSettings(draft, file.id)
+        if (settings.rendering !== 'rendered') return file
         if (file.sourceRevision && file.displayPreviewUrl) return file
         // Without an edit, the backend renders and exports the photo's camera defaults.
         const preview = await ipc.invoke('editor:preview', {
@@ -184,7 +227,7 @@ export const useQueueStore = create<QueueState>((set, get) => {
       summary: null,
       results: draft.files.map((file) => ({
         file,
-        outputFileName: outputFileName(file, draft.settings),
+        outputFileName: outputFileName(file, exportSettings(draft, file.id)),
         status: 'queued',
         progress: 0
       }))
@@ -200,17 +243,7 @@ export const useQueueStore = create<QueueState>((set, get) => {
     void ipc
       .invoke('convert:start', {
         batchId: batch.id,
-        files: draft.files.map(({ id, path, edit, sourceRevision }) => ({
-          id,
-          path,
-          ...(draft!.settings.rendering === 'rendered'
-            ? {
-                recipe: edit?.recipe,
-                revision: edit?.revision ?? 0,
-                sourceRevision: sourceRevision ?? edit?.sourceRevision
-              }
-            : {})
-        })),
+        files: conversionFiles(draft),
         settings: draft.settings,
         replaceExisting: approvedOutputs.length > 0,
         approvedOutputs
@@ -237,17 +270,7 @@ export const useQueueStore = create<QueueState>((set, get) => {
       draft = await prepareRendered(draft)
       set({ draft })
       const conflicts = await ipc.invoke('queue:existingOutputs', {
-        files: draft.files.map(({ id, path, edit, sourceRevision }) => ({
-          id,
-          path,
-          ...(draft!.settings.rendering === 'rendered'
-            ? {
-                recipe: edit?.recipe,
-                revision: edit?.revision ?? 0,
-                sourceRevision: sourceRevision ?? edit?.sourceRevision
-              }
-            : {})
-        })),
+        files: conversionFiles(draft),
         settings: draft.settings
       })
       if (conflicts.length) set({ pendingReconversion: conflicts })
@@ -332,17 +355,24 @@ export const useQueueStore = create<QueueState>((set, get) => {
 
     setSelection: (ids, active) => {
       if (useEditorStore.getState().closing) return
-      set((s) => ({ selectedIds: ids, activeId: pickActive(ids, active, s.activeId) }))
+      set((s) => {
+        const draft = useNavStore.getState().screen === 'export' ? s.draft : null
+        const selectedIds = draft
+          ? new Set(draft.files.filter((file) => ids.has(file.id)).map((file) => file.id))
+          : ids
+        return {
+          selectedIds,
+          activeId: pickActive(selectedIds, active, s.activeId)
+        }
+      })
     },
     selectAll: () => {
       if (useEditorStore.getState().closing) return
-      set((s) => {
-        const ids = new Set(shownFiles(s).map((f) => f.id))
-        return { selectedIds: ids, activeId: pickActive(ids, undefined, s.activeId) }
-      })
+      const draft = useNavStore.getState().screen === 'export' ? get().draft : null
+      get().setSelection(new Set((draft?.files ?? shownFiles(get())).map((f) => f.id)))
     },
     deselectAll: () => {
-      if (!useEditorStore.getState().closing) set({ selectedIds: new Set(), activeId: null })
+      get().setSelection(new Set())
     },
 
     async addFiles(paths) {
@@ -525,7 +555,13 @@ export const useQueueStore = create<QueueState>((set, get) => {
         if (useEditorStore.getState().closing) return
         const draft = capture(ids, returnScreen)
         if (!draft) return
-        set({ draft, error: null })
+        const selectedIds = new Set(draft.files.map((file) => file.id))
+        set({
+          draft,
+          selectedIds,
+          activeId: pickActive(selectedIds, undefined, get().activeId),
+          error: null
+        })
         useNavStore.getState().goToExport()
         if (draft.settings.rendering === 'rendered') {
           set({ isPreparing: true })
@@ -548,9 +584,11 @@ export const useQueueStore = create<QueueState>((set, get) => {
 
     updateDraft(patch) {
       if (get().isPreparing || get().isProcessing || useEditorStore.getState().closing) return
+      const state = get()
+      const focused = state.draft ? exportSettings(state.draft, state.activeId ?? '') : undefined
       if (patch.rendering === 'rendered' || patch.outputFormat === 'jpeg') {
-        const format = patch.outputFormat ?? get().draft?.settings.outputFormat
-        const profile = patch.colorProfile ?? get().draft?.settings.colorProfile ?? 'sRGB'
+        const format = patch.outputFormat ?? focused?.outputFormat
+        const profile = patch.colorProfile ?? focused?.colorProfile ?? 'sRGB'
         patch = {
           ...patch,
           rendering: 'rendered',
@@ -558,24 +596,52 @@ export const useQueueStore = create<QueueState>((set, get) => {
           colorProfile: profile === 'none' ? 'sRGB' : profile,
           outputFormat: format === 'tiff' ? 'tiff' : 'jpeg'
         }
-      } else if (patch.rendering === 'original' && get().draft?.settings.outputFormat === 'jpeg') {
+      } else if (patch.rendering === 'original' && focused?.outputFormat === 'jpeg') {
         patch = { ...patch, outputFormat: 'dng' }
       }
-      set((s) => ({
-        draft: s.draft ? { ...s.draft, settings: { ...s.draft.settings, ...patch } } : null
-      }))
+      set((s) => {
+        if (!s.draft || !s.draft.files.some((file) => s.selectedIds.has(file.id))) return s
+        const concurrency = patch.concurrency ?? s.draft.settings.concurrency
+        const fileSettings = Object.fromEntries(
+          s.draft.files.map((file) => {
+            const current = exportSettings(s.draft!, file.id)
+            const selected = s.selectedIds.has(file.id)
+            const settings = batchSettings({ ...current, ...(selected ? patch : {}), concurrency })
+            return [file.id, settings]
+          })
+        )
+        return {
+          draft: {
+            ...s.draft,
+            fileSettings,
+            settings: fileSettings[s.activeId ?? ''] ?? s.draft.settings
+          }
+        }
+      })
       const draft = get().draft
       if (
-        draft?.settings.rendering === 'rendered' &&
-        draft.files.some((file) => !file.sourceRevision || !file.displayPreviewUrl)
+        draft?.files.some(
+          (file) =>
+            exportSettings(draft, file.id).rendering === 'rendered' &&
+            (!file.sourceRevision || !file.displayPreviewUrl)
+        )
       ) {
         set({ isPreparing: true })
         void prepareRendered(draft)
           .then((prepared) => {
             if (get().draft === draft) set({ draft: prepared, isPreparing: false })
           })
-          .catch((error: unknown) => set({ isPreparing: false, error: String(error) }))
+          .catch((error: unknown) => {
+            if (get().draft === draft) set({ isPreparing: false, error: String(error) })
+          })
       }
+    },
+
+    resolveDraftSettings(overwrite) {
+      const { draft, activeId } = get()
+      if (!draft || !activeId) return
+      if (overwrite) get().updateDraft(exportSettings(draft, activeId))
+      else get().setSelection(new Set([activeId]), activeId)
     },
 
     cancelExport() {
@@ -598,8 +664,8 @@ export const useQueueStore = create<QueueState>((set, get) => {
         return
       const draft = capture(ids, returnScreen)
       if (!draft) return
-      draft.settings = {
-        ...batchSettings(DEFAULT_SETTINGS),
+      draft.settings = batchSettings({
+        ...DEFAULT_SETTINGS,
         outputFormat: format,
         rendering:
           format === 'jpeg' || (format === 'tiff' && draft.settings.rendering === 'rendered')
@@ -608,7 +674,7 @@ export const useQueueStore = create<QueueState>((set, get) => {
         compress: format === 'dng',
         dngHighlightRecovery: format === 'dng',
         concurrency: draft.settings.concurrency
-      }
+      })
       set({ isPreparing: true })
       try {
         const directory = await ipc.invoke('dialog:pickOutputDir')
@@ -695,7 +761,9 @@ export const useQueueStore = create<QueueState>((set, get) => {
 
     onBatchStarted({ batchId, settings }) {
       if (get().batch?.id !== batchId) return
-      useSettingsStore.getState().accept({ ...settings, hasPreviousConversion: true })
+      const exportDefaults: Partial<BatchConversionSettings> = { ...settings }
+      delete exportDefaults.concurrency
+      useSettingsStore.getState().accept({ ...exportDefaults, hasPreviousConversion: true })
       const returnScreen = get().draft?.returnScreen
       set({ draft: null, isPreparing: false })
       if (returnScreen === 'editor') useNavStore.getState().goToEditor()
@@ -760,7 +828,7 @@ export const useQueueStore = create<QueueState>((set, get) => {
 
     cancelReconversion() {
       set({ pendingReconversion: null, isPreparing: false })
-      if (useNavStore.getState().screen === 'queue') set({ draft: null })
+      if (useNavStore.getState().screen !== 'export') set({ draft: null })
     }
   }
 })

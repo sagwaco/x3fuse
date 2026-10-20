@@ -88,6 +88,8 @@ const filmStock = (film: FilmSettings | null): (typeof stocks)[number] | undefin
 const positiveFilm = (film: FilmSettings | null): boolean => !!filmStock(film)?.isPositive
 /** For a help icon in a `group/reset` row. It hides while the row's label shows Reset. */
 export const HIDE_WHILE_RESETTING = 'group-has-[[data-resetting]]/reset:invisible'
+/** Slider labels use the system font, without the caption case and letter spacing. */
+const SLIDER_LABEL = 'font-sans text-[12px] normal-case leading-tight tracking-normal text-tone-300'
 
 export function ResetLabel({
   label,
@@ -121,7 +123,8 @@ export function ResetLabel({
       <span
         data-resetting={resetting || undefined}
         className={cn(
-          'control-label grid min-w-0 select-none',
+          'slider-label grid min-w-0 select-none',
+          SLIDER_LABEL,
           center && 'justify-items-center',
           resetting && 'cursor-pointer text-tone-100'
         )}
@@ -162,7 +165,8 @@ export function Adjustment({
   scale,
   change,
   reset,
-  commit
+  commit,
+  disabled: disabledOverride
 }: {
   label: string
   /** A short visible label. With it, the label, slider and value share one row. */
@@ -179,7 +183,9 @@ export function Adjustment({
   scale?: Scale
   change: (value: number, commit: boolean) => void
   reset: () => void
-  commit: () => void
+  commit?: () => void
+  /** Export controls do not depend on the editor preview state. */
+  disabled?: boolean
 }): React.JSX.Element {
   const busy = useQueueStore((state) => state.isProcessing || state.isPreparing)
   // The controls turn on after the developing cloud leaves. Turning them all
@@ -188,7 +194,7 @@ export function Adjustment({
   const inactive = useEditorStore(
     (state) => cloud || state.before || state.loading || state.closing || !state.preview
   )
-  const disabled = busy || inactive
+  const disabled = disabledOverride ?? (busy || inactive)
   // A drag keeps the range it started with, so the thumb stays under the pointer.
   const [held, setHeld] = useState<{ min: number; max: number; step: number; scale?: Scale }>()
   const range = held ?? { min, max, step, scale }
@@ -207,7 +213,7 @@ export function Adjustment({
       // Above a slider, shifted right so its digits end where the slider ends. Focus shows
       // the box, in line. In a row, it fills a column as wide as the label column.
       className={cn(
-        'h-6 shrink-0 rounded-md border border-transparent bg-transparent text-right font-mono text-xs tabular-nums text-tone-400 [appearance:textfield] focus:border-ink/40 focus:bg-ink/[0.03] focus:text-tone-100 focus:outline-none disabled:opacity-40 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none',
+        'h-6 shrink-0 rounded-md border font-sans border-transparent bg-transparent text-right text-xs tabular-nums text-tone-400 [appearance:textfield] focus:border-ink/40 focus:bg-ink/[0.03] focus:text-tone-100 focus:outline-none disabled:opacity-40 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none',
         short
           ? 'w-full px-0 text-[11px]'
           : 'w-14 translate-x-2.5 px-2 transition-transform focus:translate-x-0 motion-reduce:transition-none'
@@ -255,7 +261,7 @@ export function Adjustment({
         <span
           aria-hidden="true"
           title={label}
-          className="control-label select-none"
+          className={cn('select-none', SLIDER_LABEL)}
           onClick={(event) => {
             if (event.shiftKey && !disabled) reset()
           }}

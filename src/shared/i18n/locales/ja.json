@@ -7,7 +7,7 @@
   "button.ok": "OK",
   "button.cancel": "キャンセル",
   "button.done": "完了",
-  "button.browse": "参照...",
+  "button.browse": "参照",
   "button.overwrite": "上書き",
   "toolbar.stop_conversion": "書き出しを停止",
   "toolbar.convert_all": "すべて書き出し",
@@ -430,5 +430,12 @@
   "editor.halationAmountHelp": "フィルムベースから反射する光の量を調整する倍率。1でフィルム本来の強度、0で散乱を残してハレーションをなくします。",
   "editor.halationSpatialScaleHelp": "反射光の広がりを調整する倍率。1でフィルム本来のサイズになります。反射の強度は変わりません。",
   "editor.grainChannelOffsets": "チャンネルのオフセット",
-  "editor.grainChannelOffsetHelp": "この色チャンネルのRMS粒状度をメイン値から増減します。0ではメイン値を使用します。チャンネルの範囲は0〜100です。"
+  "editor.grainChannelOffsetHelp": "この色チャンネルのRMS粒状度をメイン値から増減します。0ではメイン値を使用します。チャンネルの範囲は0〜100です。",
+  "export.format_column": "書き出し形式",
+  "export.mixed_title": "書き出し設定が異なります",
+  "export.mixed_description": "選択した画像の書き出し設定が異なります。{{name}} の設定で上書きするか、キャンセルしてこの画像のみを選択してください。",
+  "settings.section.advanced": "詳細設定",
+  "export.partial_highlight_recovery": "ハイライト復元は選択したMerrill画像にのみ適用されます。",
+  "export.partial_sfd_source": "この設定は選択したX3I画像にのみ適用されます。",
+  "settings.warning_label": "警告: {{setting}}"
 }

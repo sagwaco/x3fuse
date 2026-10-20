@@ -8,6 +8,7 @@ use std::{
 use tauri::{AppHandle, Emitter};
 
 fn canonical_output(file: &ConvertFile, settings: &BatchSettings) -> Result<PathBuf, String> {
+    let settings = file.effective_settings(settings);
     let output = settings.output_path(&file.path)?;
     let parent = output.parent().ok_or("Missing output directory")?;
     let parent = parent
@@ -57,6 +58,8 @@ pub fn validate_batch(
     let mut targets: HashMap<String, Vec<OutputConflict>> = HashMap::new();
     let mut conflicts: HashMap<String, OutputConflict> = HashMap::new();
     for file in files {
+        let settings = file.effective_settings(settings);
+        settings.validate()?;
         if file.id.is_empty() || file.id.len() > 128 || !ids.insert(&file.id) {
             return Err("Invalid or duplicate file ID".into());
         }
@@ -129,6 +132,18 @@ fn target_groups(
         groups[index].push(file);
     }
     Ok(groups.into())
+}
+
+fn worker_count(request: &StartRequest, groups: usize) -> usize {
+    if request
+        .files
+        .iter()
+        .any(|file| file.effective_settings(&request.settings).is_rendered())
+    {
+        1
+    } else {
+        concurrency(request.settings.concurrency).min(groups)
+    }
 }
 
 fn status(
@@ -300,6 +315,7 @@ async fn process_file(
     settings: &BatchSettings,
     approved: &HashSet<(String, PathBuf)>,
 ) -> Result<bool, String> {
+    let settings = file.effective_settings(settings);
     let check = || {
         if state.cancel.load(Ordering::Relaxed) {
             Err("Export cancelled".to_string())
@@ -501,12 +517,8 @@ pub async fn run_batch(
             return Ok(());
         }
     };
+    let lanes = worker_count(&request, groups.len());
     let groups = Arc::new(Mutex::new(groups));
-    let lanes = if request.settings.is_rendered() {
-        1
-    } else {
-        concurrency(request.settings.concurrency).min(groups.lock().unwrap().len())
-    };
     let summary = Arc::new(Mutex::new(BatchSummary {
         batch_id: request.batch_id.clone(),
         total: request.files.len(),
@@ -677,6 +689,142 @@ mod tests {
     }
 
     #[test]
+    fn per_file_formats_and_directories_control_conflicts_and_groups() {
+        let directory = tempfile::tempdir().unwrap();
+        let other = tempfile::tempdir().unwrap();
+        let settings = BatchSettings::default();
+        let files: Vec<_> = [
+            None,
+            Some(BatchSettings {
+                output_format: OutputFormat::Tiff,
+                ..Default::default()
+            }),
+            Some(BatchSettings {
+                output_directory: Some(other.path().to_owned()),
+                ..Default::default()
+            }),
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(id, settings)| ConvertFile {
+            id: id.to_string(),
+            path: directory.path().join("same.X3F"),
+            settings,
+            ..Default::default()
+        })
+        .collect();
+        let outputs = [
+            directory.path().canonicalize().unwrap().join("same.dng"),
+            directory
+                .path()
+                .canonicalize()
+                .unwrap()
+                .join("same.X3F.tif"),
+            other.path().canonicalize().unwrap().join("same.dng"),
+        ];
+        for (file, output) in files.iter().zip(&outputs) {
+            assert_eq!(canonical_output(file, &settings).unwrap(), *output);
+        }
+        assert!(validate_batch(&files, &settings).unwrap().is_empty());
+        assert_eq!(target_groups(files.clone(), &settings).unwrap().len(), 3);
+
+        std::fs::write(&outputs[0], b"existing DNG").unwrap();
+        std::fs::write(&outputs[1], b"existing TIFF").unwrap();
+        std::fs::write(other.path().join("same.X3F.dng"), b"legacy DNG").unwrap();
+        let conflicts = validate_batch(&files, &settings).unwrap();
+        assert_eq!(conflicts.len(), 3);
+        for (conflict, output) in conflicts.iter().zip(&outputs) {
+            assert_eq!(conflict.output_path, *output);
+        }
+
+        let mut duplicates = files;
+        let mut duplicate = duplicates[2].clone();
+        duplicate.id = "duplicate".into();
+        duplicates.push(duplicate);
+        let groups = target_groups(duplicates, &settings).unwrap();
+        assert_eq!(groups.len(), 3);
+        assert_eq!(groups[2].len(), 2);
+    }
+
+    #[test]
+    fn per_file_settings_validate_before_export() {
+        let directory = tempfile::tempdir().unwrap();
+        let settings = BatchSettings::default();
+        let mut file = ConvertFile {
+            id: "photo".into(),
+            path: directory.path().join("photo.X3F"),
+            settings: Some(BatchSettings {
+                denoise_intensity: 11,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert_eq!(
+            validate_batch(&[file.clone()], &settings).unwrap_err(),
+            "Invalid export setting"
+        );
+        file.settings = Some(BatchSettings {
+            output_directory: Some("relative".into()),
+            ..Default::default()
+        });
+        assert_eq!(
+            validate_batch(&[file.clone()], &settings).unwrap_err(),
+            "Output directory must be an absolute path"
+        );
+        file.settings = Some(BatchSettings {
+            output_format: OutputFormat::RenderedJpeg,
+            ..Default::default()
+        });
+        assert_eq!(
+            validate_batch(&[file.clone()], &settings).unwrap_err(),
+            "Review the source before edited export"
+        );
+        file.source_revision = Some("a".repeat(64));
+        assert!(validate_batch(&[file.clone()], &settings).is_ok());
+        file.settings.as_mut().unwrap().cineon = true;
+        assert!(validate_batch(&[file.clone()], &settings).is_err());
+
+        file.settings = Some(BatchSettings::default());
+        file.source_revision = None;
+        let rendered_fallback = BatchSettings {
+            output_format: OutputFormat::RenderedJpeg,
+            ..Default::default()
+        };
+        assert!(validate_batch(&[file], &rendered_fallback).is_ok());
+    }
+
+    #[test]
+    fn rendered_file_serializes_workers_and_batch_controls_concurrency() {
+        let mut request = StartRequest {
+            batch_id: "batch".into(),
+            files: vec![
+                ConvertFile::default(),
+                ConvertFile {
+                    settings: Some(BatchSettings {
+                        concurrency: 8,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            ],
+            settings: BatchSettings {
+                concurrency: 3,
+                ..Default::default()
+            },
+            replace_existing: false,
+            approved_outputs: vec![],
+        };
+        assert_eq!(worker_count(&request, 4), concurrency(3).min(4));
+        request.files[1].settings.as_mut().unwrap().output_format = OutputFormat::RenderedJpeg;
+        assert_eq!(worker_count(&request, 4), 1);
+        request.files[1].settings.as_mut().unwrap().output_format = OutputFormat::Dng;
+        request.settings.output_format = OutputFormat::RenderedJpeg;
+        assert_eq!(worker_count(&request, 4), 1);
+        request.files[0].settings = Some(BatchSettings::default());
+        assert_eq!(worker_count(&request, 4), concurrency(3).min(4));
+    }
+
+    #[test]
     fn replacement_approval_does_not_extend_to_new_conflicts() {
         let dir = tempfile::tempdir().unwrap();
         let files: Vec<_> = ["one", "two"]
@@ -684,6 +832,10 @@ mod tests {
             .map(|name| ConvertFile {
                 id: name.into(),
                 path: dir.path().join(format!("{name}.X3F")),
+                settings: (name == "two").then(|| BatchSettings {
+                    output_format: OutputFormat::Tiff,
+                    ..Default::default()
+                }),
                 ..Default::default()
             })
             .collect();

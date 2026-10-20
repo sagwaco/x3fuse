@@ -4,9 +4,10 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { batchSettings, DEFAULT_SETTINGS, type X3FFileDTO } from '@shared/types'
 import * as strings from '../src/renderer/src/lib/strings'
 
-const invoke = vi.fn(async (): Promise<unknown> => undefined)
+const invoke = vi.fn(async (_channel?: unknown, _payload?: unknown): Promise<unknown> => undefined)
 ;(window as unknown as { x3f: unknown }).x3f = { invoke, on: () => () => {}, pathForFile: () => '' }
-const { useQueueStore: store } = await import('../src/renderer/src/stores/queueStore')
+const { useQueueStore: store, exportSettings } =
+  await import('../src/renderer/src/stores/queueStore')
 const { useSettingsStore } = await import('../src/renderer/src/stores/settingsStore')
 const { useNavStore } = await import('../src/renderer/src/stores/navStore')
 const { usePreviewStore } = await import('../src/renderer/src/stores/previewStore')
@@ -58,6 +59,209 @@ async function start(): Promise<string> {
 }
 
 describe('batch workflow', () => {
+  it('checks and starts a fixed batch with each image settings and output name', async () => {
+    store.getState().openExport()
+    store.getState().setSelection(new Set(['a']), 'a')
+    store
+      .getState()
+      .updateDraft({ outputFormat: 'tiff', outputDirectory: '/tiffs', denoiseIntensity: 3 })
+    store.getState().setSelection(new Set(['b']), 'b')
+    store.getState().updateDraft({ outputDirectory: '/dngs', x3iSource: 'middle_exposure' })
+    const draft = store.getState().draft!
+    const a = exportSettings(draft, 'a')
+    const b = exportSettings(draft, 'b')
+    expect(a.outputFormat).toBe('tiff')
+    expect(a.outputDirectory).toBe('/tiffs')
+    expect(b.outputFormat).toBe('dng')
+    expect(b.outputDirectory).toBe('/dngs')
+
+    await store.getState().commitExport()
+    const expectedFiles = [
+      { id: 'a', path: '/photos/a.X3F', settings: a },
+      { id: 'b', path: '/photos/b.X3F' }
+    ]
+    expect(invoke).toHaveBeenCalledWith('queue:existingOutputs', {
+      files: expectedFiles,
+      settings: b
+    })
+    expect(invoke).toHaveBeenCalledWith(
+      'convert:start',
+      expect.objectContaining({ files: expectedFiles, settings: b })
+    )
+    expect(store.getState().batch!.results.map((result) => result.outputFileName)).toEqual([
+      'a.X3F.tif',
+      'b.dng'
+    ])
+    store.getState().updateDraft({ outputFormat: 'embeddedJpg' })
+    store.getState().setSelection(new Set(['a']), 'a')
+    expect(store.getState().draft).toEqual(draft)
+  })
+
+  it('prepares and sends recipes only for rendered images in a mixed batch', async () => {
+    invoke.mockImplementation(async (channel?: unknown) => {
+      if (channel === 'editor:preview')
+        return { url: 'x3f-edit://rendered', sourceRevision: 'a'.repeat(64) }
+      if (channel === 'queue:existingOutputs') return []
+    })
+    store.getState().openExport()
+    store.getState().setSelection(new Set(['a']), 'a')
+    store.getState().updateDraft({ rendering: 'rendered' })
+    await waitFor(() => expect(store.getState().isPreparing).toBe(false))
+    expect(invoke.mock.calls.filter(([channel]) => channel === 'editor:preview')).toHaveLength(1)
+    store.getState().setSelection(new Set(['b']), 'b')
+    expect(exportSettings(store.getState().draft!, 'b').rendering).toBe('original')
+    await store.getState().commitExport()
+    const startCall = invoke.mock.calls.find(([channel]) => channel === 'convert:start')!
+    expect(startCall[1]).toMatchObject({
+      files: [
+        {
+          id: 'a',
+          sourceRevision: 'a'.repeat(64),
+          revision: 0
+        },
+        { id: 'b', path: '/photos/b.X3F', settings: { rendering: 'original', outputFormat: 'dng' } }
+      ]
+    })
+    expect(startCall[1]).toHaveProperty('files.1', {
+      id: 'b',
+      path: '/photos/b.X3F',
+      settings: exportSettings(store.getState().draft!, 'b')
+    })
+    expect(invoke.mock.calls.filter(([channel]) => channel === 'editor:preview')).toHaveLength(1)
+  })
+
+  it('keeps concurrency and saved defaults stable when the focused image changes', async () => {
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, concurrency: 1 } })
+    store.getState().openExport()
+    store.getState().setSelection(new Set(['a']), 'a')
+    store.getState().updateDraft({ outputFormat: 'tiff' })
+    const draft = store.getState().draft!
+    store.getState().setSelection(new Set(['b']), 'b')
+    expect(store.getState().draft).toBe(draft)
+    expect(exportSettings(draft, 'b')).toMatchObject({ outputFormat: 'dng', concurrency: 1 })
+    store.getState().setSelection(new Set(['a', 'b']), 'b')
+    store.getState().resolveDraftSettings(false)
+    await store.getState().commitExport()
+    expect(invoke).toHaveBeenCalledWith(
+      'convert:start',
+      expect.objectContaining({ settings: { ...settings, outputFormat: 'tiff', concurrency: 1 } })
+    )
+    const batchId = store.getState().batch!.id
+    useSettingsStore.setState({
+      settings: { ...useSettingsStore.getState().settings, concurrency: 4 }
+    })
+    store.getState().onBatchStarted({ batchId, settings: draft.settings })
+    expect(useSettingsStore.getState().settings).toMatchObject({
+      outputFormat: 'tiff',
+      concurrency: 4,
+      hasPreviousConversion: true
+    })
+  })
+
+  it.each(['review', 'preset'])(
+    'disables hidden recovery for non-Merrill DNGs in a %s export',
+    async (workflow) => {
+      store.setState({
+        files: files.map((file) => ({
+          ...file,
+          exif:
+            file.id === 'c'
+              ? []
+              : [{ label: 'Camera', value: file.id === 'a' ? 'SIGMA SD1' : 'SIGMA dp2 Quattro' }]
+        })),
+        selectedIds: new Set(['a', 'b', 'c'])
+      })
+      useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, dngHighlightRecovery: true } })
+      invoke.mockImplementation(async (channel) => {
+        if (channel === 'dialog:pickOutputDir') return '/exports'
+        if (channel === 'queue:existingOutputs') return []
+      })
+      if (workflow === 'preset') await store.getState().exportPreset('dng')
+      else {
+        store.getState().openExport()
+        await store.getState().commitExport()
+      }
+      const captured = store.getState().draft!.settings
+      const expected = [
+        { id: 'a', path: '/photos/a.X3F' },
+        { id: 'b', path: '/photos/b.X3F', settings: { ...captured, dngHighlightRecovery: false } },
+        { id: 'c', path: '/photos/c.X3F', settings: { ...captured, dngHighlightRecovery: false } }
+      ]
+      expect(invoke).toHaveBeenCalledWith('queue:existingOutputs', {
+        files: expected,
+        settings: captured
+      })
+      expect(invoke).toHaveBeenCalledWith(
+        'convert:start',
+        expect.objectContaining({ files: expected })
+      )
+    }
+  )
+
+  it('allows selection changes while rendered previews are being prepared', async () => {
+    let finish!: (value: unknown) => void
+    invoke.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve
+      })
+    )
+    store.getState().openExport()
+    store.getState().setSelection(new Set(['a']), 'a')
+    store.getState().updateDraft({ rendering: 'rendered' })
+    expect(store.getState().isPreparing).toBe(true)
+    store.getState().setSelection(new Set(['a', 'b']), 'b')
+    store.getState().resolveDraftSettings(false)
+    expect(store.getState().selectedIds).toEqual(new Set(['b']))
+    finish({ url: 'x3f-edit://rendered', sourceRevision: 'a'.repeat(64) })
+    await waitFor(() => expect(store.getState().isPreparing).toBe(false))
+    expect(exportSettings(store.getState().draft!, 'a').rendering).toBe('rendered')
+    expect(exportSettings(store.getState().draft!, 'b').rendering).toBe('original')
+  })
+
+  it('discards a shortcut draft when an overwrite prompt is canceled from the editor', async () => {
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, hasPreviousConversion: true } })
+    useNavStore.setState({ screen: 'editor' })
+    invoke.mockImplementation(async (channel) => {
+      if (channel === 'editor:preview')
+        return { url: 'x3f-edit://c', sourceRevision: 'a'.repeat(64) }
+      if (channel === 'queue:existingOutputs') return [{ id: 'c', outputPath: '/photos/c.X3F.jpg' }]
+    })
+    await store.getState().convertPrevious(new Set(['c']), 'editor')
+    expect(store.getState().draft).not.toBeNull()
+    expect(store.getState().pendingReconversion).toHaveLength(1)
+    store.getState().cancelReconversion()
+    expect(store.getState().draft).toBeNull()
+    expect(useNavStore.getState().screen).toBe('editor')
+    store.getState().setSelection(new Set(['a']), 'a')
+    expect(store.getState().activeId).toBe('a')
+    store.getState().openExport(new Set(['a']))
+    expect(store.getState().draft!.files[0].id).toBe('a')
+  })
+
+  it('keeps browsing selection independent while a shortcut checks its fixed targets', async () => {
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, hasPreviousConversion: true } })
+    let finish!: (value: unknown) => void
+    invoke.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve
+      })
+    )
+    const conversion = store.getState().convertPrevious(new Set(['a']))
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith('queue:existingOutputs', expect.anything())
+    )
+    store.getState().setSelection(new Set(['c']), 'c')
+    expect(store.getState().activeId).toBe('c')
+    store.getState().selectAll()
+    expect(store.getState().selectedIds).toEqual(new Set(['a', 'b', 'c']))
+    finish([])
+    await conversion
+    expect(invoke).toHaveBeenCalledWith(
+      'convert:start',
+      expect.objectContaining({ files: [{ id: 'a', path: '/photos/a.X3F' }] })
+    )
+  })
+
   it('requires a ready selection and a previous commit for the shortcut', () => {
     store.setState({ selectedIds: new Set() })
     render(<Toolbar />)
@@ -187,10 +391,11 @@ describe('batch workflow', () => {
       expect(invoke).toHaveBeenLastCalledWith(
         'convert:start',
         expect.objectContaining({
-          files: [
-            { id: 'a', path: '/photos/a.X3F' },
-            { id: 'b', path: '/photos/b.X3F' }
-          ],
+          files: ['a', 'b'].map((id) => ({
+            id,
+            path: `/photos/${id}.X3F`,
+            ...(format === 'dng' ? { settings: { ...preset, dngHighlightRecovery: false } } : {})
+          })),
           settings: preset,
           replaceExisting: false,
           approvedOutputs: []

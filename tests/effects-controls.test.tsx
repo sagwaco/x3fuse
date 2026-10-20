@@ -35,7 +35,7 @@ function adjust(label: string, value: number): void {
   })
 }
 function resetByLabel(effect: 'grain' | 'halation'): void {
-  fireEvent.click(screen.getByText(t(`editor.${effect}`), { selector: '.control-label > span' }), {
+  fireEvent.click(screen.getByText(t(`editor.${effect}`), { selector: '.slider-label > span' }), {
     shiftKey: true
   })
 }
@@ -99,7 +99,7 @@ it.each(['grain', 'halation'] as const)(
     recipe.film!.halationParams!.halationAmount = 3
     render(<Effects initial={recipe} />)
     const key = effect === 'grain' ? 'grainParams' : 'halationParams'
-    const label = screen.getByText(t(`editor.${effect}`), { selector: '.control-label > span' })
+    const label = screen.getByText(t(`editor.${effect}`), { selector: '.slider-label > span' })
     fireEvent.click(label)
     expect(change).not.toHaveBeenCalled()
     resetByLabel(effect)
@@ -117,7 +117,7 @@ it('puts each help button right after its label text, before the switch', () => 
     const view = render(<Effects initial={recipe} />)
     for (const effect of ['grain', 'halation'] as const) {
       const label = screen.getByText(t(`editor.${effect}`), {
-        selector: '.control-label > span'
+        selector: '.slider-label > span'
       }).parentElement!
       const help = label.nextElementSibling as HTMLElement
       expect(help.tagName).toBe('BUTTON')

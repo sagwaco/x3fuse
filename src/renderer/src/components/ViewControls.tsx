@@ -13,7 +13,13 @@ const MODES: { mode: QueueViewMode; icon: typeof List; labelKey: string; key?: s
 ]
 
 /** Queue-view buttons, shown in the toolbar. */
-export function ViewControls({ disabled = false }: { disabled?: boolean }): React.JSX.Element {
+export function ViewControls({
+  disabled = false,
+  exportView = false
+}: {
+  disabled?: boolean
+  exportView?: boolean
+}): React.JSX.Element {
   const viewMode = useSettingsStore((s) => s.settings.queueViewMode)
   const update = useSettingsStore((s) => s.update)
 
@@ -22,15 +28,17 @@ export function ViewControls({ disabled = false }: { disabled?: boolean }): Reac
       display="icon"
       aria-label={t('view.mode')}
       disabled={disabled}
-      value={viewMode}
+      value={exportView && viewMode === 'survey' ? 'grid' : viewMode}
       onValueChange={(mode) => void update({ queueViewMode: mode })}
-      items={MODES.map(({ mode, icon, labelKey, key }) => ({
-        value: mode,
-        icon,
-        label: t(labelKey),
-        title: key ? withShortcut(t(labelKey), key) : t(labelKey),
-        keyshortcuts: key
-      }))}
+      items={MODES.filter(({ mode }) => !exportView || mode !== 'survey').map(
+        ({ mode, icon, labelKey, key }) => ({
+          value: mode,
+          icon,
+          label: t(labelKey),
+          title: key ? withShortcut(t(labelKey), key) : t(labelKey),
+          keyshortcuts: key
+        })
+      )}
     />
   )
 }

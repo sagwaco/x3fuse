@@ -15,6 +15,7 @@ export interface ConvertFile {
   id: string
   /** Absolute path to the source .X3F file. */
   path: string
+  settings?: BatchConversionSettings
   recipe?: EditRecipe
   sourceRevision?: string
   revision?: number

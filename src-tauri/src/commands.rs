@@ -173,7 +173,7 @@ pub async fn convert_start(
     app: AppHandle,
     window: WebviewWindow,
     state: State<'_, Arc<AppState>>,
-    payload: StartRequest,
+    mut payload: StartRequest,
 ) -> Result<(), String> {
     main_window(&window)?;
     if payload.batch_id.is_empty() || payload.batch_id.len() > 128 {
@@ -194,6 +194,7 @@ pub async fn convert_start(
     state.editor.cancel_preview();
     let state = state.inner().clone();
     let result = async {
+        payload.settings.concurrency = state.preferences.get().batch.concurrency;
         let validation = payload.clone();
         let conflicts = tauri::async_runtime::spawn_blocking(move || {
             conversion::validate_batch(&validation.files, &validation.settings)
@@ -204,9 +205,11 @@ pub async fn convert_start(
         if state.cancel.load(Ordering::SeqCst) {
             return Err("Export cancelled".into());
         }
-        let mut settings = serde_json::to_value(&payload.settings).map_err(|e| e.to_string())?;
-        settings["hasPreviousConversion"] = true.into();
-        write_settings(state.clone(), settings).await?;
+        let settings = batch_settings_patch(&payload.settings)?;
+        payload.settings.concurrency = write_settings(state.clone(), settings)
+            .await?
+            .batch
+            .concurrency;
         app.emit_to(
             "main",
             "batch:started",
@@ -220,6 +223,16 @@ pub async fn convert_start(
     state.editor.resume_previews();
     crate::finish_shutdown(&app, &state);
     result
+}
+
+fn batch_settings_patch(settings: &BatchSettings) -> Result<Value, String> {
+    let mut patch = serde_json::to_value(settings).map_err(|e| e.to_string())?;
+    let fields = patch
+        .as_object_mut()
+        .ok_or("Expected a batch settings object")?;
+    fields.remove("concurrency");
+    patch["hasPreviousConversion"] = true.into();
+    Ok(patch)
 }
 
 #[tauri::command]
@@ -815,4 +828,29 @@ pub async fn editor_finish_close(
         window.close().map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn batch_preferences_keep_current_global_concurrency() {
+        let directory = tempfile::tempdir().unwrap();
+        let preferences = crate::storage::Preferences::load(directory.path().join("settings.json"));
+        let captured = BatchSettings {
+            output_format: OutputFormat::Tiff,
+            concurrency: 8,
+            ..Default::default()
+        };
+        let patch = batch_settings_patch(&captured).unwrap();
+        assert!(patch.get("concurrency").is_none());
+        for concurrency in [0, 2, 5] {
+            preferences.set(json!({"concurrency":concurrency})).unwrap();
+            let current = preferences.set(patch.clone()).unwrap();
+            assert_eq!(current.batch.concurrency, concurrency);
+            assert_eq!(current.batch.output_format, OutputFormat::Tiff);
+            assert!(current.has_previous_conversion);
+        }
+    }
 }

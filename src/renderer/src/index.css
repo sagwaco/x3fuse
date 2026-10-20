@@ -7,6 +7,35 @@
   .control-label {
     @apply font-mono text-[11px] uppercase leading-tight tracking-[0.12em] text-tone-300;
   }
+
+  .export-settings .control-label:not(button, summary, h1, h2, h3, h4, h5, h6) {
+    @apply font-sans text-[13px] normal-case tracking-normal;
+  }
+}
+
+.export-action {
+  color: #241c00;
+  background-color: #facc15;
+}
+
+button.export-action:hover:not(:disabled) {
+  color: #241c00;
+  background-color: #fde047;
+}
+
+@supports (-apple-visual-effect: -apple-system-glass-material) {
+  html[data-platform='darwin'] .export-action {
+    -apple-visual-effect: -apple-system-glass-material;
+    background-color: rgb(250 204 21 / 0.75);
+    box-shadow: inset 0 0 0 1px rgb(255 234 120 / 0.6);
+  }
+}
+
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  html[data-platform='darwin'] .export-action {
+    -apple-visual-effect: none;
+    background-color: #facc15;
+  }
 }
 
 /* Any element with data-theme='dark' keeps the dark tokens, such as the

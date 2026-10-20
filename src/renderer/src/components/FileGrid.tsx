@@ -1,7 +1,6 @@
 import { memo, useEffect, useRef } from 'react'
 import type { X3FFileDTO } from '@shared/types'
 import { useQueueStore, type ExportDraft } from '../stores/queueStore'
-import { outputFileName } from '../lib/outputName'
 import { useFileDrop } from '../hooks/useFileDrop'
 import { useQueueSelection, type QueueSelection } from '../hooks/useQueueSelection'
 import { useScrollToActive } from '../hooks/useScrollToActive'
@@ -77,7 +76,6 @@ export function FileGrid({ draft }: { draft?: ExportDraft }): React.JSX.Element 
                   <GridCell
                     key={file.id}
                     file={file}
-                    outputName={draft ? outputFileName(file, draft.settings) : undefined}
                     index={start + c}
                     selected={selectedIds.has(file.id)}
                     active={activeId === file.id}
@@ -100,14 +98,12 @@ export function FileGrid({ draft }: { draft?: ExportDraft }): React.JSX.Element 
 // Keep unchanged cells stable while browsing.
 const GridCell = memo(function GridCell({
   file,
-  outputName,
   index,
   selected,
   active,
   sel
 }: {
   file: X3FFileDTO
-  outputName?: string
   index: number
   selected: boolean
   active: boolean
@@ -146,11 +142,6 @@ const GridCell = memo(function GridCell({
       >
         {file.fileName}
       </span>
-      {outputName && (
-        <span className="truncate px-1 text-center text-xs text-tone-200" title={outputName}>
-          → {outputName}
-        </span>
-      )}
     </div>
   )
 })

@@ -1,6 +1,7 @@
 import { Tooltip } from './tooltip'
 import { cn } from '../../lib/cn'
-import { Info } from 'lucide-react'
+import { t } from '../../lib/strings'
+import { Info, TriangleAlert } from 'lucide-react'
 import { Switch } from './switch'
 
 /**
@@ -28,16 +29,19 @@ export function Section({
 export function Row({
   label,
   children,
-  help
+  help,
+  warning
 }: {
   label: string
   children: React.ReactNode
   help?: string
+  warning?: string
 }): React.JSX.Element {
   return (
     <div className="flex items-center justify-between gap-3">
-      <span className="control-label">{label}</span>
+      <span className="font-sans text-[13px] text-tone-300">{label}</span>
       <div className="flex shrink-0 items-center gap-2">
+        {warning && <HelpTooltip label={label} text={warning} warning />}
         {help && <HelpTooltip label={label} text={help} />}
         {children}
       </div>
@@ -50,16 +54,18 @@ export function ToggleRow({
   checked,
   onChange,
   disabled,
-  help
+  help,
+  warning
 }: {
   label: string
   checked: boolean
   onChange: (checked: boolean) => void
   disabled?: boolean
   help?: string
+  warning?: string
 }): React.JSX.Element {
   return (
-    <Row label={label} help={help}>
+    <Row label={label} help={help} warning={warning}>
       <Switch aria-label={label} checked={checked} onCheckedChange={onChange} disabled={disabled} />
     </Row>
   )
@@ -72,28 +78,34 @@ export function Divider(): React.JSX.Element {
 export function HelpTooltip({
   label,
   text,
-  className
+  className,
+  warning = false
 }: {
   label: string
   text: string
   className?: string
+  warning?: boolean
 }): React.JSX.Element {
+  const Icon = warning ? TriangleAlert : Info
   return (
     <Tooltip
       text={text}
-      side="left"
+      side="top"
       className="export-help-tooltip max-w-[min(18rem,var(--radix-tooltip-content-available-width))]"
     >
       <button
         type="button"
-        aria-label={label}
+        aria-label={warning ? t('settings.warning_label', { setting: label }) : label}
         // The icon only shows help, so it keeps the default pointer.
         className={cn(
-          'cursor-default rounded text-tone-400 hover:text-tone-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/50',
+          'cursor-default rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/50',
+          warning
+            ? 'text-yellow-400 [[data-theme=light]_&]:text-yellow-700 [[data-theme=gray]_&]:text-yellow-950'
+            : 'text-tone-400 hover:text-tone-100',
           className
         )}
       >
-        <Info className="h-3.5 w-3.5" aria-hidden="true" />
+        <Icon className="h-3.5 w-3.5" aria-hidden="true" />
       </button>
     </Tooltip>
   )

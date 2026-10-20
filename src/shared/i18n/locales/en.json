@@ -7,7 +7,7 @@
   "button.ok": "OK",
   "button.cancel": "Cancel",
   "button.done": "Done",
-  "button.browse": "Browse...",
+  "button.browse": "Browse",
   "button.overwrite": "Overwrite",
   "toolbar.stop_conversion": "Stop export",
   "toolbar.convert_all": "Export all",
@@ -430,5 +430,12 @@
   "editor.halationAmountHelp": "Scales light reflected from the film base. 1 uses the stock’s physical strength; 0 removes halation while keeping scattering.",
   "editor.halationSpatialScaleHelp": "Scales the spread of reflected light. 1 uses the stock’s physical size. This does not change the reflection strength.",
   "editor.grainChannelOffsets": "Channel offsets",
-  "editor.grainChannelOffsetHelp": "Add or subtract RMS granularity from the main value for this color channel. Zero uses the main value. The channel stays between 0 and 100."
+  "editor.grainChannelOffsetHelp": "Add or subtract RMS granularity from the main value for this color channel. Zero uses the main value. The channel stays between 0 and 100.",
+  "export.format_column": "Export format",
+  "export.mixed_title": "Different export settings",
+  "export.mixed_description": "The selected images have different export settings. Overwrite them with the settings for {{name}}, or cancel to keep only that image selected.",
+  "settings.section.advanced": "Advanced",
+  "export.partial_highlight_recovery": "Highlight recovery applies only to the selected Merrill images.",
+  "export.partial_sfd_source": "This setting applies only to the selected X3I images.",
+  "settings.warning_label": "Warning: {{setting}}"
 }

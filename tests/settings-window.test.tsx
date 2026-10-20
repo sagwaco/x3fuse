@@ -72,7 +72,7 @@ it.each([
   await waitFor(() => expect(update).toHaveBeenCalledWith({ [key]: 'gray' }))
 })
 
-const tabNames = ['appearance', 'cache', 'debug', 'updates', 'about'].map((key) =>
+const tabNames = ['appearance', 'cache', 'advanced', 'updates', 'about'].map((key) =>
   t(`settings.section.${key}`)
 )
 const title = (): string | null => screen.getByRole('heading', { level: 1 }).textContent
@@ -114,6 +114,46 @@ it('moves the selection with the arrow keys', () => {
   fireEvent.keyDown(screen.getByRole('tab', { selected: true }), { key: 'ArrowLeft' })
   expect(selected()).toBe(t('settings.section.about'))
   expect(title()).toBe(t('settings.section.about'))
+})
+
+it('edits simultaneous exports in Advanced and retains the debug controls', async () => {
+  fireEvent.click(screen.getByRole('tab', { name: t('settings.section.advanced') }))
+  const concurrency = screen.getByRole('button', {
+    name: t('settings.concurrency'),
+    exact: true,
+    expanded: false
+  })
+  expect(screen.getByRole('switch', { name: t('settings.debug_logging') })).toBeTruthy()
+  invoke.mockResolvedValueOnce('2')
+  fireEvent.click(concurrency)
+  await waitFor(() => expect(update).toHaveBeenCalledWith({ concurrency: 2 }))
+  expect(invoke).toHaveBeenCalledWith(
+    'menu:popup',
+    expect.objectContaining({
+      items: expect.arrayContaining([
+        expect.objectContaining({ value: '0', checked: true }),
+        expect.objectContaining({ value: '8' })
+      ])
+    })
+  )
+  invoke.mockResolvedValueOnce(null)
+  fireEvent.click(concurrency)
+  await waitFor(() => expect(concurrency.getAttribute('aria-expanded')).toBe('false'))
+  expect(update).toHaveBeenCalledTimes(1)
+})
+
+it('opens the Advanced tab when the previous Debug tab was stored', async () => {
+  cleanup()
+  localStorage.setItem('x3fuse.settingsTab', 'debug')
+  await act(async () => {
+    render(<SettingsWindow />)
+  })
+  expect(screen.getByRole('tab', { selected: true }).textContent).toBe(
+    t('settings.section.advanced')
+  )
+  expect(
+    screen.getByRole('button', { name: t('settings.concurrency'), exact: true, expanded: false })
+  ).toBeTruthy()
 })
 
 describe('Cache tab', () => {

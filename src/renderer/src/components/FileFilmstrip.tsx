@@ -4,7 +4,6 @@ import { useScrollToActive } from '../hooks/useScrollToActive'
 import type { X3FFileDTO } from '@shared/types'
 import { useQueueStore, type ExportDraft } from '../stores/queueStore'
 import { useEditorStore } from '../stores/editorStore'
-import { outputFileName } from '../lib/outputName'
 import { useFileDrop } from '../hooks/useFileDrop'
 import { useQueueSelection, type QueueSelection } from '../hooks/useQueueSelection'
 import { useShownFiles } from '../hooks/useCulling'
@@ -75,12 +74,6 @@ export function FileFilmstrip({
               <ZoomablePreview key={active.id} file={active} digitZoom={!!draft} />
             ) : null)}
         </div>
-
-        {draft && active && (
-          <p className="truncate px-3 py-1 text-center text-xs text-tone-300">
-            {active.fileName} → {outputFileName(active, draft.settings)}
-          </p>
-        )}
 
         <FilmstripStrip
           files={sorted}

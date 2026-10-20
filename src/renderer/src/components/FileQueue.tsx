@@ -2,8 +2,7 @@ import { memo, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { ChevronDown, ChevronUp } from 'lucide-react'
 import type { ListColumnWidths, SortField, X3FFileDTO } from '@shared/types'
-import { useQueueStore, type ExportDraft } from '../stores/queueStore'
-import { outputFileName } from '../lib/outputName'
+import { exportSettings, useQueueStore, type ExportDraft } from '../stores/queueStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useFileDrop } from '../hooks/useFileDrop'
 import { useQueueSelection, type QueueSelection } from '../hooks/useQueueSelection'
@@ -48,10 +47,13 @@ export function FileQueue({ draft }: { draft?: ExportDraft }): React.JSX.Element
       requested.name ||
       Math.max(
         COLUMNS[0].min,
-        Math.min(COLUMNS[0].max, Math.floor(available - requested.date - requested.size - 40))
+        Math.min(
+          COLUMNS[0].max,
+          Math.floor(available - requested.date - requested.size - 40 - (draft ? 140 : 0))
+        )
       )
   }
-  const tableWidth = widths.name + widths.date + widths.size + 40
+  const tableWidth = widths.name + widths.date + widths.size + 40 + (draft ? 140 : 0)
   const { isDragOver, dropHandlers } = useFileDrop()
   const sel = useQueueSelection(sorted, { mode: 'vertical' })
   const virtualizer = useVirtualizer({
@@ -92,7 +94,6 @@ export function FileQueue({ draft }: { draft?: ExportDraft }): React.JSX.Element
         if (file.edit && file.edit.revision > 0) content += 20
         if ((file.flag ?? 'unflagged') !== 'unflagged' || file.rating)
           content += 24 + measure('★'.repeat(file.rating ?? 0), 11)
-        if (draft) content += 8 + measure(`→ ${outputFileName(file, draft.settings)}`, 12)
       } else if (column.key === 'date') {
         content = measure(
           file.capturedDate ? formatDateWithOrdinal(file.capturedDate) : t('placeholder.dash')
@@ -124,7 +125,7 @@ export function FileQueue({ draft }: { draft?: ExportDraft }): React.JSX.Element
             style={
               {
                 width: Math.max(available, tableWidth),
-                '--queue-columns': `${widths.name}px ${widths.date}px ${widths.size}px`
+                '--queue-columns': `${widths.name}px ${widths.date}px ${widths.size}px${draft ? ' 132px' : ''}`
               } as CSSProperties
             }
           >
@@ -166,6 +167,7 @@ export function FileQueue({ draft }: { draft?: ExportDraft }): React.JSX.Element
                   />
                 </div>
               ))}
+              {draft && <span className="truncate pl-2">{t('export.format_column')}</span>}
             </div>
             <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
               {virtualizer.getVirtualItems().map((vi) => {
@@ -174,7 +176,7 @@ export function FileQueue({ draft }: { draft?: ExportDraft }): React.JSX.Element
                   <Row
                     key={file.id}
                     file={file}
-                    outputName={draft ? outputFileName(file, draft.settings) : undefined}
+                    exportFormat={draft ? exportSettings(draft, file.id).outputFormat : undefined}
                     index={vi.index}
                     selected={selectedIds.has(file.id)}
                     active={activeId === file.id}
@@ -198,7 +200,7 @@ export function FileQueue({ draft }: { draft?: ExportDraft }): React.JSX.Element
 // Geometry is inherited through CSS so dragging does not rerender every row.
 const Row = memo(function Row({
   file,
-  outputName,
+  exportFormat,
   index,
   selected,
   active,
@@ -207,7 +209,7 @@ const Row = memo(function Row({
   sel
 }: {
   file: X3FFileDTO
-  outputName?: string
+  exportFormat?: string
   index: number
   selected: boolean
   active: boolean
@@ -235,17 +237,11 @@ const Row = memo(function Row({
         active && 'ring-1 ring-inset ring-accent/40'
       )}
     >
-      <div
-        className="flex min-w-0 items-center gap-2"
-        title={outputName ? `${file.fileName} → ${outputName}` : file.fileName}
-      >
+      <div className="flex min-w-0 items-center gap-2" title={file.fileName}>
         <div aria-hidden="true" className="shrink-0">
           <Thumbnail file={file} maxEdge={84} className="h-6 w-7 rounded-sm" />
         </div>
-        <span className="truncate">
-          {file.fileName}
-          {outputName && <span className="ml-2 text-xs text-tone-400">→ {outputName}</span>}
-        </span>
+        <span className="truncate">{file.fileName}</span>
         <CullBadge file={file} />
         <EditedBadge edit={file.edit} />
         <StackBadge file={file} />
@@ -268,6 +264,11 @@ const Row = memo(function Row({
           t('placeholder.dash')
         )}
       </span>
+      {exportFormat && (
+        <span className="truncate pl-2 text-tone-400">
+          {exportFormat === 'embeddedJpg' ? 'Embedded JPG' : exportFormat.toUpperCase()}
+        </span>
+      )}
     </div>
   )
 })

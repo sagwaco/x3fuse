@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Bug, HardDrive, Info, Palette, RefreshCw } from 'lucide-react'
+import { HardDrive, Info, Palette, RefreshCw, Settings2 } from 'lucide-react'
+import { MAX_CONCURRENCY } from '@shared/concurrency'
 import type { LogSizes } from '@shared/ipc'
 import { ipc } from '../lib/ipc'
 import { appInfo } from '../lib/appInfo'
@@ -16,7 +17,7 @@ import { Row, Section, ToggleRow } from './ui/settingsLayout'
 const TABS = [
   ['appearance', Palette],
   ['cache', HardDrive],
-  ['debug', Bug],
+  ['advanced', Settings2],
   ['updates', RefreshCw],
   ['about', Info]
 ] as const
@@ -25,7 +26,8 @@ const TAB_KEY = 'x3fuse.settingsTab'
 
 function savedTab(): Tab {
   try {
-    const saved = localStorage.getItem(TAB_KEY)
+    const previous = localStorage.getItem(TAB_KEY)
+    const saved = previous === 'debug' ? 'advanced' : previous
     return TABS.find(([value]) => value === saved)?.[0] ?? 'appearance'
   } catch {
     return 'appearance'
@@ -123,35 +125,56 @@ export function SettingsWindow(): React.JSX.Element {
 
         {tab === 'cache' && <CachePage />}
 
-        {tab === 'debug' && (
-          <Section title={t('settings.section.debug')}>
-            <ToggleRow
-              label={t('settings.debug_logging')}
-              checked={settings.debugLoggingEnabled}
-              onChange={(v) => void update({ debugLoggingEnabled: v })}
-            />
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-sm text-tone-300">{t('settings.debug_logs')}</span>
-              <div className="flex items-center gap-2">
-                <Button variant="bordered" size="sm" onClick={() => void ipc.invoke('logs:open')}>
-                  {t('settings.open_logs_folder')}
-                </Button>
-                <Button
-                  variant="bordered"
-                  size="sm"
-                  onClick={() => void ipc.invoke('logs:clear').then(refreshLogSizes)}
-                >
-                  {t('settings.clear_logs')}
-                </Button>
+        {tab === 'advanced' && (
+          <>
+            <Section title={t('settings.section.conversion')}>
+              <Row label={t('settings.concurrency')} help={t('settings.concurrency.help')}>
+                <Select
+                  aria-label={t('settings.concurrency')}
+                  value={String(settings.concurrency)}
+                  options={[
+                    {
+                      value: '0',
+                      label: `${t('settings.concurrency.auto')} (${appInfo.autoConcurrency})`
+                    },
+                    ...Array.from({ length: MAX_CONCURRENCY }, (_, i) => ({
+                      value: String(i + 1),
+                      label: String(i + 1)
+                    }))
+                  ]}
+                  onValueChange={(value) => void update({ concurrency: Number(value) })}
+                />
+              </Row>
+            </Section>
+            <Section title={t('settings.section.debug')}>
+              <ToggleRow
+                label={t('settings.debug_logging')}
+                checked={settings.debugLoggingEnabled}
+                onChange={(v) => void update({ debugLoggingEnabled: v })}
+              />
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-sm text-tone-300">{t('settings.debug_logs')}</span>
+                <div className="flex items-center gap-2">
+                  <Button variant="bordered" size="sm" onClick={() => void ipc.invoke('logs:open')}>
+                    {t('settings.open_logs_folder')}
+                  </Button>
+                  <Button
+                    variant="bordered"
+                    size="sm"
+                    onClick={() => void ipc.invoke('logs:clear').then(refreshLogSizes)}
+                  >
+                    {t('settings.clear_logs')}
+                  </Button>
+                </div>
               </div>
-            </div>
 
-            <div className="flex flex-col gap-1 text-xs text-tone-500">
-              <LogSizeRow label={t('settings.log.conversion')} bytes={logSizes.conversion} />
-              <LogSizeRow label={t('settings.log.error')} bytes={logSizes.error} />
-              <LogSizeRow label={t('settings.log.debug')} bytes={logSizes.debug} />
-            </div>
-          </Section>
+              <div className="flex flex-col gap-1 text-xs text-tone-500">
+                <LogSizeRow label={t('settings.log.conversion')} bytes={logSizes.conversion} />
+                <LogSizeRow label={t('settings.log.error')} bytes={logSizes.error} />
+                <LogSizeRow label={t('settings.log.debug')} bytes={logSizes.debug} />
+              </div>
+            </Section>
+          </>
         )}
 
         {tab === 'updates' && (

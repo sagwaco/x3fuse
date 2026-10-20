@@ -31,7 +31,7 @@ class TestPointerEvent extends MouseEvent {
 const wheels = (): EditRecipe['wheels'] => change.mock.lastCall?.[0].wheels
 /** The name above a wheel. Shift-click on it resets the wheel. */
 const label = (name: string): HTMLElement =>
-  screen.getByText(t(`editor.${name}`), { selector: '.control-label > span' })
+  screen.getByText(t(`editor.${name}`), { selector: '.slider-label > span' })
 /** The wheel's disc, laid out as a 100 px square at the origin. */
 function disc(name: string): HTMLElement {
   const element = screen.getByRole('application', { name: t(`editor.${name}`) })

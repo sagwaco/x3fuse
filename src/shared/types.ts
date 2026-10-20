@@ -212,7 +212,14 @@ export const shouldShowCompressionOption = (f: OutputFormat): boolean => f === '
 export const shouldShowColorProfileOption = (f: OutputFormat): boolean =>
   f === 'embeddedJpg' || f === 'tiff'
 
-export const shouldShowDngHighlightRecoveryOption = (f: OutputFormat): boolean => f === 'dng'
+export const shouldShowDngHighlightRecoveryOption = (
+  f: OutputFormat,
+  cameraModels: readonly (string | undefined)[]
+): boolean =>
+  f === 'dng' && cameraModels.some((model) => /\b(?:merrill|sd1|dp[123]m)\b/i.test(model ?? ''))
+
+export const cameraModel = (file: Pick<X3FFileDTO, 'cameraModel' | 'exif'>): string | undefined =>
+  file.cameraModel ?? file.exif?.find((row) => row.label === 'Camera')?.value
 
 export const shouldShowCineonOption = (f: OutputFormat): boolean => f === 'tiff'
 

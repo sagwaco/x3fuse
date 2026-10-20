@@ -7,7 +7,7 @@
   "button.ok": "Aceptar",
   "button.cancel": "Cancelar",
   "button.done": "Listo",
-  "button.browse": "Examinar...",
+  "button.browse": "Examinar",
   "button.overwrite": "Sobrescribir",
   "toolbar.stop_conversion": "Detener exportación",
   "toolbar.convert_all": "Exportar todo",
@@ -430,5 +430,12 @@
   "editor.halationAmountHelp": "Ajusta la luz reflejada por la base de la película. 1 usa la intensidad física de la película; 0 elimina el halo y mantiene la dispersión.",
   "editor.halationSpatialScaleHelp": "Ajusta la extensión de la luz reflejada. 1 usa el tamaño físico de la película. No cambia la intensidad del reflejo.",
   "editor.grainChannelOffsets": "Diferencias entre canales",
-  "editor.grainChannelOffsetHelp": "Añade o resta granularidad RMS al valor principal de este canal de color. Cero usa el valor principal. El canal se mantiene entre 0 y 100."
+  "editor.grainChannelOffsetHelp": "Añade o resta granularidad RMS al valor principal de este canal de color. Cero usa el valor principal. El canal se mantiene entre 0 y 100.",
+  "export.format_column": "Formato de exportación",
+  "export.mixed_title": "Ajustes de exportación diferentes",
+  "export.mixed_description": "Las imágenes seleccionadas tienen ajustes de exportación diferentes. Sobrescríbelos con los ajustes de {{name}}, o cancela para mantener seleccionada solo esa imagen.",
+  "settings.section.advanced": "Avanzado",
+  "export.partial_highlight_recovery": "La recuperación de altas luces solo se aplica a las imágenes Merrill seleccionadas.",
+  "export.partial_sfd_source": "Este ajuste solo se aplica a las imágenes X3I seleccionadas.",
+  "settings.warning_label": "Advertencia: {{setting}}"
 }

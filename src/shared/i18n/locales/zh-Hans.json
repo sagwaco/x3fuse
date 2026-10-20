@@ -7,7 +7,7 @@
   "button.ok": "确定",
   "button.cancel": "取消",
   "button.done": "完成",
-  "button.browse": "浏览...",
+  "button.browse": "浏览",
   "button.overwrite": "覆盖",
   "toolbar.stop_conversion": "停止导出",
   "toolbar.convert_all": "全部导出",
@@ -430,5 +430,12 @@
   "editor.halationAmountHelp": "调节片基反射光量的倍率。1使用胶片本身的强度，0消除光晕并保留散射。",
   "editor.halationSpatialScaleHelp": "调节反射光扩散范围的倍率。1使用胶片本身的大小，不改变反射强度。",
   "editor.grainChannelOffsets": "通道偏移",
-  "editor.grainChannelOffsetHelp": "在主数值上增加或减少此颜色通道的RMS颗粒度。0表示使用主数值。通道数值保持在0到100之间。"
+  "editor.grainChannelOffsetHelp": "在主数值上增加或减少此颜色通道的RMS颗粒度。0表示使用主数值。通道数值保持在0到100之间。",
+  "export.format_column": "导出格式",
+  "export.mixed_title": "导出设置不同",
+  "export.mixed_description": "所选图像的导出设置不同。使用 {{name}} 的设置覆盖，或取消以仅选择该图像。",
+  "settings.section.advanced": "高级",
+  "export.partial_highlight_recovery": "高光恢复仅适用于所选的 Merrill 图像。",
+  "export.partial_sfd_source": "此设置仅适用于所选的 X3I 图像。",
+  "settings.warning_label": "警告：{{setting}}"
 }
