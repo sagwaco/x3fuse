@@ -80,21 +80,35 @@ function commandsOf(event: KeyboardEvent): MenuCommand[] {
 }
 
 /**
+ * True for the keys that a text field uses itself: keys without ⌘ (Ctrl on Windows and
+ * Linux), ⌘A, ⌘C, ⌘V, ⌘X, ⌘Z, ⇧⌘Z, and the arrow keys with any modifier.
+ */
+function fieldKey(event: KeyboardEvent): boolean {
+  const mod = appInfo.platform === 'darwin' ? event.metaKey : event.ctrlKey
+  // AltGr types characters on Windows, and it also sets Ctrl and Alt.
+  if (!mod || event.key.startsWith('Arrow') || event.getModifierState('AltGraph')) return true
+  const key = event.key.toLowerCase()
+  return !event.altKey && (event.shiftKey ? key === 'z' : /^[acvxz]$/.test(key))
+}
+
+/**
  * Runs the commands of `shortcuts.json` from the keyboard. A key prevents its default
  * action only when its command ran. On macOS a key that the page does not use then goes
- * to the menu bar. Text fields, open dialogs and menus, and an IME keep their keys.
- * Focused controls use their keys first, such as the arrow keys of a list or `+` on a
- * preview. Only ⌘← and ⌘→ go to the photos before the focused control.
+ * to the menu bar. Open dialogs and menus and an IME keep their keys. Text fields keep
+ * the keys that they use; other shortcuts run and never reach the menu bar, as in a Mac
+ * app. Focused controls use their keys first, such as the arrow keys of a list or `+` on
+ * a preview. Only ⌘← and ⌘→ go to the photos before the focused control.
  */
 export function useShortcuts(): void {
   useEffect(() => {
     const listener =
       (early: boolean) =>
       (event: KeyboardEvent): void => {
+        const text = isTextEditing(event.target)
         if (
           event.defaultPrevented ||
           event.isComposing ||
-          isTextEditing(event.target) ||
+          (text && fieldKey(event)) ||
           document.querySelector(POPUP_OPEN)
         )
           return
@@ -103,7 +117,8 @@ export function useShortcuts(): void {
         if (event.key === 'Enter' && event.target !== document.body) return
         const names = commandsOf(event).filter((name) => EARLY.has(name) === early)
         if (!names.length) return
-        // A held key must not reach a menu item either.
+        // A held key must not reach a menu item either. In a text field no shortcut does.
+        if (text) event.preventDefault()
         const run = event.repeat ? names.filter((name) => REPEAT.has(name)) : names
         if (!run.length) return event.preventDefault()
         for (const name of run) {

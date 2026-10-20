@@ -244,6 +244,49 @@ describe('useShortcuts', () => {
     expect(update).toHaveBeenCalledWith({ queueViewMode: 'grid' })
   })
 
+  it('leaves the editing keys to a text field and runs other shortcuts from it', () => {
+    const copy = vi.fn()
+    const resetEdits = vi.fn(() => true)
+    editor.setState({ copy })
+    const off = registerCommands({ resetEdits })
+    const input = document.body.appendChild(document.createElement('input'))
+    // The field uses these keys: no command runs, and the default action stays.
+    for (const init of [
+      { key: 'g' },
+      { key: 'x' },
+      { key: '5', code: 'Digit5' },
+      { key: 'a', ctrlKey: true },
+      { key: 'c', ctrlKey: true },
+      { key: 'v', ctrlKey: true },
+      { key: 'x', ctrlKey: true },
+      { key: 'z', ctrlKey: true },
+      { key: 'Z', ctrlKey: true, shiftKey: true },
+      { key: 'ArrowRight', ctrlKey: true },
+      { key: 'ArrowUp', ctrlKey: true, shiftKey: true },
+      { key: 'ArrowLeft', altKey: true },
+      // AltGr+0 types } on a German layout.
+      { key: '}', code: 'Digit0', ctrlKey: true, altKey: true, modifierAltGraph: true }
+    ])
+      expect(fireEvent.keyDown(input, init)).toBe(true)
+    expect(copy).not.toHaveBeenCalled()
+    expect(update).not.toHaveBeenCalled()
+    expect(queue.getState()).toMatchObject({ selectedIds: new Set(['a']), activeId: 'a' })
+    expect(queue.getState().files[0].flag).toBeUndefined()
+    // Other shortcuts run, and the key does not reach the menu bar, also when nothing ran.
+    expect(fireEvent.keyDown(input, { key: 'R', ctrlKey: true, shiftKey: true })).toBe(false)
+    expect(fireEvent.keyDown(input, { key: 'C', ctrlKey: true, shiftKey: true })).toBe(false)
+    expect(fireEvent.keyDown(input, { key: '=', ctrlKey: true })).toBe(false)
+    expect(resetEdits).toHaveBeenCalledOnce()
+    expect(copy).toHaveBeenCalledOnce()
+    appInfo.platform = 'darwin'
+    expect(fireEvent.keyDown(input, { key: 'a', metaKey: true })).toBe(true)
+    expect(fireEvent.keyDown(input, { key: 'ArrowLeft', metaKey: true })).toBe(true)
+    expect(fireEvent.keyDown(input, { key: 'r', metaKey: true, shiftKey: true })).toBe(false)
+    expect(resetEdits).toHaveBeenCalledTimes(2)
+    off()
+    input.remove()
+  })
+
   it('stops held keys from running, except zoom and photo steps', () => {
     const zoomIn = vi.fn(() => true)
     const off = registerCommands({ zoomIn })
@@ -288,6 +331,9 @@ describe('useShortcuts', () => {
     )
     fireEvent.keyDown(screen.getByRole('button', { name: 'vertical' }), { key: 'Enter' })
     fireEvent.keyDown(screen.getByTestId('horizontal'), { key: 'Enter' })
+    // Return that confirms the text of an input method stays with it.
+    fireEvent.keyDown(screen.getByTestId('vertical'), { key: 'Enter', isComposing: true })
+    fireEvent.keyDown(screen.getByTestId('vertical'), { key: 'Enter', keyCode: 229 })
     expect(open).not.toHaveBeenCalled()
     fireEvent.keyDown(screen.getByTestId('vertical'), { key: 'Enter' })
     fireEvent.keyDown(document.body, { key: 'Enter' })

@@ -121,7 +121,9 @@ export function useQueueSelection(ordered: X3FFileDTO[], nav?: ArrowNav): QueueS
   const handleKeyDown = useCallback(
     (e: KeyboardEvent | globalThis.KeyboardEvent): void => {
       // A child that used the key, such as the crop canvas nudging its frame, keeps it.
-      if (e.defaultPrevented) return
+      // An input method keeps the keys that compose text, such as Return to confirm it.
+      const native = 'nativeEvent' in e ? e.nativeEvent : e
+      if (e.defaultPrevented || native.isComposing || native.keyCode === 229) return
       const store = useQueueStore.getState()
       const mode = navRef.current?.mode
       // Return in the list or the grid opens the photo in the editor, as D does.
