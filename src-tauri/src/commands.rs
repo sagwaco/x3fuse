@@ -2,14 +2,14 @@ use crate::{conversion, metadata, model::*, AppState};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
 };
 use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
-use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use tauri_plugin_opener::OpenerExt;
 
 fn main_window(window: &WebviewWindow) -> Result<(), String> {
@@ -286,31 +286,54 @@ pub async fn dialog_pick_files(
     let state = state.inner().clone();
     let title = crate::menu::translate("dialog.select_x3f_files.title");
     tauri::async_runtime::spawn_blocking(move || {
-        let last = state.preferences.get().last_import_directory;
-        let mut dialog = app
-            .dialog()
-            .file()
-            .set_parent(&window)
-            .set_title(title)
-            .add_filter("X3F RAW", &["x3f", "X3F", "x3i", "X3I"]);
-        if let Some(last) = last {
-            dialog = dialog.set_directory(last);
-        }
-        let paths = dialog
-            .blocking_pick_files()
-            .unwrap_or_default()
-            .into_iter()
-            .map(|p| p.into_path().map_err(|e| e.to_string()))
-            .collect::<Result<Vec<_>, _>>()?;
-        if let Some(parent) = paths.first().and_then(|p| p.parent()) {
-            state
-                .preferences
-                .set(json!({"lastImportDirectory":parent}))?;
-        }
-        Ok(paths)
+        let pick = || {
+            let last = state.preferences.get().last_import_directory;
+            let mut dialog = app
+                .dialog()
+                .file()
+                .set_parent(&window)
+                .set_title(title)
+                .add_filter("X3F RAW", &["x3f", "X3F", "x3i", "X3I"]);
+            if let Some(last) = last {
+                dialog = dialog.set_directory(last);
+            }
+            let paths = dialog
+                .blocking_pick_files()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|p| p.into_path().map_err(|e| e.to_string()))
+                .collect::<Result<Vec<_>, _>>()?;
+            if let Some(parent) = paths.first().and_then(|p| p.parent()) {
+                state
+                    .preferences
+                    .set(json!({"lastImportDirectory":parent}))?;
+            }
+            Ok(paths)
+        };
+        reported(&app, &window, &state, pick())
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// Shows and logs the error of Add Photos or Add Folder, as a failed update check does.
+fn reported<T>(
+    app: &AppHandle,
+    window: &WebviewWindow,
+    state: &AppState,
+    result: Result<T, String>,
+) -> Result<T, String> {
+    if let Err(error) = &result {
+        state.logs.write("error", format!("Add photos: {error}"));
+        let message = format!("{}\n\n{error}", crate::menu::translate("dialog.add_failed"));
+        app.dialog()
+            .message(message)
+            .title("X3Fuse")
+            .kind(MessageDialogKind::Error)
+            .parent(window)
+            .blocking_show();
+    }
+    result
 }
 
 #[tauri::command]
@@ -323,40 +346,50 @@ pub async fn dialog_pick_folder(
     let state = state.inner().clone();
     let title = crate::menu::translate("dialog.select_folders.title");
     tauri::async_runtime::spawn_blocking(move || {
-        let last = state.preferences.get().last_import_directory;
-        let mut dialog = app.dialog().file().set_parent(&window).set_title(title);
-        if let Some(last) = last {
-            dialog = dialog.set_directory(last);
-        }
-        let folders = dialog
-            .blocking_pick_folders()
-            .unwrap_or_default()
-            .into_iter()
-            .map(|p| p.into_path().map_err(|e| e.to_string()))
-            .collect::<Result<Vec<_>, _>>()?;
-        if let Some(parent) = folders.first().and_then(|p| p.parent()) {
-            state
-                .preferences
-                .set(json!({"lastImportDirectory":parent}))?;
-        }
-        folder_sources(&folders)
+        let pick = || {
+            let last = state.preferences.get().last_import_directory;
+            let mut dialog = app.dialog().file().set_parent(&window).set_title(title);
+            if let Some(last) = last {
+                dialog = dialog.set_directory(last);
+            }
+            let folders = dialog
+                .blocking_pick_folders()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|p| p.into_path().map_err(|e| e.to_string()))
+                .collect::<Result<Vec<_>, _>>()?;
+            if let Some(folder) = folders.first() {
+                state
+                    .preferences
+                    .set(json!({"lastImportDirectory":folder}))?;
+            }
+            folder_sources(&folders)
+        };
+        reported(&app, &window, &state, pick())
     })
     .await
     .map_err(|e| e.to_string())?
 }
 
 /// The X3F and X3I files directly inside the folders, sorted by path. Hidden files,
-/// such as the "._" files that macOS writes on memory cards, are not photos.
+/// such as the "._" files that macOS writes on memory cards, are not photos. A folder
+/// or a photo that cannot be read gives an error, not an incomplete list.
 fn folder_sources(folders: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
     let mut paths = Vec::new();
     for folder in folders {
-        let entries =
-            std::fs::read_dir(folder).map_err(|e| format!("{}: {e}", folder.display()))?;
-        for path in entries.flatten().map(|entry| entry.path()) {
+        let error = |path: &Path, e: std::io::Error| format!("{}: {e}", path.display());
+        for entry in std::fs::read_dir(folder).map_err(|e| error(folder, e))? {
+            let path = entry.map_err(|e| error(folder, e))?.path();
             let hidden = path
                 .file_name()
                 .is_some_and(|name| name.to_string_lossy().starts_with('.'));
-            if !hidden && path.is_file() && path.extension().is_some_and(is_source_extension) {
+            if hidden || !path.extension().is_some_and(is_source_extension) {
+                continue;
+            }
+            if std::fs::metadata(&path)
+                .map_err(|e| error(&path, e))?
+                .is_file()
+            {
                 paths.push(path);
             }
         }
@@ -929,5 +962,15 @@ mod tests {
             folder_sources(&[root.to_path_buf()]).unwrap(),
             [root.join("a.X3F"), root.join("b.x3i")]
         );
+        // A photo or a folder that cannot be read stops the import with its path.
+        let missing = root.join("missing");
+        let error = folder_sources(&[root.to_path_buf(), missing.clone()]).unwrap_err();
+        assert!(error.starts_with(&missing.display().to_string()), "{error}");
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(root.join("gone.X3F"), root.join("e.X3F")).unwrap();
+            let error = folder_sources(&[root.to_path_buf()]).unwrap_err();
+            assert!(error.contains("e.X3F"), "{error}");
+        }
     }
 }

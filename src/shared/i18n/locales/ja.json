@@ -18,6 +18,7 @@
   "dialog.select_x3f_files.title": "X3Fファイルを選択",
   "dialog.select_x3f_files.message": "書き出すX3Fファイルを選択してください",
   "dialog.select_folders.title": "フォルダを選択",
+  "dialog.add_failed": "写真を追加できませんでした。",
   "dialog.select_output_directory.title": "出力ディレクトリを選択",
   "dialog.select_output_directory.message": "書き出したファイルの保存場所を選択してください",
   "alert.setup_issues.title": "セットアップの問題",

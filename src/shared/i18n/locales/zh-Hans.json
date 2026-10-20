@@ -18,6 +18,7 @@
   "dialog.select_x3f_files.title": "选择 X3F 文件",
   "dialog.select_x3f_files.message": "选择要导出的 X3F 文件",
   "dialog.select_folders.title": "选择文件夹",
+  "dialog.add_failed": "无法添加照片。",
   "dialog.select_output_directory.title": "选择输出目录",
   "dialog.select_output_directory.message": "选择导出后文件的保存位置",
   "alert.setup_issues.title": "设置问题",
