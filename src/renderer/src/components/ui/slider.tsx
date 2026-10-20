@@ -89,10 +89,14 @@ export function Slider({
       onPointerCancel={endDrag}
       onKeyDown={(event) => {
         const direction = STEP_KEYS[event.key]
-        if (!onKeyStep || !direction) return
-        // Radix skips its own step for a handled key.
+        if (!direction) return
+        // ⌘ or Ctrl with an arrow key is a shortcut, such as Next Photo, and not a step.
+        // The shortcut runs before the slider gets the key. Radix skips its own step for a
+        // handled key.
+        const shortcut = event.metaKey || event.ctrlKey
+        if (!onKeyStep && !shortcut) return
         event.preventDefault()
-        onKeyStep(direction, event.shiftKey || event.key.startsWith('Page'))
+        if (!shortcut) onKeyStep?.(direction, event.shiftKey || event.key.startsWith('Page'))
       }}
       className={cn(
         // The glass lens sizes its track copy with cqw units of the slider.
