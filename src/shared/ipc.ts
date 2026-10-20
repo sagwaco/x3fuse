@@ -42,12 +42,56 @@ export interface LogSizes {
   debug: number
 }
 
-/** Commands fired by the native application menu. */
+/**
+ * Commands of the menu bar, the keys, and the context menus. The menu item ids in
+ * `menu.rs` and the keys of `shortcuts.json` use these names.
+ */
 export type MenuCommand =
+  // File
+  | 'addFiles'
+  | 'addFolder'
+  | 'editPhoto'
+  | 'exportSelected'
+  | 'exportPrevious'
+  | 'exportJpeg'
+  | 'exportTiff'
+  | 'exportDng'
+  | 'exportEmbeddedJpg'
+  | 'convertAll'
+  | 'stop'
+  | 'showInFinder'
+  | 'removeSelected'
+  | 'clearQueue'
+  // Edit
   | 'undoEdit'
   | 'redoEdit'
   | 'copyEdits'
   | 'pasteEdits'
+  | 'resetEdits'
+  | 'selectAll'
+  | 'deselectAll'
+  | 'invertSelection'
+  // View
+  | 'viewList'
+  | 'viewGrid'
+  | 'viewFilmstrip'
+  | 'viewSurvey'
+  | 'sortByName'
+  | 'sortByDate'
+  | 'sortBySize'
+  | 'sortAscending'
+  | 'sortDescending'
+  | 'toggleFilterBar'
+  | 'togglePanel'
+  | 'zoomIn'
+  | 'zoomOut'
+  | 'zoomFit'
+  | 'zoomActual'
+  | 'compare'
+  | 'negativePreview'
+  // Photo
+  | 'previousPhoto'
+  | 'nextPhoto'
   | 'pick'
   | 'reject'
   | 'unflag'
@@ -57,15 +101,24 @@ export type MenuCommand =
   | 'rate3'
   | 'rate4'
   | 'rate5'
-  | 'addFiles'
-  | 'selectAll'
-  | 'deselectAll'
-  | 'removeSelected'
-  | 'convertAll'
-  | 'stop'
-  | 'clearQueue'
+  | 'ratingUp'
+  | 'ratingDown'
+  | 'rotateLeft'
+  | 'rotateRight'
+  | 'crop'
+  | 'whiteBalancePicker'
+  // Help
+  | 'help'
+  | 'shortcuts'
   | 'showLogs'
   | 'checkForUpdates'
+
+/** How a command started. Keys toggle flags; Shift with a key also advances. */
+export interface CommandOptions {
+  source?: 'menu' | 'key' | 'context'
+  advance?: boolean
+  toggle?: boolean
+}
 
 export interface NativeMenuItem {
   value: string
@@ -169,6 +222,8 @@ export interface IpcRequestMap {
   'exif:full': { payload: { path: string }; result: ExifPair[] }
 
   'dialog:pickFiles': { payload: void; result: string[] }
+  /** The X3F and X3I files in the chosen folders, without subfolders. */
+  'dialog:pickFolder': { payload: void; result: string[] }
   'dialog:pickOutputDir': { payload: void; result: string | null }
 
   /** Reveal a path in the OS file manager (Finder / Explorer / file-manager). */
@@ -247,6 +302,7 @@ export const IPC_REQUEST_CHANNELS: IpcRequestChannel[] = [
   'convert:stop',
   'exif:full',
   'dialog:pickFiles',
+  'dialog:pickFolder',
   'dialog:pickOutputDir',
   'shell:reveal',
   'window:openSettings',

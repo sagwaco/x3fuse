@@ -1,21 +1,8 @@
 import { useEffect } from 'react'
-import type { MenuCommand } from '@shared/ipc'
 import { ipc } from '../lib/ipc'
-import { appInfo } from '../lib/appInfo'
+import { checkForUpdates, runCommand } from '../lib/commands'
 import { cullingSaved, useQueueStore } from '../stores/queueStore'
-import { addFilesViaDialog } from '../lib/addFilesViaDialog'
-import { useEditorStore, isTextEditing } from '../stores/editorStore'
-import { useNavStore } from '../stores/navStore'
-import { cull } from './useCulling'
-
-export async function checkForUpdates(manual = true): Promise<void> {
-  if (appInfo.platform !== 'darwin') return
-  try {
-    await ipc.invoke('update:check', { manual })
-  } catch (error) {
-    console.error('Could not check for updates', error)
-  }
-}
+import { useEditorStore } from '../stores/editorStore'
 
 /**
  * Subscribes the main window to main->renderer events and the native-menu
@@ -47,7 +34,7 @@ export function useIpcEvents(): void {
       ipc.on('file:status', (p) => q().applyStatus(p)),
       ipc.on('file:progress', (p) => q().applyProgress(p)),
       ipc.on('batch:complete', (p) => q().onBatchComplete(p)),
-      ipc.on('menu:command', ({ name }) => handleMenuCommand(name))
+      ipc.on('menu:command', ({ name }) => void runCommand(name, { source: 'menu' }))
     ]
 
     return () => {
@@ -55,65 +42,4 @@ export function useIpcEvents(): void {
       unsubscribers.forEach((off) => off())
     }
   }, [])
-}
-
-function handleMenuCommand(name: MenuCommand): void {
-  const q = useQueueStore.getState()
-  const editor = useEditorStore.getState()
-  if (editor.closing) return
-  if (name === 'pick' || name === 'reject' || name === 'unflag') {
-    cull({ flag: name === 'unflag' ? 'unflagged' : name })
-    return
-  }
-  const rating = /^rate([0-5])$/.exec(name)
-  if (rating) {
-    cull({ rating: Number(rating[1]) })
-    return
-  }
-  if (['undoEdit', 'redoEdit', 'copyEdits', 'pasteEdits'].includes(name)) {
-    if (isTextEditing(document.activeElement) || q.isProcessing) return
-    if (name === 'copyEdits') editor.copy()
-    else if (name === 'pasteEdits') void editor.paste()
-    else if (useNavStore.getState().screen === 'editor') {
-      if (name === 'undoEdit') editor.undo()
-      else editor.redo()
-    }
-    return
-  }
-  if (editor.session && ['removeSelected', 'clearQueue', 'addFiles', 'convertAll'].includes(name)) {
-    if (q.isProcessing || q.isPreparing || q.draft) return
-    void editor.close().then((closed) => {
-      if (closed) handleMenuCommand(name)
-    })
-    return
-  }
-  switch (name) {
-    case 'addFiles':
-      void addFilesViaDialog()
-      break
-    case 'selectAll':
-      q.selectAll()
-      break
-    case 'deselectAll':
-      q.deselectAll()
-      break
-    case 'removeSelected':
-      q.removeSelected()
-      break
-    case 'convertAll':
-      void q.convertAllMenu()
-      break
-    case 'stop':
-      q.stop()
-      break
-    case 'clearQueue':
-      q.clearQueue()
-      break
-    case 'showLogs':
-      void ipc.invoke('logs:open')
-      break
-    case 'checkForUpdates':
-      void checkForUpdates()
-      break
-  }
 }
