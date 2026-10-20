@@ -162,7 +162,7 @@ export const DEFAULT_FILM: FilmSettings = {
   couplers: 0.25,
   couplersRadius: 0.0015,
   grain: true,
-  grainParams: { rmsGranularity: [4.5, 4.5, 4.5], blur: 0.89, multUsmAmount: 1.5 },
+  grainParams: { rmsGranularity: [4.5, 4.5, 4.5], blur: 0.7, multUsmAmount: 1.5 },
   grainSize: 1,
   grainAmount: 1,
   grainRoughness: 0,
@@ -203,7 +203,7 @@ export function filmHalationDefaults(
 /** Generic effects for a look without a film stock: spektrafilm's schema-default grain, no halation. */
 export const DEFAULT_EFFECTS: EffectsSettings = {
   grain: false,
-  grainParams: { rmsGranularity: [6, 8, 10], blur: 0.89, multUsmAmount: 1.5 },
+  grainParams: { rmsGranularity: [6, 8, 10], blur: 0.7, multUsmAmount: 1.5 },
   halation: false,
   halationParams: { ...DEFAULT_FILM.halationParams! }
 }
@@ -211,7 +211,7 @@ export const DEFAULT_EFFECTS: EffectsSettings = {
 export function filmGrainDefaults(film: number): GrainParams {
   const stock = stocks.find((item) => !item.isPaper && item.index === film)
   const rms = (grainRms as Record<string, number[]>)[stock?.key ?? ''] ?? [6, 8, 10]
-  return { rmsGranularity: [...rms] as Rgb, blur: 0.89, multUsmAmount: 1.5 }
+  return { rmsGranularity: [...rms] as Rgb, blur: 0.7, multUsmAmount: 1.5 }
 }
 export function grainRmsBase(grain: GrainParams, monochrome = false): number {
   return (

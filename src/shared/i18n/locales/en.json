@@ -423,7 +423,7 @@
   "editor.sfdDelete": "Delete SFD RAW",
   "editor.legacyFilmEffect": "This photo uses previous effect controls. Reset this effect to use Spektrafilm controls.",
   "editor.grainRmsGranularityHelp": "Film density variation measured through a 48 µm aperture (RMS × 1000). Higher values produce coarser grain. Moves all RGB channels together and keeps their offsets. The range stops when a channel reaches 0 or 100.",
-  "editor.grainBlurHelp": "Gaussian blur of the sampled grain, in output pixels (sigma). The default is 0.89. Higher values also soften image detail.",
+  "editor.grainBlurHelp": "Gaussian blur of the sampled grain, in output pixels (sigma). The default is 0.7. Higher values also soften image detail.",
   "editor.grainSharpenHelp": "Restores detail after grain blur with a density unsharp mask. 0 disables it; the default is 1.5. The radius stays at 0.7 pixels.",
   "editor.scatterAmountHelp": "The fraction of light scattered inside the emulsion. 0 disables scattering; 1 applies the stock’s physical scattering.",
   "editor.scatterSpatialScaleHelp": "Scales the width of both the narrow and wide scattering. 1 uses the stock’s physical sizes; 0 removes the spread.",

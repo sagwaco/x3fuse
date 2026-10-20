@@ -312,7 +312,7 @@ impl Default for GrainParams {
         Self {
             rms_granularity: [4.5; 3],
             rms_base: None,
-            blur: 0.89,
+            blur: 0.7,
             mult_usm_amount: 1.5,
         }
     }

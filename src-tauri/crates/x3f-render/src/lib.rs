@@ -25,7 +25,8 @@ pub use stocks::STOCKS_JSON;
 /// Version 7 applies native camera looks before film exposure.
 /// Version 8 adds native grain and halation controls with stock baselines.
 /// Version 9 uses smooth tone curves. Version 10 adds color wheels.
-pub const RENDER_VERSION: u32 = 10;
+/// Version 11 reduces the default grain blur.
+pub const RENDER_VERSION: u32 = 11;
 
 use image::ImageEncoder;
 use serde::{Deserialize, Serialize};

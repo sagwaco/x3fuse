@@ -423,7 +423,7 @@
   "editor.sfdDelete": "刪除 SFD RAW",
   "editor.legacyFilmEffect": "此照片使用舊的效果設定。重設此效果後，即可使用Spektrafilm調整項目。",
   "editor.grainRmsGranularityHelp": "透過48 µm孔徑測量的底片密度變化（RMS × 1000）。數值越高，顆粒越粗。同時調整RGB通道並保留各通道的偏移量。當任一通道達到0或100時，滑桿到達範圍邊界。",
-  "editor.grainBlurHelp": "對顆粒套用高斯模糊，以輸出像素為單位表示標準差。預設值為0.89。增大也會使影像細節變柔和。",
+  "editor.grainBlurHelp": "對顆粒套用高斯模糊，以輸出像素為單位表示標準差。預設值為0.7。增大也會使影像細節變柔和。",
   "editor.grainSharpenHelp": "使用密度遮色片銳利化還原顆粒模糊後的細節。0為關閉，預設值為1.5。半徑固定為0.7像素。",
   "editor.scatterAmountHelp": "在乳劑內部散射的光所佔的比例。0關閉散射，1使用底片本身的物理散射。",
   "editor.scatterSpatialScaleHelp": "調整窄幅和寬幅散射寬度的倍率。1使用底片本身的大小，0消除擴散。",
