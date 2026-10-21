@@ -12,16 +12,14 @@ import {
   type MonochromeFilter
 } from './editor'
 
-/** The monochrome mixer adds `warmth` and `toneMixer`. The type works with and without them. */
-type Recipe = EditRecipe & { warmth?: number; toneMixer?: number[] }
-type Patch = Partial<Recipe>
+type Patch = Partial<EditRecipe>
 
 /** The settings of an editor panel section. Its menu resets, copies, and pastes them. */
 export interface EditorSection {
   /** The section's settings of `from`, as a change to `to`. A paste applies it. */
-  take: (from: Recipe, to: Recipe) => Patch
+  take: (from: EditRecipe, to: EditRecipe) => Patch
   /** A change that resets the section. Without it, the reset takes the section of `defaults`. */
-  reset?: (recipe: Recipe) => Patch
+  reset?: (recipe: EditRecipe) => Patch
 }
 
 /** Film settings of the Effects section. Light changes `evFilm`; Look changes the others. */
@@ -47,7 +45,7 @@ const pick = <T extends object, K extends keyof T>(object: T, keys: readonly K[]
   structuredClone(Object.fromEntries(keys.map((key) => [key, object[key]]))) as Pick<T, K>
 
 /** The grain and halation of a recipe, as a look without a film stock keeps them. */
-function effectsOf({ film, effects }: Recipe): EffectsSettings {
+function effectsOf({ film, effects }: EditRecipe): EffectsSettings {
   return structuredClone(
     film
       ? {
@@ -143,6 +141,10 @@ export const editorSection = (id: string): EditorSection | undefined =>
   Object.hasOwn(EDITOR_SECTIONS, id) ? EDITOR_SECTIONS[id as SectionId] : undefined
 
 /** A change that resets a section of `recipe`. `defaults` is the photo's as-shot recipe. */
-export function resetSection(section: EditorSection, recipe: Recipe, defaults: Recipe): Patch {
+export function resetSection(
+  section: EditorSection,
+  recipe: EditRecipe,
+  defaults: EditRecipe
+): Patch {
   return section.reset?.(recipe) ?? section.take(defaults, recipe)
 }
