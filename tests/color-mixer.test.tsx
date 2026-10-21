@@ -3,7 +3,7 @@ import { useState, type Dispatch, type SetStateAction } from 'react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { defaultRecipe, type EditRecipe } from '@shared/editor'
-import { ColorMixer } from '../src/renderer/src/components/ColorMixer'
+import { ColorMixer, ToneMixer } from '../src/renderer/src/components/ColorMixer'
 import { useEditorStore as editor } from '../src/renderer/src/stores/editorStore'
 import { useQueueStore as queue } from '../src/renderer/src/stores/queueStore'
 import { t } from '../src/renderer/src/lib/strings'
@@ -14,11 +14,17 @@ const change = vi.fn()
 const commit = vi.fn()
 let recipe: EditRecipe
 let setRecipe: Dispatch<SetStateAction<EditRecipe>>
-function Mixer(): React.JSX.Element {
-  const [current, update] = useState(defaultRecipe)
+function Mixer({
+  tone = false,
+  initial = defaultRecipe()
+}: {
+  tone?: boolean
+  initial?: EditRecipe
+}): React.JSX.Element {
+  const [current, update] = useState(initial)
   recipe = current
   setRecipe = update
-  return <ColorMixer recipe={current} />
+  return tone ? <ToneMixer recipe={current} /> : <ColorMixer recipe={current} />
 }
 const COLORS = ['red', 'orange', 'yellow', 'green', 'aqua', 'blue', 'purple', 'magenta']
 
@@ -106,4 +112,43 @@ it('moves between tabs with the arrow, Home and End keys', () => {
   expect(tabs[0].getAttribute('aria-selected')).toBe('true')
   expect(screen.getByRole('tabpanel').getAttribute('aria-labelledby')).toBe(tabs[0].id)
   expect(change).not.toHaveBeenCalled()
+})
+
+it('edits and resets all eight tone bands independently of HSL and warmth', () => {
+  const initial = {
+    ...defaultRecipe(),
+    toneMixer: undefined,
+    warmth: 25,
+    hsl: COLORS.map((_, index) => ({ hue: index, saturation: index + 1, luminance: index + 2 }))
+  }
+  render(<Mixer tone initial={initial} />)
+  expect(screen.queryByRole('tablist')).toBeNull()
+  expect(screen.getAllByRole('slider').map((slider) => slider.getAttribute('aria-label'))).toEqual(
+    COLORS.map((color) => t(`editor.${color}`))
+  )
+  for (const color of COLORS) {
+    expect(screen.getByTitle(t(`editor.${color}`)).textContent).toBe(t(`editor.${color}`))
+    const slider = screen.getByRole('slider', { name: t(`editor.${color}`) })
+    expect(slider.getAttribute('aria-valuenow')).toBe('0')
+    expect(slider.getAttribute('aria-valuemin')).toBe('-100')
+    expect(slider.getAttribute('aria-valuemax')).toBe('100')
+  }
+  const values = [-80, -60, -40, -20, 20, 40, 60, 80]
+  COLORS.forEach((color, index) => {
+    fireEvent.change(screen.getByRole('spinbutton', { name: t(`editor.${color}`) }), {
+      target: { value: String(values[index]) }
+    })
+    expect(change).toHaveBeenLastCalledWith({ toneMixer: recipe.toneMixer }, true)
+    expect(recipe.toneMixer).toEqual(values.map((value, band) => (band <= index ? value : 0)))
+  })
+  fireEvent.keyDown(screen.getByRole('slider', { name: t('editor.red') }), { key: 'ArrowRight' })
+  expect(recipe.toneMixer).toEqual([-79, ...values.slice(1)])
+  expect(change).toHaveBeenLastCalledWith({ toneMixer: recipe.toneMixer }, false)
+  expect(commit).toHaveBeenCalledTimes(1)
+  fireEvent.doubleClick(screen.getByRole('slider', { name: t('editor.blue') }))
+  expect(recipe.toneMixer).toEqual([-79, -60, -40, -20, 20, 0, 60, 80])
+  fireEvent.click(screen.getByTitle(t('editor.red')), { shiftKey: true })
+  expect(recipe.toneMixer).toEqual([0, -60, -40, -20, 20, 0, 60, 80])
+  expect(recipe.hsl).toEqual(initial.hsl)
+  expect(recipe.warmth).toBe(25)
 })

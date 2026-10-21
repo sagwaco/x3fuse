@@ -45,11 +45,20 @@ Input and output gamut compression retain the experimental defaults.
 
 `gpu_experimental_reference` compares those patches with the GPU pipeline.
 B&W wide-gamut output is checked for equal RGB channels by the editor GPU tests,
-since X3Fuse explicitly removes residual scan tint. Module tests also compare
+at zero Warmth, since X3Fuse removes residual scan tint. Module tests also compare
 model curves, couplers, gamut boundaries and grain calibration with independent
 Python values. The grain GPU test checks statistical RMS rather than random
 sample identity. Geometry, tile, crop, preview and export checks retain the
 X3Fuse metering and scanner workflow.
+
+Monochrome grading is an X3Fuse extension. Tone mixer changes source-color
+exposure before conversion to monochrome. Warmth changes the developed silver
+amount before scanning B&W film or paper. Its blue-to-orange tone uses an RGB
+absorption approximation scaled by that silver density. The bundled profiles
+do not contain measured toned-silver spectra. Scanner levels and mid-gray are
+calibrated for the changed silver amount. Camera monochrome uses apparent
+optical density. The tint keeps luminance and is applied after output gamut
+compression. Zero Warmth keeps neutral output.
 
 ## SHA-256
 
@@ -61,7 +70,7 @@ X3Fuse metering and scanner workflow.
 
 - `assets/camera-tone-deltas.json`: 2ee2bea81844b572b08d4b5eb1e21f0905798ac571aef66038eaa33482d19144
 
-- `src/render.wgsl`: aeff6798665d3471af2b322ef2ba37282a5475d9d2e346d77389a89666641b2b
+- `src/render.wgsl`: f0098bb64f6cf7a404f1ed57b1e36dc143153f138e5676943ff48409de01f2ca
 - `licenses/SPEKTRAFILM_LICENSE.txt`: 76d629501783ae52e8d63aee1e054c1e1a9713b9fe7d36fb306e25b1d14b24e9
 - `assets/irradiance_xy_tc.npy`: 52f90c724811f5fab80769f8548bf24d08a521eb09e65ab6e016893258d2a783
 - `assets/neutral_print_filters.json`: 22ae6cca433cfbeab87df7f17cd58a2f65e88cab845818819195e6f1a80db67c

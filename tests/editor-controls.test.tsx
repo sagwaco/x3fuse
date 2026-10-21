@@ -1425,3 +1425,91 @@ it('shows the filter colors on the grading tab only for a monochrome look', () =
   act(() => setRecipe({ ...defaultRecipe(), monochrome: null }))
   expect(screen.queryByRole('radiogroup', { name: t('editor.filter') })).toBeNull()
 })
+
+it.each<Partial<EditRecipe>>([
+  { monochrome: { filter: 'red' } },
+  { film: null, cameraProfile: 'Monochrome' },
+  { film: { ...DEFAULT_FILM, film: 20 } }
+])('shows warmth and the tone mixer for monochrome recipes: %j', (profile) => {
+  const view = render(
+    <Controls
+      initial={{ ...defaultRecipe(), warmth: undefined, toneMixer: undefined, ...profile }}
+    />
+  )
+  panelTab('grading')
+  expect(sections(view.container)).toEqual([
+    t('editor.filter'),
+    t('editor.color'),
+    t('editor.toneMixer')
+  ])
+  expect(screen.getByRole('radiogroup', { name: t('editor.filter') })).toBeTruthy()
+  for (const label of ['saturation', 'vibrance'])
+    expect(screen.queryByRole('slider', { name: t(`editor.${label}`) })).toBeNull()
+  expect(screen.queryByRole('tablist', { name: t('editor.colorMixer') })).toBeNull()
+  expect(screen.queryByText(t('editor.colorWheels'), { selector: 'summary' })).toBeNull()
+  const warmth = screen.getByRole('slider', { name: t('editor.warmth') })
+  expect(warmth.getAttribute('aria-valuenow')).toBe('0')
+  expect(warmth.getAttribute('aria-valuemin')).toBe('-100')
+  expect(warmth.getAttribute('aria-valuemax')).toBe('100')
+  const track = warmth.closest('.adjustment')!.querySelector('[style*="linear-gradient"]')
+  expect(track?.getAttribute('style')).toContain('#4f7cff, #d4d4d4, #ffb43d')
+  adjust(t('editor.warmth'), -100)
+  expect(change).toHaveBeenLastCalledWith({ warmth: -100 }, true)
+  fireEvent.keyDown(warmth, { key: 'ArrowRight' })
+  expect(change).toHaveBeenLastCalledWith({ warmth: -99 }, false)
+  expect(commit).toHaveBeenCalledTimes(1)
+  reset(t('editor.warmth'))
+  expect(change).toHaveBeenLastCalledWith({ warmth: 0 })
+})
+
+it('preserves color adjustments and monochrome settings when switching profiles', () => {
+  const initial: EditRecipe = {
+    ...defaultRecipe(),
+    saturation: 35,
+    vibrance: -20,
+    hsl: defaultRecipe().hsl.map((band, index) => ({ ...band, hue: index === 0 ? 15 : 0 })),
+    wheels: {
+      ...defaultRecipe().wheels!,
+      midtones: { x: 0.1, y: 0.2, luminance: 10 }
+    }
+  }
+  render(<Controls initial={initial} />)
+  panelTab('grading')
+  expect(screen.queryByRole('slider', { name: t('editor.warmth') })).toBeNull()
+  expect(screen.queryByText(t('editor.toneMixer'), { selector: 'summary' })).toBeNull()
+  expect(
+    screen.getByRole('slider', { name: t('editor.saturation') }).getAttribute('aria-valuenow')
+  ).toBe('35')
+  chooseFilm(t('editor.monochrome'))
+  panelTab('grading')
+  adjust(t('editor.warmth'), 40)
+  adjust(t('editor.red'), -30)
+  fireEvent.click(swatch(t('editor.filter'), t('editor.red')))
+  chooseFilm(t('editor.standard'))
+  panelTab('grading')
+  expect(screen.queryByRole('slider', { name: t('editor.warmth') })).toBeNull()
+  expect(screen.queryByText(t('editor.toneMixer'), { selector: 'summary' })).toBeNull()
+  expect(
+    screen.getByRole('slider', { name: t('editor.saturation') }).getAttribute('aria-valuenow')
+  ).toBe('35')
+  expect(
+    screen.getByRole('slider', { name: t('editor.vibrance') }).getAttribute('aria-valuenow')
+  ).toBe('-20')
+  const mixer = within(screen.getByRole('tabpanel', { name: t('editor.hue') }))
+  expect(mixer.getByRole('slider', { name: t('editor.red') }).getAttribute('aria-valuenow')).toBe(
+    '15'
+  )
+  expect(
+    screen
+      .getByRole('slider', { name: `${t('editor.midtones')} ${t('editor.luminance')}` })
+      .getAttribute('aria-valuenow')
+  ).toBe('10')
+  chooseFilm(t('editor.monochrome'))
+  panelTab('grading')
+  expect(
+    screen.getByRole('slider', { name: t('editor.warmth') }).getAttribute('aria-valuenow')
+  ).toBe('40')
+  expect(screen.getByRole('slider', { name: t('editor.red') }).getAttribute('aria-valuenow')).toBe(
+    '-30'
+  )
+})

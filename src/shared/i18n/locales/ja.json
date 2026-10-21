@@ -289,6 +289,8 @@
   "editor.saturation": "彩度",
   "editor.vibrance": "自然な彩度",
   "editor.colorMixer": "カラーミキサー",
+  "editor.warmth": "暖かさ",
+  "editor.toneMixer": "トーンミキサー",
   "editor.hue": "色相",
   "editor.luminance": "輝度",
   "editor.sat": "彩度",

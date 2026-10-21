@@ -130,6 +130,9 @@ X3Fuse modifications to the code (not to the data)
     without it, like a meter that reads through the filter. spektrafilm
     leaves the loss to its auto exposure. Filter curves are interpolated
     linearly onto the 5 nm grid where spektrafilm uses Akima.
+  - Monochrome grading adds source-color tone mixing and Warmth. Warmth scales
+    developed silver density before scanning. Blue-to-orange silver toning uses
+    an RGB absorption approximation, without changing the bundled profile data.
 
 Runtime dependencies added for rendering/encoding include wgpu (MIT/Apache-2.0),
 pollster (MIT/Apache-2.0), bytemuck (Zlib/Apache-2.0/MIT), serde/serde_json

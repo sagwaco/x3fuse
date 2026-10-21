@@ -289,6 +289,8 @@
   "editor.saturation": "Saturación",
   "editor.vibrance": "Intensidad",
   "editor.colorMixer": "Mezclador de color",
+  "editor.warmth": "Calidez",
+  "editor.toneMixer": "Mezclador de tonos",
   "editor.hue": "Tono",
   "editor.luminance": "Luminancia",
   "editor.sat": "Sat",

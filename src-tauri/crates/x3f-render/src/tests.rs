@@ -143,6 +143,291 @@ fn recipes_validate_and_round_trip() {
 }
 
 #[test]
+fn monochrome_grading_defaults_round_trip_and_validate() {
+    let mut recipe: EditRecipe = serde_json::from_str(r#"{"film":null}"#).unwrap();
+    assert_eq!(recipe.warmth, 0.);
+    assert_eq!(recipe.tone_mixer, [0.; 8]);
+    let encoded = serde_json::to_value(&recipe).unwrap();
+    assert!(encoded.get("warmth").is_none());
+    assert!(encoded.get("toneMixer").is_none());
+    recipe.warmth = -35.;
+    recipe.tone_mixer = [10., -20., 30., -40., 50., -60., 70., -80.];
+    recipe.validate().unwrap();
+    assert_eq!(
+        recipe,
+        serde_json::from_value(serde_json::to_value(&recipe).unwrap()).unwrap()
+    );
+    for invalid in [-101., 101., f32::NAN, f32::INFINITY] {
+        let mut bad = recipe.clone();
+        bad.warmth = invalid;
+        assert!(bad.validate().is_err());
+        for band in 0..8 {
+            let mut bad = recipe.clone();
+            bad.tone_mixer[band] = invalid;
+            assert!(bad.validate().is_err());
+        }
+    }
+    assert!(serde_json::from_str::<EditRecipe>(r#"{"toneMixer":[0,0]}"#).is_err());
+}
+
+#[test]
+fn silver_warmth_recalibrates_and_keys_the_scanner() {
+    for stock in [2, 20, 21] {
+        let settings = FilmSettings {
+            film: stock,
+            paper: if stock == 2 { 3 } else { 8 },
+            negative: stock == 21,
+            ..Default::default()
+        };
+        let lut = film::FilmLut::build(stock, None).unwrap();
+        let neutral = film::FilmPair::build(&settings, &lut, 0.).unwrap();
+        let warm = film::FilmPair::build(&settings, &lut, 100.).unwrap();
+        assert!(warm.matches(&settings, 100.));
+        if stock == 2 {
+            assert!(neutral.matches(&settings, 100.));
+            assert_eq!(neutral.fingerprint(), warm.fingerprint());
+        } else {
+            assert!(!neutral.matches(&settings, 100.));
+            assert!(warm.silver_scale < neutral.silver_scale);
+            assert_ne!(neutral.scan_remap, warm.scan_remap);
+            assert_ne!(neutral.fingerprint(), warm.fingerprint());
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires hardware GPU"]
+fn gpu_monochrome_grading() {
+    let renderer = Renderer::new().unwrap();
+    let cancel = AtomicBool::new(false);
+    let luminance = |pixel: &[u16]| {
+        pixel
+            .iter()
+            .zip([0.2126, 0.7152, 0.0722])
+            .map(|(&v, weight)| {
+                let encoded = f64::from(v) / 65535.;
+                weight
+                    * if encoded <= 0.04045 {
+                        encoded / 12.92
+                    } else {
+                        ((encoded + 0.055) / 1.055).powf(2.4)
+                    }
+            })
+            .sum::<f64>()
+    };
+    let mut source = image(9, 1);
+    source.data = vec![
+        0.18, 0.18, 0.18, // Neutral
+        0.3, 0.03, 0.03, // Red
+        0.3, 0.165, 0.03, // Orange
+        0.3, 0.3, 0.03, // Yellow
+        0.03, 0.3, 0.03, // Green
+        0.03, 0.3, 0.3, // Aqua
+        0.03, 0.03, 0.3, // Blue
+        0.165, 0.03, 0.3, // Purple
+        0.3, 0.03, 0.3, // Magenta
+    ];
+    source.data[..3].fill(camera::fallback_metered_gray() as f32);
+    let render = |recipe: &EditRecipe, color_profile| {
+        renderer
+            .render(
+                &source,
+                recipe,
+                RenderOptions {
+                    color_profile,
+                    ..Default::default()
+                },
+                &cancel,
+            )
+            .unwrap()
+    };
+    for recipe in [
+        EditRecipe {
+            film: None,
+            camera_profile: Some("Monochrome".into()),
+            ..Default::default()
+        },
+        EditRecipe {
+            film: Some(FilmSettings {
+                film: 20,
+                paper: 8,
+                grain: false,
+                couplers: 0.,
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        EditRecipe {
+            film: Some(FilmSettings {
+                film: 21,
+                paper: 8,
+                negative: true,
+                grain: false,
+                couplers: 0.,
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+    ] {
+        let base = render(&recipe, ColorProfile::Srgb);
+        assert!(base
+            .data
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .all(|p| p[0] == p[1] && p[1] == p[2]));
+        let mut hidden = recipe.clone();
+        hidden.saturation = -80.;
+        hidden.vibrance = 60.;
+        hidden.hsl[0].luminance = 100.;
+        hidden.hsl[1].saturation = -100.;
+        hidden.wheels.midtones = Wheel {
+            x: 0.7,
+            luminance: 60.,
+            ..Default::default()
+        };
+        assert_eq!(render(&hidden, ColorProfile::Srgb).data, base.data);
+        for band in 0..8 {
+            let mut mixed = recipe.clone();
+            mixed.tone_mixer[band] = 70.;
+            let raised = render(&mixed, ColorProfile::Srgb);
+            mixed.tone_mixer[band] = -70.;
+            let lowered = render(&mixed, ColorProfile::Srgb);
+            assert_eq!(
+                &raised.data[..3],
+                &base.data[..3],
+                "neutral changed for band {band}"
+            );
+            assert_eq!(&lowered.data[..3], &base.data[..3]);
+            let target = (band + 1) * 3;
+            assert!(
+                raised.data[target] > base.data[target],
+                "band {band} did not brighten"
+            );
+            assert!(
+                lowered.data[target] < base.data[target],
+                "band {band} did not darken"
+            );
+            let opposite = ((band + 4) % 8 + 1) * 3;
+            assert_eq!(raised.data[opposite], base.data[opposite]);
+        }
+        for profile in [
+            ColorProfile::Srgb,
+            ColorProfile::AdobeRgb,
+            ColorProfile::ProPhotoRgb,
+        ] {
+            for warmth in [-100., -1., 1., 100.] {
+                let mut toned = recipe.clone();
+                toned.warmth = warmth;
+                let pixels = render(&toned, profile);
+                let p = &pixels.data[..3];
+                assert!(
+                    if warmth > 0. {
+                        p[0] > p[2]
+                    } else {
+                        p[0] < p[2]
+                    },
+                    "{warmth} {profile:?}: {p:?}"
+                );
+                if profile == ColorProfile::Srgb {
+                    let ratio = luminance(p) / luminance(&base.data[..3]);
+                    assert!(
+                        (ratio - 1.).abs() < 0.02,
+                        "Warmth shifted mid-gray: {warmth}, {ratio}"
+                    );
+                }
+            }
+        }
+        let mut white_source = image(1, 1);
+        white_source.data.fill(1000.);
+        let white = renderer
+            .render(&white_source, &recipe, RenderOptions::default(), &cancel)
+            .unwrap();
+        for warmth in [-100., 100.] {
+            let warmed = renderer
+                .render(
+                    &white_source,
+                    &EditRecipe {
+                        warmth,
+                        ..recipe.clone()
+                    },
+                    RenderOptions::default(),
+                    &cancel,
+                )
+                .unwrap();
+            let ratio = luminance(&warmed.data) / luminance(&white.data);
+            // Scanner endpoints are solved before the paper exposure correction.
+            assert!(
+                (ratio - 1.).abs() < 0.02,
+                "Warmth shifted paper white: film {:?}, warmth {warmth}, {:?} -> {:?}",
+                recipe.film.as_ref().map(|f| f.film),
+                &white.data[..3],
+                &warmed.data[..3]
+            );
+        }
+        let toned = EditRecipe {
+            warmth: 65.,
+            tone_mixer: [20.; 8],
+            ..recipe
+        };
+        let export = render(&toned, ColorProfile::Srgb);
+        let preview = renderer
+            .render(
+                &source,
+                &toned,
+                RenderOptions {
+                    rgba8: true,
+                    ..Default::default()
+                },
+                &cancel,
+            )
+            .unwrap();
+        for (rgb, rgba) in export
+            .data
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .zip(preview.rgba8().unwrap().as_chunks::<4>().0.iter())
+        {
+            for channel in 0..3 {
+                assert_eq!(rgba[channel], ((u32::from(rgb[channel]) + 128) / 257) as u8);
+            }
+        }
+    }
+    let color = EditRecipe {
+        film: None,
+        ..Default::default()
+    };
+    let mut controls = color.clone();
+    controls.warmth = 100.;
+    controls.tone_mixer = [100.; 8];
+    assert_eq!(
+        render(&color, ColorProfile::Srgb).data,
+        render(&controls, ColorProfile::Srgb).data
+    );
+    source.data.fill(1000.);
+    for warmth in [-100., 100.] {
+        let white = renderer
+            .render(
+                &source,
+                &EditRecipe {
+                    film: None,
+                    camera_profile: Some("Monochrome".into()),
+                    warmth,
+                    ..Default::default()
+                },
+                RenderOptions::default(),
+                &cancel,
+            )
+            .unwrap();
+        assert!(
+            white.data.iter().all(|&v| v >= 65534),
+            "Warmth tinted paper white"
+        );
+    }
+}
+
+#[test]
 fn native_film_parameters_preserve_legacy_recipes_and_validate() {
     let defaults = FilmSettings::default();
     assert!(defaults.grain && !defaults.halation);
@@ -634,7 +919,14 @@ fn gpu_color_wheels() {
     // display luma 1/3 (shadows, red) and 2/3 (highlights, blue).
     let base_ramp = pixels(&ramp, &color(ColorWheels::default()));
     for (border, wheels, c) in [
-        (1. / 3., ColorWheels { shadows: red, ..hard }, 0),
+        (
+            1. / 3.,
+            ColorWheels {
+                shadows: red,
+                ..hard
+            },
+            0,
+        ),
         (
             2. / 3.,
             ColorWheels {
@@ -665,8 +957,7 @@ fn gpu_color_wheels() {
         }
         assert_eq!(sides, [true, true], "no ramp pixels next to {border}");
     }
-    // A B&W output gets the luminance gains but no tint: its chroma would go
-    // and its change in luminance would stay.
+    // Monochrome bypasses hidden color wheels and keeps their saved values.
     let lift = Wheel {
         luminance: 40.,
         ..Default::default()
@@ -701,7 +992,7 @@ fn gpu_color_wheels() {
         };
         let lifted = pixels(&source, &graded(lift));
         assert_eq!(pixels(&source, &graded(tint)), lifted);
-        assert_ne!(lifted, pixels(&source, &recipe));
+        assert_eq!(lifted, pixels(&source, &recipe));
     }
 }
 
@@ -1038,6 +1329,7 @@ fn taking_filters_rebuild_only_bw_luts() {
             ..Default::default()
         },
         &bw,
+        0.,
     )
     .unwrap();
     assert!(pair.monochrome);
@@ -1069,8 +1361,8 @@ fn every_film_paper_pair_prepares_finite_tables() {
                     tune_y: -0.25,
                     ..Default::default()
                 };
-                let pair = film::FilmPair::build(&settings, &lut).unwrap();
-                assert!(pair.matches(&settings));
+                let pair = film::FilmPair::build(&settings, &lut, 0.).unwrap();
+                assert!(pair.matches(&settings, 0.));
                 assert!(
                     pair.spectral.iter().all(|v| v.is_finite()),
                     "stock {stock}, paper {paper}"
@@ -1175,7 +1467,7 @@ fn prepared_pairs_are_keyed_on_every_setting_they_read() {
         .map(|f| film::FilmLut::build(f, None).unwrap())
         .collect();
     let prepare = |s: &FilmSettings| {
-        film::FilmPair::build(s, &luts[s.film as usize])
+        film::FilmPair::build(s, &luts[s.film as usize], 0.)
             .unwrap()
             .fingerprint()
     };
@@ -1183,9 +1475,9 @@ fn prepared_pairs_are_keyed_on_every_setting_they_read() {
     for (name, settings) in &cases {
         settings.validate().unwrap();
         let prepared = prepare(settings);
-        let cached = film::FilmPair::build(&base, &luts[base.film as usize])
+        let cached = film::FilmPair::build(&base, &luts[base.film as usize], 0.)
             .unwrap()
-            .matches(settings);
+            .matches(settings, 0.);
         if prepared != reference {
             assert!(
                 !cached,
@@ -1276,7 +1568,7 @@ fn spektrafilm_license_ships_unmodified() {
     for (shader, expected) in [
         (
             include_bytes!("render.wgsl").as_slice(),
-            "aeff6798665d3471af2b322ef2ba37282a5475d9d2e346d77389a89666641b2b",
+            "f0098bb64f6cf7a404f1ed57b1e36dc143153f138e5676943ff48409de01f2ca",
         ),
         (
             include_bytes!("gamut.wgsl").as_slice(),
@@ -2764,7 +3056,7 @@ fn spektrafilm_calibration_matches_reference() {
         let want = sample["value"].as_f64().unwrap();
         assert!((illuminant[i] - want).abs() < want * 1e-9);
     }
-    let pair = film::FilmPair::build(&FilmSettings::default(), &lut).unwrap();
+    let pair = film::FilmPair::build(&FilmSettings::default(), &lut, 0.).unwrap();
     let expected = reference["print_exposure_factor"].as_f64().unwrap();
     assert!((pair.print_normalization as f64 - expected).abs() < 1e-6);
 }

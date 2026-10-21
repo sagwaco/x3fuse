@@ -289,6 +289,8 @@
   "editor.saturation": "饱和度",
   "editor.vibrance": "自然饱和度",
   "editor.colorMixer": "颜色混合器",
+  "editor.warmth": "暖色调",
+  "editor.toneMixer": "影调混合器",
   "editor.hue": "色相",
   "editor.luminance": "明亮度",
   "editor.sat": "饱和度",

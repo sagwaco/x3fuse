@@ -120,6 +120,9 @@ export interface EditRecipe {
   fillLight: number
   saturation: number
   vibrance: number
+  /** Monochrome warmth and tone bands, -100..100. Missing values mean zero. */
+  warmth?: number
+  toneMixer?: number[]
   curves: Record<'master' | 'red' | 'green' | 'blue', CurvePoint[]>
   hsl: HslBand[]
   /** Missing means `DEFAULT_WHEELS`. The renderer does not write the default. */
@@ -240,6 +243,8 @@ export function defaultRecipe(): EditRecipe {
     fillLight: 0,
     saturation: 0,
     vibrance: 0,
+    warmth: 0,
+    toneMixer: Array(8).fill(0),
     curves: { master: line(), red: line(), green: line(), blue: line() },
     hsl: Array.from({ length: 8 }, () => ({ hue: 0, saturation: 0, luminance: 0 })),
     // Present so Reset clears the wheels.

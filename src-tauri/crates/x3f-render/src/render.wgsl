@@ -4,7 +4,7 @@
 // assets/PROVENANCE.md; source attribution: NOTICE.
 struct Pixels { v: array<vec4<f32>> }
 struct Table { v: array<f32> }
-struct Uniforms { v: array<vec4<f32>, 60> }
+struct Uniforms { v: array<vec4<f32>, 63> }
 @group(0) @binding(0) var<storage, read> source: Pixels;
 @group(0) @binding(1) var<storage, read> auxiliary: Pixels;
 @group(0) @binding(2) var<storage, read_write> destination: Pixels;
@@ -211,7 +211,9 @@ fn print_develop(@builtin(global_invocation_id) id:vec3<u32>) {
 @compute @workgroup_size(16,8)
 fn scan(@builtin(global_invocation_id) id:vec3<u32>) {
     let pos=id.xy;if !in_bounds(pos) {return;}let i=index(pos);
-    let cmy=source.v[i].rgb;var xyz=vec3<f32>(0);
+    // Warmth changes the developed silver amount before optical scanning.
+    let silver=p.v[37].w>0.5;
+    let cmy=source.v[i].rgb*p.v[62].y;var xyz=vec3<f32>(0);
     for (var wl=0u; wl<N_WL; wl++) {
         let dye=wl*3u;
         let d=cmy.x*spectral.v[SP_SCAN_DYE+dye]+cmy.y*spectral.v[SP_SCAN_DYE+dye+1u]
@@ -223,7 +225,7 @@ fn scan(@builtin(global_invocation_id) id:vec3<u32>) {
     // luminance so paper white and the deepest black reach the scanner's
     // levels, keeping chromaticity.
     if p.v[28].w>0.5 {xyz*=clamp(p.v[26].w*xyz.y+p.v[27].w,0.0,1.0)/(xyz.y+1e-10);}
-    destination.v[i]=vec4<f32>(matrix_at(26u,xyz),1);
+    destination.v[i]=vec4<f32>(matrix_at(26u,xyz),select(1.0,max(0.0,dot(cmy,vec3<f32>(1.0/3.0))),silver));
 }
 @compute @workgroup_size(16,8)
 fn sample(@builtin(global_invocation_id) id:vec3<u32>) {
@@ -273,6 +275,18 @@ fn adjust(@builtin(global_invocation_id) id:vec3<u32>) {
     let native=p.v[41].y>0.5;let gain=source.v[i].w;
     var rgb=vec3<f32>(dot(p.v[5].xyz,c),dot(p.v[6].xyz,c),dot(p.v[7].xyz,c))*exp2(p.v[2].x)*select(gain,1.0,native);
     if p.v[41].x>0.5 { rgb=camera_look(rgb); }
+    if p.v[1].w>0.5 {
+        // Mix source colors before the sensor or film removes their hue.
+        let positive=max(rgb,vec3<f32>(0));
+        let peak=max(1e-10,max(positive.x,max(positive.y,positive.z)));
+        let hsv=rgb_to_hsv(encode_srgb(positive/peak));var tone=0.0;var total=0.0;
+        for(var band=0u;band<8u;band++) {
+            let distance=abs(hsv.x-p.v[8u+band].w);
+            let weight=max(0.0,1.0-min(distance,1.0-distance)/0.125);
+            tone+=p.v[60u+band/4u][band%4u]*weight;total+=weight;
+        }
+        rgb*=exp2(tone/max(total,1.0)*hsv.y);
+    }
     // Calibrated inverse camera matrix recovers the B/M/T layer mixture. Keep
     // signed samples and highlight headroom until the ordinary output transform.
     // B&W film takes the colour image; its spectral sensitivity makes it gray.
@@ -391,7 +405,19 @@ fn finish(@builtin(global_invocation_id) id:vec3<u32>) {
     // Extrapolate endpoint slopes so identity curves retain extended channels;
     // conversion to the selected output gamut happens before the final clamp.
     percept=vec3<f32>(sample_curve(sample_curve(percept.x,3u),0u),sample_curve(sample_curve(percept.y,3u),1u),sample_curve(sample_curve(percept.z,3u),2u));
-    destination.v[i]=vec4<f32>(decode_srgb(percept),1);
+    destination.v[i]=vec4<f32>(decode_srgb(percept),source.v[i].w);
+}
+fn output_primaries(c:vec3<f32>)->vec3<f32> {
+    if p.v[1].y>1.5 {
+        // Linear sRGB D65 -> Bradford D50 -> ProPhoto RGB.
+        if p.v[1].z>0.5 { return mat3x3<f32>(vec3<f32>(0.5288241003643182,0.09752941484853804,0.01635990179731055),vec3<f32>(0.3340609866357058,0.8790074094009789,0.10661249325366998),vec3<f32>(0.1373616909346029,0.023398117522046773,0.877248518530815))*c; }
+        return mat3x3<f32>(vec3<f32>(0.529345,0.098374,0.016883),vec3<f32>(0.330072,0.873461,0.117673),vec3<f32>(0.140583,0.028165,0.865444))*c;
+    }
+    if p.v[1].y>0.5 {
+        if p.v[1].z>0.5 { return mat3x3<f32>(vec3<f32>(0.7151773009999999,-8.124599999998504e-05,-2.7899000000002072e-05),vec3<f32>(0.2848856159999999,1.0000474719999999,0.041163335999999995),vec3<f32>(4.74079999999303e-05,-5.999999983976074e-09,0.9587994129999999))*c; }
+        return mat3x3<f32>(vec3<f32>(0.715162,0,0),vec3<f32>(0.284838,1,0.041170),vec3<f32>(0,0,0.958830))*c;
+    }
+    return c;
 }
 @compute @workgroup_size(16,8)
 fn output(@builtin(global_invocation_id) id:vec3<u32>) {
@@ -411,21 +437,19 @@ fn output(@builtin(global_invocation_id) id:vec3<u32>) {
     // them; a neutral ray is identical in every supported output RGB space.
     let monochrome=p.v[1].w>0.5;
     if monochrome { c=vec3<f32>(dot(c,vec3<f32>(0.2126,0.7152,0.0722))); }
-    if p.v[1].y>1.5 {
-        // Linear sRGB D65 -> Bradford D50 -> ProPhoto RGB.
-        if !monochrome {
-            if p.v[1].z>0.5 { c=mat3x3<f32>(vec3<f32>(0.5288241003643182,0.09752941484853804,0.01635990179731055),vec3<f32>(0.3340609866357058,0.8790074094009789,0.10661249325366998),vec3<f32>(0.1373616909346029,0.023398117522046773,0.877248518530815))*c; }
-            else { c=mat3x3<f32>(vec3<f32>(0.529345,0.098374,0.016883),vec3<f32>(0.330072,0.873461,0.117673),vec3<f32>(0.140583,0.028165,0.865444))*c; }
-        }
-    } else if p.v[1].y>0.5 {
-        if !monochrome {
-            if p.v[1].z>0.5 { c=mat3x3<f32>(vec3<f32>(0.7151773009999999,-8.124599999998504e-05,-2.7899000000002072e-05),vec3<f32>(0.2848856159999999,1.0000474719999999,0.041163335999999995),vec3<f32>(4.74079999999303e-05,-5.999999983976074e-09,0.9587994129999999))*c; }
-            else { c=mat3x3<f32>(vec3<f32>(0.715162,0,0),vec3<f32>(0.284838,1,0.041170),vec3<f32>(0,0,0.958830))*c; }
-        }
-    }
+    if !monochrome { c=output_primaries(c); }
     if p.v[1].z>0.5 { c=compress_output_gamut(c,u32(p.v[1].y)); }
     // Keep B&W neutral after the native-white output compression.
-    if monochrome { c=vec3<f32>(dot(c,vec3<f32>(0.2126,0.7152,0.0722))); }
+    if monochrome {
+        c=vec3<f32>(dot(c,vec3<f32>(0.2126,0.7152,0.0722)));
+        if p.v[62].x!=0.0 {
+            // shortcut: RGB absorption approximates silver toning; replace it when measured toned-silver spectra are available.
+            let density=select(-log(clamp(c.x,1e-4,1.0))*INV_LN10,source.v[i].w,p.v[37].w>0.5);
+            var tint=exp2(p.v[62].x*density*vec3<f32>(0.3,0.04,-0.4));
+            tint/=dot(tint,vec3<f32>(0.2126,0.7152,0.0722));
+            c*=output_primaries(tint)/output_primaries(vec3<f32>(1));
+        }
+    }
     if p.v[1].y>1.5 {
         c=max(c,vec3<f32>(0));c=select(pow(c,vec3<f32>(1.0/1.8)),c*16.0,c<vec3<f32>(1.0/512.0));
     } else if p.v[1].y>0.5 {

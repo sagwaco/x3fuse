@@ -776,6 +776,40 @@ it('restores the as-shot camera look for Reset and Before while preserving actua
   expect(queue.getState().files[0].edit?.recipe).toEqual(original)
 })
 
+it('commits monochrome warmth and tone bands together and clears them on Reset', async () => {
+  await editor.getState().open(file)
+  const toneMixer = [10, -20, 30, -40, 50, -60, 70, -80]
+  editor.getState().change(
+    {
+      film: null,
+      cameraProfile: 'Monochrome',
+      monochrome: { filter: 'neutral' },
+      warmth: 10,
+      toneMixer: Array(8).fill(0)
+    },
+    false
+  )
+  editor.getState().change({ warmth: 35, toneMixer }, false)
+  expect(invoke.mock.calls.some(([command]) => command === 'editor:save')).toBe(false)
+  editor.getState().commit()
+  expect(await editor.getState().flush()).toBe(true)
+  expect(editor.getState().documents[file.path].past).toHaveLength(1)
+  expect(queue.getState().files[0].edit?.recipe).toMatchObject({ warmth: 35, toneMixer })
+  editor.getState().reset()
+  expect(await editor.getState().flush()).toBe(true)
+  expect(queue.getState().files[0].edit?.recipe).toMatchObject({
+    warmth: 0,
+    toneMixer: Array(8).fill(0)
+  })
+  editor.getState().undo()
+  expect(await editor.getState().flush()).toBe(true)
+  expect(queue.getState().files[0].edit?.recipe).toMatchObject({ warmth: 35, toneMixer })
+  expect(pasteRecipe(queue.getState().files[0].edit!.recipe, defaultRecipe())).toMatchObject({
+    warmth: 35,
+    toneMixer
+  })
+})
+
 it('treats Reset back to the camera defaults as unedited and keeps undo history on reopen', async () => {
   const defaults = { ...defaultRecipe(), film: null, cameraProfile: 'Standard', seed: 7 }
   const other: X3FFileDTO = { id: 'b', path: '/photos/b.X3F', fileName: 'b.X3F' }

@@ -38,6 +38,12 @@ pub struct EditRecipe {
     pub pitch: f32,
     pub yaw: f32,
     pub monochrome: Option<MonochromeSettings>,
+    /// Blue-to-orange toning for monochrome output (-100..100).
+    #[serde(skip_serializing_if = "is_default")]
+    pub warmth: f32,
+    /// Source-color brightness in the eight HSL band positions (-100..100).
+    #[serde(skip_serializing_if = "is_default")]
+    pub tone_mixer: [f32; 8],
     pub film: Option<FilmSettings>,
     /// Grain and halation for a look without a film stock. Ignored while `film` is Some.
     pub effects: Option<EffectsSettings>,
@@ -82,6 +88,8 @@ impl Default for EditRecipe {
             pitch: 0.,
             yaw: 0.,
             monochrome: None,
+            warmth: 0.,
+            tone_mixer: [0.; 8],
             film: Some(FilmSettings::default()),
             effects: None,
             seed: 0,
@@ -400,7 +408,11 @@ impl EditRecipe {
     pub fn pixels(&self) -> EditRecipe {
         let mut recipe = self.clone();
         let wheels = &mut recipe.wheels;
-        for wheel in [&mut wheels.shadows, &mut wheels.midtones, &mut wheels.highlights] {
+        for wheel in [
+            &mut wheels.shadows,
+            &mut wheels.midtones,
+            &mut wheels.highlights,
+        ] {
             wheel.hue = 0.;
         }
         recipe
@@ -431,8 +443,12 @@ impl EditRecipe {
             ("blacks", self.blacks),
             ("saturation", self.saturation),
             ("vibrance", self.vibrance),
+            ("warmth", self.warmth),
         ] {
             range(n, v, -100., 100.)?;
+        }
+        for value in self.tone_mixer {
+            range("tone mixer", value, -100., 100.)?;
         }
         range("sharpen", self.sharpen, 0., 100.)?;
         range("straighten", self.straighten, -45., 45.)?;

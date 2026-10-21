@@ -174,6 +174,7 @@ pub struct FilmPair {
     /// remap. `print_normalization` stays spektrafilm's own.
     pub print_exposure_correction: f32,
     pub film_exposure_correction: f32,
+    pub silver_scale: f32,
 }
 
 /// Identifies a prepared pair. Floats are compared by bits so a cached pair is
@@ -190,6 +191,7 @@ pub struct Key(
     u32,
     u32,
     Option<[u32; 3]>,
+    u32,
 );
 impl Key {
     /// Every setting [`FilmPair::build`] reads. Anything consumed there and
@@ -198,7 +200,7 @@ impl Key {
     /// `ev_film` is deliberately absent: it scales the scene before the front
     /// pass and changes none of the prepared tables, so dragging the film
     /// exposure slider reuses the cached pair.
-    fn new(s: &FilmSettings) -> Self {
+    fn new(s: &FilmSettings, warmth: f32) -> Self {
         Self(
             s.film,
             s.paper,
@@ -212,6 +214,7 @@ impl Key {
             s.grain_params
                 .as_ref()
                 .map(|p| p.rms_granularity.map(f32::to_bits)),
+            warmth.to_bits(),
         )
     }
 }
@@ -221,8 +224,8 @@ fn mat_f32(m: &[[f64; 3]; 3]) -> [[f32; 3]; 3] {
 }
 
 impl FilmPair {
-    pub fn matches(&self, settings: &FilmSettings) -> bool {
-        self.key == Key::new(settings)
+    pub fn matches(&self, settings: &FilmSettings, warmth: f32) -> bool {
+        self.key == Key::new(settings, if self.monochrome { warmth } else { 0. })
     }
 
     /// Every prepared value, flattened, so a cache-key test can tell whether
@@ -245,19 +248,26 @@ impl FilmPair {
         out.extend(self.scan_remap.into_iter().flatten());
         out.push(self.print_exposure_correction);
         out.push(self.film_exposure_correction);
+        out.push(self.silver_scale);
         out
     }
 
     /// Solve the enlarger and pack every table for one film/paper pair. Cheap
     /// next to [`FilmLut::build`], which supplies `lut`.
-    pub fn build(settings: &FilmSettings, lut: &FilmLut) -> Result<Self, RenderError> {
-        let key = Key::new(settings);
+    pub fn build(settings: &FilmSettings, lut: &FilmLut, warmth: f32) -> Result<Self, RenderError> {
+        let warmth = if lut.monochrome { warmth } else { 0. };
+        let key = Key::new(settings, warmth);
         let mut film = profile::load(settings.film as usize)?;
         let mut paper = profile::load(profile::FILM_COUNT + settings.paper as usize)?;
         film.apply_gamma(settings.gamma_film as f64)?;
         paper.apply_gamma(settings.gamma_paper as f64)?;
         let grain = grain::Grain::build_with_params(&film, settings.grain_params.as_ref())?;
         let scan = if settings.negative { &film } else { &paper };
+        let silver_scale = if !settings.negative || film.is_positive() {
+            2f64.powf(-f64::from(warmth) / 400.)
+        } else {
+            1.
+        };
         let rgb_to_adapted_xyz = lut.rgb_to_adapted_xyz;
 
         // ── Enlarger: per-stock neutral filtration plus the user's trim ────
@@ -357,7 +367,11 @@ impl FilmPair {
         };
         let scan_y = |cmy: [f64; 3]| -> f64 {
             (0..N_WL)
-                .map(|wl| light(scan, cmy, wl) * viewing[wl] * data::CMF_Y_F64[wl])
+                .map(|wl| {
+                    light(scan, cmy.map(|v| v * silver_scale), wl)
+                        * viewing[wl]
+                        * data::CMF_Y_F64[wl]
+                })
                 .sum::<f64>()
                 / scan_normalization
         };
@@ -379,6 +393,14 @@ impl FilmPair {
             }
         };
         let midgray = -(0.184f64.log10());
+        // The scanner references and mid-gray solve must use the same silver amount.
+        let unscaled_density = |density: f64| {
+            if silver_scale == 1. {
+                return density;
+            }
+            let base = finite_mean(&scan.data.base_density);
+            base + (density - base) / silver_scale
+        };
         let (scan_remap, print_exposure_correction, film_exposure_correction) =
             if !settings.negative {
                 // Print: the film's clearest and densest references through the
@@ -400,14 +422,22 @@ impl FilmPair {
                 let y_black = scan_y(develop(grain.preset.floor.map(|v| -v)));
                 let y_white = scan_y(develop(density_max));
                 let (m, q, corrected) = remap(y_white, y_black);
-                let shift = exposure(&paper, &paper_curves, -corrected.log10(), true)
-                    - exposure(&paper, &paper_curves, midgray, true);
+                let shift = exposure(
+                    &paper,
+                    &paper_curves,
+                    unscaled_density(-corrected.log10()),
+                    true,
+                ) - exposure(&paper, &paper_curves, midgray, true);
                 (Some([m as f32, q as f32]), 10f64.powf(shift) as f32, 1.)
             } else if film.is_positive() {
                 // Slide scanned directly: clear film is white, densest is black.
                 let (m, q, corrected) = remap(scan_y([0.; 3]), scan_y(density_max));
-                let shift = exposure(&film, &film_curves, -corrected.log10(), false)
-                    - exposure(&film, &film_curves, midgray, false);
+                let shift = exposure(
+                    &film,
+                    &film_curves,
+                    unscaled_density(-corrected.log10()),
+                    false,
+                ) - exposure(&film, &film_curves, midgray, false);
                 (Some([m as f32, q as f32]), 1., 10f64.powf(shift) as f32)
             } else {
                 // spektrafilm does not correct a negative scanned directly.
@@ -486,6 +516,7 @@ impl FilmPair {
             scan_remap,
             print_exposure_correction,
             film_exposure_correction,
+            silver_scale: silver_scale as f32,
         })
     }
 }

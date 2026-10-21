@@ -289,6 +289,8 @@
   "editor.saturation": "채도",
   "editor.vibrance": "생동감",
   "editor.colorMixer": "컬러 믹서",
+  "editor.warmth": "따뜻함",
+  "editor.toneMixer": "톤 믹서",
   "editor.hue": "색상",
   "editor.luminance": "휘도",
   "editor.sat": "채도",

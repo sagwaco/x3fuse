@@ -69,3 +69,28 @@ export function ColorMixer({ recipe }: { recipe: EditRecipe }): React.JSX.Elemen
     </>
   )
 }
+
+/** Adjust source colors before the renderer converts them to monochrome. */
+export function ToneMixer({ recipe }: { recipe: EditRecipe }): React.JSX.Element {
+  const change = useEditorStore((state) => state.change)
+  const commit = useEditorStore((state) => state.commit)
+  const values = recipe.toneMixer ?? BANDS.map(() => 0)
+  const set = (band: number, value: number, save = true): void =>
+    change({ toneMixer: values.map((entry, index) => (index === band ? value : entry)) }, save)
+  return (
+    <>
+      {BANDS.map(([name, hue], band) => (
+        <Adjustment
+          key={name}
+          label={t(`editor.${name}`)}
+          row
+          value={values[band]}
+          track={`linear-gradient(to right, ${hsl(hue, 70, 15)}, ${hsl(hue, 70, 85)})`}
+          change={(value, save) => set(band, value, save)}
+          reset={() => set(band, 0)}
+          commit={commit}
+        />
+      ))}
+    </>
+  )
+}

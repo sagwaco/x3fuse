@@ -26,7 +26,8 @@ pub use stocks::STOCKS_JSON;
 /// Version 8 adds native grain and halation controls with stock baselines.
 /// Version 9 uses smooth tone curves. Version 10 adds color wheels.
 /// Version 11 reduces the default grain blur.
-pub const RENDER_VERSION: u32 = 11;
+/// Version 12 adds monochrome warmth and source-color tone mixing.
+pub const RENDER_VERSION: u32 = 12;
 
 use image::ImageEncoder;
 use serde::{Deserialize, Serialize};
@@ -283,7 +284,7 @@ struct GpuSource {
     fill: Option<[u32; 4]>,
 }
 
-const PARAMETER_SLOTS: usize = 60;
+const PARAMETER_SLOTS: usize = 63;
 type Parameters = [[f32; 4]; PARAMETER_SLOTS];
 const PARAMETER_BYTES: u64 = std::mem::size_of::<Parameters>() as u64;
 const MAX_DISPATCHES: u64 = 80;
@@ -1253,7 +1254,7 @@ impl Renderer {
                 .then(|| recipe.monochrome.map(|m| m.filter))
                 .flatten();
             let stale = film_cache.as_ref().is_none_or(|(lut, pair, _)| {
-                !lut.matches(settings, filter) || !pair.matches(settings)
+                !lut.matches(settings, filter) || !pair.matches(settings, recipe.warmth)
             });
             if stale {
                 // Rebuild the LUT only when the film or its taking filter
@@ -1262,7 +1263,7 @@ impl Renderer {
                     Some((lut, _, _)) if lut.matches(settings, filter) => lut,
                     _ => film::FilmLut::build(settings.film, filter)?,
                 };
-                let pair = film::FilmPair::build(settings, &lut)?;
+                let pair = film::FilmPair::build(settings, &lut, recipe.warmth)?;
                 let tables = Arc::new(FilmTables {
                     spectral: pair.spectral.clone(),
                     tc_lut: lut.uploadable.clone(),
@@ -1644,8 +1645,8 @@ impl Renderer {
         p[3] = [
             r.whites / 100.,
             r.blacks / 100.,
-            r.saturation / 100.,
-            r.vibrance / 100.,
+            if neutral { 0. } else { r.saturation / 100. },
+            if neutral { 0. } else { r.vibrance / 100. },
         ];
         p[4][0] = r.sharpen / 100.;
         if let Some(monochrome) = sensor_mix {
@@ -1661,11 +1662,17 @@ impl Renderer {
             }
         }
         let centers = [0., 1. / 12., 1. / 6., 1. / 3., 0.5, 2. / 3., 0.75, 5. / 6.];
+        if neutral {
+            for (i, value) in r.tone_mixer.iter().enumerate() {
+                p[60 + i / 4][i % 4] = value / 100.;
+            }
+            p[62][0] = r.warmth / 100.;
+        }
         for (i, b) in r.hsl.iter().enumerate() {
             p[8 + i] = [
-                b.hue / 100.,
-                b.saturation / 100.,
-                b.luminance / 100.,
+                if neutral { 0. } else { b.hue / 100. },
+                if neutral { 0. } else { b.saturation / 100. },
+                if neutral { 0. } else { b.luminance / 100. },
                 centers[i],
             ];
         }
@@ -1674,9 +1681,11 @@ impl Renderer {
         // split) and an on flag. Without an offset or gain the flag stays off,
         // so `finish` skips the grade.
         let w = &r.wheels;
-        for (row, wheel) in [w.shadows, w.midtones, w.highlights].into_iter().enumerate() {
-            // A B&W output loses the tint's chroma but would keep its change
-            // in luminance, so it gets no tint.
+        for (row, wheel) in [w.shadows, w.midtones, w.highlights]
+            .into_iter()
+            .enumerate()
+        {
+            // Keep hidden color grades in the recipe for a return to color.
             if !neutral {
                 // The dot on a hue wheel with red at 0°, green at 120° and blue
                 // at 240°. 0.1 at the rim is a strong tint that rarely clips.
@@ -1684,8 +1693,8 @@ impl Renderer {
                     let (sin, cos) = hue.to_radians().sin_cos();
                     p[56 + row][c] = 0.1 * (wheel.x * cos + wheel.y * sin);
                 }
+                p[56 + row][3] = wheel.luminance / 100.;
             }
-            p[56 + row][3] = wheel.luminance / 100.;
         }
         if p[56..59].iter().flatten().any(|&v| v != 0.) {
             let shift = -0.2 * w.balance / 100.;
@@ -1697,6 +1706,7 @@ impl Renderer {
             ];
         }
         if let (Some(f), Some(pair), Some(_)) = (film, pair, spatial) {
+            p[62][1] = pair.silver_scale;
             let channels = |values| film::channels(values, pair.monochrome);
             let grain = pair.grain.spatial_for(g.long_edge(), f);
             let native = f.halation_params.as_ref();

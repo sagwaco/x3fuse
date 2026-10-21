@@ -32,7 +32,7 @@ import { SfdRaw, SfdRawInfo } from './SfdRaw'
 import { EffectsSection } from './EffectsControls'
 import { useStoredOpen } from '../hooks/useStoredOpen'
 import { animateDetails } from '../lib/animateDetails'
-import { ColorMixer } from './ColorMixer'
+import { ColorMixer, ToneMixer } from './ColorMixer'
 import { ColorWheels } from './ColorWheels'
 
 /** Tracks that show which way a slider moves the picture. */
@@ -151,6 +151,7 @@ export function ResetLabel({
 export function Adjustment({
   label,
   short,
+  row = false,
   value,
   min = -100,
   max = 100,
@@ -167,6 +168,8 @@ export function Adjustment({
   label: string
   /** A short visible label. With it, the label, slider and value share one row. */
   short?: string
+  /** Keep the full label, slider and value in one row. */
+  row?: boolean
   value: number
   min?: number
   max?: number
@@ -211,7 +214,7 @@ export function Adjustment({
       // the box, in line. In a row, it fills a column as wide as the label column.
       className={cn(
         'h-6 shrink-0 rounded-md border font-sans border-transparent bg-transparent text-right text-xs tabular-nums text-tone-400 [appearance:textfield] focus:border-ink/40 focus:bg-ink/[0.03] focus:text-tone-100 focus:outline-none disabled:opacity-40 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none',
-        short
+        short || row
           ? 'w-full px-0 text-[12px]'
           : 'w-14 translate-x-2.5 px-2 transition-transform focus:translate-x-0 motion-reduce:transition-none'
       )}
@@ -260,21 +263,28 @@ export function Adjustment({
     onPointerUp: () => setHeld(undefined),
     onPointerCancel: () => setHeld(undefined)
   }
-  if (short) {
-    // The slider and the value carry the full name. Shift-click on the letter resets.
-    // The label and value columns have the same width, so the slider is centered. They
-    // are narrow and have no gap: at 12 px, -100 just fits, and most values are shorter.
+  if (short || row) {
+    // The slider and value use the full name. Shift-click on the label resets.
+    // Short labels use equal outer columns to center the slider.
     return (
-      <div className="adjustment grid grid-cols-[1.875rem_minmax(0,1fr)_1.875rem] items-center py-0.5" {...hold}>
+      <div
+        className={cn(
+          'adjustment grid items-center py-0.5',
+          row
+            ? 'grid-cols-[minmax(0,5rem)_minmax(0,1fr)_2.375rem] gap-2'
+            : 'grid-cols-[1.875rem_minmax(0,1fr)_1.875rem]'
+        )}
+        {...hold}
+      >
         <span
           aria-hidden="true"
           title={label}
-          className={cn('select-none', SLIDER_LABEL)}
+          className={cn('select-none truncate', SLIDER_LABEL)}
           onClick={(event) => {
             if (event.shiftKey && !disabled) reset()
           }}
         >
-          {short}
+          {short ?? label}
         </span>
         {slider}
         {input}
@@ -400,6 +410,8 @@ export const EditorControls = memo(function EditorControls({
   }
   const change = useEditorStore((state) => state.change)
   const commit = useEditorStore((state) => state.commit)
+  const monochrome =
+    !!recipe.monochrome || recipe.cameraProfile === 'Monochrome' || monochromeFilm(recipe.film)
   const x3i = useEditorStore((state) => state.x3i)
   // While an X3I merges an SFD RAW that it uses, only the SFD RAW section works.
   const pending = useEditorStore(needsX3iMerge)
@@ -608,7 +620,7 @@ export const EditorControls = memo(function EditorControls({
           )}
           {tab === 'grading' && (
             <>
-              {recipe.monochrome && (
+              {monochrome && (
                 <Section
                   id="filter"
                   name={t('editor.filter')}
@@ -618,7 +630,7 @@ export const EditorControls = memo(function EditorControls({
                 >
                   <Swatches
                     label={t('editor.filter')}
-                    value={recipe.monochrome.filter}
+                    value={recipe.monochrome?.filter ?? 'neutral'}
                     options={(monochromeFilm(recipe.film)
                       ? FILM_MONOCHROME_FILTERS
                       : MONOCHROME_FILTERS
@@ -632,15 +644,29 @@ export const EditorControls = memo(function EditorControls({
                 </Section>
               )}
               <Section id="color" name={t('editor.color')}>
-                {control('saturation', { track: RAINBOW })}
-                {control('vibrance', { track: RAINBOW, help: t('editor.vibranceHelp') })}
+                {monochrome ? (
+                  control('warmth', { value: recipe.warmth ?? 0, track: TEMPERATURE })
+                ) : (
+                  <>
+                    {control('saturation', { track: RAINBOW })}
+                    {control('vibrance', { track: RAINBOW, help: t('editor.vibranceHelp') })}
+                  </>
+                )}
               </Section>
-              <Section id="colorMixer" name={t('editor.colorMixer')}>
-                <ColorMixer recipe={recipe} />
-              </Section>
-              <Section id="colorWheels" name={t('editor.colorWheels')}>
-                <ColorWheels recipe={recipe} />
-              </Section>
+              {monochrome ? (
+                <Section id="toneMixer" name={t('editor.toneMixer')}>
+                  <ToneMixer recipe={recipe} />
+                </Section>
+              ) : (
+                <>
+                  <Section id="colorMixer" name={t('editor.colorMixer')}>
+                    <ColorMixer recipe={recipe} />
+                  </Section>
+                  <Section id="colorWheels" name={t('editor.colorWheels')}>
+                    <ColorWheels recipe={recipe} />
+                  </Section>
+                </>
+              )}
             </>
           )}
         </div>
