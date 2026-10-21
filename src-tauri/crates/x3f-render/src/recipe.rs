@@ -10,6 +10,10 @@ pub struct EditRecipe {
     pub exposure: f32,
     pub temperature: Option<f32>,
     pub tint: f32,
+    /// Full spectrum raw color. It replaces white balance and the camera color
+    /// matrix. None keeps the calibrated visible path and is not written.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw_color: Option<RawColor>,
     pub contrast: f32,
     pub highlights: f32,
     pub shadows: f32,
@@ -68,6 +72,7 @@ impl Default for EditRecipe {
             exposure: 0.,
             temperature: None,
             tint: 0.,
+            raw_color: None,
             contrast: 0.,
             highlights: 0.,
             shadows: 0.,
@@ -114,6 +119,18 @@ pub enum MonochromeFilter {
     Yellow,
     Green,
     Blue,
+}
+
+/// Full spectrum raw color: gains on the camera layers, then a 3x3 mix to RGB.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RawColor {
+    /// Gains on the bottom, middle, and top sensor layers. The renderer divides
+    /// them by the middle gain, so they do not change exposure.
+    pub gains: [f32; 3],
+    /// Row-major mix. Rows are output red, green, and blue. Columns are the
+    /// bottom, middle, and top layers.
+    pub matrix: [f32; 9],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -435,6 +452,19 @@ impl EditRecipe {
         }
         let tint = crate::color::EXTENDED_TINT;
         range("tint", self.tint, -tint, tint)?;
+        if let Some(raw) = &self.raw_color {
+            let [lo, hi] = crate::color::RAW_GAIN;
+            for gain in raw.gains {
+                range("raw gain", gain, lo, hi)?;
+            }
+            let mix = crate::color::RAW_MIX;
+            for value in raw.matrix {
+                range("raw mix", value, -mix, mix)?;
+            }
+            if self.camera_profile.is_some() || self.monochrome.is_some() {
+                return Err("Raw color cannot use a camera profile or monochrome".into());
+            }
+        }
         for (n, v) in [
             ("contrast", self.contrast),
             ("highlights", self.highlights),

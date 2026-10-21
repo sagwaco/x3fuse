@@ -7,10 +7,12 @@ mod geometry;
 mod recipe;
 mod stocks;
 pub use camera::{read_camera_profiles, CameraProfile, CameraProfiles};
-pub use color::{as_shot_white_balance, pick_white_balance};
+pub use color::{
+    as_shot_channel_gains, as_shot_white_balance, pick_channel_gains, pick_white_balance,
+};
 pub use recipe::{
     ColorWheels, Crop, Curves, EditRecipe, EffectsSettings, FilmSettings, GrainParams,
-    HalationParams, HslBand, MonochromeFilter, MonochromeSettings, Point, Wheel,
+    HalationParams, HslBand, MonochromeFilter, MonochromeSettings, Point, RawColor, Wheel,
 };
 pub use stocks::STOCKS_JSON;
 
@@ -1655,7 +1657,10 @@ impl Renderer {
                 monochrome.filter,
             )?);
         }
-        let wb = color::white_balance_matrix(&image.white_balance, r.temperature, r.tint)?;
+        let wb = match &r.raw_color {
+            Some(raw) => color::raw_color_matrix(&image.white_balance, raw)?,
+            None => color::white_balance_matrix(&image.white_balance, r.temperature, r.tint)?,
+        };
         for i in 0..3 {
             for j in 0..3 {
                 p[5 + i][j] = wb[i * 3 + j] as f32;

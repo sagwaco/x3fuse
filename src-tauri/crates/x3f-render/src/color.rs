@@ -1,4 +1,6 @@
-use crate::{geometry, Curves, EditRecipe, MonochromeFilter, Point, RenderError, RenderOptions};
+use crate::{
+    geometry, Curves, EditRecipe, MonochromeFilter, Point, RawColor, RenderError, RenderOptions,
+};
 use x3f_core::{SceneLinearImage, WhiteBalanceCalibration};
 
 pub(crate) fn inverse(m: [f64; 9]) -> Result<[f64; 9], RenderError> {
@@ -93,6 +95,9 @@ const TINT: f64 = 100.;
 /// The extended slider range: temperature in kelvin, and tint.
 pub(crate) const EXTENDED_TEMPERATURE: [f32; 2] = [500., 50000.];
 pub(crate) const EXTENDED_TINT: f32 = 2000.;
+/// Raw color limits: the range of a layer gain, and the largest mix entry.
+pub(crate) const RAW_GAIN: [f32; 2] = [1. / 64., 64.];
+pub(crate) const RAW_MIX: f32 = 4.;
 fn planck(cal: &WhiteBalanceCalibration, k: f64, t: f64) -> [f64; 3] {
     let n = vector(cal.xyz_to_camera, white_xyz(k, t));
     let g = n[1].max(1e-8);
@@ -165,6 +170,31 @@ pub(crate) fn white_balance_matrix(
     }
     Ok(out)
 }
+/// Recover camera layers, apply relative gains, then mix them to output RGB.
+/// The as-shot luminance anchor keeps the exposure of the standard path.
+pub(crate) fn raw_color_matrix(
+    cal: &WhiteBalanceCalibration,
+    raw: &RawColor,
+) -> Result<[f64; 9], RenderError> {
+    let middle = f64::from(raw.gains[1]);
+    if !middle.is_finite() || middle <= 0. {
+        return Err(RenderError::Invalid("Invalid raw color middle gain".into()));
+    }
+    let rgb = vector(cal.camera_to_rgb, cal.as_shot_neutral);
+    let anchor = (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) / cal.as_shot_neutral[1];
+    if !anchor.is_finite() || anchor <= 0. {
+        return Err(RenderError::Invalid(
+            "Invalid raw color exposure anchor".into(),
+        ));
+    }
+    let mix =
+        std::array::from_fn(|i| f64::from(raw.matrix[i]) * f64::from(raw.gains[i % 3]) / middle);
+    let out = multiply(mix, inverse(cal.camera_to_rgb)?).map(|v| anchor * v);
+    if out.iter().any(|v| !v.is_finite()) {
+        return Err(RenderError::Invalid("Raw color is not finite".into()));
+    }
+    Ok(out)
+}
 /// Pick a neutral patch in normalized coordinates of the current edited output.
 pub fn pick_white_balance(
     image: &SceneLinearImage,
@@ -172,6 +202,33 @@ pub fn pick_white_balance(
     x: f32,
     y: f32,
 ) -> Result<(f32, f32), String> {
+    let target = pick_camera_layers(image, recipe, x, y)?;
+    Ok(fit_neutral(
+        &image.white_balance,
+        target.map(|v| v / target[1]),
+    ))
+}
+/// Pick relative layer gains from a neutral patch in the current edited output.
+pub fn pick_channel_gains(
+    image: &SceneLinearImage,
+    recipe: &EditRecipe,
+    x: f32,
+    y: f32,
+) -> Result<[f32; 3], String> {
+    let b = pick_camera_layers(image, recipe, x, y)?;
+    let gains = [b[1] / b[0], 1., b[1] / b[2]];
+    let [lo, hi] = RAW_GAIN.map(f64::from);
+    if gains.iter().any(|v| !(lo..=hi).contains(v)) {
+        return Err("This point requires channel gains outside the supported range".into());
+    }
+    Ok(gains.map(|v| v as f32))
+}
+fn pick_camera_layers(
+    image: &SceneLinearImage,
+    recipe: &EditRecipe,
+    x: f32,
+    y: f32,
+) -> Result<[f64; 3], String> {
     recipe.validate()?;
     if !x.is_finite()
         || !y.is_finite()
@@ -208,10 +265,14 @@ pub fn pick_white_balance(
     if target.iter().any(|&v| !v.is_finite() || v <= 1e-5) {
         return Err("This point cannot define a camera neutral".into());
     }
-    Ok(fit_neutral(
-        &image.white_balance,
-        target.map(|v| v / target[1]),
-    ))
+    Ok(target)
+}
+/// The camera's as-shot layer gains, relative to the middle layer. They are
+/// clamped to the recipe range, so a reset to as shot always validates.
+pub fn as_shot_channel_gains(cal: &WhiteBalanceCalibration) -> [f32; 3] {
+    let n = cal.as_shot_neutral;
+    let [lo, hi] = RAW_GAIN;
+    [(n[1] / n[0]) as f32, 1., (n[1] / n[2]) as f32].map(|g| g.clamp(lo, hi))
 }
 /// The temperature and tint the sliders show for the camera's own white balance.
 pub fn as_shot_white_balance(cal: &WhiteBalanceCalibration) -> (f32, f32) {
@@ -329,6 +390,148 @@ pub(crate) fn curve_table(c: &Curves) -> Vec<[f32; 4]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn raw_color_recovers_layers_and_normalizes_gains() {
+        let cal = WhiteBalanceCalibration {
+            camera_to_rgb: [1.3, -0.2, 0.1, -0.3, 1.4, -0.1, 0.2, -0.4, 1.2],
+            xyz_to_camera: [1., 0., 0., 0., 1., 0., 0., 0., 1.],
+            as_shot_neutral: [0.8, 2., 1.6],
+        };
+        let mut raw = RawColor {
+            gains: [1.; 3],
+            matrix: [1., 0., 0., 0., 1., 0., 0., 0., 1.],
+        };
+        let b = [0.12, 0.3, 0.27];
+        let neutral_rgb = vector(cal.camera_to_rgb, cal.as_shot_neutral);
+        let anchor = (0.2126 * neutral_rgb[0] + 0.7152 * neutral_rgb[1] + 0.0722 * neutral_rgb[2])
+            / cal.as_shot_neutral[1];
+        let output = vector(
+            raw_color_matrix(&cal, &raw).unwrap(),
+            vector(cal.camera_to_rgb, b),
+        );
+        for c in 0..3 {
+            assert!((output[c] - anchor * b[c]).abs() < 1e-12);
+        }
+        raw.gains = [0.5, 2., 3.];
+        raw.matrix = [0., -0.5, 1.5, -1., 2., 0., 1., 0., 0.];
+        let original = raw_color_matrix(&cal, &raw).unwrap();
+        raw.gains = raw.gains.map(|v| v * 4.);
+        assert_eq!(raw_color_matrix(&cal, &raw).unwrap(), original);
+    }
+
+    #[test]
+    fn raw_as_shot_neutral_keeps_standard_luminance() {
+        let cal = WhiteBalanceCalibration {
+            camera_to_rgb: [1.3, -0.2, 0.1, -0.3, 1.4, -0.1, 0.2, -0.4, 1.2],
+            xyz_to_camera: [1., 0., 0., 0., 1., 0., 0., 0., 1.],
+            as_shot_neutral: [0.8, 2., 1.6],
+        };
+        let raw = RawColor {
+            gains: as_shot_channel_gains(&cal),
+            matrix: [1., 0., 0., 0., 1., 0., 0., 0., 1.],
+        };
+        assert_eq!(raw.gains, [2.5, 1., 1.25]);
+        let scene = vector(cal.camera_to_rgb, cal.as_shot_neutral.map(|v| v * 0.18));
+        let standard = vector(white_balance_matrix(&cal, None, 0.).unwrap(), scene);
+        let output = vector(raw_color_matrix(&cal, &raw).unwrap(), scene);
+        let luminance = |rgb: [f64; 3]| 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
+        for channel in output {
+            assert!((channel - luminance(standard)).abs() < 1e-12);
+        }
+        assert!((luminance(output) - luminance(standard)).abs() < 1e-12);
+        // An extreme as-shot neutral still gives gains that validate.
+        let extreme = WhiteBalanceCalibration {
+            as_shot_neutral: [1. / 128., 1., 128.],
+            ..cal
+        };
+        assert_eq!(as_shot_channel_gains(&extreme), [64., 1., 1. / 64.]);
+    }
+
+    #[test]
+    fn raw_color_rejects_invalid_gains_calibration_and_mix() {
+        let mut cal = WhiteBalanceCalibration {
+            camera_to_rgb: [1., 0., 0., 0., 1., 0., 0., 0., 1.],
+            xyz_to_camera: [1., 0., 0., 0., 1., 0., 0., 0., 1.],
+            as_shot_neutral: [1.; 3],
+        };
+        let mut raw = RawColor {
+            gains: [1.; 3],
+            matrix: [1., 0., 0., 0., 1., 0., 0., 0., 1.],
+        };
+        for middle in [0., -1., f32::NAN, f32::INFINITY] {
+            raw.gains[1] = middle;
+            assert!(matches!(
+                raw_color_matrix(&cal, &raw),
+                Err(RenderError::Invalid(_))
+            ));
+        }
+        raw.gains[1] = 1.;
+        for n in [
+            [0.; 3],
+            [1., 0., 1.],
+            [1., -0.1, 1.],
+            [1., f64::NAN, 1.],
+            [f64::INFINITY, 1., 1.],
+        ] {
+            cal.as_shot_neutral = n;
+            assert!(matches!(
+                raw_color_matrix(&cal, &raw),
+                Err(RenderError::Invalid(_))
+            ));
+        }
+        cal.as_shot_neutral = [1.; 3];
+        for value in [f32::NAN, f32::INFINITY] {
+            raw.matrix[0] = value;
+            assert!(matches!(
+                raw_color_matrix(&cal, &raw),
+                Err(RenderError::Invalid(_))
+            ));
+        }
+        raw.matrix[0] = 1.;
+        cal.camera_to_rgb = [1.; 9];
+        assert!(matches!(
+            raw_color_matrix(&cal, &raw),
+            Err(RenderError::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn channel_picker_keeps_signed_samples_neutral_through_a_mix() {
+        let cal = WhiteBalanceCalibration {
+            camera_to_rgb: [1.25, 0., 0., 0., 1., 0., -2., 0., 13. / 3.],
+            xyz_to_camera: [1., 0., 0., 0., 1., 0., 0., 0., 1.],
+            as_shot_neutral: [0.8, 1., 0.6],
+        };
+        let b = [0.18, 0.22, 0.04];
+        let scene = vector(cal.camera_to_rgb, b).map(|v| v as f32);
+        assert!(scene[2] < 0.);
+        let mut image = SceneLinearImage {
+            data: scene.repeat(25),
+            width: 5,
+            height: 5,
+            orientation: 1,
+            white_balance: cal,
+            color_mode_calibration: None,
+        };
+        let mut raw = RawColor {
+            gains: [1.; 3],
+            matrix: [-0.5, 0., 1.5, 0., 1.25, -0.25, 1.5, -0.5, 0.],
+        };
+        let recipe = EditRecipe {
+            raw_color: Some(raw),
+            ..EditRecipe::default()
+        };
+        raw.gains = pick_channel_gains(&image, &recipe, 0.5, 0.5).unwrap();
+        let output = vector(raw_color_matrix(&cal, &raw).unwrap(), scene.map(f64::from));
+        for channel in output {
+            assert!((channel - b[1]).abs() < 1e-7);
+        }
+        for b in [[0.001, 0.2, 0.1], [0.2, 0.001, 0.1], [0.1, 0.2, 0.001]] {
+            image.data = vector(cal.camera_to_rgb, b).map(|v| v as f32).repeat(25);
+            assert!(pick_channel_gains(&image, &recipe, 0.5, 0.5).is_err());
+        }
+    }
 
     #[test]
     fn curves_keep_identity_and_two_point_lines() {
@@ -501,6 +704,7 @@ mod tests {
         ] {
             image.data = invalid.repeat(25);
             assert!(pick_white_balance(&image, &EditRecipe::default(), 0.5, 0.5).is_err());
+            assert!(pick_channel_gains(&image, &EditRecipe::default(), 0.5, 0.5).is_err());
         }
     }
 }

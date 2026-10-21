@@ -143,6 +143,53 @@ fn recipes_validate_and_round_trip() {
 }
 
 #[test]
+fn raw_color_recipes_validate_and_round_trip() {
+    let encoded = serde_json::to_value(EditRecipe::default()).unwrap();
+    assert!(encoded.get("rawColor").is_none());
+    let json = r#"{"rawColor":{"gains":[0.5,1,2],"matrix":[1,0,0,0,1,0,0,0,1]}}"#;
+    let recipe: EditRecipe = serde_json::from_str(json).unwrap();
+    recipe.validate().unwrap();
+    let encoded = serde_json::to_value(&recipe).unwrap();
+    assert_eq!(encoded["rawColor"]["gains"][2], 2.);
+    assert_eq!(recipe, serde_json::from_value(encoded).unwrap());
+    for json in [
+        r#"{"rawColor":{"gains":[1,1,1],"matrix":[1,0,0,0,1,0,0,0,1],"mix":1}}"#,
+        r#"{"rawColor":{"gains":[1,1,1]}}"#,
+        r#"{"rawColor":{"gains":[1,1,1],"matrix":[1,0,0,0,1,0,0,0]}}"#,
+    ] {
+        assert!(serde_json::from_str::<EditRecipe>(json).is_err());
+    }
+    let with = |gain: f32, entry: f32| {
+        let mut raw = recipe.clone();
+        let color = raw.raw_color.as_mut().unwrap();
+        color.gains[0] = gain;
+        color.matrix[4] = entry;
+        raw
+    };
+    for (gain, entry) in [(1. / 64., 4.), (64., -4.)] {
+        with(gain, entry).validate().unwrap();
+    }
+    for (gain, entry) in [
+        (f32::NAN, 1.),
+        (f32::INFINITY, 1.),
+        (1., f32::NAN),
+        (1., f32::NEG_INFINITY),
+        (0., 1.),
+        (65., 1.),
+        (1., 4.5),
+        (1., -4.5),
+    ] {
+        assert!(with(gain, entry).validate().is_err(), "{gain} {entry}");
+    }
+    let mut bad = recipe.clone();
+    bad.camera_profile = Some("Standard".into());
+    assert!(bad.validate().is_err());
+    bad = recipe;
+    bad.monochrome = Some(MonochromeSettings::default());
+    assert!(bad.validate().is_err());
+}
+
+#[test]
 fn monochrome_grading_defaults_round_trip_and_validate() {
     let mut recipe: EditRecipe = serde_json::from_str(r#"{"film":null}"#).unwrap();
     assert_eq!(recipe.warmth, 0.);
@@ -2759,6 +2806,57 @@ fn gpu_monochrome(renderer: &Renderer) {
     assert!(image::load_from_memory(&full.jpeg(95).unwrap()).is_ok());
 }
 
+fn gpu_raw_color(renderer: &Renderer) {
+    let cancel = AtomicBool::new(false);
+    let source = layer_test_image();
+    let render = |image: &SceneLinearImage, recipe: &EditRecipe| {
+        renderer
+            .render(image, recipe, RenderOptions::default(), &cancel)
+            .unwrap()
+            .data
+    };
+    let plain = EditRecipe {
+        film: None,
+        ..Default::default()
+    };
+    // At the as-shot gains with no mix, the output is the normalized layers.
+    // The same values as plain scene RGB must render the same pixels.
+    let layers = [
+        [0.1, 0.1, 0.1],
+        [0.12, 0.06, 0.03],
+        [0.02, 0.04, 0.14],
+        [0.08, 0.13, 0.03],
+    ];
+    let gains = as_shot_channel_gains(&source.white_balance);
+    for (matrix, order) in [
+        ([1., 0., 0., 0., 1., 0., 0., 0., 1.], [0, 1, 2]),
+        ([0., 0., 1., 0., 1., 0., 1., 0., 0.], [2, 1, 0]),
+    ] {
+        let raw = EditRecipe {
+            raw_color: Some(RawColor { gains, matrix }),
+            ..plain.clone()
+        };
+        let mut expected = image(4, 1);
+        expected.data = layers.iter().flat_map(|l| order.map(|c| l[c])).collect();
+        let (got, want) = (render(&source, &raw), render(&expected, &plain));
+        assert!(
+            got.iter()
+                .zip(want.iter())
+                .all(|(g, w)| g.abs_diff(*w) <= 2),
+            "{matrix:?}: {:?} vs {:?}",
+            &got[..],
+            &want[..]
+        );
+        // Temperature and tint do not apply in raw mode.
+        let warm = EditRecipe {
+            temperature: Some(3000.),
+            tint: 40.,
+            ..raw.clone()
+        };
+        assert_eq!(render(&source, &warm), got);
+    }
+}
+
 #[test]
 #[ignore = "requires hardware GPU; cargo test -p x3f-render gpu_pipeline -- --ignored --nocapture"]
 fn gpu_pipeline() {
@@ -2768,6 +2866,7 @@ fn gpu_pipeline() {
     gpu_preview_matches_tiled(&renderer);
     gpu_film_exposure_moves_print_brightness(&renderer);
     gpu_monochrome(&renderer);
+    gpu_raw_color(&renderer);
     gpu_bw_film(&renderer);
     gpu_rgba8_and_tiling(&renderer);
     gpu_pack_flags_non_finite(&renderer);
