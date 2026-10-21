@@ -17,6 +17,7 @@ import { Adjustment } from './EditorControls'
 
 const gainScale = { to: Math.log2, from: (value: number): number => 2 ** value, step: 1 / 24 }
 const channels = ['red', 'green', 'blue'] as const
+const layers = ['Bottom', 'Middle', 'Top'] as const
 
 function normalizedGains(gains: [number, number, number]): [number, number, number] {
   return [gains[0] / gains[1], 1, gains[2] / gains[1]]
@@ -133,6 +134,24 @@ export function RawMatrixControls({ recipe }: { recipe: EditRecipe }): React.JSX
   const update = (next: number[], save = true): void => {
     if (gains) change({ rawColor: { gains: [...gains], matrix: next } }, save)
   }
+  const setSource = (column: number, value: number, save = true): void => {
+    const next = [...matrix]
+    const others = [0, 1, 2].filter((index) => index !== column)
+    const first = row * 3 + others[0]
+    const second = row * 3 + others[1]
+    const remaining = 1 - value
+    const state = useEditorStore.getState()
+    // Keep the source ratio when a drag passes through 100% or a coefficient limit.
+    const source =
+      (state.session && state.documents[state.session.path]?.gesture?.rawColor?.matrix) || matrix
+    const sum = source[first] + source[second]
+    const proportional = Math.abs(sum) < 1e-8 ? remaining / 2 : (remaining * source[first]) / sum
+    // Limit redistribution so both source coefficients stay in the supported range.
+    next[first] = Math.max(-4, remaining - 4, Math.min(4, remaining + 4, proportional))
+    next[second] = remaining - next[first]
+    next[row * 3 + column] = value
+    update(next, save)
+  }
   const swap = (first: number, second: number): void => {
     const next = [...matrix]
     for (let column = 0; column < 3; column++) {
@@ -161,22 +180,14 @@ export function RawMatrixControls({ recipe }: { recipe: EditRecipe }): React.JSX
         {channels.map((channel, column) => (
           <Adjustment
             key={channel}
-            label={t(`editor.source${channel[0].toUpperCase()}${channel.slice(1)}`)}
-            short={channel[0].toUpperCase()}
-            value={Math.round(matrix[row * 3 + column] * 100)}
+            label={t(`editor.source${layers[column]}`)}
+            short={layers[column][0]}
+            value={Number((matrix[row * 3 + column] * 100).toFixed(4))}
             min={-400}
             max={400}
             step={1}
-            change={(value, save) => {
-              const next = [...matrix]
-              next[row * 3 + column] = value / 100
-              update(next, save)
-            }}
-            reset={() => {
-              const next = [...matrix]
-              next[row * 3 + column] = IDENTITY_RAW_MATRIX[row * 3 + column]
-              update(next)
-            }}
+            change={(value, save) => setSource(column, value / 100, save)}
+            reset={() => setSource(column, IDENTITY_RAW_MATRIX[row * 3 + column])}
             commit={commit}
             disabled={gains ? undefined : true}
           />

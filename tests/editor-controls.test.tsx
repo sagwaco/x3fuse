@@ -1674,13 +1674,13 @@ it('composes channel swaps and preserves gains and neutral row totals', () => {
       swapped.matrix.slice(row * 3, row * 3 + 3).reduce((a: number, b: number) => a + b, 0)
     ).toBeCloseTo(1)
   fireEvent.click(screen.getByRole('tab', { name: t('editor.outputGreen') }))
-  adjust(t('editor.sourceRed'), -50)
+  adjust(t('editor.sourceBottom'), -50)
   expect(change.mock.lastCall?.[0].rawColor.matrix[3]).toBe(-0.5)
   fireEvent.click(screen.getByRole('button', { name: t('editor.monochrome') }))
-  expect(change.mock.lastCall?.[0].rawColor).toEqual({
-    gains,
-    matrix: [-0.5, 0.2, 1, -0.5, 0.2, 1, -0.5, 0.2, 1]
-  })
+  expect(change.mock.lastCall?.[0].rawColor.gains).toEqual(gains)
+  change.mock.lastCall?.[0].rawColor.matrix.forEach((value: number, index: number) =>
+    expect(value).toBeCloseTo([-0.5, 0.25, 1.25][index % 3])
+  )
   fireEvent.click(screen.getByRole('button', { name: t('editor.identity') }))
   expect(change.mock.lastCall?.[0].rawColor).toEqual({ gains, matrix: [1, 0, 0, 0, 1, 0, 0, 0, 1] })
 })
@@ -1711,4 +1711,76 @@ it('keeps valid non-unit-middle gains in range when editing another channel', ()
   expect(raw.matrix).toEqual(matrix)
   fireEvent.click(screen.getByRole('button', { name: t('editor.resetWhiteBalance') }))
   expect(change.mock.lastCall?.[0].rawColor).toEqual({ gains: [2, 1, 0.5], matrix })
+})
+
+it.each([
+  { row: [0.4, 0.2, 0.4], column: 0, value: 10, expected: [0.1, 0.3, 0.6] },
+  { row: [0.4, 0.2, 0.4], column: 1, value: 40, expected: [0.3, 0.4, 0.3] },
+  { row: [0.4, 0.2, 0.4], column: 2, value: -20, expected: [0.8, 0.4, -0.2] },
+  { row: [1, 0, 0], column: 0, value: 50, expected: [0.5, 0.25, 0.25] },
+  { row: [1, 0.2, -0.2], column: 0, value: 50, expected: [0.5, 0.25, 0.25] },
+  { row: [0.5, 1, -0.5], column: 0, value: 25, expected: [0.25, 1.5, -0.75] },
+  { row: [0.99, 4, -3.99], column: 0, value: -100, expected: [-1, 4, -2] },
+  { row: [1, 0, 0], column: 0, value: -400, expected: [-4, 2.5, 2.5] },
+  { row: [1, 0, 0], column: 0, value: 400, expected: [4, -1.5, -1.5] }
+])(
+  'balances the other source layers to 100%: $row, column $column, $value%',
+  ({ row, column, value, expected }) => {
+    const gains: [number, number, number] = [2, 1, 0.5]
+    const matrix = [...row, 0, 1, 0, 0, 0, 1]
+    render(
+      <Controls
+        initial={{
+          ...defaultRecipe(),
+          film: null,
+          cameraProfile: null,
+          rawColor: { gains, matrix }
+        }}
+      />
+    )
+    panelTab('grading')
+    const labels = ['editor.sourceBottom', 'editor.sourceMiddle', 'editor.sourceTop']
+    for (const label of labels) expect(screen.getByRole('slider', { name: t(label) })).toBeTruthy()
+    adjust(t(labels[column]), value)
+    const raw = change.mock.lastCall?.[0].rawColor
+    expect(raw.gains).toEqual(gains)
+    expect(raw.matrix.slice(3)).toEqual(matrix.slice(3))
+    raw.matrix.slice(0, 3).forEach((coefficient: number, index: number) => {
+      expect(coefficient).toBeCloseTo(expected[index])
+      expect(coefficient).toBeGreaterThanOrEqual(-4)
+      expect(coefficient).toBeLessThanOrEqual(4)
+    })
+    expect(
+      raw.matrix.slice(0, 3).reduce((sum: number, coefficient: number) => sum + coefficient, 0)
+    ).toBeCloseTo(1)
+  }
+)
+
+it('uses the gesture source ratio after passing through 100% and rebalances slider reset', () => {
+  const gains: [number, number, number] = [2, 1, 0.5]
+  const base = {
+    ...defaultRecipe(),
+    film: null,
+    cameraProfile: null,
+    rawColor: { gains, matrix: [0.6, 0.3, 0.1, 0, 1, 0, 0, 0, 1] }
+  }
+  const originalDocuments = editor.getState().documents
+  render(
+    <Controls initial={{ ...base, rawColor: { gains, matrix: [1, 0, 0, 0, 1, 0, 0, 0, 1] } }} />
+  )
+  panelTab('grading')
+  editor.setState({
+    documents: {
+      '/a.X3F': { recipe: base, gesture: base, revision: 0, past: [], future: [], dirty: false }
+    }
+  })
+  adjust(t('editor.sourceBottom'), 60)
+  const row = change.mock.lastCall?.[0].rawColor.matrix.slice(0, 3)
+  row.forEach((value: number, index: number) => expect(value).toBeCloseTo([0.6, 0.3, 0.1][index]))
+  editor.setState({ documents: originalDocuments })
+  reset(t('editor.sourceMiddle'))
+  const resetRow = change.mock.lastCall?.[0].rawColor.matrix.slice(0, 3)
+  expect(resetRow[1]).toBe(0)
+  expect(resetRow[0] / resetRow[2]).toBeCloseTo(6)
+  expect(resetRow.reduce((sum: number, value: number) => sum + value, 0)).toBeCloseTo(1)
 })
