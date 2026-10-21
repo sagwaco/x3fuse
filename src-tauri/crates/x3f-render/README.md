@@ -32,15 +32,22 @@ The white-balance picker validates the recovered sensor values. It accepts
 negative visible RGB components when all sensor values are positive, as can
 occur in full spectrum captures through a three-band filter.
 
-The frontend's Aerochrome-style preset uses `cameraProfile: "FCBlue"`,
-`film.film: 15` (Ektachrome 100), `film.negative: true`, and `monochrome: null`.
-It starts at 1170 K and -263 tint, grain amount 2, and grain size 1.5, based on
-the supplied DP2 Merrill three-band captures. It uses the existing CAMF and
-spectral film stages without a new stock index.
-This is a full spectrum Foveon approximation, not measured Aerochrome film data
-or a separation of visible and near-IR bands. White balance must be set for the
-capture filter. Attach the file's camera profiles to `PreparedImage` for both
-preview and export, as with other camera looks.
+Full spectrum recipes set `rawColor` with three layer gains and a row-major 3x3
+matrix. The renderer uses `A * matrix * diag(gains / middle_gain) * inverse(camera_to_rgb)`
+instead of temperature/tint and the visible-light camera transform. The exposure
+anchor `A` keeps as-shot neutral luminance. Camera profiles and sensor monochrome
+must be unset in this path. Signed values and highlight headroom remain available.
+
+The frontend Aerochrome preset uses an empirical raw mix and Ektachrome 100
+(`film: 15`, `negative: true`). It starts with the current raw gains, or as-shot
+gains when entering raw mode. Pick a cloud before judging the result. No FCBlue
+profile or Kelvin offset is applied. This is a manually tuned DP2 Merrill
+550/660/850 nm approximation, not measured Aerochrome film data or a spectral
+separation. See [the preset notes](assets/AEROCHROME.md) for samples and limits.
+
+The `raw_patches` example measures unrotated source rectangles and renders a
+preview, with an optional recipe or sidecar. It reports signed raw-layer and
+matrix-output statistics without changing the input. Output PNGs must be new files.
 
 Processing is geometric sampling → white balance/exposure → optional sensor-layer
 monochrome → highlights/shadows → optional spectral film → contrast/saturation/vibrance/HSL/color wheels/curves

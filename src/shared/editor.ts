@@ -156,6 +156,8 @@ export interface RawColor {
 }
 export const IDENTITY_RAW_MATRIX: number[] = [1, 0, 0, 0, 1, 0, 0, 0, 1]
 export const RAW_GAIN_RANGE = [1 / 64, 64] as const
+/** Empirical DP2 Merrill mix for a 550/660/850 nm filter, not measured band separation. */
+export const AEROCHROME_MATRIX: number[] = [1.7, 0, -0.7, -1, 3, -1, 0.5, -3.5, 4]
 /** The frames of an X3I (Super Fine Detail) photo: all merged, or the middle exposure only. */
 export type X3iSource = 'merge' | 'middle_exposure'
 /** True when an X3I uses its SFD RAW, the merge of all its frames. */

@@ -11,6 +11,7 @@ import {
   type LucideIcon
 } from 'lucide-react'
 import {
+  AEROCHROME_MATRIX,
   DEFAULT_FILM,
   IDENTITY_RAW_MATRIX,
   FILM_MONOCHROME_FILTERS,
@@ -178,13 +179,8 @@ export function LookPicker({
   const gains = recipe.rawColor?.gains ?? asShotGains
   const base = recipe.film ?? DEFAULT_FILM
   const filter = recipe.monochrome?.filter ?? 'neutral'
-  const hasFCBlue = !!cameraProfiles?.some((profile) => profile.id === 'FCBlue')
   const aerochrome =
-    !!recipe.film &&
-    base.film === AEROCHROME_FILM.index &&
-    base.negative &&
-    recipe.cameraProfile === 'FCBlue' &&
-    !recipe.monochrome
+    !!recipe.rawColor && !!recipe.film && base.film === AEROCHROME_FILM.index && base.negative
   // A stock comes with the print paper it was designed for, else keeps a paper it can print on.
   const paper = (stock: Stock): number =>
     (PAPERS.find((candidate) => candidate.key === stock.targetPaperKey) ??
@@ -261,13 +257,12 @@ export function LookPicker({
             id: 'aerochrome',
             name: t('editor.aerochrome'),
             group: 'fullSpectrum',
-            disabled: !hasFCBlue,
+            disabled: !gains,
             recipe: {
               ...recipe,
-              cameraProfile: 'FCBlue',
-              rawColor: null,
+              cameraProfile: null,
+              rawColor: gains ? { gains: [...gains], matrix: [...AEROCHROME_MATRIX] } : null,
               monochrome: null,
-              ...(!aerochrome && { temperature: 1170, tint: -263 }),
               film: {
                 ...base,
                 ...(recipe.film && base.film === AEROCHROME_FILM.index
@@ -312,17 +307,17 @@ export function LookPicker({
       ? base.negative
         ? 'negative'
         : PAPERS.find((stock) => stock.index === base.paper)?.key
-      : recipe.rawColor
-        ? 'full-spectrum'
+      : aerochrome
+        ? 'aerochrome'
         : recipe.film
-          ? aerochrome
-            ? 'aerochrome'
-            : FILMS.find((film) => film.index === recipe.film?.film)?.key
-          : recipe.monochrome
-            ? 'Monochrome'
-            : looks.some((look) => look.id === cameraProfile)
-              ? cameraProfile
-              : 'Standard'
+          ? FILMS.find((film) => film.index === recipe.film?.film)?.key
+          : recipe.rawColor
+            ? 'full-spectrum'
+            : recipe.monochrome
+              ? 'Monochrome'
+              : looks.some((look) => look.id === cameraProfile)
+                ? cameraProfile
+                : 'Standard'
   // The gallery shows one group. It opens on the group of the selected look, else the first.
   const [chosenGroup, setChosenGroup] = useState('')
   const groups = [...new Set(looks.map((look) => look.group))].filter((g): g is string => !!g)
@@ -368,8 +363,7 @@ export function LookPicker({
               text={
                 look.id === 'full-spectrum'
                   ? t('editor.fullSpectrumHelp')
-                  : look.id === 'aerochrome' &&
-                    `${t('editor.aerochromeHelp')}${hasFCBlue ? '' : ` ${t('editor.aerochromeUnavailable')}`}`
+                  : look.id === 'aerochrome' && t('editor.aerochromeHelp')
               }
             >
               <button
@@ -381,11 +375,7 @@ export function LookPicker({
                     film: look.recipe.film,
                     monochrome: look.recipe.monochrome,
                     cameraProfile: look.recipe.cameraProfile,
-                    rawColor: look.recipe.rawColor ?? null,
-                    ...(look.id === 'aerochrome' && {
-                      temperature: look.recipe.temperature,
-                      tint: look.recipe.tint
-                    })
+                    rawColor: look.recipe.rawColor ?? null
                   })
                   blurOnClick(event)
                 }}

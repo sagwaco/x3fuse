@@ -390,11 +390,15 @@ The spektrafilm model simulates negative response, DIR couplers, grain, halation
 and print paper. Existing film recipes load unchanged but render differently
 from the model used in earlier alphas; no re-save is required.
 
-The film picker includes an experimental **Aerochrome-style (Foveon)** look for
-full spectrum captures with a physical filter. It uses the file's FOV Classic Blue
-calibration and the Ektachrome 100 model. It approximates the look without
-reconstructing a separate IR band or measured Aerochrome spectral response.
-Files without FCBlue calibration cannot select this preset.
+The Fspec group includes **Full spectrum**, which starts with an identity channel
+matrix, and **Aerochrome-style (Foveon)**, which uses an empirical 3x3 mix followed
+by Ektachrome 100. In these looks, White balance shows raw channel gains, and
+Grading adds a channel mixer and swaps. Use the neutral picker on a cloud for the
+capture filter. Painted walls and visible-gray materials may not be neutral in NIR.
+The Aerochrome mix was tuned on DP2 Merrill captures through a 550/660/850 nm
+filter. It does not require FCBlue or reconstruct measured visible and NIR bands;
+other cameras and filters can need a different mix. Existing FCBlue sidecars show as Ektachrome 100 and keep
+their saved rendering until the look is applied again.
 
 The editor sidebar has three tabs under the histogram. **RAW** holds Light, Tone
 curve, White balance, and Detail. **FILM** holds the Emulsion section: the film

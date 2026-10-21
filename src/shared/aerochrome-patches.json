@@ -1,0 +1,124 @@
+{
+  "filterNm": [550, 660, 850],
+  "camera": "Sigma DP2 Merrill",
+  "method": "Manually tuned empirical mix. No measured target colors or spectral separation. Means use unrotated active-area coordinates with denoise disabled. Filter confirmed by capture owner.",
+  "samples": [
+    {
+      "file": "aero_P2M1109.X3F",
+      "role": "development",
+      "neutralFile": "aero_P2M1109.X3F",
+      "patches": [
+        {
+          "name": "cloud",
+          "x": 0.72,
+          "y": 0.35,
+          "width": 0.04,
+          "height": 0.04,
+          "meanLayers": [0.06415829085293574, 0.0825668924066763, 0.08389623471827498]
+        },
+        {
+          "name": "sky",
+          "x": 0.94,
+          "y": 0.02,
+          "width": 0.035,
+          "height": 0.035,
+          "meanLayers": [0.024045500950270752, 0.035411508106838414, 0.03837598480419043]
+        },
+        {
+          "name": "foliage",
+          "x": 0.54,
+          "y": 0.75,
+          "width": 0.02,
+          "height": 0.02,
+          "meanLayers": [0.023618174375033756, 0.02334497779691573, 0.022038696074268095]
+        },
+        {
+          "name": "cloud-check",
+          "x": 0.85,
+          "y": 0.44,
+          "width": 0.04,
+          "height": 0.04,
+          "meanLayers": [0.10920252786641059, 0.13955447888458913, 0.14113654515039875]
+        }
+      ]
+    },
+    {
+      "file": "_P2M0193.X3F",
+      "role": "check",
+      "neutralFile": "_P2M0193.X3F",
+      "patches": [
+        {
+          "name": "cloud",
+          "x": 0.66,
+          "y": 0.07,
+          "width": 0.04,
+          "height": 0.04,
+          "meanLayers": [0.03520465763962592, 0.036477979397920704, 0.035584020475958586]
+        },
+        {
+          "name": "sky",
+          "x": 0.92,
+          "y": 0.78,
+          "width": 0.04,
+          "height": 0.04,
+          "meanLayers": [0.023196651333797867, 0.023624812007340193, 0.02264838571935626]
+        },
+        {
+          "name": "foliage",
+          "x": 0.75,
+          "y": 0.43,
+          "width": 0.04,
+          "height": 0.04,
+          "meanLayers": [0.035654894272785065, 0.022692100972866693, 0.018336890246098077]
+        },
+        {
+          "name": "cloud-check",
+          "x": 0.64,
+          "y": 0.84,
+          "width": 0.035,
+          "height": 0.035,
+          "meanLayers": [0.059926939297629746, 0.05977124219771425, 0.05673539333087975]
+        },
+        {
+          "name": "foliage-check",
+          "x": 0.81,
+          "y": 0.57,
+          "width": 0.03,
+          "height": 0.03,
+          "meanLayers": [0.02657611112184512, 0.022602238982243228, 0.02068235426057952]
+        }
+      ]
+    },
+    {
+      "file": "aero_P2M1159.X3F",
+      "role": "check",
+      "neutralFile": "aero_P2M1109.X3F",
+      "patches": [
+        {
+          "name": "neutral-wall",
+          "x": 0.42,
+          "y": 0.42,
+          "width": 0.02,
+          "height": 0.02,
+          "meanLayers": [0.07276800155584369, 0.06811122505010317, 0.06364528532243266]
+        },
+        {
+          "name": "sky",
+          "x": 0.89,
+          "y": 0.14,
+          "width": 0.04,
+          "height": 0.04,
+          "meanLayers": [0.05044235135328744, 0.07991179280810216, 0.08634136335780063]
+        },
+        {
+          "name": "foliage",
+          "x": 0.08,
+          "y": 0.23,
+          "width": 0.04,
+          "height": 0.04,
+          "meanLayers": [0.08064128350707084, 0.07139285926537547, 0.06553216590999397]
+        }
+      ]
+    }
+  ]
+}

@@ -3,6 +3,7 @@ import { useState, type Dispatch, type SetStateAction } from 'react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import {
+  AEROCHROME_MATRIX,
   DEFAULT_FILM,
   FILM_MONOCHROME_FILTERS,
   MONOCHROME_FILTERS,
@@ -395,9 +396,15 @@ it('shows the chosen film stock as a labeled canister on the Emulsion button', (
   expect(
     canister('film', {
       film: { ...DEFAULT_FILM, film: 15, negative: true },
-      cameraProfile: 'FCBlue'
+      rawColor: { gains: [2, 1, 0.5], matrix: AEROCHROME_MATRIX }
     })
   ).toEqual(['IR', '#f7b218'])
+  expect(
+    canister('film', {
+      film: { ...DEFAULT_FILM, film: 15, negative: true },
+      cameraProfile: 'FCBlue'
+    })
+  ).toEqual(['100', '#f7b218'])
   expect(canister('film', { film: null })).toBeNull()
   expect(canister('paper', film(14))).toBeNull()
 })
@@ -664,13 +671,7 @@ async function aerochromeHelp(): Promise<string> {
   return (await screen.findByRole('tooltip')).textContent!
 }
 
-it('selects and restores Aerochrome with the existing camera and film recipe', async () => {
-  editor.setState({
-    session: {
-      ...editor.getState().session!,
-      cameraProfiles: [{ id: 'FCBlue', name: 'FOV Classic Blue' }]
-    }
-  })
+it('selects and restores Aerochrome with raw gains and Ektachrome without injecting Kelvin', async () => {
   const initial: EditRecipe = {
     ...defaultRecipe(),
     temperature: 2335,
@@ -681,7 +682,8 @@ it('selects and restores Aerochrome with the existing camera and film recipe', a
   render(<Controls initial={initial} />)
   chooseFilm(t('editor.aerochrome'))
   expect(change.mock.lastCall?.[0]).toMatchObject({
-    cameraProfile: 'FCBlue',
+    cameraProfile: null,
+    rawColor: { gains: [2, 1, 0.5], matrix: AEROCHROME_MATRIX },
     monochrome: null,
     film: {
       film: 15,
@@ -691,12 +693,16 @@ it('selects and restores Aerochrome with the existing camera and film recipe', a
       grainParams: filmGrainDefaults(15)
     }
   })
+  expect(change.mock.lastCall?.[0]).not.toHaveProperty('temperature')
+  expect(change.mock.lastCall?.[0]).not.toHaveProperty('tint')
   const saved: EditRecipe = JSON.parse(JSON.stringify({ ...initial, ...change.mock.lastCall?.[0] }))
-  expect(saved.temperature).toBe(1170)
-  expect(saved.tint).toBe(-263)
-  expect(
-    screen.getByRole('switch', { name: t('editor.extendedRange') }).getAttribute('aria-checked')
-  ).toBe('true')
+  expect(saved.temperature).toBe(2335)
+  expect(saved.tint).toBe(115)
+  panelTab('raw')
+  expect(screen.getByRole('slider', { name: t('editor.redGain') })).toBeTruthy()
+  expect(screen.queryByRole('slider', { name: t('editor.temperature') })).toBeNull()
+  expect(screen.queryByRole('slider', { name: t('editor.tint') })).toBeNull()
+  expect(screen.queryByRole('button', { name: t('editor.whiteBalancePreset') })).toBeNull()
   const pasted = pasteRecipe(saved, defaultRecipe())
   act(() => setRecipe(pasted))
   panelTab('film')
@@ -706,71 +712,92 @@ it('selects and restores Aerochrome with the existing camera and film recipe', a
   picker(t('editor.filmStock'))
   expect(look(t('editor.aerochrome')).ariaPressed).toBe('true')
   expect(await aerochromeHelp()).toContain(t('editor.aerochromeHelp'))
-  // Selecting the active look keeps the user's white balance and grain edits.
+  // Selecting the active look keeps raw gains and grain edits, and resets the matrix.
   act(() =>
     setRecipe({
       ...pasted,
-      temperature: 1500,
-      tint: -210,
+      rawColor: { gains: [3, 1, 0.25], matrix: [1, 0, 0, 0, 1, 0, 0, 0, 1] },
       film: { ...pasted.film!, grainParams: { ...pasted.film!.grainParams!, blur: 2 } }
     })
   )
+  act(() => editor.setState({ preview: { ...editor.getState().preview!, asShotGains: undefined } }))
   fireEvent.click(look(t('editor.aerochrome')))
   expect(change.mock.lastCall?.[0]).toMatchObject({
-    temperature: 1500,
-    tint: -210,
+    rawColor: { gains: [3, 1, 0.25], matrix: AEROCHROME_MATRIX },
     film: { grainParams: { blur: 2 } }
   })
   darkroom()
   expect(screen.queryByText(t('editor.paperStock'))).toBeNull()
   chooseFilm('Kodak Ektachrome 100')
   expect(change.mock.lastCall?.[0].cameraProfile).toBeNull()
+  expect(change.mock.lastCall?.[0].rawColor).toBeNull()
   panelTab('film')
   expect(
     screen.getByText('Kodak Ektachrome 100', { selector: '[data-sidebar-page] *' })
   ).toBeTruthy()
 })
 
-it('does not offer an uncalibrated Aerochrome preview when FCBlue is missing', async () => {
-  editor.setState({ session: { ...editor.getState().session!, sessionId: 'no-fcblue' } })
+it('offers an Aerochrome matrix preview with ready gains when FCBlue is missing', async () => {
+  editor.setState({
+    session: { ...editor.getState().session!, sessionId: 'no-fcblue', cameraProfiles: [] }
+  })
+  render(<Controls />)
+  picker(t('editor.filmStock'))
+  const button = look(t('editor.aerochrome')) as HTMLButtonElement
+  expect(button.disabled).toBe(false)
+  expect(await aerochromeHelp()).toContain(t('editor.aerochromeHelp'))
+  await waitFor(() =>
+    expect(renderThumbnail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cameraProfile: null,
+        rawColor: { gains: [2, 1, 0.5], matrix: AEROCHROME_MATRIX },
+        film: expect.objectContaining({ film: 15, negative: true })
+      })
+    )
+  )
+  fireEvent.click(button)
+  expect(change.mock.lastCall?.[0]).toMatchObject({
+    cameraProfile: null,
+    rawColor: { gains: [2, 1, 0.5], matrix: AEROCHROME_MATRIX }
+  })
+})
+
+it('waits for gains before offering a new Aerochrome look', async () => {
+  editor.setState({ preview: { ...editor.getState().preview!, asShotGains: undefined } })
   render(<Controls />)
   picker(t('editor.filmStock'))
   const button = look(t('editor.aerochrome')) as HTMLButtonElement
   expect(button.disabled).toBe(true)
-  // The disabled button cannot take focus, so its wrapper does and shows the tooltip.
+  // The wrapper lets a disabled look receive focus and show its help.
   act(() => button.parentElement!.focus())
-  expect((await screen.findByRole('tooltip')).textContent).toContain(
-    t('editor.aerochromeUnavailable')
-  )
-  expect(await aerochromeHelp()).toContain(t('editor.aerochromeUnavailable'))
+  expect((await screen.findByRole('tooltip')).textContent).toContain(t('editor.aerochromeHelp'))
   fireEvent.click(button)
   expect(change).not.toHaveBeenCalled()
-  fireEvent.click(screen.getByRole('button', { name: t('editor.cameraMatching') }))
-  await waitFor(() => expect(renderThumbnail).toHaveBeenCalled())
-  expect(renderThumbnail.mock.calls.some(([recipe]) => recipe.cameraProfile === 'FCBlue')).toBe(
-    false
+  act(() =>
+    editor.setState({ preview: { ...editor.getState().preview!, asShotGains: [2, 1, 0.5] } })
   )
+  expect(button.disabled).toBe(false)
 })
 
-it('identifies saved Aerochrome edits and explains the fallback on a camera without FCBlue', async () => {
-  const pasted = pasteRecipe(
-    {
-      ...defaultRecipe(),
-      cameraProfile: 'FCBlue',
-      film: { ...DEFAULT_FILM, film: 15, negative: true }
-    },
-    defaultRecipe()
-  )
+it('labels a legacy FCBlue sidecar as Ektachrome and keeps its render fields unchanged', () => {
+  const legacy: EditRecipe = {
+    ...defaultRecipe(),
+    cameraProfile: 'FCBlue',
+    temperature: 1170,
+    tint: -263,
+    film: { ...DEFAULT_FILM, film: 15, negative: true, grainParams: null }
+  }
+  const pasted = pasteRecipe(legacy, defaultRecipe())
   render(<Controls initial={pasted} />)
   panelTab('film')
   expect(
-    screen.getByText(t('editor.aerochrome'), { selector: '[data-sidebar-page] *' })
+    screen.getByText('Kodak Ektachrome 100', { selector: '[data-sidebar-page] *' })
   ).toBeTruthy()
   picker(t('editor.filmStock'))
-  const button = look(t('editor.aerochrome')) as HTMLButtonElement
-  expect(button.ariaPressed).toBe('true')
-  expect(button.disabled).toBe(true)
-  expect(await aerochromeHelp()).toContain(t('editor.aerochromeUnavailable'))
+  expect(look('Kodak Ektachrome 100').ariaPressed).toBe('true')
+  expect(look(t('editor.aerochrome')).ariaPressed).toBe('false')
+  expect(change).not.toHaveBeenCalled()
+  expect(pasted).toEqual(legacy)
 })
 
 const whiteBalance = (): HTMLElement =>
@@ -1083,12 +1110,6 @@ it('maps the darkroom sliders so dragging right does what the label says', () =>
 })
 
 it('keeps legacy grain when choosing another stock or the Aerochrome look', () => {
-  editor.setState({
-    session: {
-      ...editor.getState().session!,
-      cameraProfiles: [{ id: 'FCBlue', name: 'FOV Classic Blue' }]
-    }
-  })
   render(
     <Controls
       initial={{
@@ -1612,6 +1633,23 @@ it('moves the logarithmic raw gain slider at its lower bound', () => {
   const value = change.mock.lastCall?.[0].rawColor.gains[0]
   expect(value).toBeGreaterThan(1 / 64)
   expect(value).toBeLessThan(1 / 32)
+})
+
+it('applies the Aerochrome matrix in Grading without changing raw gains or film settings', () => {
+  const gains: [number, number, number] = [3, 2, 0.25]
+  editor.setState({ preview: { ...editor.getState().preview!, asShotGains: undefined } })
+  render(
+    <Controls
+      initial={{
+        ...defaultRecipe(),
+        cameraProfile: null,
+        rawColor: { gains, matrix: [0, 0, 1, 0, 1, 0, 1, 0, 0] }
+      }}
+    />
+  )
+  panelTab('grading')
+  fireEvent.click(screen.getByRole('button', { name: t('editor.aerochrome') }))
+  expect(change).toHaveBeenLastCalledWith({ rawColor: { gains, matrix: AEROCHROME_MATRIX } }, true)
 })
 
 it('composes channel swaps and preserves gains and neutral row totals', () => {

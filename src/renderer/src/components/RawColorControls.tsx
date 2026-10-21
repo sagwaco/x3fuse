@@ -1,6 +1,11 @@
 import { useContext, useState } from 'react'
 import { Pipette, RotateCcw } from 'lucide-react'
-import { IDENTITY_RAW_MATRIX, RAW_GAIN_RANGE, type EditRecipe } from '@shared/editor'
+import {
+  AEROCHROME_MATRIX,
+  IDENTITY_RAW_MATRIX,
+  RAW_GAIN_RANGE,
+  type EditRecipe
+} from '@shared/editor'
 import { useEditorStore } from '../stores/editorStore'
 import { useQueueStore } from '../stores/queueStore'
 import { DevelopingCloud } from '../lib/developingCloud'
@@ -212,6 +217,9 @@ export function RawMatrixControls({ recipe }: { recipe: EditRecipe }): React.JSX
           }
         >
           {t('editor.monochrome')}
+        </Button>
+        <Button size="sm" disabled={disabled} onClick={() => update([...AEROCHROME_MATRIX])}>
+          {t('editor.aerochrome')}
         </Button>
       </div>
     </>

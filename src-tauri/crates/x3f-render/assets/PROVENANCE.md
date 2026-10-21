@@ -122,4 +122,7 @@ from x3f-sys instead of the DNG look. It applies the native count transform,
 Merrill ColorDQ, the mode's tone curve, and the output matrix. An explicit camera
 profile with film now applies this native look before spectral film exposure.
 Film metering uses unit gain for this already toned input. The Aerochrome-style
-preset uses this path with FCBlue and Ektachrome 100. No spectral data was changed.
+preset instead uses an empirical raw-channel matrix before Ektachrome 100.
+The mix was tuned from supplied DP2 Merrill 550/660/850 nm captures; it contains
+no measured Aerochrome or Foveon spectral data. See [AEROCHROME.md](AEROCHROME.md).
+No spectral film data was changed.

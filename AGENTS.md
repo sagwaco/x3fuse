@@ -120,6 +120,11 @@ reuse the Debug probe executable. Release builds omit the probe.
 - Interactive previews refine after input stops. Changing sensor denoise prepares
   the RAW again; slider gestures defer that work until release. Rendered JPEG and
   16-bit TIFF exports use the saved recipe. Original DNG and Embedded JPG do not bake edits.
+- Full spectrum recipes use `rawColor` gains and a 3x3 matrix instead of the
+  visible white balance and camera profile. Gains live in White balance; the
+  matrix and swaps live in Grading. The Aerochrome preset is an empirical
+  DP2 Merrill 550/660/850 nm mix. See
+  `src-tauri/crates/x3f-render/assets/AEROCHROME.md` for its basis and limits.
 - Bump `x3f_render::RENDER_VERSION` when a change alters rendered pixels. Persistent
   preview caches use this value to reject older renders.
 - X3I (Quattro SFD) files contain complete X3F frames; `src-tauri/src/x3i.rs`
