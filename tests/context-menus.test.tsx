@@ -68,6 +68,7 @@ describe('editor sections', () => {
   const from = {
     ...(perturb(to) as EditRecipe),
     cameraProfile: 'Landscape',
+    rawColor: null,
     temperature: 4000,
     crop: { x: 0.1, y: 0.1, width: 0.5, height: 0.5 },
     effects: { ...DEFAULT_EFFECTS, grain: true },
@@ -88,6 +89,7 @@ describe('editor sections', () => {
     ],
     curves: ['curves'],
     whiteBalance: ['temperature', 'tint'],
+    channels: [],
     detail: ['denoise', 'denoiseOptions', 'sharpen'],
     look: ['cameraProfile', 'monochrome', ...film([...LOOK, ...PRINT])],
     effects: film(EFFECTS),
@@ -209,6 +211,7 @@ describe('editor sections', () => {
     expect(resetSection(EDITOR_SECTIONS.look, recipe, defaults)).toEqual({
       cameraProfile: 'Standard',
       monochrome: null,
+      rawColor: null,
       film: null,
       effects: {
         grain: recipe.film.grain,

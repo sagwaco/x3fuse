@@ -185,7 +185,8 @@ export interface IpcRequestMap {
   'editor:close': { payload: { sessionId: string }; result: void }
   'editor:pickWhiteBalance': {
     payload: { sessionId: string; x: number; y: number; recipe?: EditRecipe }
-    result: { temperature: number; tint: number }
+    result:
+      { temperature: number; tint: number } | { rawColor: NonNullable<EditRecipe['rawColor']> }
   }
   /** Null for a photo that is not an X3I. The recipe selects the denoise. */
   'editor:x3iStatus': { payload: { path: string; recipe: EditRecipe }; result: X3iStatus | null }

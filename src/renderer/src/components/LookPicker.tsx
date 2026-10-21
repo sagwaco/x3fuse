@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from 'react'
+import { Fragment, useContext, useEffect, useState } from 'react'
 import {
   Camera,
   ChevronRight,
@@ -12,6 +12,7 @@ import {
 } from 'lucide-react'
 import {
   DEFAULT_FILM,
+  IDENTITY_RAW_MATRIX,
   FILM_MONOCHROME_FILTERS,
   filmGrainDefaults,
   filmHalationDefaults,
@@ -21,6 +22,7 @@ import stocks from '@shared/film-stocks.json'
 import { useEditorStore } from '../stores/editorStore'
 import { t } from '../lib/strings'
 import { blurOnClick } from '../lib/commitFocus'
+import { DevelopingCloud } from '../lib/developingCloud'
 import { GlassGroup } from './ui/glassGroup'
 import { Tooltip } from './ui/tooltip'
 import { FilmCanister } from './FilmCanister'
@@ -171,6 +173,9 @@ export function LookPicker({
 }): React.JSX.Element {
   const change = useEditorStore((state) => state.change)
   const cameraProfiles = useEditorStore((state) => state.session?.cameraProfiles)
+  const cloud = useContext(DevelopingCloud)
+  const asShotGains = useEditorStore((state) => (cloud ? undefined : state.preview?.asShotGains))
+  const gains = recipe.rawColor?.gains ?? asShotGains
   const base = recipe.film ?? DEFAULT_FILM
   const filter = recipe.monochrome?.filter ?? 'neutral'
   const hasFCBlue = !!cameraProfiles?.some((profile) => profile.id === 'FCBlue')
@@ -202,6 +207,7 @@ export function LookPicker({
               ...recipe,
               film: null,
               cameraProfile: profile.id,
+              rawColor: null,
               monochrome: profile.id === 'Monochrome' ? { filter } : null
             }
           })),
@@ -213,6 +219,7 @@ export function LookPicker({
               ...recipe,
               // Film stocks use their own color response, without a camera look.
               cameraProfile: null,
+              rawColor: null,
               // Positive film is scanned directly, without a print.
               film: {
                 ...base,
@@ -238,6 +245,19 @@ export function LookPicker({
             }
           })),
           {
+            id: 'full-spectrum',
+            name: t('editor.fullSpectrumLook'),
+            group: 'fullSpectrum',
+            disabled: !gains,
+            recipe: {
+              ...recipe,
+              film: null,
+              cameraProfile: null,
+              monochrome: null,
+              rawColor: gains ? { gains: [...gains], matrix: [...IDENTITY_RAW_MATRIX] } : null
+            }
+          },
+          {
             id: 'aerochrome',
             name: t('editor.aerochrome'),
             group: 'fullSpectrum',
@@ -245,6 +265,7 @@ export function LookPicker({
             recipe: {
               ...recipe,
               cameraProfile: 'FCBlue',
+              rawColor: null,
               monochrome: null,
               ...(!aerochrome && { temperature: 1170, tint: -263 }),
               film: {
@@ -291,15 +312,17 @@ export function LookPicker({
       ? base.negative
         ? 'negative'
         : PAPERS.find((stock) => stock.index === base.paper)?.key
-      : recipe.film
-        ? aerochrome
-          ? 'aerochrome'
-          : FILMS.find((film) => film.index === recipe.film?.film)?.key
-        : recipe.monochrome
-          ? 'Monochrome'
-          : looks.some((look) => look.id === cameraProfile)
-            ? cameraProfile
-            : 'Standard'
+      : recipe.rawColor
+        ? 'full-spectrum'
+        : recipe.film
+          ? aerochrome
+            ? 'aerochrome'
+            : FILMS.find((film) => film.index === recipe.film?.film)?.key
+          : recipe.monochrome
+            ? 'Monochrome'
+            : looks.some((look) => look.id === cameraProfile)
+              ? cameraProfile
+              : 'Standard'
   // The gallery shows one group. It opens on the group of the selected look, else the first.
   const [chosenGroup, setChosenGroup] = useState('')
   const groups = [...new Set(looks.map((look) => look.group))].filter((g): g is string => !!g)
@@ -343,8 +366,10 @@ export function LookPicker({
             <LookTip
               focusable={look.disabled}
               text={
-                look.id === 'aerochrome' &&
-                `${t('editor.aerochromeHelp')}${hasFCBlue ? '' : ` ${t('editor.aerochromeUnavailable')}`}`
+                look.id === 'full-spectrum'
+                  ? t('editor.fullSpectrumHelp')
+                  : look.id === 'aerochrome' &&
+                    `${t('editor.aerochromeHelp')}${hasFCBlue ? '' : ` ${t('editor.aerochromeUnavailable')}`}`
               }
             >
               <button
@@ -356,6 +381,7 @@ export function LookPicker({
                     film: look.recipe.film,
                     monochrome: look.recipe.monochrome,
                     cameraProfile: look.recipe.cameraProfile,
+                    rawColor: look.recipe.rawColor ?? null,
                     ...(look.id === 'aerochrome' && {
                       temperature: look.recipe.temperature,
                       tint: look.recipe.tint

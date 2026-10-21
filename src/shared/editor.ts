@@ -111,6 +111,9 @@ export interface EditRecipe {
   exposure: number
   temperature: number | null
   tint: number
+  /** Full spectrum raw color. It replaces white balance and the camera color matrix.
+      Missing or null keeps the calibrated visible path. */
+  rawColor?: RawColor | null
   contrast: number
   highlights: number
   shadows: number
@@ -145,6 +148,14 @@ export interface EditRecipe {
       X3F files ignore it. */
   x3iSource?: X3iSource
 }
+/** Gains on the bottom, middle, and top sensor layers, then a row-major 3x3 mix to RGB.
+    Rows are output red, green, and blue. The renderer divides the gains by the middle gain. */
+export interface RawColor {
+  gains: [number, number, number]
+  matrix: number[]
+}
+export const IDENTITY_RAW_MATRIX: number[] = [1, 0, 0, 0, 1, 0, 0, 0, 1]
+export const RAW_GAIN_RANGE = [1 / 64, 64] as const
 /** The frames of an X3I (Super Fine Detail) photo: all merged, or the middle exposure only. */
 export type X3iSource = 'merge' | 'middle_exposure'
 /** True when an X3I uses its SFD RAW, the merge of all its frames. */
@@ -235,6 +246,7 @@ export function defaultRecipe(): EditRecipe {
     exposure: 0,
     temperature: null,
     tint: 0,
+    rawColor: null,
     contrast: 0,
     highlights: 0,
     shadows: 0,
@@ -316,6 +328,8 @@ export interface RenderedPreview {
   /** Slider values equivalent to the camera's white balance (temperature: null). */
   asShotTemperature?: number
   asShotTint?: number
+  /** Raw color layer gains for the camera's white balance, relative to the middle layer. */
+  asShotGains?: [number, number, number]
 }
 
 /** The recipe without the hue that a wheel keeps at zero strength: it changes no pixels. */

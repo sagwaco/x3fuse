@@ -1600,3 +1600,75 @@ it('shows a failed X3I merge request when a late poll and the final status read 
   expect(editor.getState().x3i).toMatchObject({ processed: false, error: 'Source missing' })
   expect(editor.getState().x3i?.progress).toBeUndefined()
 })
+
+it('applies picked raw gains without changing the matrix or visible white balance', async () => {
+  await editor.getState().open(file)
+  const rawColor: NonNullable<EditRecipe['rawColor']> = {
+    gains: [1, 1, 1],
+    matrix: [0, 0, 1, 0, 1, 0, 1, 0, 0]
+  }
+  editor
+    .getState()
+    .change({ rawColor, cameraProfile: null, monochrome: null, temperature: 4500, tint: 12 })
+  const real = invoke.getMockImplementation()!
+  const picked = { ...rawColor, gains: [2, 1, 0.5] }
+  invoke.mockImplementation(async (command: string, payload: Record<string, unknown>) =>
+    command === 'editor:pickWhiteBalance' ? { rawColor: picked } : real(command, payload)
+  )
+  await editor.getState().pickWhiteBalance(0.3, 0.4)
+  const recipe = editor.getState().documents[file.path].recipe
+  expect(recipe.rawColor).toEqual(picked)
+  expect(recipe.temperature).toBe(4500)
+  expect(recipe.tint).toBe(12)
+  expect(invoke).toHaveBeenCalledWith(
+    'editor:pickWhiteBalance',
+    expect.objectContaining({
+      sessionId: 'session-a',
+      x: 0.3,
+      y: 0.4,
+      recipe: expect.objectContaining({ rawColor })
+    })
+  )
+})
+
+it('clears raw color on Reset and restores it with Undo', async () => {
+  await editor.getState().open(file)
+  const rawColor: NonNullable<EditRecipe['rawColor']> = {
+    gains: [2, 1, 0.5],
+    matrix: [0, 0, 1, 0, 1, 0, 1, 0, 0]
+  }
+  editor.getState().change({ rawColor, film: null, cameraProfile: null, monochrome: null })
+  editor.getState().reset()
+  expect(editor.getState().documents[file.path].recipe.rawColor).toBeNull()
+  editor.getState().undo()
+  expect(editor.getState().documents[file.path].recipe.rawColor).toEqual(rawColor)
+})
+
+it.each(['swap', 'undo'] as const)(
+  'keeps current raw mode and matrix when a picker response follows %s',
+  async (action) => {
+    await editor.getState().open(file)
+    const rawColor: NonNullable<EditRecipe['rawColor']> = {
+      gains: [1, 1, 1],
+      matrix: [1, 0, 0, 0, 1, 0, 0, 0, 1]
+    }
+    editor.getState().change({ rawColor, film: null, cameraProfile: null, monochrome: null })
+    let resolve!: (value: unknown) => void
+    const pending = new Promise((done) => {
+      resolve = done
+    })
+    const real = invoke.getMockImplementation()!
+    invoke.mockImplementation((command: string, payload: Record<string, unknown>) =>
+      command === 'editor:pickWhiteBalance' ? pending : real(command, payload)
+    )
+    const picking = editor.getState().pickWhiteBalance(0.3, 0.4)
+    const swapped = [0, 0, 1, 0, 1, 0, 1, 0, 0]
+    if (action === 'swap') editor.getState().change({ rawColor: { ...rawColor, matrix: swapped } })
+    else editor.getState().undo()
+    resolve({ rawColor: { ...rawColor, gains: [2, 1, 0.5] } })
+    await picking
+    const current = editor.getState().documents[file.path].recipe
+    if (action === 'swap') expect(current.rawColor).toEqual({ gains: [2, 1, 0.5], matrix: swapped })
+    else expect(current.rawColor).toBeNull()
+  }
+)

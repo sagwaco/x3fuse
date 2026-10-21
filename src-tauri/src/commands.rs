@@ -894,7 +894,6 @@ pub async fn editor_pick_white_balance(
         state
             .editor
             .pick_white_balance(&payload.session_id, payload.recipe, payload.x, payload.y)
-            .map(|(temperature, tint)| json!({"temperature":temperature,"tint":tint}))
     })
     .await
     .map_err(|e| e.to_string())?

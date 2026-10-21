@@ -315,6 +315,8 @@ pub struct RenderedPreview {
     draft: bool,
     as_shot_temperature: Option<f32>,
     as_shot_tint: Option<f32>,
+    /// Raw color layer gains for the camera's own white balance.
+    as_shot_gains: Option<[f32; 3]>,
 }
 
 impl Editor {
@@ -1125,10 +1127,12 @@ impl Editor {
         };
         let (rendered, (source_width, source_height)) =
             self.render_with_worker(&mut worker, &asset, &cancel)?;
-        let as_shot = worker
-            .prepared
-            .as_ref()
-            .map(|p| p.image.as_shot_white_balance());
+        let as_shot = worker.prepared.as_ref().map(|p| {
+            (
+                p.image.as_shot_white_balance(),
+                x3f_render::as_shot_channel_gains(&p.image.image().white_balance),
+            )
+        });
         drop(worker);
         let preview = RenderedPreview {
             session_id: request.session_id,
@@ -1142,8 +1146,9 @@ impl Editor {
             source_height,
             region: rendered.region,
             draft,
-            as_shot_temperature: as_shot.map(|(k, _)| k),
-            as_shot_tint: as_shot.map(|(_, t)| t),
+            as_shot_temperature: as_shot.map(|((k, _), _)| k),
+            as_shot_tint: as_shot.map(|((_, t), _)| t),
+            as_shot_gains: as_shot.map(|(_, gains)| gains),
         };
         let frame = Arc::new(frame_body(rendered)?);
         check_cancel(&cancel)?;
@@ -1596,13 +1601,15 @@ impl Editor {
         }
     }
 
+    /// Returns the recipe change for a neutral point: channel gains in raw
+    /// color, else temperature and tint.
     pub fn pick_white_balance(
         &self,
         id: &str,
         recipe: EditRecipe,
         x: f32,
         y: f32,
-    ) -> Result<(f32, f32), String> {
+    ) -> Result<serde_json::Value, String> {
         if self.paused.load(Ordering::SeqCst) {
             return Err("White balance sampling pauses during export".into());
         }
@@ -1622,8 +1629,13 @@ impl Editor {
             return Err("White balance sampling pauses during export".into());
         }
         let image = self.prepare(&mut worker, &asset, &cancel, false)?;
-        let result = x3f_render::pick_white_balance(image, &asset.recipe, x, y)
-            .map_err(|e| e.to_string())?;
+        let result = match asset.recipe.raw_color {
+            Some(raw) => x3f_render::pick_channel_gains(image, &asset.recipe, x, y).map(|gains| {
+                serde_json::json!({ "rawColor": x3f_render::RawColor { gains, ..raw } })
+            }),
+            None => x3f_render::pick_white_balance(image, &asset.recipe, x, y)
+                .map(|(temperature, tint)| serde_json::json!({ "temperature": temperature, "tint": tint })),
+        }?;
         check_cancel(&cancel)?;
         self.session(id)?;
         Ok(result)

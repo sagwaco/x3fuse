@@ -10,7 +10,7 @@ use std::{
     sync::{atomic::AtomicBool, Arc},
     time::Instant,
 };
-use x3f_render::{Crop, EditRecipe, MonochromeFilter, MonochromeSettings};
+use x3f_render::{Crop, EditRecipe, MonochromeFilter, MonochromeSettings, RawColor};
 use x3fuse_app::{
     conversion::publish,
     editor::{protocol_id, Editor, EditorSession, RenderRequest},
@@ -390,6 +390,63 @@ fn real_editor_preview_persistence_exports_and_cancellation() {
             "Corpus file was changed"
         );
         eprintln!("Editor acceptance camera {camera}: {:?}", started.elapsed());
+    }
+}
+
+#[test]
+#[ignore = "Requires X3FUSE_TEST_MERRILL/QUATTRO and a physical GPU"]
+fn raw_color_picks_channel_gains_and_previews_send_as_shot_gains() {
+    let temporary = tempfile::tempdir().unwrap();
+    let editor = Editor::new(temporary.path().join("edits"));
+    for (camera, key) in ["X3FUSE_TEST_MERRILL", "X3FUSE_TEST_QUATTRO"]
+        .into_iter()
+        .enumerate()
+    {
+        let input = temporary.path().join(format!("raw-color-{camera}.X3F"));
+        fs::copy(fixture(key), &input).unwrap();
+        let session = editor.open(input).unwrap();
+        let visible = EditRecipe {
+            film: None,
+            camera_profile: None,
+            monochrome: None,
+            ..session.recipe.clone()
+        };
+        let (preview, _) = render(&editor, &session, &visible, 1);
+        let as_shot: Vec<f64> = serde_json::from_value(preview["asShotGains"].clone()).unwrap();
+        assert!(as_shot.len() == 3 && as_shot[1] == 1., "{as_shot:?}");
+        let swap = [0., 0., 1., 0., 1., 0., 1., 0., 0.];
+        let raw = EditRecipe {
+            raw_color: Some(RawColor {
+                gains: [1.; 3],
+                matrix: swap,
+            }),
+            ..visible.clone()
+        };
+        // A point can fall on a clipped highlight; one of these must be usable.
+        let pick = |recipe: &EditRecipe| {
+            [(0.5, 0.5), (0.3, 0.6), (0.7, 0.4), (0.5, 0.8)]
+                .into_iter()
+                .find_map(|(x, y)| {
+                    editor
+                        .pick_white_balance(&session.session_id, recipe.clone(), x, y)
+                        .ok()
+                })
+                .expect("no usable neutral point")
+        };
+        let picked = pick(&raw);
+        assert!(picked.get("temperature").is_none(), "{picked}");
+        let color: RawColor = serde_json::from_value(picked["rawColor"].clone()).unwrap();
+        assert_eq!(color.matrix, swap);
+        assert_eq!(color.gains[1], 1.);
+        let picked_raw = EditRecipe {
+            raw_color: Some(color),
+            ..raw
+        };
+        picked_raw.validate().unwrap();
+        render(&editor, &session, &picked_raw, 2);
+        let balance = pick(&visible);
+        assert!(balance["temperature"].is_number() && balance.get("rawColor").is_none());
+        editor.close(&session.session_id).unwrap();
     }
 }
 

@@ -3,6 +3,7 @@ import {
   DEFAULT_FILM,
   DEFAULT_WHEELS,
   FILM_MONOCHROME_FILTERS,
+  IDENTITY_RAW_MATRIX,
   filmGrainDefaults,
   filmHalationDefaults,
   monochromeFilm,
@@ -108,13 +109,30 @@ export const EDITOR_SECTIONS = {
     })
   },
   curves: { take: (from) => pick(from, ['curves']) },
-  whiteBalance: { take: (from) => pick(from, ['temperature', 'tint']) },
+  whiteBalance: {
+    take: (from, to) =>
+      from.rawColor && to.rawColor
+        ? { rawColor: { ...to.rawColor, gains: [...from.rawColor.gains] } }
+        : !from.rawColor && !to.rawColor
+          ? pick(from, ['temperature', 'tint'])
+          : {}
+  },
+  channels: {
+    take: (from, to) =>
+      from.rawColor && to.rawColor
+        ? { rawColor: { ...to.rawColor, matrix: [...from.rawColor.matrix] } }
+        : {},
+    reset: (recipe) =>
+      recipe.rawColor ? { rawColor: { ...recipe.rawColor, matrix: [...IDENTITY_RAW_MATRIX] } } : {}
+  },
   detail: { take: (from) => pick(from, ['sharpen', 'denoise', 'denoiseOptions']) },
   look: {
     // The camera look or the film stock, the paper, and the print. The film exposure, the
     // effects, and the filter belong to other sections. They keep the values of `to`.
     take: (from, to) => {
-      const look = pick(from, ['cameraProfile', 'monochrome', 'film'])
+      const look = pick(from, ['cameraProfile', 'monochrome', 'film', 'rawColor'])
+      if (to.rawColor && look.rawColor) look.rawColor.gains = [...to.rawColor.gains]
+      if (to.rawColor && !look.rawColor) look.rawColor = null
       if (look.film) look.film.evFilm = to.film?.evFilm ?? DEFAULT_FILM.evFilm
       if (look.monochrome)
         look.monochrome.filter = allowedFilter(to.monochrome?.filter ?? 'neutral', look.film)
@@ -124,9 +142,10 @@ export const EDITOR_SECTIONS = {
   },
   effects,
   filter: {
-    take: (from, to) => ({
-      monochrome: { filter: allowedFilter(from.monochrome?.filter ?? 'neutral', to.film) }
-    })
+    take: (from, to) =>
+      to.rawColor
+        ? {}
+        : { monochrome: { filter: allowedFilter(from.monochrome?.filter ?? 'neutral', to.film) } }
   },
   color: { take: (from) => pick(from, ['saturation', 'vibrance', 'warmth']) },
   toneMixer: { take: (from) => pick(from, ['toneMixer']) },

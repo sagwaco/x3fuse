@@ -175,7 +175,8 @@ beforeEach(() => {
       sourceWidth: 6000,
       sourceHeight: 4000,
       asShotTemperature: 5150,
-      asShotTint: 7
+      asShotTint: 7,
+      asShotGains: [2, 1, 0.5]
     },
     previewPose: { pitch: 0, yaw: 0 },
     loading: false,
@@ -435,7 +436,8 @@ it('previews every film stock on the photo and pairs each with its print paper',
   expect(change).toHaveBeenLastCalledWith({
     film: null,
     monochrome: null,
-    cameraProfile: 'Standard'
+    cameraProfile: 'Standard',
+    rawColor: null
   })
   expect(screen.queryByRole('switch', { name: t('editor.grain') })).toBeNull()
   panelTab('film')
@@ -468,7 +470,8 @@ it('offers black-and-white looks with their own filters, papers and darkroom', (
       grainParams: filmGrainDefaults(20)
     },
     monochrome: { filter: 'neutral' },
-    cameraProfile: null
+    cameraProfile: null,
+    rawColor: null
   })
   expect(filters()).toEqual(FILM_MONOCHROME_FILTERS.map((filter) => t(`editor.${filter}`)))
   expect(papers()).toEqual(['Kodak 2302', t('editor.negativePrint')])
@@ -491,7 +494,8 @@ it('offers black-and-white looks with their own filters, papers and darkroom', (
   expect(change).toHaveBeenLastCalledWith({
     film: null,
     monochrome: { filter: 'red' },
-    cameraProfile: 'Monochrome'
+    cameraProfile: 'Monochrome',
+    rawColor: null
   })
   expect(filters()).toEqual(MONOCHROME_FILTERS.map((filter) => t(`editor.${filter}`)))
   fireEvent.click(swatch(t('editor.filter'), t('editor.blue')))
@@ -501,7 +505,8 @@ it('offers black-and-white looks with their own filters, papers and darkroom', (
   expect(change).toHaveBeenLastCalledWith({
     film: DEFAULT_FILM,
     monochrome: null,
-    cameraProfile: null
+    cameraProfile: null,
+    rawColor: null
   })
   expect(screen.queryByRole('radiogroup', { name: t('editor.filter') })).toBeNull()
   darkroom()
@@ -644,7 +649,8 @@ it('selects the logged camera profile and separates camera matching from film st
   expect(change).toHaveBeenLastCalledWith({
     cameraProfile: 'ForestGreen',
     film: null,
-    monochrome: null
+    monochrome: null,
+    rawColor: null
   })
   fireEvent.click(look('Kodak Portra 400'))
   expect(change.mock.lastCall?.[0].cameraProfile).toBeNull()
@@ -1512,4 +1518,159 @@ it('preserves color adjustments and monochrome settings when switching profiles'
   expect(screen.getByRole('slider', { name: t('editor.red') }).getAttribute('aria-valuenow')).toBe(
     '-30'
   )
+})
+
+it('starts Full spectrum with as-shot gains and identity without a camera profile or film', async () => {
+  render(<Controls />)
+  chooseFilm(t('editor.fullSpectrumLook'))
+  expect(change.mock.lastCall?.[0]).toMatchObject({
+    rawColor: { gains: [2, 1, 0.5], matrix: [1, 0, 0, 0, 1, 0, 0, 0, 1] },
+    film: null,
+    cameraProfile: null,
+    monochrome: null
+  })
+  expect(screen.queryByRole('slider', { name: t('editor.temperature') })).toBeNull()
+  expect(screen.queryByRole('slider', { name: t('editor.tint') })).toBeNull()
+  expect(screen.queryByRole('combobox', { name: t('editor.whiteBalancePreset') })).toBeNull()
+  picker(t('editor.filmStock'))
+  expect(look(t('editor.fullSpectrumLook')).ariaPressed).toBe('true')
+  await waitFor(() =>
+    expect(renderThumbnail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        rawColor: { gains: [2, 1, 0.5], matrix: [1, 0, 0, 0, 1, 0, 0, 0, 1] }
+      })
+    )
+  )
+})
+
+it('keeps raw gains when reselecting Full spectrum and clears raw color for other looks', () => {
+  render(
+    <Controls
+      initial={{
+        ...defaultRecipe(),
+        film: null,
+        cameraProfile: null,
+        rawColor: { gains: [3, 1, 0.25], matrix: [0, 0, 1, 0, 1, 0, 1, 0, 0] }
+      }}
+    />
+  )
+  chooseFilm(t('editor.fullSpectrumLook'))
+  expect(change.mock.lastCall?.[0].rawColor).toEqual({
+    gains: [3, 1, 0.25],
+    matrix: [1, 0, 0, 0, 1, 0, 0, 0, 1]
+  })
+  chooseFilm('Kodak Gold 200')
+  expect(change.mock.lastCall?.[0].rawColor).toBeNull()
+  chooseFilm(t('editor.fullSpectrumLook'))
+  chooseFilm(t('editor.standard'))
+  expect(change.mock.lastCall?.[0]).toMatchObject({ rawColor: null, cameraProfile: 'Standard' })
+})
+
+it('waits for as-shot gains before offering a new Full spectrum look', () => {
+  editor.setState({ preview: { ...editor.getState().preview!, asShotGains: undefined } })
+  render(<Controls />)
+  picker(t('editor.filmStock'))
+  expect((look(t('editor.fullSpectrumLook')) as HTMLButtonElement).disabled).toBe(true)
+})
+
+it('edits raw gains and resets to as-shot without changing the matrix', () => {
+  const matrix = [0, 0, 1, 0, 1, 0, 1, 0, 0]
+  render(
+    <Controls
+      initial={{
+        ...defaultRecipe(),
+        film: null,
+        cameraProfile: null,
+        rawColor: { gains: [3, 1, 0.25], matrix }
+      }}
+    />
+  )
+  adjust(t('editor.redGain'), 4)
+  expect(change.mock.lastCall?.[0].rawColor).toEqual({ gains: [4, 1, 0.25], matrix })
+  fireEvent.click(screen.getByRole('button', { name: t('editor.resetWhiteBalance') }))
+  expect(change.mock.lastCall?.[0].rawColor).toEqual({ gains: [2, 1, 0.5], matrix })
+  fireEvent.click(screen.getByRole('button', { name: t('editor.picker') }))
+  expect(setPicking).toHaveBeenCalledWith(true)
+  panelTab('grading')
+  expect(screen.queryByRole('slider', { name: t('editor.redGain') })).toBeNull()
+})
+
+it('moves the logarithmic raw gain slider at its lower bound', () => {
+  render(
+    <Controls
+      initial={{
+        ...defaultRecipe(),
+        film: null,
+        cameraProfile: null,
+        rawColor: { gains: [1 / 64, 1, 0.5], matrix: [1, 0, 0, 0, 1, 0, 0, 0, 1] }
+      }}
+    />
+  )
+  fireEvent.keyDown(screen.getByRole('slider', { name: t('editor.redGain') }), {
+    key: 'ArrowRight'
+  })
+  const value = change.mock.lastCall?.[0].rawColor.gains[0]
+  expect(value).toBeGreaterThan(1 / 64)
+  expect(value).toBeLessThan(1 / 32)
+})
+
+it('composes channel swaps and preserves gains and neutral row totals', () => {
+  const gains: [number, number, number] = [2, 1, 0.5]
+  const matrix = [1.3, -0.3, 0, 0, 1, 0, -0.2, 0.2, 1]
+  render(
+    <Controls
+      initial={{ ...defaultRecipe(), film: null, cameraProfile: null, rawColor: { gains, matrix } }}
+    />
+  )
+  panelTab('grading')
+  fireEvent.click(screen.getByRole('button', { name: t('editor.swapRB') }))
+  expect(change.mock.lastCall?.[0].rawColor).toEqual({
+    gains,
+    matrix: [-0.2, 0.2, 1, 0, 1, 0, 1.3, -0.3, 0]
+  })
+  fireEvent.click(screen.getByRole('button', { name: t('editor.swapRG') }))
+  const swapped = change.mock.lastCall?.[0].rawColor
+  expect(swapped.matrix).toEqual([0, 1, 0, -0.2, 0.2, 1, 1.3, -0.3, 0])
+  for (const row of [0, 1, 2])
+    expect(
+      swapped.matrix.slice(row * 3, row * 3 + 3).reduce((a: number, b: number) => a + b, 0)
+    ).toBeCloseTo(1)
+  fireEvent.click(screen.getByRole('tab', { name: t('editor.outputGreen') }))
+  adjust(t('editor.sourceRed'), -50)
+  expect(change.mock.lastCall?.[0].rawColor.matrix[3]).toBe(-0.5)
+  fireEvent.click(screen.getByRole('button', { name: t('editor.monochrome') }))
+  expect(change.mock.lastCall?.[0].rawColor).toEqual({
+    gains,
+    matrix: [-0.5, 0.2, 1, -0.5, 0.2, 1, -0.5, 0.2, 1]
+  })
+  fireEvent.click(screen.getByRole('button', { name: t('editor.identity') }))
+  expect(change.mock.lastCall?.[0].rawColor).toEqual({ gains, matrix: [1, 0, 0, 0, 1, 0, 0, 0, 1] })
+})
+
+it('keeps valid non-unit-middle gains in range when editing another channel', () => {
+  const matrix = [1, 0, 0, 0, 1, 0, 0, 0, 1]
+  render(
+    <Controls
+      initial={{
+        ...defaultRecipe(),
+        film: null,
+        cameraProfile: null,
+        rawColor: { gains: [16, 0.125, 1], matrix }
+      }}
+    />
+  )
+  fireEvent.keyDown(screen.getByRole('slider', { name: t('editor.blueGain') }), {
+    key: 'ArrowRight'
+  })
+  const raw = change.mock.lastCall?.[0].rawColor
+  expect(raw.gains[0]).toBe(16)
+  expect(raw.gains[1]).toBe(0.125)
+  expect(raw.gains[2]).toBeGreaterThan(1)
+  for (const value of raw.gains) {
+    expect(value).toBeGreaterThanOrEqual(1 / 64)
+    expect(value).toBeLessThanOrEqual(64)
+  }
+  expect(raw.matrix).toEqual(matrix)
+  fireEvent.click(screen.getByRole('button', { name: t('editor.resetWhiteBalance') }))
+  expect(change.mock.lastCall?.[0].rawColor).toEqual({ gains: [2, 1, 0.5], matrix })
 })

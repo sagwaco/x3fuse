@@ -873,7 +873,12 @@ export const useEditorStore = create<EditorState>((set, get) => {
           y,
           recipe: get().documents[session.path].recipe
         })
-        if (get().session?.sessionId === session.sessionId) get().change(result)
+        if (get().session?.sessionId !== session.sessionId) return
+        const current = get().documents[session.path].recipe
+        if ('rawColor' in result) {
+          if (current.rawColor)
+            get().change({ rawColor: { ...current.rawColor, gains: result.rawColor.gains } })
+        } else if (!current.rawColor) get().change(result)
       } catch (error) {
         set({ error: String(error) })
       }
