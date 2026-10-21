@@ -8,6 +8,7 @@ import { ZoomablePreview } from '../src/renderer/src/components/ZoomablePreview'
 import { ZoomControls } from '../src/renderer/src/components/ZoomControls'
 import { PreviewMinimap } from '../src/renderer/src/components/PreviewMinimap'
 import { usePreviewStore } from '../src/renderer/src/stores/previewStore'
+import { runCommand } from '../src/renderer/src/lib/commands'
 
 const { invoke, loadFrame } = vi.hoisted(() => ({ invoke: vi.fn(), loadFrame: vi.fn() }))
 vi.mock('../src/renderer/src/lib/ipc', () => ({ ipc: { invoke } }))
@@ -596,6 +597,28 @@ describe('filmstrip zoom preview', () => {
     expect(screen.getByRole('button', { name: 'Zoom level' }).textContent).toBe('Fit')
   })
 
+  it('zooms from the menu commands, and leaves keys with modifiers to them', () => {
+    const { surface, media } = setup()
+    const run = (name: Parameters<typeof runCommand>[0]): boolean => {
+      let ran = false
+      act(() => void (ran = runCommand(name)))
+      return ran
+    }
+    expect(run('zoomActual')).toBe(true)
+    expect(media.style.transform).toContain('scale(1)')
+    expect(run('zoomIn')).toBe(true)
+    expect(media.style.transform).toContain('scale(1.25)')
+    expect(run('zoomOut')).toBe(true)
+    expect(media.style.transform).toContain('scale(1)')
+    // ⌥⌘0 is Actual Size, not the 0 key of the preview, which fits.
+    fireEvent.keyDown(surface, { key: '0', ctrlKey: true, altKey: true })
+    expect(media.style.transform).toContain('scale(1)')
+    expect(run('zoomFit')).toBe(true)
+    expect(screen.getByRole('button', { name: 'Zoom level' }).textContent).toBe('Fit')
+    cleanup()
+    expect(run('zoomFit')).toBe(false)
+  })
+
   it('disables controls until a preview loads, including pending and failed previews', () => {
     const result = render(<PreviewWithControls key="pending" file={{ ...file, pending: true }} />)
     expect(screen.queryByRole('img')).toBeNull()
@@ -837,6 +860,27 @@ describe('image points and regions', () => {
     expect(onImagePoint).toHaveBeenCalledTimes(2)
     expect(onImageRegion).not.toHaveBeenCalled()
     expect(media.style.transform).toBe('translate(0px, 0px) scale(0.5)')
+  })
+
+  it('opens a context menu with the image point under the pointer, or none from the keyboard', () => {
+    const onContextMenu = vi.fn()
+    const { rerender } = render(<ZoomablePreview file={file} />)
+    const image = loadImage()
+    const preview = screen.getByRole('region', { name: 'Image preview' })
+    const media = image.parentElement!.parentElement!
+    media.getBoundingClientRect = () => ({ left: 0, top: 0, width: 800, height: 600 }) as DOMRect
+    preview.getBoundingClientRect = () => ({ left: 5, top: 7, width: 800, height: 600 }) as DOMRect
+    // Without a menu, the right-click keeps its default.
+    expect(fireEvent.contextMenu(preview, { clientX: 200, clientY: 450 })).toBe(true)
+    rerender(<ZoomablePreview file={file} onContextMenu={onContextMenu} />)
+    expect(fireEvent.contextMenu(preview, { clientX: 200, clientY: 450 })).toBe(false)
+    expect(onContextMenu).toHaveBeenLastCalledWith({ x: 0.25, y: 0.75 }, 200, 450)
+    fireEvent.contextMenu(preview, { clientX: 801, clientY: 10 })
+    expect(onContextMenu).toHaveBeenLastCalledWith(null, 801, 10)
+    fireEvent.keyDown(preview, { key: 'F10', shiftKey: true })
+    expect(onContextMenu).toHaveBeenLastCalledWith(null, 5, 7)
+    fireEvent.keyDown(preview, { key: 'ContextMenu' })
+    expect(onContextMenu).toHaveBeenCalledTimes(4)
   })
 
   it('normalizes reverse drags, clamps them to the image, and drops cancelled drags', () => {

@@ -1,4 +1,4 @@
-import { memo, useContext, useEffect, useRef, useState } from 'react'
+import { memo, useContext, useEffect, useId, useRef, useState } from 'react'
 import { DenoiseControls } from './DenoiseControls'
 import { ChevronDown, Aperture, Film, Blend, RotateCcw, Pipette, Plus, Trash2 } from 'lucide-react'
 import {
@@ -15,7 +15,9 @@ import {
 } from '@shared/editor'
 import stocks from '@shared/film-stocks.json'
 import { curvePath, evaluateCurve } from '@shared/curves'
-import { needsX3iMerge, useEditorStore } from '../stores/editorStore'
+import { asShotRecipe, needsX3iMerge, useEditorStore } from '../stores/editorStore'
+import { editorSection, resetSection } from '@shared/editorSections'
+import { invalidateNativeMenu, showNativeMenu } from '../lib/nativeMenu'
 import { DevelopingCloud } from '../lib/developingCloud'
 import { useQueueStore } from '../stores/queueStore'
 import { t, useLanguage } from '../lib/strings'
@@ -309,6 +311,9 @@ export function Adjustment({
   )
 }
 
+/** A section's settings that its context menu copied, for this session. */
+let copiedSection: { id: string; recipe: EditRecipe } | null = null
+
 export function Section({
   id,
   name,
@@ -323,6 +328,58 @@ export function Section({
   children: React.ReactNode
 }): React.JSX.Element {
   const [open, setOpen] = useStoredOpen(id)
+  // An editor section with settings has a context menu, and Option-click resets it.
+  const section = editorSection(id)
+  const cloud = useContext(DevelopingCloud)
+  const menuId = useId()
+  useEffect(() => () => invalidateNativeMenu(menuId), [menuId])
+  const summary = useRef<HTMLElement>(null)
+  /** The open photo's recipe, while its controls work. */
+  const editable = (): EditRecipe | undefined => {
+    const editor = useEditorStore.getState()
+    const queue = useQueueStore.getState()
+    const off = cloud || queue.isProcessing || queue.isPreparing || editor.before
+    if (off || editor.loading || editor.closing || !editor.preview || !editor.session) return
+    return editor.documents[editor.session.path]?.recipe
+  }
+  const reset = (): void => {
+    const recipe = editable()
+    const { session, change } = useEditorStore.getState()
+    if (section && recipe) change(resetSection(section, recipe, asShotRecipe(session, recipe.seed)))
+  }
+  const menu = (x: number, y: number): void => {
+    if (!section) return
+    const session = useEditorStore.getState().session?.sessionId
+    const off = !editable()
+    const items = [
+      { value: 'reset', label: t('context.reset_section', { name }), disabled: off },
+      { value: 'copy', label: t('context.copy_section', { name }), disabled: off },
+      {
+        value: 'paste',
+        label: t('context.paste_section', { name }),
+        disabled: off || copiedSection?.id !== id
+      },
+      { value: 'expand', label: t('context.expand_all'), separatorBefore: true },
+      { value: 'collapse', label: t('context.collapse_all') }
+    ]
+    const details = summary.current?.parentElement
+    void showNativeMenu({ id: menuId, x, y, items }, (value) => {
+      if (value === 'expand' || value === 'collapse') {
+        // Each section saves its state from its toggle event.
+        details
+          ?.closest('[role="tabpanel"]')
+          ?.querySelectorAll<HTMLDetailsElement>('details.editor-section')
+          .forEach((other) => (other.open = value === 'expand'))
+        return
+      }
+      const recipe = editable()
+      if (!recipe || useEditorStore.getState().session?.sessionId !== session) return
+      if (value === 'reset') reset()
+      else if (value === 'copy') copiedSection = { id, recipe: structuredClone(recipe) }
+      else if (value === 'paste' && copiedSection?.id === id)
+        useEditorStore.getState().change(section.take(copiedSection.recipe, recipe))
+    }).catch((error: unknown) => console.error('Could not open native context menu', error))
+  }
   // Sections reach the panel edges, divided by rules; a nested one does too.
   // A section is transparent at rest. While the pointer or the focus is in it, it fades
   // from a faint light under its header to dark by its first field (see .editor-section).
@@ -338,7 +395,27 @@ export function Section({
       className="editor-section border-t border-ink/10 px-4 bg-[linear-gradient(rgb(var(--ink)/calc(0.03*var(--section-glow))),transparent_3rem)] bg-[length:100%_3rem] bg-no-repeat [details_&]:-mx-4"
     >
       <summary
-        onClick={animateDetails}
+        ref={summary}
+        onClick={(event) => {
+          // Option-click resets the section, as in Lightroom, and keeps it open or closed.
+          if (section && event.altKey) {
+            event.preventDefault()
+            reset()
+          }
+          animateDetails(event)
+        }}
+        onContextMenu={(event) => {
+          if (!section) return
+          event.preventDefault()
+          menu(event.clientX, event.clientY)
+        }}
+        onKeyDown={(event) => {
+          if (!(event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10'))) return
+          if (!section) return
+          event.preventDefault()
+          const bounds = event.currentTarget.getBoundingClientRect()
+          menu(bounds.left, bounds.bottom)
+        }}
         className="control-label sticky top-0 z-[2] -mx-4 flex h-10 cursor-pointer list-none items-center gap-1.5 bg-[color:color-mix(in_srgb,rgb(var(--tone-900))_30%,rgb(var(--tone-950)))] px-4 font-bold tracking-[0.16em] text-tone-400 transition-colors hover:text-tone-100 focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ink/50 bg-[linear-gradient(rgb(var(--ink)/calc(0.03*var(--section-glow))),transparent_3rem)] [details_details>&]:top-10 [details_details>&]:z-[1] [&::-webkit-details-marker]:hidden"
       >
         {name}
@@ -520,7 +597,7 @@ export const EditorControls = memo(function EditorControls({
                     size="icon"
                     className="h-7 w-7 shrink-0"
                     aria-label={t('editor.picker')}
-                    title={withShortcut(t('editor.picker'), 'W')}
+                    title={withShortcut(t('editor.picker'), 'whiteBalancePicker')}
                     aria-keyshortcuts="W"
                     aria-pressed={picking}
                     onClick={() => setPicking(!picking)}
@@ -718,7 +795,14 @@ function Curves({ recipe }: { recipe: EditRecipe }): React.JSX.Element {
     setPoints(points.filter((_, i) => i !== index))
     setSelected(Math.max(0, index - 1))
   }
-  const position = (event: React.PointerEvent<SVGSVGElement>): CurvePoint => {
+  const reset = (): void => {
+    setPoints(defaultRecipe().curves[channel])
+    setSelected(0)
+  }
+  const menuId = useId()
+  const session = useEditorStore((state) => state.session?.sessionId)
+  useEffect(() => () => invalidateNativeMenu(menuId), [menuId, session, channel])
+  const position = (event: React.MouseEvent<SVGSVGElement>): CurvePoint => {
     const bounds = event.currentTarget.getBoundingClientRect()
     return {
       x: Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width)),
@@ -781,10 +865,7 @@ function Curves({ recipe }: { recipe: EditRecipe }): React.JSX.Element {
             className="h-7 w-7"
             aria-label={t('editor.resetCurve')}
             title={t('editor.resetCurve')}
-            onClick={() => {
-              setPoints(defaultRecipe().curves[channel])
-              setSelected(0)
-            }}
+            onClick={reset}
           >
             <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
           </Button>
@@ -795,7 +876,23 @@ function Curves({ recipe }: { recipe: EditRecipe }): React.JSX.Element {
         aria-label={t('editor.curves')}
         role="group"
         className="aspect-square w-full touch-none rounded-lg border border-white/10 bg-black"
+        onContextMenu={(event) => {
+          event.preventDefault()
+          // On a point, the menu removes it. Elsewhere, it resets the curve.
+          const index = near(position(event))
+          const onPoint = index >= 0 && !endpoint(index)
+          const items = [
+            onPoint
+              ? { value: 'remove', label: t('editor.removePoint') }
+              : { value: 'reset', label: t('editor.resetCurve') }
+          ]
+          void showNativeMenu({ id: menuId, x: event.clientX, y: event.clientY, items }, (value) =>
+            value === 'remove' ? remove(index) : reset()
+          ).catch((error: unknown) => console.error('Could not open native context menu', error))
+        }}
         onPointerDown={(event) => {
+          // A secondary click opens the menu; it does not add a point.
+          if (event.button > 0 || event.ctrlKey) return
           const point = position(event)
           let index = near(point)
           if (

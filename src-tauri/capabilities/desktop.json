@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "desktop",
-  "description": "Local application windows; filesystem and subprocess work stays in Rust. The single opener grant is the CC BY-SA attribution link in Settings > About, scoped to that one URL.",
+  "description": "Local application windows; filesystem and subprocess work stays in Rust. The opener grant allows two URLs only: the CC BY-SA attribution link in Settings > About and the Help menu's README.",
   "windows": ["main", "settings"],
   "permissions": [
     "core:event:allow-listen", "core:event:allow-unlisten",
@@ -14,7 +14,10 @@
     "core:resources:allow-close",
     {
       "identifier": "opener:allow-open-url",
-      "allow": [{ "url": "https://github.com/andreavolpato/spektrafilm" }]
+      "allow": [
+        { "url": "https://github.com/andreavolpato/spektrafilm" },
+        { "url": "https://github.com/sagwaco/x3fuse#readme" }
+      ]
     }
   ]
 }

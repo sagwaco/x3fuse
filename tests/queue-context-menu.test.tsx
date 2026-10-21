@@ -6,6 +6,10 @@ import { QueueContextMenu } from '../src/renderer/src/components/QueueContextMen
 import { useQueueSelection } from '../src/renderer/src/hooks/useQueueSelection'
 import { useQueueStore } from '../src/renderer/src/stores/queueStore'
 import { useSettingsStore } from '../src/renderer/src/stores/settingsStore'
+import { useEditorStore } from '../src/renderer/src/stores/editorStore'
+import { useNavStore } from '../src/renderer/src/stores/navStore'
+import { t } from '../src/renderer/src/lib/strings'
+import { defaultRecipe } from '@shared/editor'
 import { DEFAULT_SETTINGS } from '@shared/types'
 
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }))
@@ -65,14 +69,29 @@ it('opens at the pointer after row selection and removes the clicked file', asyn
     x: 120,
     y: 80,
     items: [
-      { value: 'convert', disabled: false },
-      { value: 'remove', disabled: false, separatorBefore: true },
+      { value: 'edit', label: t('menu.file.edit_photo'), accelerator: 'D', disabled: false },
       { value: 'flag', separatorBefore: true },
       { value: 'rating' },
-      { value: 'reveal', separatorBefore: true },
-      { value: 'deselect' }
+      { value: 'copy', accelerator: 'CmdOrCtrl+Shift+C', separatorBefore: true, disabled: true },
+      { value: 'paste', accelerator: 'CmdOrCtrl+Shift+V', disabled: true },
+      { value: 'export', label: t('context.convert'), separatorBefore: true, disabled: false },
+      { value: 'reveal', accelerator: 'CmdOrCtrl+R', separatorBefore: true },
+      { value: 'remove', disabled: false, separatorBefore: true },
+      { value: 'deselect', accelerator: 'CmdOrCtrl+D' }
     ]
   })
+  expect(request().items[0]).not.toHaveProperty('separatorBefore')
+  const [flag, rating] = [1, 2].map((index) => request().items[index].items!)
+  expect(flag.map((item) => item.accelerator)).toEqual(['Z', 'X', 'U'])
+  expect(rating.map((item) => item.accelerator)).toEqual(['0', '1', '2', '3', '4', '5'])
+  expect(request().items[5].items).toMatchObject([
+    { value: 'export:screen', label: t('menu.file.export'), accelerator: 'CmdOrCtrl+Shift+E' },
+    { value: 'export:previous', accelerator: 'CmdOrCtrl+Alt+Shift+E', disabled: true },
+    { value: 'export:jpeg', separatorBefore: true },
+    { value: 'export:embeddedJpg' },
+    { value: 'export:dng' },
+    { value: 'export:tiff' }
+  ])
   expect(useQueueStore.getState().selectedIds).toEqual(new Set(['b']))
   expect(screen.queryByRole('menu')).toBeNull()
   await act(async () => choose('remove'))
@@ -118,7 +137,7 @@ it('preserves multi-selection, reveals its files, and offers all-file actions on
   for (const file of files) expect(invoke).toHaveBeenCalledWith('shell:reveal', { path: file.path })
   fireEvent.contextMenu(screen.getByTestId('surface'))
   expect(useQueueStore.getState().selectedIds.size).toBe(0)
-  expect(request().items.map((item) => item.value)).toEqual(['convert', 'remove'])
+  expect(request().items.map((item) => item.value)).toEqual(['export', 'remove'])
   await act(async () => choose('remove'))
   expect(useQueueStore.getState().files).toEqual([])
 })
@@ -145,4 +164,60 @@ it('supports keyboard invocation, busy states, and invalidation when disabled or
   view.unmount()
   await act(async () => choose('remove'))
   expect(useQueueStore.getState().files).toEqual(files)
+})
+
+it('edits, copies, pastes, and exports the photos fixed when the menu opened', async () => {
+  const edited = files.map((file, index) => ({
+    ...file,
+    edit: { recipe: { ...defaultRecipe(), exposure: index }, revision: 1 }
+  }))
+  const editor = useEditorStore.getState()
+  const queue = useQueueStore.getState()
+  const nav = useNavStore.getState()
+  const paste = vi.fn(async () => {})
+  const exportPreset = vi.fn(async () => {})
+  invoke.mockImplementation(async (channel, payload) =>
+    channel === 'menu:popup'
+      ? new Promise((resolve) => {
+          choose = resolve
+        })
+      : channel === 'editor:open'
+        ? {
+            sessionId: 'session',
+            path: payload.path,
+            recipe: defaultRecipe(),
+            revision: 0,
+            storage: 'none',
+            sourceRevision: 'source'
+          }
+        : undefined
+  )
+  useEditorStore.setState({ paste, clipboard: defaultRecipe() })
+  useQueueStore.setState({ files: edited, exportPreset })
+  render(<Surface />)
+  const menu = (): void => {
+    act(() => useQueueStore.getState().setSelection(new Set(['a', 'b']), 'a'))
+    fireEvent.contextMenu(screen.getByText('b'))
+    // A later selection change does not move the menu's targets.
+    act(() => useQueueStore.getState().setSelection(new Set(['a']), 'a'))
+  }
+  menu()
+  expect(request().items.find((item) => item.value === 'copy')?.disabled).toBe(false)
+  expect(request().items.find((item) => item.value === 'paste')?.disabled).toBe(false)
+  await act(async () => choose('copy'))
+  expect(useEditorStore.getState().clipboard).toEqual(edited[1].edit.recipe)
+  menu()
+  await act(async () => choose('paste'))
+  expect(paste).toHaveBeenCalledWith(edited)
+  menu()
+  await act(async () => choose('export:tiff'))
+  expect(exportPreset).toHaveBeenCalledWith('tiff', new Set(['a', 'b']))
+  // The editor opens the photo of the menu, which is the active photo that it shows.
+  menu()
+  await act(async () => choose('edit'))
+  expect(useEditorStore.getState().session?.path).toBe(edited[1].path)
+  expect(useQueueStore.getState().activeId).toBe('b')
+  useEditorStore.setState(editor, true)
+  useQueueStore.setState({ exportPreset: queue.exportPreset })
+  useNavStore.setState(nav, true)
 })

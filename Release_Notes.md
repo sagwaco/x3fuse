@@ -6,6 +6,8 @@
 - The RAW editor's film simulation uses the spektrafilm model by Andrea Volpato (https://github.com/andreavolpato/spektrafilm, profiles and data CC BY-SA 4.0), ported from spektrafilm-rs (GPL-3.0). It replaces the previous film model.
 - Existing saved film edits load unchanged, but render differently with the new model. The recipe format is unchanged; no re-save is required.
 - Add photo culling with pick/reject flags, star ratings, and queue filters.
+- Reorganize the menus, with new View and Photo menus and File > Add Folder, and show most menu text in the app language. Add right-click menus to photos, the editor preview, and the editor sections. Help > Keyboard Shortcuts lists the keyboard shortcuts.
+- Change two shortcuts to match other Mac photo apps: ⌘R now shows the selected photo in Finder, and ⌘. (Command-Period) stops an export. Export All no longer has a shortcut.
 - Make Windows and Linux portable alpha builds available from the Releases page.
 - Add Spanish to the cross-platform app, alongside English, Japanese, Korean, Simplified Chinese, and Traditional Chinese.
 - Open Settings -> About -> View Licenses to read the bundled third-party notices.

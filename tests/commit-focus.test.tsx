@@ -7,6 +7,8 @@ import { Slider } from '../src/renderer/src/components/ui/slider'
 import { Switch } from '../src/renderer/src/components/ui/switch'
 import { GlassGroup } from '../src/renderer/src/components/ui/glassGroup'
 
+vi.mock('../src/renderer/src/lib/ipc', () => ({ ipc: { invoke: vi.fn(async () => {}) } }))
+
 beforeEach(() => {
   vi.stubGlobal(
     'ResizeObserver',
@@ -87,6 +89,22 @@ it('keeps arrow adjustments focused and leaves the slider on Enter', () => {
   expect(document.activeElement).toBe(slider)
   fireEvent.keyDown(slider, { key: 'Enter' })
   expect(document.activeElement).toBe(document.body)
+})
+
+it('slides only with the main button', () => {
+  const change = vi.fn()
+  const view = render(<Slider value={50} min={0} max={100} onValueChange={change} />)
+  const root = view.container.firstElementChild as HTMLElement
+  root.setPointerCapture = vi.fn()
+  root.getBoundingClientRect = () => new DOMRect(0, 0, 100, 20)
+  // jsdom has no PointerEvent. A MouseEvent carries the button.
+  const press = (button: number, ctrlKey = false): boolean =>
+    fireEvent(root, new MouseEvent('pointerdown', { bubbles: true, button, ctrlKey, clientX: 20 }))
+  press(2)
+  press(0, true)
+  expect(change).not.toHaveBeenCalled()
+  press(0)
+  expect(change).toHaveBeenCalledWith(20)
 })
 
 it.each(['pointerUp', 'pointerCancel'] as const)(

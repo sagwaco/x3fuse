@@ -6,6 +6,7 @@ import { usePreviewStore } from '../stores/previewStore'
 import type { PreviewRegion } from '@shared/editor'
 import type { PreviewCache } from '../lib/previewTiles'
 import { loadFrame } from '../lib/frames'
+import { registerCommands } from '../lib/commands'
 
 type View = { zoom: number | null; x: number; y: number }
 type ZoomOptions = { x?: number; y?: number; animate?: boolean; center?: boolean }
@@ -54,6 +55,7 @@ export function ZoomablePreview({
   onViewportMove,
   onPaint,
   onSelectionCancel,
+  onContextMenu,
   digitZoom = true
 }: {
   file: X3FFileDTO
@@ -81,6 +83,11 @@ export function ZoomablePreview({
   onPaint?: (url: string, size: { width: number; height: number }) => void
   /** Called when Escape ends a selection in progress. */
   onSelectionCancel?: () => void
+  /**
+   * Opens a context menu at `x`, `y` in window pixels. `point` is the image point under
+   * the pointer, 0 to 1 of the image, or null outside the image and for the Menu key.
+   */
+  onContextMenu?: (point: { x: number; y: number } | null, x: number, y: number) => void
   /** False leaves 0 and 1 for other shortcuts, such as star ratings. */
   digitZoom?: boolean
 }): React.JSX.Element {
@@ -196,6 +203,21 @@ export function ZoomablePreview({
     },
     [ready, constrain, fit, minZoom, interruptZoom, updateView]
   )
+
+  // The zoom commands of the menu bar and the keys act on the preview on screen.
+  useEffect(() => {
+    if (!ready) return
+    const zoom = (target: Parameters<typeof zoomTo>[0]) => (): boolean => {
+      zoomTo(target)
+      return true
+    }
+    return registerCommands({
+      zoomIn: zoom((scale) => scale * 1.25),
+      zoomOut: zoom((scale) => scale / 1.25),
+      zoomFit: zoom(null),
+      zoomActual: zoom(1)
+    })
+  }, [ready, zoomTo])
 
   const pan = useCallback(
     (x: number, y: number): void => {
@@ -332,6 +354,11 @@ export function ZoomablePreview({
     if (!rect || rect.width <= 0 || rect.height <= 0) return null
     return { x: (clientX - rect.left) / rect.width, y: (clientY - rect.top) / rect.height }
   }
+  /** A client point on the image, as a fraction of it, or null outside the image. */
+  const pointOnImage = (clientX: number, clientY: number): { x: number; y: number } | null => {
+    const point = imagePoint(clientX, clientY)
+    return point && point.x >= 0 && point.x <= 1 && point.y >= 0 && point.y <= 1 ? point : null
+  }
   // Ends a selection by keys or by pointer without a report. A pointer that is still
   // down then neither pans nor clicks.
   const cancelSelection = useCallback((): void => {
@@ -409,9 +436,8 @@ export function ZoomablePreview({
         }}
         onClick={(event) => {
           if (onImagePoint && !moved.current) {
-            const point = imagePoint(event.clientX, event.clientY)
-            if (point && point.x >= 0 && point.x <= 1 && point.y >= 0 && point.y <= 1)
-              onImagePoint(point.x, point.y)
+            const point = pointOnImage(event.clientX, event.clientY)
+            if (point) onImagePoint(point.x, point.y)
             return
           }
           if (!moved.current) {
@@ -424,7 +450,21 @@ export function ZoomablePreview({
           }
           moved.current = false
         }}
+        onContextMenu={(event) => {
+          if (!onContextMenu) return
+          event.preventDefault()
+          onContextMenu(pointOnImage(event.clientX, event.clientY), event.clientX, event.clientY)
+        }}
         onKeyDown={(event) => {
+          if (
+            onContextMenu &&
+            (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10'))
+          ) {
+            event.preventDefault()
+            const bounds = event.currentTarget.getBoundingClientRect()
+            onContextMenu(null, bounds.left, bounds.top)
+            return
+          }
           // Keys select as a pointer does: arrow keys move a point, Shift with arrow keys
           // sizes a rectangle around it, Return applies it, and Escape cancels.
           const arrow = ARROWS[event.key]
@@ -469,7 +509,9 @@ export function ZoomablePreview({
             onSelectionCancel?.()
             return
           }
-          if (!['+', '=', '-', ...(digitZoom ? ['0', '1'] : [])].includes(event.key)) return
+          // With a modifier, the key is a shortcut, such as ⌥⌘0 for Actual Size.
+          if (!plain || !['+', '=', '-', ...(digitZoom ? ['0', '1'] : [])].includes(event.key))
+            return
           event.preventDefault()
           event.stopPropagation()
           if (event.key === '0') zoomTo(null)

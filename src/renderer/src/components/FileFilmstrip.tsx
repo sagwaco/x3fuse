@@ -14,7 +14,8 @@ import type { X3FFileDTO } from '@shared/types'
 import type { PreviewRegion } from '@shared/editor'
 import { displayPreviewUrl } from '@shared/preview'
 import { useQueueStore, type ExportDraft } from '../stores/queueStore'
-import { useEditorStore } from '../stores/editorStore'
+import { isTextEditing, useEditorStore } from '../stores/editorStore'
+import { runCommand } from '../lib/commands'
 import { useScopeSourceStore } from '../stores/scopeSourceStore'
 import { qualifySquare } from '../lib/qualifySquare'
 import { useFileDrop } from '../hooks/useFileDrop'
@@ -109,15 +110,19 @@ export function FileFilmstrip({
     [shownId]
   )
   const disarm = useScopeSourceStore.getState().disarm
-  // Escape disarms the Qualifier.
+  // Escape disarms the Qualifier. Else in the library it goes back to the grid, as in
+  // Lightroom. Dialogs, menus, and text fields keep their Escape.
+  const library = !draft && preview === undefined
   useEffect(() => {
-    if (!qualifying) return
+    if (!qualifying && !library) return
     const keydown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape' && !event.defaultPrevented) useScopeSourceStore.getState().disarm()
+      if (event.key !== 'Escape' || event.defaultPrevented) return
+      if (qualifying) useScopeSourceStore.getState().disarm()
+      else if (!isTextEditing(event.target)) runCommand('viewGrid', { source: 'key' })
     }
     window.addEventListener('keydown', keydown)
     return () => window.removeEventListener('keydown', keydown)
-  }, [qualifying])
+  }, [qualifying, library])
 
   return (
     <QueueContextMenu disabled={!!draft || preview !== undefined}>
