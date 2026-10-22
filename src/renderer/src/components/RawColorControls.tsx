@@ -1,5 +1,5 @@
-import { useContext, useEffect, useRef, useState } from 'react'
-import { Pipette } from 'lucide-react'
+import { useContext, useEffect, useId, useRef, useState } from 'react'
+import { Pipette, RotateCcw } from 'lucide-react'
 import {
   AEROCHROME_MATRIX,
   IDENTITY_RAW_MATRIX,
@@ -11,15 +11,20 @@ import { useQueueStore } from '../stores/queueStore'
 import { DevelopingCloud } from '../lib/developingCloud'
 import { t } from '../lib/strings'
 import { Button } from './ui/button'
-import { GlassGroup } from './ui/glassGroup'
-import { Adjustment, TEMPERATURE, TINT } from './EditorControls'
+import { Select } from './ui/select'
+import { Adjustment, CHANNELS, SLIDER_LABEL, Swatches, TEMPERATURE, TINT } from './EditorControls'
 import { TernaryMixPad } from './TernaryMixPad'
-import type { LayerMix } from '../lib/ternaryMix'
-import { blurOnEnter } from '../lib/commitFocus'
+import { useSwitchTween } from '../lib/switchTween'
+import { channelMap, swapChannel, type LayerMix } from '../lib/ternaryMix'
+import { cn } from '../lib/cn'
 
 const channels = ['red', 'green', 'blue'] as const
 const layers = ['Bottom', 'Middle', 'Top'] as const
 const BALANCE_SCALE = 100 / Math.log2(RAW_GAIN_RANGE[1])
+const MIX_PRESETS = [
+  ['identity', IDENTITY_RAW_MATRIX],
+  ['aerochrome', AEROCHROME_MATRIX]
+] as const
 
 function normalizedGains(gains: [number, number, number]): [number, number, number] {
   return [gains[0] / gains[1], 1, gains[2] / gains[1]]
@@ -98,6 +103,32 @@ export function GainWhiteBalance({
   )
 }
 
+/** The matrix of the RAW channel controls, with the state that allows edits. */
+function useRawMatrix(recipe: EditRecipe): {
+  matrix: number[]
+  disabled: boolean
+  update: (next: number[], save?: boolean) => void
+  commit: () => void
+} {
+  const asShotGains = useEditorStore((state) => state.preview?.asShotGains)
+  const change = useEditorStore((state) => state.change)
+  const commit = useEditorStore((state) => state.commit)
+  const unavailable = useEditorStore(
+    (state) => state.before || state.loading || state.closing || !state.preview
+  )
+  const busy = useQueueStore((state) => state.isProcessing || state.isPreparing)
+  const cloud = useContext(DevelopingCloud)
+  const gains = recipe.rawColor?.gains ?? (asShotGains && normalizedGains(asShotGains))
+  return {
+    matrix: recipe.rawColor?.matrix ?? IDENTITY_RAW_MATRIX,
+    disabled: !gains || unavailable || busy || cloud,
+    update: (next, save = true) => {
+      if (gains) change({ rawColor: { gains: [...gains], matrix: next } }, save)
+    },
+    commit
+  }
+}
+
 export function RawMatrixControls({
   recipe,
   mixPicking,
@@ -108,26 +139,13 @@ export function RawMatrixControls({
   setMixPicking?: (output: 0 | 1 | 2 | null) => void
 }): React.JSX.Element {
   const [output, setOutput] = useState<(typeof channels)[number]>('red')
-  const [view, setView] = useState<'pad' | 'sliders'>('pad')
-  const asShotGains = useEditorStore((state) => state.preview?.asShotGains)
-  const change = useEditorStore((state) => state.change)
-  const commit = useEditorStore((state) => state.commit)
-  const unavailable = useEditorStore(
-    (state) => state.before || state.loading || state.closing || !state.preview
-  )
-  const busy = useQueueStore((state) => state.isProcessing || state.isPreparing)
-  const cloud = useContext(DevelopingCloud)
-  const gains = recipe.rawColor?.gains ?? (asShotGains && normalizedGains(asShotGains))
-  const disabled = !gains || unavailable || busy || cloud
-  const matrix = recipe.rawColor?.matrix ?? IDENTITY_RAW_MATRIX
+  const { matrix, disabled, update, commit } = useRawMatrix(recipe)
   const row = channels.indexOf(output)
   const session = useEditorStore((state) => state.session?.sessionId)
-  const total = Number(
-    (matrix.slice(row * 3, row * 3 + 3).reduce((sum, value) => sum + value, 0) * 100).toFixed(4)
-  )
-  const update = (next: number[], save = true): void => {
-    if (gains) change({ rawColor: { gains: [...gains], matrix: next } }, save)
-  }
+  const mix = matrix.slice(row * 3, row * 3 + 3) as LayerMix
+  // On a channel switch, the pad handle and the sliders glide from the previous mix.
+  const { from, t: glide } = useSwitchTween(output, mix)
+  const shown = glide === 1 ? mix : (mix.map((v, i) => from[i] + (v - from[i]) * glide) as LayerMix)
   const setSource = (column: number, value: number, save = true): void => {
     const next = [...matrix]
     const others = [0, 1, 2].filter((index) => index !== column)
@@ -146,235 +164,366 @@ export function RawMatrixControls({
     next[row * 3 + column] = value
     update(next, save)
   }
-  const swap = (first: number, second: number): void => {
+  const preset =
+    MIX_PRESETS.find(([, preset]) =>
+      preset.every((value, index) => value === matrix[index])
+    )?.[0] ?? 'custom'
+  const reset = (): void => {
     const next = [...matrix]
-    for (let column = 0; column < 3; column++) {
-      const index = first * 3 + column
-      next[index] = matrix[second * 3 + column]
-      next[second * 3 + column] = matrix[index]
-    }
+    next.splice(row * 3, 3, ...IDENTITY_RAW_MATRIX.slice(row * 3, row * 3 + 3))
     update(next)
   }
   return (
     <>
-      <GlassGroup
-        kind="tabs"
-        id="raw-output"
-        panelId={() => 'raw-output-panel'}
-        aria-label={t('editor.outputChannel')}
-        value={output}
-        onValueChange={(next) => {
-          setMixPicking?.(null)
-          commit()
-          setOutput(next)
-        }}
-        items={channels.map((channel) => ({
-          value: channel,
-          label: t(`editor.${channel}`),
-          title: t(`editor.output${channel[0].toUpperCase()}${channel.slice(1)}`)
-        }))}
-        className="grid auto-cols-fr grid-flow-col"
-      />
-      <GlassGroup
-        aria-label={t('editor.mixView')}
-        size="sm"
-        value={view}
-        onValueChange={(next) => {
-          setMixPicking?.(null)
-          commit()
-          setView(next)
-        }}
-        items={[
-          { value: 'pad', label: t('editor.mixPadView') },
-          { value: 'sliders', label: t('editor.mixSlidersView') }
-        ]}
-        className="grid auto-cols-fr grid-flow-col"
-      />
-      <div role="tabpanel" id="raw-output-panel" aria-labelledby={`raw-output-tab-${output}`}>
-        {view === 'pad' ? (
-          <>
-            <TernaryMixPad
-              key={`${session}:${output}`}
-              value={matrix.slice(row * 3, row * 3 + 3) as LayerMix}
-              disabled={disabled}
-              qualifier={
-                setMixPicking && (
-                  <Button
-                    size="icon"
-                    className="h-6 w-6"
-                    aria-label={t('editor.mixQualifier', { color: t(`editor.${output}`) })}
-                    title={t('editor.mixQualifierHelp', { color: t(`editor.${output}`) })}
-                    aria-pressed={mixPicking === row}
-                    disabled={disabled}
-                    onClick={() => setMixPicking(mixPicking === row ? null : (row as 0 | 1 | 2))}
-                  >
-                    <Pipette aria-hidden="true" className="h-3 w-3" />
-                  </Button>
-                )
-              }
-              change={(mix, save) => {
-                const next = [...matrix]
-                next.splice(row * 3, 3, ...mix)
-                update(next, save)
-              }}
-              commit={commit}
-              reset={() => {
-                const next = [...matrix]
-                next.splice(row * 3, 3, ...IDENTITY_RAW_MATRIX.slice(row * 3, row * 3 + 3))
-                update(next)
-              }}
-            />
-            {mixPicking === row && (
-              <p role="status" className="text-xs text-tone-200">
-                {t('editor.mixQualifierHint', { color: t(`editor.${output}`) })}
-              </p>
-            )}
-            <div className="my-2 grid grid-cols-3 gap-2">
-              {layers.map((layer, column) => (
-                <label
-                  key={layer}
-                  className="flex min-w-0 items-center gap-1 text-xs text-tone-400"
-                  title={t(`editor.source${layer}`)}
-                >
-                  <span aria-hidden="true">{layer[0]}</span>
-                  <MixPercentage
-                    key={`${session}:${output}`}
-                    label={t(`editor.source${layer}`)}
-                    value={matrix[row * 3 + column] * 100}
-                    disabled={disabled}
-                    change={(value) => setSource(column, value / 100, false)}
-                    commit={commit}
-                  />
-                  <span aria-hidden="true">%</span>
-                </label>
-              ))}
-            </div>
-          </>
-        ) : (
-          layers.map((layer, column) => (
-            <Adjustment
-              key={`${session}:${output}:${layer}`}
-              label={t(`editor.source${layer}`)}
-              short={layer[0]}
-              value={Number((matrix[row * 3 + column] * 100).toFixed(4))}
-              min={-400}
-              max={400}
-              step={1}
-              change={(value, save) => setSource(column, value / 100, save)}
-              reset={() => setSource(column, IDENTITY_RAW_MATRIX[row * 3 + column])}
-              commit={commit}
-              disabled={disabled}
-            />
-          ))
-        )}
-        <p className={total === 100 ? 'text-xs text-tone-500' : 'text-xs text-danger'}>
-          {t('editor.total')}: {total}%
-        </p>
-      </div>
-      <div className="flex flex-wrap gap-1.5">
-        {(
-          [
-            [0, 2],
-            [0, 1],
-            [1, 2]
-          ] as const
-        ).map(([first, second]) => (
-          <Button
-            key={`${first}${second}`}
-            size="sm"
-            disabled={disabled}
-            onClick={() => swap(first, second)}
-          >
-            {t(
-              `editor.swap${channels[first][0].toUpperCase()}${channels[second][0].toUpperCase()}`
-            )}
-          </Button>
-        ))}
-      </div>
-      <div className="flex flex-wrap gap-1.5">
-        <Button size="sm" disabled={disabled} onClick={() => update([...IDENTITY_RAW_MATRIX])}>
-          {t('editor.identity')}
-        </Button>
-        <Button
-          size="sm"
+      <div className="flex items-center gap-2">
+        <Swatches
+          label={t('editor.outputChannel')}
+          value={output}
+          options={channels.map((channel) => ({
+            value: channel,
+            label: t(`editor.${channel}`),
+            color: CHANNELS[channel]
+          }))}
+          onChange={(next) => {
+            setMixPicking?.(null)
+            commit()
+            setOutput(next)
+          }}
+        />
+        <Select
+          aria-label={t('editor.rawMixPreset')}
+          className="min-w-0 flex-1"
+          value={preset}
           disabled={disabled}
-          onClick={() =>
-            update(Array.from({ length: 3 }, () => matrix.slice(row * 3, row * 3 + 3)).flat())
-          }
-        >
-          {t('editor.monochrome')}
-        </Button>
-        <Button size="sm" disabled={disabled} onClick={() => update([...AEROCHROME_MATRIX])}>
-          {t('editor.aerochrome')}
-        </Button>
+          options={[
+            ...MIX_PRESETS.map(([value]) => ({ value, label: t(`editor.${value}`) })),
+            ...(preset === 'custom'
+              ? [{ value: 'custom', label: t('editor.customWhiteBalance'), disabled: true }]
+              : [])
+          ]}
+          onValueChange={(value) => {
+            const selected = MIX_PRESETS.find(([name]) => name === value)
+            if (selected) update([...selected[1]])
+          }}
+        />
+        <div className="flex gap-1">
+          {setMixPicking && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              aria-label={t('editor.mixQualifier', { color: t(`editor.${output}`) })}
+              title={t('editor.mixQualifierHelp', { color: t(`editor.${output}`) })}
+              aria-pressed={mixPicking === row}
+              disabled={disabled}
+              onClick={() => setMixPicking(mixPicking === row ? null : (row as 0 | 1 | 2))}
+            >
+              <Pipette aria-hidden="true" className="h-3.5 w-3.5" />
+            </Button>
+          )}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            aria-label={t('editor.resetOutputMix')}
+            title={t('editor.resetOutputMix')}
+            disabled={disabled}
+            onClick={reset}
+          >
+            <RotateCcw aria-hidden="true" className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      </div>
+      <TernaryMixPad
+        key={session}
+        value={mix}
+        shown={shown}
+        disabled={disabled}
+        change={(mix, save) => {
+          const next = [...matrix]
+          next.splice(row * 3, 3, ...mix)
+          update(next, save)
+        }}
+        commit={commit}
+        reset={reset}
+        glow={CHANNELS[output]}
+      />
+      {mixPicking === row && (
+        <p role="status" className="text-xs text-tone-200">
+          {t('editor.mixQualifierHint', { color: t(`editor.${output}`) })}
+        </p>
+      )}
+      <div>
+        {/* Top to bottom, as the layers stack in the sensor. */}
+        {[2, 1, 0].map((column) => (
+          <Adjustment
+            key={`${session}:${output}:${layers[column]}`}
+            label={t(`editor.source${layers[column]}`)}
+            short={layers[column][0]}
+            value={Number((shown[column] * 100).toFixed(4))}
+            min={-400}
+            max={400}
+            step={1}
+            change={(value, save) => setSource(column, value / 100, save)}
+            reset={() => setSource(column, IDENTITY_RAW_MATRIX[row * 3 + column])}
+            commit={commit}
+            disabled={disabled}
+          />
+        ))}
       </div>
     </>
   )
 }
 
-function MixPercentage({
-  label,
-  value,
-  disabled,
-  change,
-  commit
+const NODE_Y = [10, 30, 50]
+const INPUT_X = 5
+const OUTPUT_X = 135
+
+/**
+ * A link from an input to `end`. It eases from `from` when it mounts, and to each new
+ * `end` unless `follow` is set.
+ */
+function SwapLink({
+  input,
+  from: initial,
+  end,
+  stroke,
+  dotted = false,
+  follow = false
 }: {
-  label: string
-  value: number
-  disabled: boolean
-  change: (value: number) => void
-  commit: () => void
+  input: number
+  from?: { x: number; y: number }
+  end: { x: number; y: number }
+  stroke: string
+  dotted?: boolean
+  follow?: boolean
 }): React.JSX.Element {
-  const [draft, setDraft] = useState<string>()
-  const fresh = useRef(false)
-  const editing = useRef(false)
-  const finish = (): void => {
-    if (!editing.current) return
-    editing.current = false
-    commit()
-  }
+  const [shown, setShown] = useState(initial ?? end)
+  const current = useRef(initial ?? end)
   useEffect(() => {
-    if (disabled) setDraft(undefined)
-    return () => {
-      if (!editing.current) return
-      editing.current = false
-      commit()
+    const from = current.current
+    const show = (point: { x: number; y: number }): void => {
+      current.current = point
+      setShown(point)
     }
-  }, [commit, disabled])
+    if (
+      follow ||
+      (from.x === end.x && from.y === end.y) ||
+      window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    )
+      return show(end)
+    const start = performance.now()
+    let frame = requestAnimationFrame(function step(now) {
+      const progress = Math.min(1, (now - start) / 180)
+      const eased = 1 - (1 - progress) ** 3
+      show({ x: from.x + (end.x - from.x) * eased, y: from.y + (end.y - from.y) * eased })
+      if (progress < 1) frame = requestAnimationFrame(step)
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [end.x, end.y, follow]) // eslint-disable-line react-hooks/exhaustive-deps
+  const y = NODE_Y[input]
   return (
-    <input
-      aria-label={label}
-      type="number"
-      min={-400}
-      max={400}
-      step={0.1}
-      disabled={disabled}
-      value={draft ?? Number(value.toFixed(4))}
-      className="h-7 w-full min-w-0 rounded-md border border-ink/15 bg-transparent px-1 text-right text-xs tabular-nums text-tone-100 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none focus:outline-none focus-visible:ring-2 focus-visible:ring-ink/60 disabled:opacity-40"
-      onMouseDown={(event) => {
-        fresh.current = document.activeElement !== event.currentTarget
-      }}
-      onMouseUp={(event) => {
-        if (fresh.current) event.preventDefault()
-        fresh.current = false
-      }}
-      onFocus={(event) => {
-        setDraft(String(Number(value.toFixed(4))))
-        event.currentTarget.select()
-      }}
-      onKeyDown={blurOnEnter}
-      onChange={(event) => {
-        setDraft(event.currentTarget.value)
-        const next = event.currentTarget.valueAsNumber
-        if (Number.isFinite(next)) {
-          editing.current = true
-          change(Math.max(-400, Math.min(400, next)))
-        }
-      }}
-      onBlur={() => {
-        setDraft(undefined)
-        finish()
-      }}
+    <path
+      d={`M ${INPUT_X} ${y} C 70 ${y}, 70 ${shown.y}, ${shown.x} ${shown.y}`}
+      fill="none"
+      stroke={stroke}
+      strokeWidth="1.25"
+      strokeDasharray={dotted ? '2 2' : undefined}
+      className={dotted ? 'marching-dash' : undefined}
     />
+  )
+}
+
+/** The output under a drag point, or -1. */
+const dropTarget = ({ x, y }: { x: number; y: number }): number =>
+  x > 70 ? NODE_Y.findIndex((node) => Math.abs(node - y) < 10) : -1
+
+export function ChannelSwap({ recipe }: { recipe: EditRecipe }): React.JSX.Element {
+  const { matrix, disabled, update } = useRawMatrix(recipe)
+  const map = channelMap(matrix)
+  // SVG url() references need a plain id.
+  const gradient = useId().replace(/[^\w-]/g, '')
+  // A drag from either end of a link moves its input to the output under the release point.
+  const [drag, setDrag] = useState<{ pointer: number; input: number; x: number; y: number }>()
+  const move = (input: number, output: number): void => {
+    if (map[output] !== input) update(swapChannel(matrix, input, output))
+  }
+  const point = (event: React.PointerEvent<SVGSVGElement>): { x: number; y: number } => {
+    const box = event.currentTarget.getBoundingClientRect()
+    return {
+      x: ((event.clientX - box.left) / box.width) * 140,
+      y: ((event.clientY - box.top) / box.height) * 60
+    }
+  }
+  const name = (channel: number): string => t(`editor.${channels[channel]}`)
+  const labels = (align: string): React.JSX.Element => (
+    <div aria-hidden="true" className={cn('grid grid-rows-3 items-center', align, SLIDER_LABEL)}>
+      {channels.map((channel) => (
+        <span key={channel}>{channel[0].toUpperCase()}</span>
+      ))}
+    </div>
+  )
+  const link = (input: number, output: number): React.JSX.Element => (
+    <SwapLink
+      input={input}
+      end={{ x: OUTPUT_X, y: NODE_Y[output] }}
+      stroke={`url(#${gradient}${input}${output})`}
+    />
+  )
+  // While a drag is over an output, the link snaps to it, and the input it displaces
+  // shows with a dotted line at the dragged input's present output.
+  const target = drag ? dropTarget(drag) : -1
+  const displaced = target >= 0 && map[target] !== drag?.input ? map[target] : -1
+  return (
+    <div className="grid grid-cols-[1rem_minmax(0,1fr)_1rem]">
+      {labels('text-left')}
+      <svg
+        viewBox="0 0 140 60"
+        role="group"
+        aria-label={t('editor.channelSwap')}
+        className={cn(
+          'aspect-[7/3] w-full touch-none select-none overflow-visible',
+          drag && 'cursor-grabbing [&_*]:cursor-grabbing',
+          disabled && 'opacity-40'
+        )}
+        onPointerDown={(event) => {
+          const node = (event.target as Element).closest('[data-input],[data-output]')
+          if (disabled || drag || !node || event.button !== 0) return
+          event.preventDefault()
+          event.currentTarget.setPointerCapture(event.pointerId)
+          const input = node.hasAttribute('data-input')
+            ? Number(node.getAttribute('data-input'))
+            : map[Number(node.getAttribute('data-output'))]
+          setDrag({ pointer: event.pointerId, input, ...point(event) })
+        }}
+        onPointerMove={(event) => {
+          if (drag?.pointer === event.pointerId) setDrag({ ...drag, ...point(event) })
+        }}
+        onPointerUp={(event) => {
+          if (drag?.pointer !== event.pointerId) return
+          const output = dropTarget(point(event))
+          if (output >= 0) move(drag.input, output)
+          setDrag(undefined)
+        }}
+        onPointerCancel={() => setDrag(undefined)}
+        onLostPointerCapture={() => setDrag(undefined)}
+      >
+        <defs>
+          {map.flatMap((_, input) =>
+            map.map((_, output) => (
+              <linearGradient
+                key={`${input}${output}`}
+                id={`${gradient}${input}${output}`}
+                gradientUnits="userSpaceOnUse"
+                x1={INPUT_X}
+                x2={OUTPUT_X}
+                y1="0"
+                y2="0"
+              >
+                <stop offset="0" stopColor={CHANNELS[channels[input]]} />
+                <stop offset="1" stopColor={CHANNELS[channels[output]]} />
+              </linearGradient>
+            ))
+          )}
+        </defs>
+        {map.map((input, output) =>
+          input === displaced || (input === drag?.input && target >= 0) ? null : (
+            <g key={input} opacity={input === drag?.input ? 0.25 : 1}>
+              {link(input, output)}
+            </g>
+          )
+        )}
+        {/* The uncommitted links are dotted. The dragged one follows the cursor, then
+            eases onto an output under it. */}
+        {drag && (
+          <SwapLink
+            input={drag.input}
+            end={target >= 0 ? { x: OUTPUT_X, y: NODE_Y[target] } : drag}
+            stroke={
+              target >= 0
+                ? `url(#${gradient}${drag.input}${target})`
+                : CHANNELS[channels[drag.input]]
+            }
+            dotted
+            follow={target < 0}
+          />
+        )}
+        {displaced >= 0 && (
+          <SwapLink
+            input={displaced}
+            from={{ x: OUTPUT_X, y: NODE_Y[target] }}
+            end={{ x: OUTPUT_X, y: NODE_Y[map.indexOf(drag!.input)] }}
+            stroke={`url(#${gradient}${displaced}${map.indexOf(drag!.input)})`}
+            dotted
+          />
+        )}
+        {channels.map((channel, index) => (
+          <g key={channel}>
+            <g
+              data-input={index}
+              role="button"
+              tabIndex={disabled ? -1 : 0}
+              aria-label={t('editor.channelSwapInput', {
+                input: name(index),
+                output: name(map.indexOf(index))
+              })}
+              aria-disabled={disabled || undefined}
+              aria-keyshortcuts="ArrowUp ArrowDown"
+              className="group/input cursor-grab outline-none [&:focus-visible>circle]:stroke-ink"
+              onKeyDown={(event) => {
+                const step = { ArrowUp: -1, ArrowDown: 1 }[event.key]
+                if (disabled || !step) return
+                event.preventDefault()
+                move(index, (map.indexOf(index) + step + 3) % 3)
+              }}
+            >
+              <circle cx={INPUT_X} cy={NODE_Y[index]} r="8" fill="transparent" />
+              <circle
+                cx={INPUT_X}
+                cy={NODE_Y[index]}
+                r="4.5"
+                fill={CHANNELS[channel]}
+                strokeWidth="1.5"
+                className={cn(
+                  'origin-center stroke-transparent transition-transform duration-150 [transform-box:fill-box]',
+                  drag?.input === index
+                    ? 'scale-100'
+                    : cn('scale-[0.6]', !disabled && !drag && 'group-hover/input:scale-100')
+                )}
+              />
+            </g>
+            <g data-output={index} className="group/output cursor-grab">
+              <circle cx={OUTPUT_X} cy={NODE_Y[index]} r="8" fill="transparent" />
+              {/* The knob is small until a pointer is on it or a drag targets it. */}
+              <circle
+                cx={OUTPUT_X}
+                cy={NODE_Y[index]}
+                r="4.5"
+                fill={CHANNELS[channel]}
+                className={cn(
+                  'origin-center transition-transform duration-150 [transform-box:fill-box]',
+                  target === index
+                    ? 'scale-100'
+                    : cn('scale-[0.6]', !disabled && !drag && 'group-hover/output:scale-100')
+                )}
+              />
+              {target === index && (
+                <circle
+                  cx={OUTPUT_X}
+                  cy={NODE_Y[index]}
+                  r="7"
+                  fill="none"
+                  stroke={CHANNELS[channel]}
+                  strokeWidth="1"
+                  strokeDasharray="2 2"
+                  className="marching-dash"
+                />
+              )}
+            </g>
+          </g>
+        ))}
+      </svg>
+      {labels('text-right')}
+    </div>
   )
 }

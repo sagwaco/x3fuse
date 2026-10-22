@@ -25,9 +25,9 @@ it('places equal weights at the origin and the reference layers at their vertice
   expect(mixPoint([1 / 3, 1 / 3, 1 / 3])).toEqual({ x: 0, y: 0 })
   expectMix(pointMix({ x: 0, y: 0 }), [1 / 3, 1 / 3, 1 / 3])
   for (const [mix, point] of [
-    [[1, 0, 0], { x: 0, y: 1 }],
+    [[1, 0, 0], { x: Math.sqrt(3) / 2, y: -0.5 }],
     [[0, 1, 0], { x: -Math.sqrt(3) / 2, y: -0.5 }],
-    [[0, 0, 1], { x: Math.sqrt(3) / 2, y: -0.5 }]
+    [[0, 0, 1], { x: 0, y: 1 }]
   ] as [LayerMix, { x: number; y: number }][]) {
     expect(mixPoint(mix)).toEqual(point)
     expectMix(pointMix(point), mix)
@@ -36,9 +36,9 @@ it('places equal weights at the origin and the reference layers at their vertice
 
 it('maps loaded values without normalization, clamping, or mutation', () => {
   const mix: LayerMix = [2, -1, 3]
-  expect(mixPoint(mix)).toEqual({ x: 2 * Math.sqrt(3), y: 1 })
+  expect(mixPoint(mix)).toEqual({ x: (3 * Math.sqrt(3)) / 2, y: 2.5 })
   expect(mix).toEqual([2, -1, 3])
-  expect(mixPoint([5, 0, 0])).toEqual({ x: 0, y: 5 })
+  expect(mixPoint([0, 0, 5])).toEqual({ x: 0, y: 5 })
 })
 
 it('round-trips negative mixes and the full supported domain', () => {
@@ -62,7 +62,8 @@ it('exports all six boundary corners in perimeter order', () => {
     const after = MIX_BOUNDARY[(index + 2) % 6]
     expect(
       (next.x - point.x) * (after.y - next.y) - (next.y - point.y) * (after.x - next.x)
-    ).toBeGreaterThan(0)
+      // Clockwise: the pad shows the layers top, middle, bottom counterclockwise.
+    ).toBeLessThan(0)
   })
 })
 
@@ -154,16 +155,16 @@ it('is continuous across the enlarged triangle and monotonic toward every signed
     let last = -1
     for (let radius = 0; radius < 14; radius += 0.05) {
       const p = { x: Math.cos(angle) * radius, y: Math.sin(angle) * radius }
-      const bottom = (1 + 2 * p.y) / 3
-      const middle = (1 - bottom) / 2 - p.x / Math.sqrt(3)
-      const display = mixPadPoint([bottom, middle, 1 - bottom - middle])
+      const top = (1 + 2 * p.y) / 3
+      const middle = (1 - top) / 2 - p.x / Math.sqrt(3)
+      const display = mixPadPoint([1 - top - middle, middle, top])
       const distance = Math.hypot(display.x, display.y)
       expect(distance).toBeGreaterThan(last)
       last = distance
     }
   }
-  for (const bottom of [1 - 1e-8, 1, 1 + 1e-8]) {
-    expect(mixPadPoint([bottom, (1 - bottom) / 2, (1 - bottom) / 2]).y).toBeCloseTo(3.5, 6)
+  for (const top of [1 - 1e-8, 1, 1 + 1e-8]) {
+    expect(mixPadPoint([(1 - top) / 2, (1 - top) / 2, top]).y).toBeCloseTo(3.5, 6)
   }
 })
 

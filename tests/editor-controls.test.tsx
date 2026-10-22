@@ -1129,7 +1129,7 @@ it('keeps legacy grain when choosing another stock or the Aerochrome look', () =
   }
 })
 
-it('adjusts color ranges in the color mixer and edits curve points from the keyboard', () => {
+it('adjusts color ranges in the color mixer and edits curve points from the keyboard', async () => {
   const view = render(<Controls />)
   panelTab('grading')
   expect(sections(view.container).slice(0, 2)).toEqual([t('editor.color'), t('editor.colorMixer')])
@@ -1153,7 +1153,8 @@ it('adjusts color ranges in the color mixer and edits curve points from the keyb
   const curve = screen
     .getByRole('group', { name: t('editor.curves') })
     .querySelector('path[stroke-width="2"]')!
-  expect(curve.getAttribute('d')).toContain(' C ')
+  // The switch to the red channel morphs the curve first.
+  await waitFor(() => expect(curve.getAttribute('d')).toContain(' C '))
   expect(curve.getAttribute('d')).toContain('100 98')
   fireEvent.keyDown(point, { key: 'Enter' })
   expect(document.activeElement).toBe(document.body)
@@ -1710,7 +1711,7 @@ it.each([
   }
 )
 
-it('applies the Aerochrome matrix in Grading without changing raw gains or film settings', () => {
+it('applies the Aerochrome matrix preset in Grading without changing raw gains or film settings', async () => {
   const gains: [number, number, number] = [3, 2, 0.25]
   editor.setState({ preview: { ...editor.getState().preview!, asShotGains: undefined } })
   render(
@@ -1723,11 +1724,19 @@ it('applies the Aerochrome matrix in Grading without changing raw gains or film 
     />
   )
   panelTab('grading')
-  fireEvent.click(screen.getByRole('button', { name: t('editor.aerochrome') }))
-  expect(change).toHaveBeenLastCalledWith({ rawColor: { gains, matrix: AEROCHROME_MATRIX } }, true)
+  const preset = screen.getByRole('button', { name: t('editor.rawMixPreset') })
+  expect(preset.textContent).toBe(t('editor.customWhiteBalance'))
+  invoke.mockResolvedValueOnce('aerochrome')
+  fireEvent.click(preset)
+  await waitFor(() =>
+    expect(change).toHaveBeenLastCalledWith(
+      { rawColor: { gains, matrix: AEROCHROME_MATRIX } },
+      true
+    )
+  )
 })
 
-it('composes channel swaps and preserves gains and neutral row totals', () => {
+it('swaps channels from the graph and preserves gains', () => {
   const gains: [number, number, number] = [2, 1, 0.5]
   const matrix = [1.3, -0.3, 0, 0, 1, 0, -0.2, 0.2, 1]
   render(
@@ -1736,28 +1745,20 @@ it('composes channel swaps and preserves gains and neutral row totals', () => {
     />
   )
   panelTab('grading')
-  fireEvent.click(screen.getByRole('button', { name: t('editor.swapRB') }))
+  expect(screen.queryByRole('button', { name: t('editor.monochrome') })).toBeNull()
+  fireEvent.keyDown(
+    screen.getByRole('button', {
+      name: t('editor.channelSwapInput', { input: t('editor.blue'), output: t('editor.blue') })
+    }),
+    { key: 'ArrowDown' }
+  )
   expect(change.mock.lastCall?.[0].rawColor).toEqual({
     gains,
     matrix: [-0.2, 0.2, 1, 0, 1, 0, 1.3, -0.3, 0]
   })
-  fireEvent.click(screen.getByRole('button', { name: t('editor.swapRG') }))
-  const swapped = change.mock.lastCall?.[0].rawColor
-  expect(swapped.matrix).toEqual([0, 1, 0, -0.2, 0.2, 1, 1.3, -0.3, 0])
-  for (const row of [0, 1, 2])
-    expect(
-      swapped.matrix.slice(row * 3, row * 3 + 3).reduce((a: number, b: number) => a + b, 0)
-    ).toBeCloseTo(1)
-  fireEvent.click(screen.getByRole('tab', { name: t('editor.green') }))
+  fireEvent.click(screen.getByRole('radio', { name: t('editor.green') }))
   adjust(t('editor.sourceBottom'), -50)
   expect(change.mock.lastCall?.[0].rawColor.matrix[3]).toBe(-0.5)
-  fireEvent.click(screen.getByRole('button', { name: t('editor.monochrome') }))
-  expect(change.mock.lastCall?.[0].rawColor.gains).toEqual(gains)
-  change.mock.lastCall?.[0].rawColor.matrix.forEach((value: number, index: number) =>
-    expect(value).toBeCloseTo([-0.5, 0.25, 1.25][index % 3])
-  )
-  fireEvent.click(screen.getByRole('button', { name: t('editor.identity') }))
-  expect(change.mock.lastCall?.[0].rawColor).toEqual({ gains, matrix: [1, 0, 0, 0, 1, 0, 0, 0, 1] })
 })
 
 it('keeps valid non-unit-middle gains in range when editing another channel', () => {

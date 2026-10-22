@@ -10,16 +10,17 @@ const boundaryMixes: LayerMix[] = [
   [-4, 4, 1]
 ]
 
+/** The pad point of a mix: the top layer at the top, middle at the bottom left, bottom at the bottom right. */
 export function mixPoint(mix: LayerMix): { x: number; y: number } {
-  return { x: ((mix[2] - mix[1]) * SQRT3) / 2, y: mix[0] - (mix[1] + mix[2]) / 2 }
+  return { x: ((mix[0] - mix[1]) * SQRT3) / 2, y: mix[2] - (mix[0] + mix[1]) / 2 }
 }
 
 export const MIX_BOUNDARY = boundaryMixes.map(mixPoint)
 
 export function pointMix({ x, y }: { x: number; y: number }): LayerMix {
-  const bottom = (1 + 2 * y) / 3
-  const middle = (1 - bottom) / 2 - x / SQRT3
-  const mix: LayerMix = [bottom, middle, 1 - bottom - middle]
+  const top = (1 + 2 * y) / 3
+  const middle = (1 - top) / 2 - x / SQRT3
+  const mix: LayerMix = [1 - top - middle, middle, top]
   if (mix.every((value) => value >= -4 && value <= 4)) return mix
 
   // Equal-length reference axes preserve nearest distances on the sum-one plane.
@@ -77,4 +78,34 @@ export function mixPadPoint(mix: LayerMix): { x: number; y: number } {
 
 export function padPointMix(point: { x: number; y: number }): LayerMix {
   return pointMix(padScale(point, true))
+}
+
+const PERMUTATIONS = [
+  [0, 1, 2],
+  [0, 2, 1],
+  [1, 0, 2],
+  [1, 2, 0],
+  [2, 0, 1],
+  [2, 1, 0]
+]
+
+/**
+ * Gives the input channel that feeds each output row: the permutation with the largest
+ * sum of coefficients. A tie keeps the earlier permutation, so equal rows show as identity.
+ */
+export function channelMap(matrix: number[]): number[] {
+  const score = (map: number[]): number =>
+    map.reduce((sum, input, output) => sum + matrix[output * 3 + input], 0)
+  return PERMUTATIONS.reduce((best, map) => (score(map) > score(best) + 1e-9 ? map : best))
+}
+
+/** Moves input `input` to output `output`. The input of that output goes to the old output. */
+export function swapChannel(matrix: number[], input: number, output: number): number[] {
+  const from = channelMap(matrix).indexOf(input)
+  const next = [...matrix]
+  for (let column = 0; column < 3; column++) {
+    next[from * 3 + column] = matrix[output * 3 + column]
+    next[output * 3 + column] = matrix[from * 3 + column]
+  }
+  return next
 }

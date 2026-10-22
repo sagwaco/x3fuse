@@ -1,14 +1,14 @@
 // @vitest-environment jsdom
 import { useState } from 'react'
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { AEROCHROME_MATRIX, defaultRecipe, type EditRecipe } from '@shared/editor'
-import { RawMatrixControls } from '../src/renderer/src/components/RawColorControls'
+import { ChannelSwap, RawMatrixControls } from '../src/renderer/src/components/RawColorControls'
 import { WhiteBalanceControls } from '../src/renderer/src/components/WhiteBalanceControls'
 import { useEditorStore as editor } from '../src/renderer/src/stores/editorStore'
 import { useQueueStore as queue } from '../src/renderer/src/stores/queueStore'
 import { t } from '../src/renderer/src/lib/strings'
-import { mixPadPoint } from '../src/renderer/src/lib/ternaryMix'
+import { channelMap, mixPadPoint, swapChannel } from '../src/renderer/src/lib/ternaryMix'
 import { DevelopingCloud } from '../src/renderer/src/lib/developingCloud'
 
 const original = editor.getState()
@@ -349,21 +349,24 @@ it.each(['before', 'loading', 'closing', 'preview', 'busy', 'cloud', 'asShot'])(
   }
 )
 
-it('displays signed Aerochrome values without changing the recipe on load', () => {
+it('displays signed Aerochrome values without changing the recipe on load', async () => {
   render(<Controls />)
   expect(
-    screen.getByRole('img', { name: 'B: Bottom layer, M: Middle layer, T: Top layer' })
+    screen.getByRole('img', { name: 'BOT: Bottom layer, MID: Middle layer, TOP: Top layer' })
   ).toBeTruthy()
   expect(field('Bottom').value).toBe('170')
   expect(field('Middle').value).toBe('0')
   expect(field('Top').value).toBe('-70')
-  fireEvent.click(screen.getByRole('tab', { name: t('editor.blue') }))
+  fireEvent.click(screen.getByRole('radio', { name: t('editor.blue') }))
+  const dot = pad().querySelector('[data-mix-point]')!
+  const p = mixPadPoint([0.5, -3.5, 4])
+  // The handle and the sliders glide to the blue channel mix.
+  expect(dot.getAttribute('transform')).not.toBe(`translate(${p.x},${-p.y})`)
+  expect(field('Top').value).not.toBe('400')
+  await waitFor(() => expect(dot.getAttribute('transform')).toBe(`translate(${p.x},${-p.y})`))
   expect(field('Bottom').value).toBe('50')
   expect(field('Middle').value).toBe('-350')
   expect(field('Top').value).toBe('400')
-  const dot = pad().querySelector('[data-mix-point]')!
-  const p = mixPadPoint([0.5, -3.5, 4])
-  expect(dot.getAttribute('transform')).toBe(`translate(${p.x},${-p.y})`)
   expect(recipe()).toEqual(initial)
   expect(invoke).not.toHaveBeenCalled()
 })
@@ -381,7 +384,10 @@ it('maps pointer positions, holds signed bounds, and saves one undo step for a d
   fireEvent.pointerMove(element, { ...at(100, 100), pointerId: 1 })
   valid()
   expect(editor.getState().documents[path].past).toHaveLength(0)
-  expect(invoke).not.toHaveBeenCalled()
+  expect(invoke.mock.calls.map(([command]) => command)).toEqual([
+    'haptics:detent',
+    'haptics:detent'
+  ])
   fireEvent.pointerUp(element, { ...at(100, 100), pointerId: 1 })
   await act(async () => {
     await editor.getState().flush()
@@ -401,12 +407,12 @@ it('supports keyboard steps, fine steps, row reset and shortcut guards', () => {
   fireEvent.keyDown(element, { key: 'Delete' })
   expect(row()).toEqual([1, 0, 0])
   fireEvent.keyDown(element, { key: 'ArrowRight' })
+  expect(row()[0]).toBeCloseTo(1.01)
   expect(row()[1]).toBeCloseTo(-0.01)
-  expect(row()[2]).toBeCloseTo(0.01)
   fireEvent.keyDown(element, { key: 'ArrowUp', altKey: true })
-  expect(row()[0]).toBeCloseTo(1.001)
+  expect(row()[2]).toBeCloseTo(0.001)
   fireEvent.keyDown(element, { key: 'ArrowDown', shiftKey: true })
-  expect(row()[0]).toBeCloseTo(0.901)
+  expect(row()[2]).toBeCloseTo(-0.099)
   valid()
   const before = recipe()
   fireEvent.keyDown(element, { key: 'ArrowRight', metaKey: true })
@@ -416,26 +422,19 @@ it('supports keyboard steps, fine steps, row reset and shortcut guards', () => {
   valid()
 })
 
-it('allows signed numeric entry with proportional redistribution, then commits on blur', async () => {
+it('allows signed numeric entry with proportional redistribution', () => {
   render(<Controls />)
   const input = field('Middle')
   fireEvent.focus(input)
   fireEvent.change(input, { target: { value: '' } })
   expect(recipe()).toEqual(initial)
-  fireEvent.change(input, { target: { value: '-20.5' } })
-  expect(row()[1]).toBe(-0.205)
+  fireEvent.change(input, { target: { value: '-20' } })
+  expect(row()[1]).toBe(-0.2)
   expect(row()[0] / row()[2]).toBeCloseTo(1.7 / -0.7)
   valid()
-  expect(editor.getState().documents[path].past).toHaveLength(0)
   fireEvent.change(input, { target: { value: '800' } })
   expect(row()[1]).toBe(4)
   valid()
-  fireEvent.blur(input)
-  expect(input.value).toBe('400')
-  await act(async () => {
-    await editor.getState().flush()
-  })
-  expect(editor.getState().documents[path].past).toHaveLength(1)
 })
 
 it('ends capture on cancellation and ignores later moves or disabled interaction', () => {
@@ -478,18 +477,6 @@ it('returns to the same mix after dragging past a boundary and back', () => {
   fireEvent.pointerUp(element, { ...at(0, 0), pointerId: 1 })
 })
 
-it('clears a numeric draft and closes its gesture if the editor becomes disabled', () => {
-  render(<Controls />)
-  const input = field('Middle')
-  fireEvent.focus(input)
-  fireEvent.change(input, { target: { value: '800' } })
-  expect(input.value).toBe('800')
-  act(() => editor.setState({ loading: true }))
-  expect(input.disabled).toBe(true)
-  expect(input.value).toBe('400')
-  expect(editor.getState().documents[path].gesture).toBeUndefined()
-})
-
 it('does not commit another control gesture when unfocused fields become disabled', () => {
   render(<Controls />)
   act(() => editor.getState().change({ exposure: 1 }, false))
@@ -512,67 +499,15 @@ it('ends a pad drag on disable and ignores later pointer moves', () => {
 
 it('resets the selected output on a point double-click', () => {
   render(<Controls />)
-  fireEvent.click(screen.getByRole('tab', { name: t('editor.blue') }))
+  fireEvent.click(screen.getByRole('radio', { name: t('editor.blue') }))
   const point = mixPadPoint([0.5, -3.5, 4])
   fireEvent.doubleClick(pad(), displayAt(point))
   expect(recipe().rawColor!.matrix.slice(6)).toEqual([0, 0, 1])
   expect(recipe().rawColor!.matrix.slice(0, 6)).toEqual(AEROCHROME_MATRIX.slice(0, 6))
 })
 
-it('switches between pad and sliders without changing signed mixes or history', () => {
-  render(<Controls />)
-  const sliders = screen.getByRole('button', { name: t('editor.mixSlidersView') })
-  fireEvent.click(sliders)
-  expect(sliders.getAttribute('aria-pressed')).toBe('true')
-  expect(screen.queryByRole('application', { name: t('editor.mixPad') })).toBeNull()
-  for (const layer of ['Bottom', 'Middle', 'Top'])
-    expect(screen.getByRole('slider', { name: t(`editor.source${layer}`) })).toBeTruthy()
-  expect(recipe()).toEqual(initial)
-  fireEvent.click(screen.getByRole('tab', { name: t('editor.blue') }))
-  expect(field('Bottom').value).toBe('50')
-  expect(field('Middle').value).toBe('-350')
-  expect(field('Top').value).toBe('400')
-  fireEvent.click(screen.getByRole('button', { name: t('editor.mixPadView') }))
-  expect(screen.queryByRole('slider', { name: t('editor.sourceBottom') })).toBeNull()
-  expect(pad()).toBeTruthy()
-  expect(recipe()).toEqual(initial)
-  expect(editor.getState().documents[path].past).toHaveLength(0)
-  expect(invoke).not.toHaveBeenCalled()
-})
-
-it('shares proportional slider edits with the pad and retains Undo across view changes', () => {
-  render(<Controls />)
-  fireEvent.click(screen.getByRole('button', { name: t('editor.mixSlidersView') }))
-  fireEvent.change(field('Middle'), { target: { value: '-20' } })
-  expect(row()[1]).toBe(-0.2)
-  expect(row()[0] / row()[2]).toBeCloseTo(1.7 / -0.7)
-  valid()
-  const edited = recipe()
-  fireEvent.click(screen.getByRole('button', { name: t('editor.mixPadView') }))
-  expect(recipe()).toBe(edited)
-  expect(field('Middle').value).toBe('-20')
-  act(() => editor.getState().undo())
-  expect(recipe()).toEqual(initial)
-  act(() => editor.getState().redo())
-  expect(recipe()).toEqual(edited)
-})
-
-it('commits a live pad drag once before switching to sliders', () => {
-  render(<Controls />)
-  fireEvent.pointerDown(pad(), { ...at(0, 0), button: 0, pointerId: 1 })
-  expect(editor.getState().documents[path].past).toHaveLength(0)
-  fireEvent.click(screen.getByRole('button', { name: t('editor.mixSlidersView') }))
-  expect(editor.getState().documents[path].past).toHaveLength(1)
-  expect(editor.getState().documents[path].gesture).toBeUndefined()
-  row().forEach((value) => expect(value).toBeCloseTo(1 / 3))
-  valid()
-  act(() => editor.getState().undo())
-  expect(recipe()).toEqual(initial)
-})
-
 it('uses the prior slider keyboard and reset controls with a 100% row total', () => {
   render(<Controls />)
-  fireEvent.click(screen.getByRole('button', { name: t('editor.mixSlidersView') }))
   const slider = screen.getByRole('slider', { name: t('editor.sourceBottom') })
   fireEvent.keyDown(slider, { key: 'ArrowRight' })
   expect(row()[0]).toBeCloseTo(1.71)
@@ -606,18 +541,92 @@ it('arms the qualifier for the selected output and disarms it on output or view 
   fireEvent.click(red)
   expect(red.getAttribute('aria-pressed')).toBe('true')
   expect(screen.getByRole('status').textContent).toContain(t('editor.red'))
-  fireEvent.click(screen.getByRole('tab', { name: t('editor.blue') }))
+  fireEvent.click(screen.getByRole('radio', { name: t('editor.blue') }))
   const blue = screen.getByRole('button', {
     name: t('editor.mixQualifier', { color: t('editor.blue') })
   })
   expect(blue.getAttribute('aria-pressed')).toBe('false')
   fireEvent.click(blue)
   expect(blue.getAttribute('aria-pressed')).toBe('true')
-  fireEvent.click(screen.getByRole('button', { name: t('editor.mixSlidersView') }))
-  fireEvent.click(screen.getByRole('button', { name: t('editor.mixPadView') }))
+})
+
+it('infers the channel map and swaps the displaced input on a move', () => {
+  expect(channelMap(AEROCHROME_MATRIX)).toEqual([0, 1, 2])
+  const swapped = swapChannel(AEROCHROME_MATRIX, 0, 2)
+  expect(swapped).toEqual([0.5, -3.5, 4, -1, 3, -1, 1.7, 0, -0.7])
+  expect(channelMap(swapped)).toEqual([2, 1, 0])
+  expect(channelMap(swapChannel(swapped, 1, 0))).toEqual([1, 2, 0])
+})
+
+it('swaps outputs by dragging an input onto an output', async () => {
+  function Swap(): React.JSX.Element {
+    const recipe = editor((state) => state.documents[path].recipe)
+    return <ChannelSwap recipe={recipe} />
+  }
+  render(<Swap />)
+  const graph = screen.getByRole('group', { name: t('editor.channelSwap') })
+  graph.getBoundingClientRect = () => ({ left: 0, top: 0, width: 140, height: 60 }) as DOMRect
+  const red = graph.querySelector('[data-input="0"] circle')!
+  fireEvent.pointerDown(red, { clientX: 8, clientY: 10, button: 0, pointerId: 1 })
+  fireEvent.pointerMove(graph, { clientX: 132, clientY: 50, pointerId: 1 })
+  expect(graph.classList.contains('cursor-grabbing')).toBe(true)
+  // The link snaps to output blue, and input blue previews its move to output red.
+  // Both uncommitted links are dotted.
+  await waitFor(() =>
+    expect(
+      [...graph.querySelectorAll('path[stroke-dasharray]')].map((path) => path.getAttribute('d'))
+    ).toEqual(['M 5 10 C 70 10, 70 50, 135 50', 'M 5 50 C 70 50, 70 10, 135 10'])
+  )
+  fireEvent.pointerUp(graph, { clientX: 132, clientY: 50, pointerId: 1 })
+  expect(recipe().rawColor!.matrix).toEqual(swapChannel(AEROCHROME_MATRIX, 0, 2))
+  // Output red now shows input blue. Dragging that end to green moves blue to green.
+  const output = graph.querySelector('[data-output="0"] circle')!
+  fireEvent.pointerDown(output, { clientX: 132, clientY: 10, button: 0, pointerId: 2 })
+  fireEvent.pointerUp(graph, { clientX: 132, clientY: 30, pointerId: 2 })
+  expect(channelMap(recipe().rawColor!.matrix)).toEqual([1, 2, 0])
+  act(() => editor.getState().undo())
+  const blue = screen.getByRole('button', {
+    name: t('editor.channelSwapInput', { input: t('editor.blue'), output: t('editor.red') })
+  })
+  fireEvent.keyDown(blue, { key: 'ArrowDown' })
+  expect(channelMap(recipe().rawColor!.matrix)).toEqual([1, 2, 0])
+})
+
+it('colors the pad light by the mix and marks a drag', () => {
+  render(<Controls />)
+  const element = pad()
+  expect(element.style.getPropertyValue('--mix-color')).toBe('rgb(255 0 0)')
+  fireEvent.pointerDown(element, { ...at(0, 0), button: 0, pointerId: 1 })
+  expect(element.style.getPropertyValue('--mix-color')).toBe('rgb(255 255 255)')
+  expect(element.dataset.dragging).toBe('')
+  fireEvent.pointerUp(element, { ...at(0, 0), pointerId: 1 })
+  expect(element.dataset.dragging).toBeUndefined()
+})
+
+it('shows at most four characters per source value until focus', () => {
+  render(<Controls />)
+  const element = pad()
+  fireEvent.keyDown(element, { key: 'Delete' })
+  fireEvent.keyDown(element, { key: 'ArrowUp', altKey: true })
+  const bottom = field('Bottom')
+  expect(['Top', 'Middle', 'Bottom'].map((layer) => field(layer).value.length <= 4)).toEqual([
+    true,
+    true,
+    true
+  ])
+  expect(Number(bottom.value)).toBeCloseTo(100)
+  fireEvent.focus(bottom)
+  expect(Number(bottom.value)).toBeCloseTo(99.95)
+  fireEvent.blur(bottom)
+  expect(bottom.value.length).toBeLessThanOrEqual(4)
+})
+
+it('lists the source sliders top to bottom', () => {
+  render(<Controls />)
   expect(
     screen
-      .getByRole('button', { name: t('editor.mixQualifier', { color: t('editor.blue') }) })
-      .getAttribute('aria-pressed')
-  ).toBe('false')
+      .getAllByRole('spinbutton')
+      .map((input) => input.getAttribute('aria-label'))
+      .filter((name) => name?.endsWith('layer'))
+  ).toEqual([t('editor.sourceTop'), t('editor.sourceMiddle'), t('editor.sourceBottom')])
 })

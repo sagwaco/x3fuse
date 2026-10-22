@@ -34,9 +34,10 @@ import { SfdRaw, SfdRawInfo } from './SfdRaw'
 import { EffectsSection } from './EffectsControls'
 import { useStoredOpen } from '../hooks/useStoredOpen'
 import { animateDetails } from '../lib/animateDetails'
+import { useSwitchTween } from '../lib/switchTween'
 import { ColorMixer, ToneMixer } from './ColorMixer'
 import { ColorWheels } from './ColorWheels'
-import { RawMatrixControls } from './RawColorControls'
+import { ChannelSwap, RawMatrixControls } from './RawColorControls'
 import { WhiteBalanceControls } from './WhiteBalanceControls'
 
 /** Tracks that show which way a slider moves the picture. */
@@ -73,7 +74,8 @@ const positiveFilm = (film: FilmSettings | null): boolean => !!filmStock(film)?.
 /** For a help icon in a `group/reset` row. It hides while the row's label shows Reset. */
 export const HIDE_WHILE_RESETTING = 'group-has-[[data-resetting]]/reset:invisible'
 /** Slider labels use the system font, without the caption case and letter spacing. */
-const SLIDER_LABEL = 'font-sans text-[12px] normal-case leading-tight tracking-normal text-tone-300'
+export const SLIDER_LABEL =
+  'font-sans text-[12px] normal-case leading-tight tracking-normal text-tone-300'
 
 export function ResetLabel({
   label,
@@ -189,6 +191,17 @@ export function Adjustment({
     Math.max(range.min, Math.min(range.max, Math.round(value / range.step) * range.step))
   const map = range.scale
   const fresh = useRef(false)
+  const [focused, setFocused] = useState(false)
+  const full = String(Number(value.toFixed(4)))
+  // Until focus shows the full value, a value shows at most 4 characters. Above a slider,
+  // it keeps at least the precision of its step.
+  const places = short || row ? 0 : Math.min(4, String(step).split('.')[1]?.length ?? 0)
+  const shown = focused
+    ? full
+    : ([4, 3, 2, 1, 0]
+        .filter((digits) => digits >= places)
+        .map((digits) => String(Number(value.toFixed(digits))))
+        .find((text) => text.length <= 4) ?? String(Number(value.toFixed(places))))
   const input = (
     <input
       aria-label={label}
@@ -197,7 +210,7 @@ export function Adjustment({
       min={min}
       max={max}
       step={step}
-      value={Number(value.toFixed(4))}
+      value={shown}
       // Above a slider, shifted right so its digits end where the slider ends. Focus shows
       // the box, in line. In a row, it fills a column as wide as the label column.
       className={cn(
@@ -211,7 +224,13 @@ export function Adjustment({
       onMouseDown={(event) => {
         fresh.current = document.activeElement !== event.currentTarget
       }}
-      onFocus={(event) => event.currentTarget.select()}
+      onFocus={(event) => {
+        // Show the full value before the selection, so the render keeps it.
+        event.currentTarget.value = full
+        setFocused(true)
+        event.currentTarget.select()
+      }}
+      onBlur={() => setFocused(false)}
       onKeyDown={blurOnEnter}
       onMouseUp={(event) => {
         if (fresh.current) event.preventDefault()
@@ -430,7 +449,7 @@ export function Section({
 }
 
 /** One-of-many color choice shown as swatches rather than names. */
-function Swatches<T extends string>({
+export function Swatches<T extends string>({
   label,
   value,
   options,
@@ -442,8 +461,9 @@ function Swatches<T extends string>({
   onChange: (value: T) => void
 }): React.JSX.Element {
   return (
-    <div role="radiogroup" aria-label={label} className="flex flex-wrap gap-2.5 py-1">
+    <div role="radiogroup" aria-label={label} className="flex flex-wrap gap-1.5 py-1">
       {options.map((option) => (
+        // The selection rings are inset, so a selected swatch keeps the size of the others.
         <button
           key={option.value}
           type="button"
@@ -455,7 +475,7 @@ function Swatches<T extends string>({
             onChange(option.value)
             blurOnClick(event)
           }}
-          className="h-5 w-5 rounded-full ring-offset-2 ring-offset-tone-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/60 disabled:opacity-40 aria-checked:ring-2 aria-checked:ring-ink"
+          className="h-5 w-5 rounded-full ring-offset-2 ring-offset-tone-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/60 disabled:opacity-40 aria-checked:shadow-[inset_0_0_0_2px_rgb(var(--ink)),inset_0_0_0_4px_rgb(var(--tone-950))]"
           style={{ background: option.color }}
         />
       ))}
@@ -619,13 +639,24 @@ export const EditorControls = memo(function EditorControls({
           {tab === 'grading' && (
             <>
               {recipe.rawColor && (
-                <Section id="channels" name={t('editor.rawChannels')}>
-                  <RawMatrixControls
-                    recipe={recipe}
-                    mixPicking={mixPicking}
-                    setMixPicking={setMixPicking}
-                  />
-                </Section>
+                <>
+                  <Section
+                    id="channels"
+                    name={t('editor.rawChannels')}
+                    info={
+                      <HelpTooltip label={t('editor.rawChannels')} text={t('editor.mixPadHelp')} />
+                    }
+                  >
+                    <RawMatrixControls
+                      recipe={recipe}
+                      mixPicking={mixPicking}
+                      setMixPicking={setMixPicking}
+                    />
+                  </Section>
+                  <Section id="channelSwap" name={t('editor.channelSwap')}>
+                    <ChannelSwap recipe={recipe} />
+                  </Section>
+                </>
               )}
               {monochrome && (
                 <Section
@@ -686,7 +717,7 @@ export function EmulsionControls({ recipe }: { recipe: EditRecipe }): React.JSX.
   return <LookPicker kind="film" recipe={recipe} gallery />
 }
 
-const CHANNELS = {
+export const CHANNELS = {
   master: 'conic-gradient(#f87171, #4ade80, #60a5fa, #f87171)',
   red: '#f87171',
   green: '#4ade80',
@@ -741,6 +772,17 @@ function Curves({ recipe }: { recipe: EditRecipe }): React.JSX.Element {
   }
   const near = (point: CurvePoint): number =>
     points.findIndex((p) => Math.hypot(p.x - point.x, p.y - point.y) < 0.06)
+  // On a channel switch, the curve and its points morph from the previous curve.
+  const { from, t: morph } = useSwitchTween(channel, points)
+  const blend = (x: number, y: number, curve: CurvePoint[] = from): number =>
+    morph === 1 ? y : evaluateCurve(curve, x) + (y - evaluateCurve(curve, x)) * morph
+  const path =
+    morph === 1
+      ? curvePath(points)
+      : Array.from({ length: 101 }, (_, i) => {
+          const x = i / 100
+          return `${i ? 'L' : 'M'} ${x * 200} ${(1 - blend(x, evaluateCurve(points, x))) * 200}`
+        }).join(' ')
   return (
     <>
       <div className="flex items-center justify-between gap-2">
@@ -801,122 +843,153 @@ function Curves({ recipe }: { recipe: EditRecipe }): React.JSX.Element {
           </Button>
         </div>
       </div>
-      <svg
-        viewBox="0 0 200 200"
-        aria-label={t('editor.curves')}
-        role="group"
-        className="aspect-square w-full touch-none rounded-lg border border-white/10 bg-black"
-        onContextMenu={(event) => {
-          event.preventDefault()
-          // On a point, the menu removes it. Elsewhere, it resets the curve.
-          const index = near(position(event))
-          const onPoint = index >= 0 && !endpoint(index)
-          const items = [
-            onPoint
-              ? { value: 'remove', label: t('editor.removePoint') }
-              : { value: 'reset', label: t('editor.resetCurve') }
-          ]
-          void showNativeMenu({ id: menuId, x: event.clientX, y: event.clientY, items }, (value) =>
-            value === 'remove' ? remove(index) : reset()
-          ).catch((error: unknown) => console.error('Could not open native context menu', error))
-        }}
-        onPointerDown={(event) => {
-          // A secondary click opens the menu; it does not add a point.
-          if (event.button > 0 || event.ctrlKey) return
-          const point = position(event)
-          let index = near(point)
-          if (
-            index < 0 &&
-            points.length < 16 &&
-            point.x > 0.01 &&
-            point.x < 0.99 &&
-            points.every((p) => Math.abs(p.x - point.x) > 0.005)
-          ) {
-            const next = [...points, point].sort((a, b) => a.x - b.x)
-            index = next.indexOf(point)
-            setPoints(next, false)
-          }
-          if (index >= 0) {
-            setSelected(index)
-            drag.current = index
-            event.currentTarget.setPointerCapture(event.pointerId)
-          }
-        }}
+      <div
+        className="glass-well relative overflow-hidden rounded-xl"
+        style={
+          { '--glow': channel === 'master' ? undefined : CHANNELS[channel] } as React.CSSProperties
+        }
         onPointerMove={(event) => {
-          if (drag.current !== null && points[drag.current]) {
-            const p = position(event)
-            move(drag.current, p.x, p.y, false)
-          }
-        }}
-        onPointerUp={(event) => {
-          drag.current = null
-          commit()
-          event.currentTarget.querySelector<SVGElement>('[role="slider"]:focus')?.blur()
-        }}
-        onPointerCancel={(event) => {
-          drag.current = null
-          commit()
-          event.currentTarget.querySelector<SVGElement>('[role="slider"]:focus')?.blur()
-        }}
-        onDoubleClick={(event) => {
-          const bounds = event.currentTarget.getBoundingClientRect()
-          remove(
-            near({
-              x: (event.clientX - bounds.left) / bounds.width,
-              y: 1 - (event.clientY - bounds.top) / bounds.height
-            })
-          )
+          const box = event.currentTarget.getBoundingClientRect()
+          event.currentTarget.style.setProperty('--light-x', `${event.clientX - box.left}px`)
+          event.currentTarget.style.setProperty('--light-y', `${event.clientY - box.top}px`)
         }}
       >
-        {[50, 100, 150].map((v) => (
-          <path key={v} d={`M${v} 0V200 M0 ${v}H200`} stroke="white" opacity="0.07" />
-        ))}
-        <path d="M0 200L200 0" stroke="white" opacity="0.15" strokeDasharray="3 4" />
-        <path
-          d={curvePath(points)}
-          fill="none"
-          stroke={channel === 'master' ? '#ddd' : CHANNELS[channel]}
-          strokeWidth="2"
-        />
-        {points.map((point, index) => (
-          <circle
-            key={index}
-            role="slider"
-            tabIndex={0}
-            aria-label={`${t('editor.curvePoint')} ${index + 1}`}
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-valuenow={Math.round(point.y * 100)}
-            aria-valuetext={`${Math.round(point.x * 100)} → ${Math.round(point.y * 100)}`}
-            cx={point.x * 200}
-            cy={(1 - point.y) * 200}
-            r={index === active ? 4.5 : 3.5}
-            fill={index === active ? '#fff' : '#888'}
-            stroke="#000"
-            strokeWidth="1.5"
-            className="outline-none focus-visible:stroke-white"
-            onFocus={() => setSelected(index)}
-            onKeyDown={(event) => {
-              blurOnEnter(event)
-              const step = event.shiftKey ? 0.1 : 0.01
-              const [dx, dy] =
-                {
-                  ArrowLeft: [-step, 0],
-                  ArrowRight: [step, 0],
-                  ArrowUp: [0, step],
-                  ArrowDown: [0, -step]
-                }[event.key] ?? []
-              if (dx !== undefined) {
-                event.preventDefault()
-                move(index, point.x + dx, point.y + dy, true)
-              } else if (event.key === 'Delete' || event.key === 'Backspace') {
-                event.preventDefault()
-                remove(index)
-              }
-            }}
+        <div aria-hidden="true" className="mix-light" />
+        <svg
+          viewBox="0 0 200 200"
+          aria-label={t('editor.curves')}
+          role="group"
+          className="relative block aspect-square w-full touch-none"
+          onContextMenu={(event) => {
+            event.preventDefault()
+            // On a point, the menu removes it. Elsewhere, it resets the curve.
+            const index = near(position(event))
+            const onPoint = index >= 0 && !endpoint(index)
+            const items = [
+              onPoint
+                ? { value: 'remove', label: t('editor.removePoint') }
+                : { value: 'reset', label: t('editor.resetCurve') }
+            ]
+            void showNativeMenu(
+              { id: menuId, x: event.clientX, y: event.clientY, items },
+              (value) => (value === 'remove' ? remove(index) : reset())
+            ).catch((error: unknown) => console.error('Could not open native context menu', error))
+          }}
+          onPointerDown={(event) => {
+            // A secondary click opens the menu; it does not add a point.
+            if (event.button > 0 || event.ctrlKey) return
+            const point = position(event)
+            let index = near(point)
+            if (
+              index < 0 &&
+              points.length < 16 &&
+              point.x > 0.01 &&
+              point.x < 0.99 &&
+              points.every((p) => Math.abs(p.x - point.x) > 0.005)
+            ) {
+              const next = [...points, point].sort((a, b) => a.x - b.x)
+              index = next.indexOf(point)
+              setPoints(next, false)
+            }
+            if (index >= 0) {
+              setSelected(index)
+              drag.current = index
+              event.currentTarget.setPointerCapture(event.pointerId)
+            }
+          }}
+          onPointerMove={(event) => {
+            if (drag.current !== null && points[drag.current]) {
+              const p = position(event)
+              move(drag.current, p.x, p.y, false)
+            }
+          }}
+          onPointerUp={(event) => {
+            drag.current = null
+            commit()
+            event.currentTarget.querySelector<SVGElement>('[role="slider"]:focus')?.blur()
+          }}
+          onPointerCancel={(event) => {
+            drag.current = null
+            commit()
+            event.currentTarget.querySelector<SVGElement>('[role="slider"]:focus')?.blur()
+          }}
+          onDoubleClick={(event) => {
+            const bounds = event.currentTarget.getBoundingClientRect()
+            remove(
+              near({
+                x: (event.clientX - bounds.left) / bounds.width,
+                y: 1 - (event.clientY - bounds.top) / bounds.height
+              })
+            )
+          }}
+        >
+          {[25, 50, 75, 100, 125, 150, 175].map((v) => (
+            <path key={v} d={`M${v} 0V200 M0 ${v}H200`} className="stroke-ink" opacity="0.07" />
+          ))}
+          <path d="M0 200L200 0" className="stroke-ink" opacity="0.15" strokeDasharray="3 4" />
+          <path
+            d={path}
+            fill="none"
+            className="curve-line"
+            style={{ stroke: channel === 'master' ? 'rgb(var(--ink) / 0.85)' : CHANNELS[channel] }}
+            strokeWidth="2"
           />
-        ))}
-      </svg>
+          {morph < 1 &&
+            from.map((point, index) => (
+              <circle
+                key={`from-${index}`}
+                aria-hidden="true"
+                pointerEvents="none"
+                cx={point.x * 200}
+                cy={(1 - (point.y + (evaluateCurve(points, point.x) - point.y) * morph)) * 200}
+                r="3.5"
+                fill="#888"
+                stroke="#000"
+                strokeWidth="1.5"
+                opacity={1 - morph}
+              />
+            ))}
+          {points.map((point, index) => (
+            <circle
+              key={index}
+              role="slider"
+              tabIndex={0}
+              aria-label={`${t('editor.curvePoint')} ${index + 1}`}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.round(point.y * 100)}
+              aria-valuetext={`${Math.round(point.x * 100)} → ${Math.round(point.y * 100)}`}
+              cx={point.x * 200}
+              cy={(1 - blend(point.x, point.y)) * 200}
+              opacity={morph}
+              r={index === active ? 4.5 : 3.5}
+              fill={index === active ? '#fff' : '#888'}
+              stroke="#000"
+              strokeWidth="1.5"
+              className="outline-none focus-visible:stroke-white"
+              onFocus={() => setSelected(index)}
+              onKeyDown={(event) => {
+                blurOnEnter(event)
+                const step = event.shiftKey ? 0.1 : 0.01
+                const [dx, dy] =
+                  {
+                    ArrowLeft: [-step, 0],
+                    ArrowRight: [step, 0],
+                    ArrowUp: [0, step],
+                    ArrowDown: [0, -step]
+                  }[event.key] ?? []
+                if (dx !== undefined) {
+                  event.preventDefault()
+                  move(index, point.x + dx, point.y + dy, true)
+                } else if (event.key === 'Delete' || event.key === 'Backspace') {
+                  event.preventDefault()
+                  remove(index)
+                }
+              }}
+            />
+          ))}
+        </svg>
+      </div>
       <p className="text-[12px] leading-snug text-tone-500">{t('editor.curveHint')}</p>
     </>
   )
