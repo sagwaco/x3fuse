@@ -1109,9 +1109,9 @@ export function EditorScreen(): React.JSX.Element {
                 {/* Crop mode has no scope. */}
                 {!editor.cropping && (
                   <div ref={scopeBox} className="p-3">
-                    <div className="mb-2 flex items-center justify-between gap-2">
-                      {/* Shifted so the text lines up with the file name above. */}
-                      <ScopeMenu className="-ml-2 h-7 px-2.5" />
+                    <div className="mb-2 flex h-[15px] items-center justify-between gap-2">
+                      {/* The row has the height of a section title. The buttons overflow it, and the menu text lines up with the panel text. */}
+                      <ScopeMenu className="-ml-2.5" />
                       <ScopeSourceControls value={scopeSource} onChange={chooseScope} />
                     </div>
                     {/* While out of view, only the header scope renders. */}

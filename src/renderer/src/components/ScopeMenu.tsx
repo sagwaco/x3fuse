@@ -13,7 +13,7 @@ export function ScopeMenu({ className = '' }: { className?: string }): React.JSX
     <NativeMenuButton
       variant="ghost"
       size="sm"
-      className={`h-auto min-w-0 gap-1 px-1 py-0.5 text-[12px] font-semibold uppercase leading-normal tracking-wide text-tone-500 ${className}`}
+      className={`control-label h-7 min-w-0 gap-1 px-2.5 font-normal tracking-[0.16em] text-tone-500 ${className}`}
       aria-label={t('inspector.scope_view')}
       items={SCOPE_MODES.map((value) => ({
         value,
