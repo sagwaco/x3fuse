@@ -246,18 +246,6 @@ export function WhiteBalanceControls({
   return (
     <>
       <div className="flex items-center gap-1.5">
-        <Button
-          size="icon"
-          className="h-7 w-7 shrink-0"
-          aria-label={t('editor.picker')}
-          title={withShortcut(t('editor.picker'), 'whiteBalancePicker')}
-          aria-keyshortcuts="W"
-          aria-pressed={picking}
-          disabled={disabled}
-          onClick={() => setPicking(!picking)}
-        >
-          <Pipette aria-hidden="true" className="h-3.5 w-3.5" />
-        </Button>
         <Select
           aria-label={t('editor.whiteBalancePreset')}
           className="flex-1"
@@ -275,6 +263,20 @@ export function WhiteBalanceControls({
           }}
         />
         <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7 shrink-0"
+          aria-label={t('editor.picker')}
+          title={withShortcut(t('editor.picker'), 'whiteBalancePicker')}
+          aria-keyshortcuts="W"
+          aria-pressed={picking}
+          disabled={disabled}
+          onClick={() => setPicking(!picking)}
+        >
+          <Pipette aria-hidden="true" className="h-3.5 w-3.5" />
+        </Button>
+        <Button
+          variant="ghost"
           size="icon"
           className="h-7 w-7 shrink-0"
           aria-label={t('editor.resetWhiteBalance')}

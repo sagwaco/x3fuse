@@ -1,6 +1,6 @@
 import { memo, useContext, useEffect, useId, useRef, useState } from 'react'
 import { DenoiseControls } from './DenoiseControls'
-import { ChevronDown, Aperture, Film, Blend, RotateCcw, Plus, Trash2 } from 'lucide-react'
+import { ChevronDown, Aperture, Film, Blend, RotateCcw } from 'lucide-react'
 import {
   DEFAULT_FILM,
   FILM_MONOCHROME_FILTERS,
@@ -29,6 +29,7 @@ import { blurOnClick, blurOnEnter } from '../lib/commitFocus'
 import { GlassGroup } from './ui/glassGroup'
 import { Slider } from './ui/slider'
 import { HelpTooltip, ToggleRow } from './ui/settingsLayout'
+import { Select } from './ui/select'
 import { LookPicker } from './LookPicker'
 import { SfdRaw, SfdRawInfo } from './SfdRaw'
 import { EffectsSection } from './EffectsControls'
@@ -597,7 +598,11 @@ export const EditorControls = memo(function EditorControls({
                   help: t('editor.fillLightHelp')
                 })}
               </Section>
-              <Section id="curves" name={t('editor.curves')}>
+              <Section
+                id="curves"
+                name={t('editor.curves')}
+                info={<HelpTooltip label={t('editor.curves')} text={t('editor.curveHint')} />}
+              >
                 <Curves recipe={recipe} />
               </Section>
               <Section id="whiteBalance" name={t('editor.whiteBalance')}>
@@ -724,6 +729,60 @@ export const CHANNELS = {
   blue: '#60a5fa'
 } as const
 
+/** Common tone curves. A preset applies to the selected channel. */
+const CURVE_PRESETS = {
+  linear: [],
+  lowContrast: [
+    [0.25, 0.29],
+    [0.75, 0.71]
+  ],
+  mediumContrast: [
+    [0.25, 0.21],
+    [0.75, 0.79]
+  ],
+  strongContrast: [
+    [0.25, 0.16],
+    [0.75, 0.84]
+  ],
+  liftShadows: [[0.25, 0.33]],
+  fadedShadows: [
+    [0, 0.1],
+    [0.25, 0.3]
+  ],
+  softHighlights: [
+    [0.6, 0.6],
+    [1, 0.9]
+  ],
+  matte: [
+    [0, 0.1],
+    [0.25, 0.3],
+    [0.75, 0.75],
+    [1, 0.92]
+  ],
+  brighten: [[0.5, 0.6]],
+  darken: [[0.5, 0.4]]
+} satisfies Record<string, Array<[number, number]>>
+type CurvePreset = keyof typeof CURVE_PRESETS
+/** The points of a preset. Points at x = 0 or 1 replace the endpoints. */
+const presetPoints = (preset: CurvePreset): CurvePoint[] => {
+  const points = new Map<number, number>([
+    [0, 0],
+    [1, 1]
+  ])
+  for (const [x, y] of CURVE_PRESETS[preset]) points.set(x, y)
+  return [...points].sort(([a], [b]) => a - b).map(([x, y]) => ({ x, y }))
+}
+const matchPreset = (points: CurvePoint[]): CurvePreset | 'custom' =>
+  (Object.keys(CURVE_PRESETS) as CurvePreset[]).find((preset) => {
+    const other = presetPoints(preset)
+    return (
+      other.length === points.length &&
+      other.every(
+        (p, i) => Math.abs(p.x - points[i].x) < 1e-4 && Math.abs(p.y - points[i].y) < 1e-4
+      )
+    )
+  }) ?? 'custom'
+
 function Curves({ recipe }: { recipe: EditRecipe }): React.JSX.Element {
   const [channel, setChannel] = useState<keyof EditRecipe['curves']>('master')
   const [selected, setSelected] = useState(0)
@@ -760,6 +819,7 @@ function Curves({ recipe }: { recipe: EditRecipe }): React.JSX.Element {
     setPoints(defaultRecipe().curves[channel])
     setSelected(0)
   }
+  const preset = matchPreset(points)
   const menuId = useId()
   const session = useEditorStore((state) => state.session?.sessionId)
   useEffect(() => () => invalidateNativeMenu(menuId), [menuId, session, channel])
@@ -799,49 +859,41 @@ function Curves({ recipe }: { recipe: EditRecipe }): React.JSX.Element {
             setSelected(0)
           }}
         />
-        <div className="flex gap-1">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7"
-            aria-label={t('editor.addPoint')}
-            title={t('editor.addPoint')}
-            disabled={points.length >= 16}
-            onClick={() => {
-              const gaps = points.slice(1).map((p, i) => ({ i, size: p.x - points[i].x }))
-              const gap = gaps.reduce((a, b) => (a.size > b.size ? a : b))
-              const point = {
-                x: (points[gap.i].x + points[gap.i + 1].x) / 2,
-                y: evaluateCurve(points, (points[gap.i].x + points[gap.i + 1].x) / 2)
-              }
-              setPoints([...points.slice(0, gap.i + 1), point, ...points.slice(gap.i + 1)])
-              setSelected(gap.i + 1)
-            }}
-          >
-            <Plus className="h-3.5 w-3.5" aria-hidden="true" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7"
-            aria-label={t('editor.removePoint')}
-            title={t('editor.removePoint')}
-            disabled={endpoint(active)}
-            onClick={() => remove(active)}
-          >
-            <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7"
-            aria-label={t('editor.resetCurve')}
-            title={t('editor.resetCurve')}
-            onClick={reset}
-          >
-            <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
-          </Button>
-        </div>
+        <Select<CurvePreset | 'custom'>
+          aria-label={t('editor.curvePreset')}
+          className="min-w-0 flex-1"
+          value={preset}
+          options={[
+            ...(preset === 'custom'
+              ? [
+                  {
+                    value: 'custom' as const,
+                    label: t('editor.curvePreset.custom'),
+                    disabled: true
+                  }
+                ]
+              : []),
+            ...(Object.keys(CURVE_PRESETS) as CurvePreset[]).map((value) => ({
+              value,
+              label: t(`editor.curvePreset.${value}`)
+            }))
+          ]}
+          onValueChange={(value) => {
+            if (value === 'custom') return
+            setPoints(presetPoints(value))
+            setSelected(0)
+          }}
+        />
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7"
+          aria-label={t('editor.resetCurve')}
+          title={t('editor.resetCurve')}
+          onClick={reset}
+        >
+          <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+        </Button>
       </div>
       <div
         className="glass-well relative overflow-hidden rounded-xl"
@@ -859,7 +911,9 @@ function Curves({ recipe }: { recipe: EditRecipe }): React.JSX.Element {
           viewBox="0 0 200 200"
           aria-label={t('editor.curves')}
           role="group"
-          className="relative block aspect-square w-full touch-none"
+          // After a click, the curve keeps the focus, so Delete removes the selected point.
+          tabIndex={-1}
+          className="relative block aspect-square w-full touch-none outline-none"
           onContextMenu={(event) => {
             event.preventDefault()
             // On a point, the menu removes it. Elsewhere, it resets the curve.
@@ -906,12 +960,18 @@ function Curves({ recipe }: { recipe: EditRecipe }): React.JSX.Element {
           onPointerUp={(event) => {
             drag.current = null
             commit()
-            event.currentTarget.querySelector<SVGElement>('[role="slider"]:focus')?.blur()
+            event.currentTarget.focus({ preventScroll: true })
           }}
           onPointerCancel={(event) => {
             drag.current = null
             commit()
-            event.currentTarget.querySelector<SVGElement>('[role="slider"]:focus')?.blur()
+            event.currentTarget.focus({ preventScroll: true })
+          }}
+          onKeyDown={(event) => {
+            if (event.key !== 'Delete' && event.key !== 'Backspace') return
+            // The queue must not remove the photo.
+            event.preventDefault()
+            remove(active)
           }}
           onDoubleClick={(event) => {
             const bounds = event.currentTarget.getBoundingClientRect()
@@ -981,16 +1041,12 @@ function Curves({ recipe }: { recipe: EditRecipe }): React.JSX.Element {
                 if (dx !== undefined) {
                   event.preventDefault()
                   move(index, point.x + dx, point.y + dy, true)
-                } else if (event.key === 'Delete' || event.key === 'Backspace') {
-                  event.preventDefault()
-                  remove(index)
                 }
               }}
             />
           ))}
         </svg>
       </div>
-      <p className="text-[12px] leading-snug text-tone-500">{t('editor.curveHint')}</p>
     </>
   )
 }

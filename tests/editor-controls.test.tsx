@@ -833,7 +833,7 @@ it('starts white balance from the camera reading so leaving As shot does not jum
   )
 })
 
-it('offers white balance presets in a menu between the picker and reset icons', async () => {
+it('offers white balance presets in a menu before the picker and reset icons', async () => {
   render(<Controls />)
   invoke.mockResolvedValueOnce('tungsten')
   fireEvent.click(whiteBalance())
@@ -861,9 +861,9 @@ it('offers white balance presets in a menu between the picker and reset icons', 
   const picker = screen.getByRole('button', { name: t('editor.picker') })
   expect(picker.textContent).toBe('')
   expect(picker.getAttribute('aria-keyshortcuts')).toBe('W')
-  expect(picker.nextElementSibling).toBe(whiteBalance())
+  expect(whiteBalance().nextElementSibling).toBe(picker)
   const reset = screen.getByRole('button', { name: t('editor.resetWhiteBalance') })
-  expect(whiteBalance().nextElementSibling).toBe(reset)
+  expect(picker.nextElementSibling).toBe(reset)
   fireEvent.click(reset)
   expect(change.mock.lastCall?.[0]).toMatchObject({
     temperature: null,
@@ -1144,26 +1144,36 @@ it('adjusts color ranges in the color mixer and edits curve points from the keyb
   act(() => red.focus())
   fireEvent.click(red, { detail: 1 })
   expect(document.activeElement).toBe(document.body)
-  fireEvent.click(screen.getByRole('button', { name: t('editor.addPoint') }))
+  // A preset applies to the selected channel; the menu then shows its name.
+  invoke.mockResolvedValueOnce('mediumContrast')
+  fireEvent.click(screen.getByRole('button', { name: t('editor.curvePreset') }))
+  await waitFor(() =>
+    expect(change.mock.lastCall?.[0].curves.red).toEqual([
+      { x: 0, y: 0 },
+      { x: 0.25, y: 0.21 },
+      { x: 0.75, y: 0.79 },
+      { x: 1, y: 1 }
+    ])
+  )
   const point = screen.getByRole('slider', { name: `${t('editor.curvePoint')} 2` })
   act(() => point.focus())
   fireEvent.keyDown(point, { key: 'ArrowUp' })
   expect(document.activeElement).toBe(point)
-  expect(change.mock.lastCall?.[0].curves.red[1].y).toBeCloseTo(0.51)
+  expect(change.mock.lastCall?.[0].curves.red[1].y).toBeCloseTo(0.22)
   const curve = screen
     .getByRole('group', { name: t('editor.curves') })
     .querySelector('path[stroke-width="2"]')!
   // The switch to the red channel morphs the curve first.
   await waitFor(() => expect(curve.getAttribute('d')).toContain(' C '))
-  expect(curve.getAttribute('d')).toContain('100 98')
   fireEvent.keyDown(point, { key: 'Enter' })
   expect(document.activeElement).toBe(document.body)
+  // After a click, the curve keeps the focus, and Delete removes the selected point.
   act(() => point.focus())
   fireEvent.pointerUp(point)
-  expect(document.activeElement).toBe(document.body)
-  fireEvent.keyDown(point, { key: 'Delete' })
-  expect(change.mock.lastCall?.[0].curves.red).toHaveLength(2)
-  fireEvent.click(screen.getByRole('button', { name: t('editor.addPoint') }))
+  const group = screen.getByRole('group', { name: t('editor.curves') })
+  expect(document.activeElement).toBe(group)
+  fireEvent.keyDown(group, { key: 'Backspace' })
+  expect(change.mock.lastCall?.[0].curves.red).toHaveLength(3)
   fireEvent.click(screen.getByRole('button', { name: t('editor.resetCurve') }))
   expect(change.mock.lastCall?.[0].curves.red).toEqual(defaultRecipe().curves.red)
 })
