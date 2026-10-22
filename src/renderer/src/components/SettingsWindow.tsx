@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { LanguageSetting } from '@shared/types'
+import type { AppearanceMode, LanguageSetting } from '@shared/types'
 import { HardDrive, Info, Palette, RefreshCw, Settings2 } from 'lucide-react'
 import { MAX_CONCURRENCY } from '@shared/concurrency'
 import type { LogSizes } from '@shared/ipc'
@@ -11,7 +11,7 @@ import { cn } from '../lib/cn'
 import { formatBytes } from '../lib/format'
 import { t } from '../lib/strings'
 import { Button } from './ui/button'
-import { GlassGroup } from './ui/glassGroup'
+import { GlassGroup, SLIDE } from './ui/glassGroup'
 import { Select } from './ui/select'
 import { Row, Section, ToggleRow } from './ui/settingsLayout'
 
@@ -59,6 +59,9 @@ export function SettingsWindow(): React.JSX.Element {
       // Without storage, the window opens on the first tab.
     }
   }
+  // A theme change restyles the whole page and stops the slide. So the mode group
+  // shows a new mode at once, and the theme changes when the slide ends.
+  const [nextMode, setNextMode] = useState<AppearanceMode | null>(null)
   const [version, setVersion] = useState('')
   const [logSizes, setLogSizes] = useState<LogSizes>({ conversion: 0, error: 0, debug: 0 })
 
@@ -90,7 +93,7 @@ export function SettingsWindow(): React.JSX.Element {
         role="tabpanel"
         id={`settings-page-${tab}`}
         aria-labelledby={`settings-tab-${tab}`}
-        className="mx-auto flex max-w-xl flex-col gap-6 px-6 py-5"
+        className="mx-auto flex max-w-xl flex-col gap-5 px-6 py-5"
       >
         {tab === 'appearance' && (
           <Section title={t('settings.section.appearance')}>
@@ -107,13 +110,21 @@ export function SettingsWindow(): React.JSX.Element {
             <Row label={t('settings.appearance.mode')}>
               <GlassGroup
                 aria-label={t('settings.appearance.mode')}
-                value={settings.appearanceMode}
+                size="sm"
+                value={nextMode ?? settings.appearanceMode}
                 items={[
                   { value: 'auto', label: t('settings.appearance.auto') },
                   { value: 'light', label: t('theme.light') },
                   { value: 'dark', label: t('theme.dark') }
                 ]}
-                onValueChange={(v) => void update({ appearanceMode: v })}
+                onValueChange={(v) => {
+                  setNextMode(v)
+                  setTimeout(() => {
+                    void update({ appearanceMode: v }).finally(() =>
+                      setNextMode((shown) => (shown === v ? null : shown))
+                    )
+                  }, SLIDE)
+                }}
               />
             </Row>
             <Row label={t('settings.appearance.light_theme')}>

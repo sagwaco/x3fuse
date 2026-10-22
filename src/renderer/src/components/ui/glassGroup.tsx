@@ -6,7 +6,7 @@ import { blurOnClick } from '../../lib/commitFocus'
 
 /** Milliseconds that a selection change shows as moving. Keep it at least the
  * slide and the squash durations in index.css (.glass-group[data-moving]). */
-const SLIDE = 400
+export const SLIDE = 400
 /** Tab keys and the direction in which each one looks for an enabled tab. */
 const STEPS: Record<string, 1 | -1> = { ArrowRight: 1, Home: 1, ArrowLeft: -1, End: -1 }
 

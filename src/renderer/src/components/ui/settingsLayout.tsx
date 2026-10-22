@@ -17,9 +17,10 @@ export function Section({
   children: React.ReactNode
 }): React.JSX.Element {
   return (
-    <section className="flex flex-col gap-3">
-      <h2 className="control-label tracking-[0.16em] text-tone-500">{title}</h2>
-      <div className="flex flex-col gap-3 rounded-xl border border-ink/10 bg-ink/[0.02] p-4">
+    <section className="flex flex-col gap-2">
+      <h2 className="control-label px-1 tracking-[0.16em] text-tone-500">{title}</h2>
+      {/* Each child is one row. Hairline dividers separate the rows. */}
+      <div className="flex flex-col divide-y divide-ink/10 rounded-xl border border-ink/10 bg-ink/[0.02] [&>*]:px-3.5 [&>*]:py-2">
         {children}
       </div>
     </section>
@@ -69,10 +70,6 @@ export function ToggleRow({
       <Switch aria-label={label} checked={checked} onCheckedChange={onChange} disabled={disabled} />
     </Row>
   )
-}
-
-export function Divider(): React.JSX.Element {
-  return <div className="h-px bg-ink/10" />
 }
 
 export function HelpTooltip({

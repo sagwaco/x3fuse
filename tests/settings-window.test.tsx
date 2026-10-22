@@ -47,11 +47,12 @@ it.each([
   ['auto', 'settings.appearance.auto'],
   ['light', 'theme.light'],
   ['dark', 'theme.dark']
-] as const)('writes the %s appearance mode', (mode, label) => {
+] as const)('writes the %s appearance mode after the slide', async (mode, label) => {
   const group = screen.getByRole('group', { name: t('settings.appearance.mode') })
   expect(within(group).getByRole('button', { pressed: true }).textContent).toBe(t('theme.dark'))
   fireEvent.click(within(group).getByRole('button', { name: t(label) }))
-  expect(update).toHaveBeenCalledWith({ appearanceMode: mode })
+  expect(within(group).getByRole('button', { pressed: true }).textContent).toBe(t(label))
+  await waitFor(() => expect(update).toHaveBeenCalledWith({ appearanceMode: mode }))
 })
 
 it.each([
