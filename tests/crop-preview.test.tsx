@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render } from '@testing-library/react'
 import { defaultRecipe, type EditRecipe, type RenderedPreview } from '@shared/editor'
 import { CropPreview } from '../src/renderer/src/components/CropPreview'
+import { appInfo } from '../src/renderer/src/lib/appInfo'
 import type { Rect } from '../src/renderer/src/lib/cropGeometry'
 
 const store = vi.hoisted(() => ({ change: vi.fn(), commit: vi.fn() }))
@@ -197,3 +198,41 @@ it.each([0, 1, 2, 3])(
     }
   }
 )
+
+it('turns the resize and rotate cursors with the side under the pointer', () => {
+  const cursor = (rotation: number, x: number, y: number): string => {
+    const svg = canvas({ rotation })
+    pointer(svg, 'Move', x, y)
+    const value = decodeURIComponent(svg.style.cursor)
+    cleanup()
+    return value
+  }
+  expect(cursor(0, 600, 200)).toBe('ns-resize')
+  expect(cursor(1, 600, 200)).toBe('ew-resize')
+  expect(cursor(0, 900, 600)).toBe('nwse-resize')
+  expect(cursor(1, 900, 600)).toBe('nesw-resize')
+  expect(cursor(0, 600, 170)).toContain('rotate(0 12 12)')
+  expect(cursor(0, 920, 170)).toContain('rotate(45 12 12)')
+  expect(cursor(1, 600, 170)).toContain('rotate(90 12 12)')
+  expect(cursor(0, 280, 620)).toContain('rotate(225 12 12)')
+})
+
+it('uses the macOS cursor of the side under the pointer', () => {
+  appInfo.platform = 'darwin'
+  const cursor = (rotation: number, x: number, y: number): string => {
+    const svg = canvas({ rotation })
+    pointer(svg, 'Move', x, y)
+    const value = svg.style.cursor
+    cleanup()
+    return value
+  }
+  try {
+    expect(cursor(0, 600, 170)).toContain('rotate-n@2x.png')
+    expect(cursor(0, 920, 170)).toContain('rotate-ne@2x.png')
+    expect(cursor(0, 280, 620)).toContain('rotate-sw@2x.png')
+    expect(cursor(1, 600, 170)).toContain('rotate-e@2x.png')
+    expect(cursor(0, 600, 200)).toBe('ns-resize')
+  } finally {
+    appInfo.platform = 'linux'
+  }
+})

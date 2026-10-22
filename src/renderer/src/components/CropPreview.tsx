@@ -4,6 +4,15 @@ import { useEditorStore } from '../stores/editorStore'
 import { t } from '../lib/strings'
 import { ipc } from '../lib/ipc'
 import { pictureQuad } from '../lib/perspective'
+import { appInfo } from '../lib/appInfo'
+import rotateN from '../assets/cursors/rotate-n@2x.png'
+import rotateNe from '../assets/cursors/rotate-ne@2x.png'
+import rotateE from '../assets/cursors/rotate-e@2x.png'
+import rotateSe from '../assets/cursors/rotate-se@2x.png'
+import rotateS from '../assets/cursors/rotate-s@2x.png'
+import rotateSw from '../assets/cursors/rotate-sw@2x.png'
+import rotateW from '../assets/cursors/rotate-w@2x.png'
+import rotateNw from '../assets/cursors/rotate-nw@2x.png'
 import {
   FULL,
   SNAP,
@@ -24,24 +33,34 @@ const HANDLE = 18
 const ROTATE = 48
 /** Padding around the picture, as a fraction of its long side, for the rotate zone. */
 const PADDING = 0.08
-const arrow = (stroke: string, width: number): string =>
-  `<path d='M19 12a7 7 0 1 1-2.1-5M19 4v4h-4' fill='none' stroke='${stroke}' stroke-width='${width}' stroke-linecap='round' stroke-linejoin='round'/>`
-const ROTATE_CURSOR = `url("data:image/svg+xml,${encodeURIComponent(
-  `<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24'>${arrow('black', 4)}${arrow('white', 2)}</svg>`
-)}") 12 12, alias`
-const CURSORS: Record<string, string> = {
-  n: 'ns-resize',
-  s: 'ns-resize',
-  e: 'ew-resize',
-  w: 'ew-resize',
-  ne: 'nesw-resize',
-  sw: 'nesw-resize',
-  nw: 'nwse-resize',
-  se: 'nwse-resize',
-  move: 'move',
-  new: 'crosshair',
-  rotate: ROTATE_CURSOR
-}
+/** Rotate zones outside the frame, clockwise from the top. */
+const SIDES = ['n', 'ne', 'e', 'se', 's', 'sw', 'w', 'nw']
+/** A curved double arrow that bulges up, turned by `degrees`. */
+const arrow = (stroke: string, width: number, degrees: number): string =>
+  `<path d='M5 14Q12 6 19 14M14.1 13L19 14L18.6 9M9.9 13L5 14L5.4 9' transform='rotate(${degrees} 12 12)' fill='none' stroke='${stroke}' stroke-width='${width}' stroke-linecap='round' stroke-linejoin='round'/>`
+/** Rotate cursors per screen side. Each arrow follows the frame side or corner below it. */
+const ROTATE_CURSORS = SIDES.map(
+  (_, index) =>
+    `url("data:image/svg+xml,${encodeURIComponent(
+      `<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24'>${arrow('black', 4, index * 45)}${arrow('white', 2, index * 45)}</svg>`
+    )}") 12 12, alias`
+)
+/**
+ * macOS rotate cursors per screen side, in SIDES order. WebKit draws an SVG cursor
+ * at 1x, so these are 2x PNGs; the side cursors are the corner arrow turned 45°.
+ */
+const MAC_ROTATE_CURSORS = [
+  rotateN,
+  rotateNe,
+  rotateE,
+  rotateSe,
+  rotateS,
+  rotateSw,
+  rotateW,
+  rotateNw
+].map((url) => `-webkit-image-set(url("${url}") 2x) 12 12, alias`)
+/** Resize cursors per screen side, by the side's index in SIDES modulo 4. */
+const RESIZE_CURSORS = ['ns-resize', 'nesw-resize', 'ew-resize', 'nwse-resize']
 /** Screen arrow direction in frame space, per quarter turn. */
 const TURNS = [
   [1, 0, 0, 1],
@@ -174,7 +193,10 @@ export function CropPreview({
       Math.max(frame.x - p.x, 0, p.x - right),
       Math.max(frame.y - p.y, 0, p.y - bottom)
     )
-    if (outside > 0 && outside <= ROTATE / scale) return 'rotate'
+    if (outside > 0 && outside <= ROTATE / scale) {
+      const vertical = p.y < frame.y ? 'n' : p.y > bottom ? 's' : ''
+      return `rotate:${vertical}${p.x < frame.x ? 'w' : p.x > right ? 'e' : ''}`
+    }
     // A frame filling the picture can't move; dragging inside draws a new crop.
     const whole = !recipe.crop || (recipe.crop.width > 0.999 && recipe.crop.height > 0.999)
     const inside = p.x > frame.x && p.x < right && p.y > frame.y && p.y < bottom
@@ -239,6 +261,14 @@ export function CropPreview({
     drag.current = undefined
     commit()
   }
+  /** Handles name frame sides; quarter turns move those sides on screen. */
+  const cursorOf = (handle: string): string => {
+    if (handle === 'move') return 'move'
+    if (handle === 'new') return 'crosshair'
+    const turned = (SIDES.indexOf(handle.replace('rotate:', '')) + 2 * rotation) % 8
+    if (!handle.startsWith('rotate:')) return RESIZE_CURSORS[turned % 4]
+    return (appInfo.platform === 'darwin' ? MAC_ROTATE_CURSORS : ROTATE_CURSORS)[turned]
+  }
   const line = { vectorEffect: 'non-scaling-stroke', stroke: 'white', fill: 'none' } as const
   const { x, y, width, height } = frame
   const r = x + width
@@ -249,7 +279,7 @@ export function CropPreview({
       ref={svg}
       viewBox={`${-pad} ${-pad} ${viewWidth + 2 * pad} ${viewHeight + 2 * pad}`}
       className="h-full w-full touch-none focus-visible:outline-none"
-      style={{ cursor: CURSORS[drag.current?.handle ?? hover] }}
+      style={{ cursor: cursorOf(drag.current?.handle ?? hover) }}
       tabIndex={0}
       role="application"
       aria-label={t('editor.cropCanvas')}
@@ -261,7 +291,7 @@ export function CropPreview({
         drag.current = fresh
           ? { ...p, frame: { ...p, width: 0, height: 0 }, handle: 'se', fresh }
           : { ...p, frame, handle, fresh }
-        if (handle === 'rotate')
+        if (handle.startsWith('rotate'))
           drag.current.turn = {
             angle,
             crop: recipe.crop ?? FULL,
@@ -275,7 +305,7 @@ export function CropPreview({
         if (!p) return
         const start = drag.current
         if (!start) return setHover(handleAt(p))
-        if (start.handle === 'rotate') return rotate(p, event.shiftKey)
+        if (start.handle.startsWith('rotate')) return rotate(p, event.shiftKey)
         apply(start.frame, start.handle, p.x - start.x, p.y - start.y, false, start.fresh)
       }}
       onPointerUp={end}
