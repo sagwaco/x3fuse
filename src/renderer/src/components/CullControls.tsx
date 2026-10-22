@@ -80,11 +80,20 @@ export function CullControls(): React.JSX.Element | null {
               aria-keyshortcuts={key}
               aria-pressed={flag === value}
               onClick={() => cull({ flag: value }, { toggle: true })}
-              className="rounded p-1 outline-none hover:bg-ink/10 focus-visible:ring-1 focus-visible:ring-ink/40"
+              className="group rounded p-1 outline-none hover:bg-ink/10 focus-visible:ring-1 focus-visible:ring-ink/40"
             >
               <Icon
                 aria-hidden="true"
-                className={cn('h-3.5 w-3.5', value === 'pick' && flag === value && 'fill-current')}
+                className={cn(
+                  'h-3.5 w-3.5',
+                  flag === value
+                    ? 'text-tone-100'
+                    : 'text-tone-500 group-hover:text-tone-100 group-focus-visible:text-tone-100',
+                  value === 'pick' &&
+                    (flag === value
+                      ? 'fill-current'
+                      : 'group-hover:fill-current group-focus-visible:fill-current')
+                )}
               />
             </button>
           )

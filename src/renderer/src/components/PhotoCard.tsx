@@ -75,7 +75,7 @@ export function PhotoCard({
           {extension && (
             <CutoutTag
               label={extension}
-              className="font-mono text-[12px] font-bold text-tone-500"
+              className="font-mono text-[12px] font-bold text-tone-100 opacity-50"
               style={{ width: `calc(${extension.length}ch + 0.5rem)` }}
             >
               <text x="50%" y="50%" textAnchor="middle" dominantBaseline="central" fill="black">
