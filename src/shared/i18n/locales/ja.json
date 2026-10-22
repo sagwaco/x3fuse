@@ -46,7 +46,7 @@
   "settings.cache.clear": "キャッシュを消去",
   "settings.cache.clear_failed": "キャッシュを消去できませんでした。",
   "settings.sfd_cache.title": "SFDキャッシュ",
-  "settings.sfd_cache.help": "合成したSFD RAWをサムネイルとは別に保存します。キャッシュを削除しても、元のファイルと編集内容は保持されます。SFD RAWが必要になった場合は再合成します。 SFD RAWを使用する写真を開いている場合、エディターに戻るとキャッシュが再作成されることがあります。",
+  "settings.sfd_cache.help": "合成したSFD .X3I RAWは、サムネイルとは別の専用キャッシュに保存されます。SFDキャッシュを削除しても、元のX3Iファイルや編集内容は削除されません。元のX3IファイルからいつでもSFD RAWを再合成できます。",
   "settings.sfd_cache.clear": "SFDキャッシュを削除",
   "settings.sfd_cache.clear_failed": "SFDキャッシュを削除できませんでした。合成中の場合は、完了してからもう一度お試しください。",
   "settings.save_alongside_original": "元ファイルと同じ場所に保存",

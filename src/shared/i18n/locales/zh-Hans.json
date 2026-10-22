@@ -46,7 +46,7 @@
   "settings.cache.clear": "清除缓存",
   "settings.cache.clear_failed": "无法清除缓存。",
   "settings.sfd_cache.title": "SFD 缓存",
-  "settings.sfd_cache.help": "将合成的 SFD RAW 与缩略图分开存储。清除此缓存会保留原始文件和编辑内容。需要时须重新合成 SFD RAW。 如果打开的照片使用 SFD RAW，返回编辑器时可能会重新生成其缓存。",
+  "settings.sfd_cache.help": "合成的 SFD .X3I RAW 存储在独立的缓存中，与缩略图分开。清除 SFD 缓存不会删除原始 X3I 文件和编辑内容。你随时可以从原始 X3I 文件重新合成 SFD RAW。",
   "settings.sfd_cache.clear": "清除 SFD 缓存",
   "settings.sfd_cache.clear_failed": "无法清除 SFD 缓存。如果正在合成，请等待完成后重试。",
   "settings.save_alongside_original": "与原始文件并排保存",

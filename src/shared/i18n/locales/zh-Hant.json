@@ -46,7 +46,7 @@
   "settings.cache.clear": "清除快取",
   "settings.cache.clear_failed": "無法清除快取。",
   "settings.sfd_cache.title": "SFD 快取",
-  "settings.sfd_cache.help": "將合成的 SFD RAW 與縮圖分開儲存。清除此快取會保留原始檔案和編輯內容。需要時須重新合成 SFD RAW。 如果開啟的照片使用 SFD RAW，返回編輯器時可能會重新產生其快取。",
+  "settings.sfd_cache.help": "合成的 SFD .X3I RAW 儲存在獨立的快取中，與縮圖分開。清除 SFD 快取不會刪除原始 X3I 檔案和編輯內容。你隨時可以從原始 X3I 檔案重新合成 SFD RAW。",
   "settings.sfd_cache.clear": "清除 SFD 快取",
   "settings.sfd_cache.clear_failed": "無法清除 SFD 快取。如果正在合成，請等待完成後重試。",
   "settings.save_alongside_original": "與原始檔案並排儲存",

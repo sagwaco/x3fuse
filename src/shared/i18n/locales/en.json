@@ -46,7 +46,7 @@
   "settings.cache.clear": "Clear cache",
   "settings.cache.clear_failed": "Could not clear the cache.",
   "settings.sfd_cache.title": "SFD cache",
-  "settings.sfd_cache.help": "Stores fused SFD RAWs separately from thumbnails. Clearing this cache keeps your originals and edits. SFD RAWs must be fused again when needed. An open photo that uses SFD RAW can rebuild its cache when you return to the editor.",
+  "settings.sfd_cache.help": "Fused SFD .X3I RAWs are stored in their own cache, separate from thumbnails. Clearing the SFD cache does not delete your original X3I files and edits. You can always re-fuse SFD RAWs from the original X3I file.",
   "settings.sfd_cache.clear": "Clear SFD cache",
   "settings.sfd_cache.clear_failed": "Could not clear the SFD cache. If an SFD RAW is fusing, wait for it to finish and try again.",
   "settings.save_alongside_original": "Save alongside original file",

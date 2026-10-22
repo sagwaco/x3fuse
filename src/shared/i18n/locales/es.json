@@ -46,7 +46,7 @@
   "settings.cache.clear": "Vaciar caché",
   "settings.cache.clear_failed": "No se pudo vaciar la caché.",
   "settings.sfd_cache.title": "Caché SFD",
-  "settings.sfd_cache.help": "Guarda los RAW SFD fusionados por separado de las miniaturas. Vaciar esta caché conserva los originales y las ediciones. Los RAW SFD se volverán a fusionar cuando sean necesarios. Una foto abierta que use SFD RAW puede reconstruir su caché al volver al editor.",
+  "settings.sfd_cache.help": "Los RAW SFD .X3I fusionados se guardan en su propia caché, separada de las miniaturas. Vaciar la caché SFD no elimina los archivos X3I originales ni las ediciones. Siempre puedes volver a fusionar los RAW SFD a partir del archivo X3I original.",
   "settings.sfd_cache.clear": "Vaciar caché SFD",
   "settings.sfd_cache.clear_failed": "No se pudo vaciar la caché SFD. Si hay una fusión en curso, espera a que termine e inténtalo de nuevo.",
   "settings.save_alongside_original": "Guardar junto al archivo original",
