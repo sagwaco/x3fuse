@@ -194,8 +194,6 @@ export function EditorScreen(): React.JSX.Element {
   }, [doc?.recipe.film, sidebarPage, navigateSidebar])
   // The photo's geometry when crop mode opened; Cancel puts it back.
   const entry = useRef<{ path: string; geometry: Partial<EditRecipe> }>()
-  const cropButton = useRef<HTMLButtonElement>(null)
-  const overflowButton = useRef<HTMLButtonElement>(null)
   const enterCrop = (): void => {
     setPicking(false)
     setMixPickingState(null)
@@ -418,23 +416,6 @@ export function EditorScreen(): React.JSX.Element {
   const folded = new Set(OVERFLOW_ORDER.slice(0, hidden))
   const exportIds = useMemo(() => (file ? new Set([file.id]) : undefined), [file?.id]) // eslint-disable-line react-hooks/exhaustive-deps
   const exportMenu = useExportMenu(exportIds, 'editor')
-  // Give focus back to the Crop button when crop mode ends. The button stays
-  // disabled until the next preview arrives, so wait for it, and only take focus
-  // that nothing else has.
-  const wasCropping = useRef(editor.cropping)
-  const refocus = useRef(false)
-  useEffect(() => {
-    if (wasCropping.current && !editor.cropping) refocus.current = true
-    if (editor.cropping) refocus.current = false
-    wasCropping.current = editor.cropping
-    const free = !document.activeElement || document.activeElement === document.body
-    // A folded Crop button has no element, so focus goes to the overflow menu button.
-    const target = cropButton.current ?? overflowButton.current
-    if (refocus.current && !unavailable && target && free) {
-      target.focus({ preventScroll: true })
-      refocus.current = false
-    }
-  }, [editor.cropping, unavailable, swap.shown])
   const naturalSize = useMemo(
     () =>
       editor.preview?.fullWidth && editor.preview.fullHeight
@@ -769,10 +750,7 @@ export function EditorScreen(): React.JSX.Element {
             </div>
           ) : (
             <div key="edit" data-swap className="contents" {...inert}>
-              <OverflowMenu
-                triggerRef={overflowButton}
-                actions={actions.filter((action) => folded.has(action.id))}
-              />
+              <OverflowMenu actions={actions.filter((action) => folded.has(action.id))} />
               {!folded.has('copy') && (
                 <Button
                   variant="ghost"
@@ -833,7 +811,6 @@ export function EditorScreen(): React.JSX.Element {
               )}
               {!folded.has('crop') && (
                 <Button
-                  ref={cropButton}
                   variant="ghost"
                   size="icon"
                   aria-label={t('editor.crop')}

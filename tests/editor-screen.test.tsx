@@ -331,7 +331,7 @@ it('draws the Before pill as a glass overlay', () => {
   expect(screen.getByText(t('editor.before')).classList.contains('glass-overlay')).toBe(true)
 })
 
-it('gives focus back to Crop after the toolbar exit animation ends', async () => {
+it('leaves no focus on Crop after the toolbar exit animation ends', async () => {
   const finishers: Array<() => void> = []
   Element.prototype.animate = function () {
     const finished = new Promise<void>((resolve) => finishers.push(resolve))
@@ -357,9 +357,8 @@ it('gives focus back to Crop after the toolbar exit animation ends', async () =>
     // The crop toolbar stays, inert, until its exit ends.
     expect(screen.queryByRole('button', { name: t('editor.done') })).toBeNull()
     await act(async () => finishers.splice(0).forEach((finish) => finish()))
-    // Crop stays disabled, and keeps no focus, until the next preview arrives.
     act(() => editor.setState({ preview: frame }))
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: t('editor.crop') }))
+    expect(document.activeElement).toBe(document.body)
   } finally {
     // @ts-expect-error remove the mock again
     delete Element.prototype.animate
@@ -367,7 +366,7 @@ it('gives focus back to Crop after the toolbar exit animation ends', async () =>
   }
 })
 
-it('gives focus to the overflow menu button when Crop is folded', () => {
+it('puts the overflow menu before the buttons that still show when Crop folds', () => {
   // The toolbar is 500 px wide and every button 100 px, so Crop folds into the menu.
   vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(500)
   vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get').mockImplementation(function (
@@ -384,13 +383,9 @@ it('gives focus to the overflow menu button when Crop is folded', () => {
     })
     render(<EditorScreen />)
     expect(screen.queryByRole('button', { name: t('editor.crop') })).toBeNull()
-    // The menu takes the place of the folded buttons, before the buttons that still show.
     const more = screen.getByRole('button', { name: t('toolbar.more') })
     const done = screen.getByRole('button', { name: t('editor.done') })
     expect(more.compareDocumentPosition(done) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    act(() => editor.setState({ cropping: true }))
-    act(() => editor.setState({ cropping: false }))
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: t('toolbar.more') }))
   } finally {
     vi.restoreAllMocks()
   }
@@ -575,12 +570,8 @@ it('keeps crop mode safe from compare, paste, held Escape and lost focus', () =>
   expect(editor.getState().cropping).toBe(true)
   fireEvent.keyDown(document.body, { key: 'Escape' })
   expect(editor.getState().cropping).toBe(false)
-  // Focus goes back to the Crop button once the next preview enables it.
-  const button = screen.getByRole('button', { name: t('editor.crop') }) as HTMLButtonElement
-  expect(button.disabled).toBe(true)
-  expect(document.activeElement).not.toBe(button)
   act(() => editor.setState({ preview: { ...frame, sourceWidth: 6000, sourceHeight: 4000 } }))
-  expect(document.activeElement).toBe(button)
+  expect(document.activeElement).toBe(document.body)
   expect(editor.getState().session).not.toBeNull()
 })
 
