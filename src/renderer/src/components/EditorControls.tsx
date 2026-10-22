@@ -827,7 +827,7 @@ function Curves({ recipe }: { recipe: EditRecipe }): React.JSX.Element {
     setSelected(0)
   }
   const preset = matchPreset(points)
-  const silhouette = useHistogramPath()
+  const silhouette = useHistogramPath(channel)
   const menuId = useId()
   const pad = useRef<HTMLDivElement>(null)
   // The clip follows the pad's 12 px corner radius, in the 200 unit curve box.
@@ -1003,10 +1003,17 @@ function Curves({ recipe }: { recipe: EditRecipe }): React.JSX.Element {
             <rect width="200" height="200" rx={corner} />
           </clipPath>
           <g clipPath={`url(#${clipId})`}>
-            {[25, 50, 75, 100, 125, 150, 175].map((v) => (
+            {[50, 100, 150].map((v) => (
               <path key={v} d={`M${v} 0V200 M0 ${v}H200`} className="stroke-ink" opacity="0.07" />
             ))}
-            {silhouette && <path d={silhouette} className="fill-ink" opacity="0.1" />}
+            {silhouette && (
+              <path
+                d={silhouette}
+                className={channel === 'master' ? 'fill-ink' : undefined}
+                fill={channel === 'master' ? undefined : CHANNELS[channel]}
+                opacity={channel === 'master' ? 0.1 : 0.18}
+              />
+            )}
             <path d="M0 200L200 0" className="stroke-ink" opacity="0.15" strokeDasharray="3 4" />
             <path
               d={path}
@@ -1077,21 +1084,31 @@ function Curves({ recipe }: { recipe: EditRecipe }): React.JSX.Element {
   )
 }
 
-/** The combined RGB histogram of the edited preview, as a filled path in the 200 unit curve box. */
-function useHistogramPath(): string | undefined {
+/**
+ * The histogram of the edited preview for a curve channel, as a filled path in the 200 unit
+ * curve box. The RGB channel combines red, green and blue.
+ */
+function useHistogramPath(channel: keyof EditRecipe['curves']): string | undefined {
   const url = useEditorStore((state) => state.preview?.url)
   // Reading the picture waits until the developing cloud leaves.
   const image = useScopeImage(useContext(DevelopingCloud) ? undefined : url)
   // Keep the last silhouette while the next preview decodes.
   const last = useRef<string>()
+  const channels = useMemo(
+    () => (image && image !== 'loading' ? histogram(image) : undefined),
+    [image]
+  )
   const path = useMemo(() => {
-    if (!image || image === 'loading') return undefined
-    const [r, g, b] = histogram(image)
-    const bins = Array.from(r, (v, i) => v + g[i] + b[i])
+    if (!channels) return undefined
+    const [r, g, b] = channels
+    const bins =
+      channel === 'master'
+        ? Array.from(r, (v, i) => v + g[i] + b[i])
+        : Array.from(channels[['red', 'green', 'blue'].indexOf(channel)])
     // Clipped blacks and whites must not flatten the rest.
     const max = Math.max(1, ...bins.slice(1, 255))
     return `M0 200 ${bins.map((v, i) => `L${(i / 255) * 200} ${200 - Math.min(1, v / max) * 200}`).join(' ')} L200 200Z`
-  }, [image])
+  }, [channels, channel])
   if (path) last.current = path
   return image === 'loading' ? last.current : path
 }
