@@ -1,4 +1,4 @@
-import { memo, useContext, useEffect, useId, useRef, useState } from 'react'
+import { memo, useContext, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { DenoiseControls } from './DenoiseControls'
 import { ChevronDown, Aperture, Film, Blend, RotateCcw } from 'lucide-react'
 import {
@@ -38,6 +38,9 @@ import { animateDetails } from '../lib/animateDetails'
 import { useSwitchTween } from '../lib/switchTween'
 import { ColorMixer, ToneMixer } from './ColorMixer'
 import { ColorWheels } from './ColorWheels'
+import { useScopeImage } from '../hooks/useScopeImage'
+import { useElementWidth } from '../hooks/useElementWidth'
+import { histogram } from '../lib/scopes'
 import { ChannelSwap, RawMatrixControls } from './RawColorControls'
 import { WhiteBalanceControls } from './WhiteBalanceControls'
 
@@ -824,7 +827,12 @@ function Curves({ recipe }: { recipe: EditRecipe }): React.JSX.Element {
     setSelected(0)
   }
   const preset = matchPreset(points)
+  const silhouette = useHistogramPath()
   const menuId = useId()
+  const pad = useRef<HTMLDivElement>(null)
+  // The clip follows the pad's 12 px corner radius, in the 200 unit curve box.
+  const corner = (12 * 200) / (useElementWidth(pad) || 200)
+  const clipId = `curve-clip${useId().replace(/:/g, '')}`
   const session = useEditorStore((state) => state.session?.sessionId)
   useEffect(() => () => invalidateNativeMenu(menuId), [menuId, session, channel])
   const position = (event: React.MouseEvent<SVGSVGElement>): CurvePoint => {
@@ -900,6 +908,7 @@ function Curves({ recipe }: { recipe: EditRecipe }): React.JSX.Element {
         </Button>
       </div>
       <div
+        ref={pad}
         className="glass-well relative rounded-xl"
         data-spectrum={recipe.rawColor ? 'full' : 'visible'}
         data-rgb={channel === 'master' || undefined}
@@ -919,7 +928,7 @@ function Curves({ recipe }: { recipe: EditRecipe }): React.JSX.Element {
           role="group"
           // After a click, the curve keeps the focus, so Delete removes the selected point.
           tabIndex={-1}
-          className="relative block aspect-square w-full touch-none outline-none"
+          className="relative block aspect-square w-full touch-none overflow-visible outline-none"
           onContextMenu={(event) => {
             event.preventDefault()
             // On a point, the menu removes it. Elsewhere, it resets the curve.
@@ -989,72 +998,102 @@ function Curves({ recipe }: { recipe: EditRecipe }): React.JSX.Element {
             )
           }}
         >
-          {[25, 50, 75, 100, 125, 150, 175].map((v) => (
-            <path key={v} d={`M${v} 0V200 M0 ${v}H200`} className="stroke-ink" opacity="0.07" />
-          ))}
-          <path d="M0 200L200 0" className="stroke-ink" opacity="0.15" strokeDasharray="3 4" />
-          <path
-            d={path}
-            fill="none"
-            className="curve-line"
-            style={{ stroke: channel === 'master' ? 'rgb(var(--ink) / 0.85)' : CHANNELS[channel] }}
-            strokeWidth="2"
-          />
-          {morph < 1 &&
-            from.map((point, index) => (
+          {/* The pad clips the grid, the histogram and the curve. The points can go past its edges. */}
+          <clipPath id={clipId}>
+            <rect width="200" height="200" rx={corner} />
+          </clipPath>
+          <g clipPath={`url(#${clipId})`}>
+            {[25, 50, 75, 100, 125, 150, 175].map((v) => (
+              <path key={v} d={`M${v} 0V200 M0 ${v}H200`} className="stroke-ink" opacity="0.07" />
+            ))}
+            {silhouette && <path d={silhouette} className="fill-ink" opacity="0.1" />}
+            <path d="M0 200L200 0" className="stroke-ink" opacity="0.15" strokeDasharray="3 4" />
+            <path
+              d={path}
+              fill="none"
+              className="curve-line"
+              style={{
+                stroke: channel === 'master' ? 'rgb(var(--ink) / 0.85)' : CHANNELS[channel]
+              }}
+              strokeWidth="2"
+            />
+          </g>
+          <g className="curve-handles">
+            {morph < 1 &&
+              from.map((point, index) => (
+                <circle
+                  key={`from-${index}`}
+                  aria-hidden="true"
+                  pointerEvents="none"
+                  cx={point.x * 200}
+                  cy={(1 - (point.y + (evaluateCurve(points, point.x) - point.y) * morph)) * 200}
+                  r="3.5"
+                  fill="#888"
+                  stroke="#000"
+                  strokeWidth="1.5"
+                  opacity={1 - morph}
+                />
+              ))}
+            {points.map((point, index) => (
               <circle
-                key={`from-${index}`}
-                aria-hidden="true"
-                pointerEvents="none"
+                key={index}
+                role="slider"
+                tabIndex={0}
+                aria-label={`${t('editor.curvePoint')} ${index + 1}`}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={Math.round(point.y * 100)}
+                aria-valuetext={`${Math.round(point.x * 100)} → ${Math.round(point.y * 100)}`}
                 cx={point.x * 200}
-                cy={(1 - (point.y + (evaluateCurve(points, point.x) - point.y) * morph)) * 200}
-                r="3.5"
-                fill="#888"
+                cy={(1 - blend(point.x, point.y)) * 200}
+                opacity={morph}
+                r={index === active ? 4.5 : 3.5}
+                fill={index === active ? '#fff' : '#888'}
                 stroke="#000"
                 strokeWidth="1.5"
-                opacity={1 - morph}
+                className="outline-none focus-visible:stroke-white"
+                onFocus={() => setSelected(index)}
+                onKeyDown={(event) => {
+                  blurOnEnter(event)
+                  const step = event.shiftKey ? 0.1 : 0.01
+                  const [dx, dy] =
+                    {
+                      ArrowLeft: [-step, 0],
+                      ArrowRight: [step, 0],
+                      ArrowUp: [0, step],
+                      ArrowDown: [0, -step]
+                    }[event.key] ?? []
+                  if (dx !== undefined) {
+                    event.preventDefault()
+                    move(index, point.x + dx, point.y + dy, true)
+                  }
+                }}
               />
             ))}
-          {points.map((point, index) => (
-            <circle
-              key={index}
-              role="slider"
-              tabIndex={0}
-              aria-label={`${t('editor.curvePoint')} ${index + 1}`}
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-valuenow={Math.round(point.y * 100)}
-              aria-valuetext={`${Math.round(point.x * 100)} → ${Math.round(point.y * 100)}`}
-              cx={point.x * 200}
-              cy={(1 - blend(point.x, point.y)) * 200}
-              opacity={morph}
-              r={index === active ? 4.5 : 3.5}
-              fill={index === active ? '#fff' : '#888'}
-              stroke="#000"
-              strokeWidth="1.5"
-              className="outline-none focus-visible:stroke-white"
-              onFocus={() => setSelected(index)}
-              onKeyDown={(event) => {
-                blurOnEnter(event)
-                const step = event.shiftKey ? 0.1 : 0.01
-                const [dx, dy] =
-                  {
-                    ArrowLeft: [-step, 0],
-                    ArrowRight: [step, 0],
-                    ArrowUp: [0, step],
-                    ArrowDown: [0, -step]
-                  }[event.key] ?? []
-                if (dx !== undefined) {
-                  event.preventDefault()
-                  move(index, point.x + dx, point.y + dy, true)
-                }
-              }}
-            />
-          ))}
+          </g>
         </svg>
       </div>
     </>
   )
+}
+
+/** The combined RGB histogram of the edited preview, as a filled path in the 200 unit curve box. */
+function useHistogramPath(): string | undefined {
+  const url = useEditorStore((state) => state.preview?.url)
+  // Reading the picture waits until the developing cloud leaves.
+  const image = useScopeImage(useContext(DevelopingCloud) ? undefined : url)
+  // Keep the last silhouette while the next preview decodes.
+  const last = useRef<string>()
+  const path = useMemo(() => {
+    if (!image || image === 'loading') return undefined
+    const [r, g, b] = histogram(image)
+    const bins = Array.from(r, (v, i) => v + g[i] + b[i])
+    // Clipped blacks and whites must not flatten the rest.
+    const max = Math.max(1, ...bins.slice(1, 255))
+    return `M0 200 ${bins.map((v, i) => `L${(i / 255) * 200} ${200 - Math.min(1, v / max) * 200}`).join(' ')} L200 200Z`
+  }, [image])
+  if (path) last.current = path
+  return image === 'loading' ? last.current : path
 }
 
 export function FilmControls({ film }: { film: FilmSettings }): React.JSX.Element {
