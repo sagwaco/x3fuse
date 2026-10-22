@@ -914,7 +914,16 @@ html:is([data-theme='light'], [data-theme='gray'])
 }
 
 /* Look picker thumbnails: inset rings over the image. The overlay blend lights
-   and shades the photo's own colors at the edge, like the rim of glass. */
+   and shades the photo's own colors at the edge, like the rim of glass.
+   The ring blends only with the image. Before the image arrives, the backdrop
+   behind the glass sidebar can be transparent, which shows the ring at full
+   brightness, so the ring waits for the image. */
+.look-thumbnail {
+  isolation: isolate;
+}
+.look-thumbnail:not(:has(img))::after {
+  display: none;
+}
 .look-thumbnail::after {
   content: '';
   position: absolute;

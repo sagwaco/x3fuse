@@ -1,10 +1,10 @@
 import { Fragment, useContext, useEffect, useState } from 'react'
-import { ChevronRight, Info } from 'lucide-react'
+import { ChevronRight } from 'lucide-react'
 import {
-  AEROCHROME_MATRIX,
   CAMERA_EFFECTS,
   DEFAULT_FILM,
   IDENTITY_RAW_MATRIX,
+  MONOCHROME_RAW_MATRIX,
   FILM_MONOCHROME_FILTERS,
   filmGrainDefaults,
   filmHalationDefaults,
@@ -33,7 +33,6 @@ const FILMS = stocks
   .filter((stock) => !stock.isPaper)
   .sort((a, b) => FAMILIES.indexOf(family(a)) - FAMILIES.indexOf(family(b)))
 const PAPERS = stocks.filter((stock) => stock.isPaper)
-const AEROCHROME_FILM = FILMS.find((stock) => stock.key === 'kodak_ektachrome_100')!
 /** Black-and-white film prints only on black-and-white paper, and color on color. */
 const sameModel = (a: Stock | undefined, b: Stock): boolean => !!a?.monochrome === !!b.monochrome
 
@@ -43,6 +42,7 @@ interface Look {
   /** The i18n key suffix of the group, such as `slideFilm`. */
   group?: string
   disabled?: boolean
+  help?: string
   recipe: EditRecipe
 }
 
@@ -150,8 +150,6 @@ export function LookPicker({
     asShotGains
   const base = recipe.film ?? DEFAULT_FILM
   const filter = recipe.monochrome?.filter ?? 'neutral'
-  const aerochrome =
-    !!recipe.rawColor && !!recipe.film && base.film === AEROCHROME_FILM.index && base.negative
   // A stock comes with the print paper it was designed for, else keeps a paper it can print on.
   const paper = (stock: Stock): number =>
     (PAPERS.find((candidate) => candidate.key === stock.targetPaperKey) ??
@@ -213,9 +211,16 @@ export function LookPicker({
                 : null
             }
           })),
-          {
-            id: 'full-spectrum',
-            name: t('editor.fullSpectrumLook'),
+          ...[
+            {
+              id: 'full-spectrum',
+              name: 'CIR',
+              help: t('editor.cirHelp'),
+              matrix: IDENTITY_RAW_MATRIX
+            },
+            { id: 'mir', name: 'MIR', help: t('editor.mirHelp'), matrix: MONOCHROME_RAW_MATRIX }
+          ].map(({ matrix, ...look }): Look => ({
+            ...look,
             group: 'fullSpectrum',
             disabled: !gains,
             recipe: {
@@ -223,39 +228,9 @@ export function LookPicker({
               film: null,
               cameraProfile: null,
               monochrome: null,
-              rawColor: gains ? { gains: [...gains], matrix: [...IDENTITY_RAW_MATRIX] } : null
+              rawColor: gains ? { gains: [...gains], matrix: [...matrix] } : null
             }
-          },
-          {
-            id: 'aerochrome',
-            name: t('editor.aerochrome'),
-            group: 'fullSpectrum',
-            disabled: !gains,
-            recipe: {
-              ...recipe,
-              cameraProfile: null,
-              rawColor: gains ? { gains: [...gains], matrix: [...AEROCHROME_MATRIX] } : null,
-              monochrome: null,
-              film: {
-                ...base,
-                ...(recipe.film && base.film === AEROCHROME_FILM.index
-                  ? {}
-                  : {
-                      ...(!base.halationParams && filmHalationDefaults(AEROCHROME_FILM.index)),
-                      ...(base.grainParams && {
-                        grainParams: {
-                          ...base.grainParams,
-                          rmsBase: undefined,
-                          rmsGranularity: filmGrainDefaults(AEROCHROME_FILM.index).rmsGranularity
-                        }
-                      })
-                    }),
-                film: AEROCHROME_FILM.index,
-                paper: paper(AEROCHROME_FILM),
-                negative: true
-              }
-            }
-          }
+          }))
         ]
       : PAPERS.filter((stock) =>
           sameModel(
@@ -280,17 +255,20 @@ export function LookPicker({
       ? base.negative
         ? 'negative'
         : PAPERS.find((stock) => stock.index === base.paper)?.key
-      : aerochrome
-        ? 'aerochrome'
-        : recipe.film
-          ? FILMS.find((film) => film.index === recipe.film?.film)?.key
-          : recipe.rawColor
-            ? 'full-spectrum'
-            : recipe.monochrome
-              ? 'Monochrome'
-              : looks.some((look) => look.id === cameraProfile)
-                ? cameraProfile
-                : 'Standard'
+      : recipe.film
+        ? FILMS.find((film) => film.index === recipe.film?.film)?.key
+        : recipe.rawColor
+          ? // The backend stores f32 values.
+            recipe.rawColor.matrix.every(
+              (value, i) => Math.abs(value - MONOCHROME_RAW_MATRIX[i]) < 1e-6
+            )
+            ? 'mir'
+            : 'full-spectrum'
+          : recipe.monochrome
+            ? 'Monochrome'
+            : looks.some((look) => look.id === cameraProfile)
+              ? cameraProfile
+              : 'Standard'
   // The gallery shows one group. It opens on the group of the selected look, else the first.
   const [chosenGroup, setChosenGroup] = useState('')
   const groups = [...new Set(looks.map((look) => look.group))].filter((g): g is string => !!g)
@@ -305,9 +283,13 @@ export function LookPicker({
   )
   if (gallery)
     return (
-      <div role="group" aria-label={caption} className="grid grid-cols-3 gap-x-2 gap-y-3 p-4">
+      <div
+        role="group"
+        aria-label={caption}
+        className="grid grid-cols-[repeat(auto-fill,minmax(120px,1fr))] gap-x-2 gap-y-3 p-4"
+      >
         {groups.length > 0 && (
-          <div className="col-span-3">
+          <div className="col-span-full">
             <Select
               className="w-full"
               aria-label={t('editor.filmGroups')}
@@ -315,18 +297,16 @@ export function LookPicker({
               onValueChange={setChosenGroup}
               options={groups.map((group) => ({ value: group, label: t(`editor.${group}`) }))}
             />
+            {shownGroup === 'fullSpectrum' && (
+              <p className="mt-2 text-[12px] leading-snug text-tone-400">
+                {t('editor.fullSpectrumNote')}
+              </p>
+            )}
           </div>
         )}
         {shown.map((look) => (
           <Fragment key={look.id}>
-            <LookTip
-              focusable={look.disabled}
-              text={
-                look.id === 'full-spectrum'
-                  ? t('editor.fullSpectrumHelp')
-                  : look.id === 'aerochrome' && t('editor.aerochromeHelp')
-              }
-            >
+            <LookTip focusable={look.disabled} text={look.help ?? false}>
               <button
                 type="button"
                 disabled={look.disabled}
@@ -341,15 +321,9 @@ export function LookPicker({
                   })
                   blurOnClick(event)
                 }}
-                className="group self-start rounded-md text-left font-mono focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50"
+                className="group self-start rounded-md text-left font-sans focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50"
               >
                 <span className="look-thumbnail relative block aspect-[3/2] overflow-hidden rounded-md bg-ink/[0.06] group-hover:ring-1 group-hover:ring-ink/30 group-focus-visible:ring-2 group-focus-visible:ring-ink/60 group-aria-pressed:ring-2 group-aria-pressed:ring-ink">
-                  {look.id === 'aerochrome' && (
-                    <Info
-                      aria-hidden="true"
-                      className="absolute right-1 top-1 h-3.5 w-3.5 text-white drop-shadow"
-                    />
-                  )}
                   {thumbnails[look.id] && (
                     <img
                       src={thumbnails[look.id]}

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import {
   AEROCHROME_MATRIX,
+  MONOCHROME_RAW_MATRIX,
   CAMERA_EFFECTS,
   DEFAULT_FILM,
   FILM_MONOCHROME_FILTERS,
@@ -656,122 +657,6 @@ it('selects the logged camera profile and separates camera matching from film st
   expect(change.mock.lastCall?.[0].cameraProfile).toBeNull()
 })
 
-/** Hover the Aerochrome thumbnail and return its tooltip text. */
-async function aerochromeHelp(): Promise<string> {
-  vi.stubGlobal('PointerEvent', MouseEvent)
-  const button = await look(t('editor.aerochrome'))
-  fireEvent.pointerMove(button.parentElement!, { pointerType: 'mouse' })
-  return (await screen.findByRole('tooltip')).textContent!
-}
-
-it('selects and restores Aerochrome with raw gains and Ektachrome without injecting Kelvin', async () => {
-  const initial: EditRecipe = {
-    ...defaultRecipe(),
-    temperature: 2335,
-    tint: 115,
-    monochrome: { filter: 'green' },
-    film: { ...DEFAULT_FILM, film: 20, paper: 8, evFilm: 0.5 }
-  }
-  render(<Controls initial={initial} />)
-  await chooseFilm(t('editor.aerochrome'))
-  expect(change.mock.lastCall?.[0]).toMatchObject({
-    cameraProfile: null,
-    rawColor: { gains: [2, 1, 0.5], matrix: AEROCHROME_MATRIX },
-    monochrome: null,
-    film: {
-      film: 15,
-      paper: 0,
-      negative: true,
-      evFilm: 0.5,
-      grainParams: filmGrainDefaults(15)
-    }
-  })
-  expect(change.mock.lastCall?.[0]).not.toHaveProperty('temperature')
-  expect(change.mock.lastCall?.[0]).not.toHaveProperty('tint')
-  const saved: EditRecipe = JSON.parse(JSON.stringify({ ...initial, ...change.mock.lastCall?.[0] }))
-  expect(saved.temperature).toBe(2335)
-  expect(saved.tint).toBe(115)
-  panelTab('grading')
-  expect(screen.getByRole('slider', { name: t('editor.rawTemperature') })).toBeTruthy()
-  expect(screen.queryByRole('slider', { name: t('editor.temperature') })).toBeNull()
-  expect(screen.getByRole('slider', { name: t('editor.tint') })).toBeTruthy()
-  expect(screen.getByRole('button', { name: t('editor.whiteBalancePreset') })).toBeTruthy()
-  const pasted = pasteRecipe(saved, defaultRecipe())
-  act(() => setRecipe(pasted))
-  panelTab('film')
-  expect(
-    screen.getByText(t('editor.aerochrome'), { selector: '[data-sidebar-page] *' })
-  ).toBeTruthy()
-  picker(t('editor.profiles'))
-  expect((await look(t('editor.aerochrome'))).ariaPressed).toBe('true')
-  expect(await aerochromeHelp()).toContain(t('editor.aerochromeHelp'))
-  // Selecting the active look keeps raw gains and grain edits, and resets the matrix.
-  act(() =>
-    setRecipe({
-      ...pasted,
-      rawColor: { gains: [3, 1, 0.25], matrix: [1, 0, 0, 0, 1, 0, 0, 0, 1] },
-      film: { ...pasted.film!, grainParams: { ...pasted.film!.grainParams!, blur: 2 } }
-    })
-  )
-  act(() => editor.setState({ preview: { ...editor.getState().preview!, asShotGains: undefined } }))
-  fireEvent.click(await look(t('editor.aerochrome')))
-  expect(change.mock.lastCall?.[0]).toMatchObject({
-    rawColor: { gains: [3, 1, 0.25], matrix: AEROCHROME_MATRIX },
-    film: { grainParams: { blur: 2 } }
-  })
-  darkroom()
-  expect(screen.queryByText(t('editor.paperStock'))).toBeNull()
-  await chooseFilm('Kodak Ektachrome 100')
-  expect(change.mock.lastCall?.[0].cameraProfile).toBeNull()
-  expect(change.mock.lastCall?.[0].rawColor).toBeNull()
-  panelTab('film')
-  expect(
-    screen.getByText('Kodak Ektachrome 100', { selector: '[data-sidebar-page] *' })
-  ).toBeTruthy()
-})
-
-it('offers an Aerochrome matrix preview with ready gains when FCBlue is missing', async () => {
-  editor.setState({
-    session: { ...editor.getState().session!, sessionId: 'no-fcblue', cameraProfiles: [] }
-  })
-  render(<Controls />)
-  picker(t('editor.profiles'))
-  const button = (await look(t('editor.aerochrome'))) as HTMLButtonElement
-  expect(button.disabled).toBe(false)
-  expect(await aerochromeHelp()).toContain(t('editor.aerochromeHelp'))
-  await waitFor(() =>
-    expect(renderThumbnail).toHaveBeenCalledWith(
-      expect.objectContaining({
-        cameraProfile: null,
-        rawColor: { gains: [2, 1, 0.5], matrix: AEROCHROME_MATRIX },
-        film: expect.objectContaining({ film: 15, negative: true })
-      })
-    )
-  )
-  fireEvent.click(button)
-  expect(change.mock.lastCall?.[0]).toMatchObject({
-    cameraProfile: null,
-    rawColor: { gains: [2, 1, 0.5], matrix: AEROCHROME_MATRIX }
-  })
-})
-
-it('waits for gains before offering a new Aerochrome look', async () => {
-  editor.setState({ preview: { ...editor.getState().preview!, asShotGains: undefined } })
-  render(<Controls />)
-  picker(t('editor.profiles'))
-  const button = (await look(t('editor.aerochrome'))) as HTMLButtonElement
-  expect(button.disabled).toBe(true)
-  // The wrapper lets a disabled look receive focus and show its help.
-  act(() => button.parentElement!.focus())
-  expect((await screen.findByRole('tooltip')).textContent).toContain(t('editor.aerochromeHelp'))
-  fireEvent.click(button)
-  expect(change).not.toHaveBeenCalled()
-  act(() =>
-    editor.setState({ preview: { ...editor.getState().preview!, asShotGains: [2, 1, 0.5] } })
-  )
-  expect(button.disabled).toBe(false)
-})
-
 it('labels a legacy FCBlue sidecar as Ektachrome and keeps its render fields unchanged', async () => {
   const legacy: EditRecipe = {
     ...defaultRecipe(),
@@ -788,7 +673,6 @@ it('labels a legacy FCBlue sidecar as Ektachrome and keeps its render fields unc
   ).toBeTruthy()
   picker(t('editor.profiles'))
   expect((await look('Kodak Ektachrome 100')).ariaPressed).toBe('true')
-  expect((await look(t('editor.aerochrome'))).ariaPressed).toBe('false')
   expect(change).not.toHaveBeenCalled()
   expect(pasted).toEqual(legacy)
 })
@@ -1118,7 +1002,7 @@ it('keeps legacy grain when choosing another stock or the Aerochrome look', asyn
       }}
     />
   )
-  for (const name of ['Kodak Gold 200', t('editor.aerochrome')]) {
+  for (const name of ['Kodak Gold 200', 'Kodak Ektachrome 100']) {
     await chooseFilm(name)
     expect(film()).toMatchObject({
       grainParams: null,
@@ -1553,7 +1437,7 @@ it('preserves color adjustments and monochrome settings when switching profiles'
 
 it('starts Full spectrum with as-shot gains and identity without a camera profile or film', async () => {
   render(<Controls />)
-  await chooseFilm(t('editor.fullSpectrumLook'))
+  await chooseFilm('CIR')
   expect(change.mock.lastCall?.[0]).toMatchObject({
     rawColor: { gains: [2, 1, 0.5], matrix: [1, 0, 0, 0, 1, 0, 0, 0, 1] },
     film: null,
@@ -1566,7 +1450,7 @@ it('starts Full spectrum with as-shot gains and identity without a camera profil
   expect(screen.getByRole('slider', { name: t('editor.tint') })).toBeTruthy()
   expect(screen.getByRole('button', { name: t('editor.whiteBalancePreset') })).toBeTruthy()
   picker(t('editor.profiles'))
-  expect((await look(t('editor.fullSpectrumLook'))).ariaPressed).toBe('true')
+  expect((await look('CIR')).ariaPressed).toBe('true')
   await waitFor(() =>
     expect(renderThumbnail).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1587,23 +1471,38 @@ it('keeps raw gains when reselecting Full spectrum and clears raw color for othe
       }}
     />
   )
-  await chooseFilm(t('editor.fullSpectrumLook'))
+  await chooseFilm('CIR')
   expect(change.mock.lastCall?.[0].rawColor).toEqual({
     gains: [3, 1, 0.25],
     matrix: [1, 0, 0, 0, 1, 0, 0, 0, 1]
   })
   await chooseFilm('Kodak Gold 200')
   expect(change.mock.lastCall?.[0].rawColor).toBeNull()
-  await chooseFilm(t('editor.fullSpectrumLook'))
+  await chooseFilm('CIR')
   await chooseFilm(t('editor.standard'))
   expect(change.mock.lastCall?.[0]).toMatchObject({ rawColor: null, cameraProfile: 'Standard' })
+})
+
+it('selects MIR as a raw color mix that averages the layers', async () => {
+  render(<Controls />)
+  await chooseFilm('MIR')
+  expect(change.mock.lastCall?.[0]).toMatchObject({
+    rawColor: { gains: [2, 1, 0.5], matrix: MONOCHROME_RAW_MATRIX },
+    film: null,
+    cameraProfile: null,
+    monochrome: null
+  })
+  picker(t('editor.profiles'))
+  expect((await look('MIR')).ariaPressed).toBe('true')
+  expect((await look('CIR')).ariaPressed).toBe('false')
+  expect(screen.getByText(t('editor.fullSpectrumNote'))).toBeTruthy()
 })
 
 it('waits for as-shot gains before offering a new Full spectrum look', async () => {
   editor.setState({ preview: { ...editor.getState().preview!, asShotGains: undefined } })
   render(<Controls />)
   picker(t('editor.profiles'))
-  expect(((await look(t('editor.fullSpectrumLook'))) as HTMLButtonElement).disabled).toBe(true)
+  expect(((await look('CIR')) as HTMLButtonElement).disabled).toBe(true)
 })
 
 it('edits raw gains and resets to as-shot without changing the matrix', () => {
