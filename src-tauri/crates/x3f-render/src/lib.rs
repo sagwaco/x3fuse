@@ -4,6 +4,7 @@ mod color;
 mod fill;
 mod film;
 mod geometry;
+mod preview;
 mod recipe;
 mod stocks;
 pub use camera::{read_camera_profiles, CameraProfile, CameraProfiles};
@@ -11,6 +12,7 @@ pub use color::{
     as_shot_channel_gains, as_shot_white_balance, pick_channel_gains, pick_white_balance,
     recipe_white_balance, WhiteBalance,
 };
+pub use preview::raw_preview;
 pub use recipe::{
     ColorWheels, Crop, Curves, EditRecipe, EffectsSettings, FilmSettings, GrainParams,
     HalationParams, HslBand, MonochromeFilter, MonochromeSettings, Point, RawColor, Wheel,

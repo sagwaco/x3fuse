@@ -27,7 +27,7 @@ struct Cache {
     bytes: usize,
 }
 
-/// Embedded previews (`<key>.jpg`) and import metadata (`<key>.json`) on disk, so that
+/// JPEG previews (`<key>.jpg`) and import metadata (`<key>.json`) on disk, so that
 /// photos seen before load without ExifTool. Errors only cause a miss.
 pub struct DiskCache {
     dir: PathBuf,
@@ -267,6 +267,7 @@ pub struct Previews {
     flights: AsyncMutex<HashMap<String, Arc<AsyncMutex<()>>>>,
     slots: Semaphore,
     thumbnail_slots: Semaphore,
+    raw_slot: Semaphore,
     exif: Arc<ExifTool>,
     pub disk: Arc<DiskCache>,
 }
@@ -278,13 +279,15 @@ impl Previews {
             flights: AsyncMutex::new(HashMap::new()),
             slots: Semaphore::new(4),
             thumbnail_slots: Semaphore::new(3),
+            raw_slot: Semaphore::new(1),
             exif,
             disk,
         }
     }
 
     /// Import metadata and previews for `paths`. The disk cache gives what it has, and one
-    /// ExifTool call reads the rest. The previews go to the memory cache, not the result.
+    /// ExifTool call reads the rest. Missing JPEGs are rendered from RAW.
+    /// The previews go to the memory cache, not the result.
     pub async fn import(&self, paths: &[PathBuf]) -> HashMap<PathBuf, DisplayMeta> {
         let (disk, inputs) = (self.disk.clone(), paths.to_vec());
         let lookups = tauri::async_runtime::spawn_blocking(move || {
@@ -347,6 +350,10 @@ impl Previews {
         for (path, meta) in &mut result {
             if let Some(bytes) = meta.preview.take() {
                 self.prime(path, bytes);
+            } else if let Err(error) = self.get(path, false).await {
+                self.disk
+                    .logs
+                    .write("error", format!("Preview {}: {error}", path.display()));
             }
         }
         result
@@ -444,7 +451,23 @@ impl Previews {
         let result = match self.cached(&key) {
             Some(hit) => Ok(hit),
             None => {
-                let result = self.exif.preview(path, full).await.map(|b| b.map(Arc::new));
+                let mut result = self.exif.preview(path, full).await.map(|b| b.map(Arc::new));
+                if matches!(result, Ok(None)) {
+                    // Release extraction slots before the full view requests its thumbnail.
+                    drop(_slot);
+                    drop(_thumbnail_slot);
+                    result = if full {
+                        Box::pin(self.get(path, false)).await
+                    } else {
+                        let _raw_slot = self.raw_slot.acquire().await.map_err(|e| e.to_string())?;
+                        let source = path.to_owned();
+                        tauri::async_runtime::spawn_blocking(move || {
+                            x3f_render::raw_preview(&source).map(|bytes| Some(Arc::new(bytes)))
+                        })
+                        .await
+                        .unwrap_or_else(|e| Err(e.to_string()))
+                    };
+                }
                 if let (Ok(Some(bytes)), Some(ticket)) = (&result, ticket) {
                     let (disk, source, bytes) = (self.disk.clone(), path.to_owned(), bytes.clone());
                     let _ = tauri::async_runtime::spawn_blocking(move || {
@@ -705,6 +728,64 @@ mod tests {
         assert!(previews.flights.lock().await.is_empty());
         // The full variant is not in the disk cache.
         assert!(previews.get(&path, true).await.is_err());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn missing_full_jpeg_reuses_thumbnail_without_holding_slots() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("exiftool"), r#"if (grep { $_ eq "-PreviewImage" } @ARGV) { print pack("C*", 255, 216, 255, 217); }"#).unwrap();
+        let path = source(dir.path(), "no-jpeg.X3F", b"raw");
+        let previews = previews(dir.path(), dir.path().into(), 1 << 20);
+        let occupied = previews.slots.acquire_many(3).await.unwrap();
+        let image =
+            tokio::time::timeout(std::time::Duration::from_secs(5), previews.get(&path, true))
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+        assert_eq!(image.as_slice(), JPEG);
+        assert!(previews.flights.lock().await.is_empty());
+        drop(occupied);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn invalid_raw_fallback_is_an_error_and_is_not_cached() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("exiftool"), "exit 0;").unwrap();
+        let path = source(dir.path(), "invalid.X3F", b"invalid raw");
+        let previews = previews(dir.path(), dir.path().into(), 1 << 20);
+        assert!(previews.get(&path, false).await.is_err());
+        assert!(previews
+            .cached(&Previews::key(&path, false).unwrap())
+            .is_none());
+        assert!(previews
+            .disk
+            .preview(&previews.disk.ticket(&path).unwrap())
+            .is_none());
+        assert!(previews.flights.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    #[ignore = "needs X3FUSE_TEST_NO_JPEG and bundled ExifTool"]
+    async fn raw_without_jpeg_imports_and_reuses_disk_preview() {
+        let path = PathBuf::from(std::env::var("X3FUSE_TEST_NO_JPEG").unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let exiftool = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/exiftool");
+        let previews = previews(dir.path(), exiftool, 1 << 20);
+        assert!(previews.exif.preview(&path, false).await.unwrap().is_none());
+        assert!(previews
+            .import(std::slice::from_ref(&path))
+            .await
+            .contains_key(&path));
+        let small = previews.get(&path, false).await.unwrap().unwrap();
+        assert!(is_jpeg(&small));
+        assert_eq!(small, previews.get(&path, true).await.unwrap().unwrap());
+        // A fresh service with no ExifTool must read the rendered JPEG from disk.
+        let fresh = self::previews(dir.path(), dir.path().join("missing"), 1 << 20);
+        assert_eq!(small, fresh.get(&path, false).await.unwrap().unwrap());
+        assert_eq!(fresh.import(&[path]).await.len(), 1);
     }
 
     #[tokio::test]

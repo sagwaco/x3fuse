@@ -103,6 +103,9 @@ reuse the Debug probe executable. Release builds omit the probe.
   eviction, and Clear. Edited thumbnails keep their own cache in `edits/thumbnails-v1`.
   On the first import, the first shown photo is active and follows the shown order
   until the user changes the selection; the dialog and Finder path order is arbitrary.
+  RAW files without embedded JPEGs, including SD9 and SD10 files, get a rendered
+  sRGB preview on import. The preview cache stores it, and the full preview reuses it.
+  Clear or version the preview cache if the fallback rendering changes.
 
 ### Editor and film pipeline
 
