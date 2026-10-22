@@ -233,10 +233,11 @@ describe('scope trace resolution', () => {
         expect(Math.abs(px - circle[0])).toBeLessThanOrEqual(0.5 / pixelRatio + 1e-8)
         expect(Math.abs(py - circle[1])).toBeLessThanOrEqual(0.5 / pixelRatio + 1e-8)
       } else {
-        const columns = mode === 'waveform' ? 230 : 73
+        const columns = mode === 'waveform' ? 242 : 77
         for (const [c, { pixels, x, y, lit }] of layers.entries()) {
           expect(pixels.width).toBe(Math.round(columns * pixelRatio))
-          expect(x).toBe(36 + (mode === 'rgbParade' ? c * (columns + 5) : 0))
+          // The parade's outer channels touch the edges of the 242 px plot.
+          expect(x).toBe(28 + Math.round((c * (242 - columns)) / 2))
           expect(y).toBe(15)
           // White fills every device column, starting at the 100% row.
           expect(new Set(lit.map((p) => p % pixels.width)).size).toBe(pixels.width)

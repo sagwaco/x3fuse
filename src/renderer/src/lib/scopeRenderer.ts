@@ -26,13 +26,18 @@ const PLOT_HEIGHT = 166
 const LEVELS = [0, 256, 512, 768, 1024]
 const levelY = (value: number): number => TOP + (1 - value / 1024) * (PLOT_HEIGHT - 1)
 
+// The width of the widest level label, "1024", in 9 px Kode Mono at 87.5 % width.
+const LABEL_WIDTH = 19
+// The gap between a level label and the plot.
+const LABEL_GAP = 5
+
 /** The left edge and the width of the plot of a waveform, a parade or a histogram. */
 function plotArea(mode: ScopeMode, width: number): { left: number; plotWidth: number } {
-  // The histogram has no left axis. Its 4 px margins and the 12 px scope padding put its
-  // edges on the 16 px edges of the editor controls.
-  const left = mode === 'histogram' ? 4 : 36
-  const right = mode === 'histogram' ? 4 : 8
-  return { left, plotWidth: Math.max(1, Math.floor(width - left - right)) }
+  // The 4 px margins and the 12 px scope padding put the scope edges on the 16 px edges
+  // of the editor controls. The histogram plot uses these edges. The waveform and the
+  // parade put their level labels at the left edge, and their plot after the labels.
+  const left = mode === 'histogram' ? 4 : 4 + LABEL_WIDTH + LABEL_GAP
+  return { left, plotWidth: Math.max(1, Math.floor(width - left - 4)) }
 }
 
 export interface ScopeLabel {
@@ -59,7 +64,7 @@ export function scopeLabels(mode: ScopeMode, width: number): ScopeLabel[] {
     }))
   return LEVELS.map((value) => ({
     text: String(value),
-    x: left - 5,
+    x: left - LABEL_GAP,
     y: levelY(value),
     align: 'right'
   }))
@@ -163,7 +168,8 @@ export function* drawScope(
   const densityHeight = Math.max(1, Math.round(PLOT_HEIGHT * pixelRatio))
   const layers = yield* scopeDensitySteps(image, mode, densityWidth, densityHeight)
   for (const [c, layer] of layers.entries()) {
-    const x = left + (mode === 'rgbParade' ? c * (channelWidth + gap) : 0)
+    // The outer channels touch the plot edges, so the parade fills the same width.
+    const x = left + Math.round((c * (plotWidth - channelWidth)) / 2)
     yield* drawDensity(
       ctx,
       layer,
