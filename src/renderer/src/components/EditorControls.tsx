@@ -849,7 +849,7 @@ function Curves({ recipe }: { recipe: EditRecipe }): React.JSX.Element {
         }).join(' ')
   return (
     <>
-      <div className="flex items-center justify-between gap-2">
+      <div className="tool-row flex flex-wrap items-center gap-2">
         <Swatches
           label={t('editor.curveChannel')}
           value={channel}
@@ -865,7 +865,7 @@ function Curves({ recipe }: { recipe: EditRecipe }): React.JSX.Element {
         />
         <Select<CurvePreset | 'custom'>
           aria-label={t('editor.curvePreset')}
-          className="min-w-0 flex-1"
+          className="tool-row-select min-w-0 flex-1"
           value={preset}
           options={[
             ...(preset === 'custom'
@@ -891,7 +891,7 @@ function Curves({ recipe }: { recipe: EditRecipe }): React.JSX.Element {
         <Button
           variant="ghost"
           size="icon"
-          className="h-7 w-7"
+          className="ml-auto h-7 w-7"
           aria-label={t('editor.resetCurve')}
           title={t('editor.resetCurve')}
           onClick={reset}

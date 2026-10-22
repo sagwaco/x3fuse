@@ -181,7 +181,7 @@ export function RawMatrixControls({
   }
   return (
     <>
-      <div className="flex items-center gap-2">
+      <div className="tool-row flex flex-wrap items-center gap-2">
         <Swatches
           label={t('editor.outputChannel')}
           value={output}
@@ -198,7 +198,7 @@ export function RawMatrixControls({
         />
         <Select
           aria-label={t('editor.rawMixPreset')}
-          className="min-w-0 flex-1"
+          className="tool-row-select min-w-0 flex-1"
           value={preset}
           disabled={disabled}
           options={[
@@ -212,7 +212,7 @@ export function RawMatrixControls({
             if (selected) update([...selected[1]])
           }}
         />
-        <div className="flex gap-1">
+        <div className="ml-auto flex gap-1">
           {setMixPicking && (
             <Button
               variant="ghost"
