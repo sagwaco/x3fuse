@@ -1,4 +1,5 @@
-import { ChevronsUpDown } from 'lucide-react'
+import { Fragment } from 'react'
+import { ArrowRight, ChevronsUpDown } from 'lucide-react'
 import { NativeMenuButton } from './nativeMenuButton'
 import { cn } from '../../lib/cn'
 
@@ -49,7 +50,21 @@ export function Select<T extends string>({
             'before:mb-1 before:block before:text-[12px] before:tracking-[0.14em] before:text-tone-500 before:content-[attr(data-caption)]'
         )}
       >
-        {options.find((option) => option.value === value)?.label ?? value}
+        {/* Native menu items are text, so a label marks an arrow with "→". The button shows an icon. */}
+        {(options.find((option) => option.value === value)?.label ?? value)
+          .split(' → ')
+          .map((part, i) => (
+            <Fragment key={i}>
+              {i > 0 && (
+                <ArrowRight
+                  aria-hidden="true"
+                  className="mx-1 inline h-3 w-3 align-middle"
+                  strokeWidth={2}
+                />
+              )}
+              {part}
+            </Fragment>
+          ))}
       </span>
       <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 opacity-60" aria-hidden="true" />
     </NativeMenuButton>

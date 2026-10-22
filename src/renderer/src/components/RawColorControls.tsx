@@ -202,7 +202,7 @@ export function RawMatrixControls({
           value={preset}
           disabled={disabled}
           options={[
-            ...MIX_PRESETS.map(([value]) => ({ value, label: t(`editor.${value}`) })),
+            ...MIX_PRESETS.map(([value]) => ({ value, label: t(`editor.${value}Mix`) })),
             ...(preset === 'custom'
               ? [{ value: 'custom', label: t('editor.customWhiteBalance'), disabled: true }]
               : [])
