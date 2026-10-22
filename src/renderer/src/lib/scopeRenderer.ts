@@ -28,9 +28,11 @@ const levelY = (value: number): number => TOP + (1 - value / 1024) * (PLOT_HEIGH
 
 /** The left edge and the width of the plot of a waveform, a parade or a histogram. */
 function plotArea(mode: ScopeMode, width: number): { left: number; plotWidth: number } {
-  // The histogram has no left axis, so its left margin is the same as its right margin.
-  const left = mode === 'histogram' ? 8 : 36
-  return { left, plotWidth: Math.max(1, Math.floor(width - left - 8)) }
+  // The histogram has no left axis. Its 4 px margins and the 12 px scope padding put its
+  // edges on the 16 px edges of the editor controls.
+  const left = mode === 'histogram' ? 4 : 36
+  const right = mode === 'histogram' ? 4 : 8
+  return { left, plotWidth: Math.max(1, Math.floor(width - left - right)) }
 }
 
 export interface ScopeLabel {
