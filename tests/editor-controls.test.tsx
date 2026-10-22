@@ -18,7 +18,7 @@ import { defaultDenoiseOptions } from '@shared/denoise'
 import { EditorControls, EmulsionControls } from '../src/renderer/src/components/EditorControls'
 import { DenoiseControls } from '../src/renderer/src/components/DenoiseControls'
 import { LookPicker } from '../src/renderer/src/components/LookPicker'
-import { CropControls } from '../src/renderer/src/components/CropControls'
+import { CropAutoButtons, CropControls } from '../src/renderer/src/components/CropControls'
 import { CropPreview } from '../src/renderer/src/components/CropPreview'
 import { DevelopingCloud } from '../src/renderer/src/lib/developingCloud'
 import { useEditorStore as editor } from '../src/renderer/src/stores/editorStore'
@@ -83,8 +83,15 @@ function Controls({ initial = defaultRecipe() }: { initial?: EditRecipe }): Reac
 function Crop({ initial = defaultRecipe() }: { initial?: EditRecipe }): React.JSX.Element {
   const [recipe, update] = useState(initial)
   const [aspect, setAspect] = useState('free')
+  const [notice, setNotice] = useState('')
   setRecipe = update
-  return <CropControls recipe={recipe} aspect={aspect} setAspect={setAspect} />
+  return (
+    <>
+      <CropAutoButtons recipe={recipe} notify={setNotice} />
+      <p role="status">{notice}</p>
+      <CropControls recipe={recipe} aspect={aspect} setAspect={setAspect} />
+    </>
+  )
 }
 function back(): void {
   let button = screen.queryByRole('button', { name: 'Back' })

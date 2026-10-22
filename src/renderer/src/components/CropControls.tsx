@@ -1,4 +1,4 @@
-import { useContext, useRef, useState } from 'react'
+import { useContext, useRef } from 'react'
 import {
   MoveVertical,
   RectangleHorizontal,
@@ -10,6 +10,7 @@ import type { EditRecipe } from '@shared/editor'
 import { useEditorStore } from '../stores/editorStore'
 import { t } from '../lib/strings'
 import { blurOnClick } from '../lib/commitFocus'
+import { GlassGroup } from './ui/glassGroup'
 import { PRESETS, FULL, centeredCrop, fitCrop, outputRatio, ratioCrop } from '../lib/cropGeometry'
 import { level, upright } from '../lib/upright'
 import { useScopeImage } from '../hooks/useScopeImage'
@@ -17,17 +18,127 @@ import { DevelopingCloud } from '../lib/developingCloud'
 import { Button } from './ui/button'
 import { Adjustment } from './EditorControls'
 
+/**
+ * One side of a dashed outline. The side has an odd count of equal dashes and gaps
+ * and starts and ends with a dash, so the corners are closed and the side is symmetrical.
+ */
+function Dashes({ x1, y1, x2, y2 }: Record<'x1' | 'y1' | 'x2' | 'y2', number>): React.JSX.Element {
+  const length = Math.hypot(x2 - x1, y2 - y1)
+  const dashes = Math.max(2, Math.round((length / 2.5 + 1) / 2))
+  return <line x1={x1} y1={y1} x2={x2} y2={y2} pathLength={2 * dashes - 1} strokeDasharray="1 1" />
+}
+
 /** A small outline of the frame shape an aspect option produces. */
 function Shape({ ratio, dashed }: { ratio: number; dashed?: boolean }): React.JSX.Element {
   const width = ratio >= 1 ? 18 : 18 * ratio
   const height = ratio >= 1 ? 18 / ratio : 18
+  const half = 0.75 // Half the stroke width.
   return (
     <span className="flex h-5 items-center justify-center" aria-hidden="true">
-      <span
-        className={`block rounded-[2px] border-[1.5px] border-current ${dashed ? 'border-dashed' : ''}`}
-        style={{ width, height }}
-      />
+      {dashed ? (
+        <svg width={width} height={height} stroke="currentColor" strokeWidth={half * 2}>
+          <Dashes x1={0} y1={half} x2={width} y2={half} />
+          <Dashes x1={0} y1={height - half} x2={width} y2={height - half} />
+          <Dashes x1={half} y1={0} x2={half} y2={height} />
+          <Dashes x1={width - half} y1={0} x2={width - half} y2={height} />
+        </svg>
+      ) : (
+        <span
+          className="block rounded-[2px] border-[1.5px] border-current"
+          style={{ width, height }}
+        />
+      )}
     </span>
+  )
+}
+
+/**
+ * Shrink the crop when a new angle or perspective would show empty corners.
+ * `from` is the crop to fit; a slider gesture passes the crop it started with.
+ */
+function fit(
+  recipe: EditRecipe,
+  patch: Partial<EditRecipe>,
+  from: EditRecipe['crop'],
+  W: number | undefined,
+  H: number | undefined
+): Partial<EditRecipe> {
+  if (!W || !H) return patch
+  const next = { ...recipe, ...patch }
+  const base = 'crop' in patch ? (patch.crop ?? null) : from
+  const fitted = fitCrop(base ?? FULL, next.straighten, next.pitch, next.yaw, W, H)
+  const crop = fitted === (base ?? FULL) ? base : fitted
+  return crop === recipe.crop && !('crop' in patch) ? patch : { ...patch, crop }
+}
+
+const clamp = (value: number, limit: number): number => Math.max(-limit, Math.min(limit, value))
+
+/** The Straighten and Upright buttons of the crop toolbar. `notify` shows a failure. */
+export function CropAutoButtons({
+  recipe,
+  notify
+}: {
+  recipe: EditRecipe
+  notify: (message: string) => void
+}): React.JSX.Element {
+  const change = useEditorStore((state) => state.change)
+  const W = useEditorStore((state) => state.preview?.sourceWidth)
+  const H = useEditorStore((state) => state.preview?.sourceHeight)
+  const url = useEditorStore((state) => state.preview?.url)
+  const rendering = useEditorStore((state) => state.rendering)
+  const pose = useEditorStore((state) => state.previewPose)
+  // The crop-mode preview is the corrected picture, unstraightened and uncropped.
+  // Reading the picture waits until the developing cloud leaves.
+  const picture = useScopeImage(useContext(DevelopingCloud) ? undefined : url)
+  // A failed or pending render leaves old pixels; only analyze a preview made with these angles.
+  const posed = pose?.pitch === recipe.pitch && pose?.yaw === recipe.yaw
+  const ready = typeof picture === 'object' && picture !== null && !rendering && posed && !!W && !!H
+  const straightenPicture = (): void => {
+    const angle = ready ? level(picture, { pitch: recipe.pitch, yaw: recipe.yaw }, W!, H!) : null
+    if (angle === null) notify(t('editor.noLines'))
+    else change(fit(recipe, { straighten: clamp(angle, 45) }, recipe.crop, W, H), true)
+  }
+  const uprightPicture = (): void => {
+    const found = ready ? upright(picture, { pitch: recipe.pitch, yaw: recipe.yaw }, W, H) : null
+    if (!found) return notify(t('editor.noLines'))
+    const crop = recipe.crop ?? FULL
+    const straighten = clamp(found.straighten, 45)
+    const pitch = clamp(found.pitch, 40)
+    const yaw = clamp(found.yaw, 40)
+    const aspect = (crop.width * W!) / (crop.height * H!)
+    change(
+      {
+        straighten,
+        pitch,
+        yaw,
+        crop: centeredCrop(aspect, straighten, pitch, yaw, W!, H!) ?? crop
+      },
+      true
+    )
+  }
+  return (
+    <>
+      <Button
+        variant="ghost"
+        size="icon"
+        aria-label={t('editor.levelPicture')}
+        title={t('editor.levelPictureHint')}
+        disabled={!ready}
+        onClick={straightenPicture}
+      >
+        <Spline aria-hidden="true" className="h-4 w-4" />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon"
+        aria-label={t('editor.upright')}
+        title={t('editor.uprightHint')}
+        disabled={!ready}
+        onClick={uprightPicture}
+      >
+        <MoveVertical aria-hidden="true" className="h-4 w-4" />
+      </Button>
+    </>
   )
 }
 
@@ -46,16 +157,6 @@ export function CropControls({
   const asShotCrop = useEditorStore((state) => state.session?.asShotCrop ?? null)
   const W = useEditorStore((state) => state.preview?.sourceWidth)
   const H = useEditorStore((state) => state.preview?.sourceHeight)
-  const url = useEditorStore((state) => state.preview?.url)
-  const rendering = useEditorStore((state) => state.rendering)
-  const pose = useEditorStore((state) => state.previewPose)
-  // The crop-mode preview is the corrected picture, unstraightened and uncropped.
-  // Reading the picture waits until the developing cloud leaves.
-  const picture = useScopeImage(useContext(DevelopingCloud) ? undefined : url)
-  const [status, setStatus] = useState('')
-  // A failed or pending render leaves old pixels; only analyze a preview made with these angles.
-  const posed = pose?.pitch === recipe.pitch && pose?.yaw === recipe.yaw
-  const ready = typeof picture === 'object' && picture !== null && !rendering && posed && !!W && !!H
   const crop = recipe.crop ?? FULL
   const rotation = recipe.rotation
   const current = W && H ? outputRatio(crop, rotation, W, H) : 1
@@ -70,21 +171,10 @@ export function CropControls({
       ratio: portrait ? b / a : a / b
     }))
   ]
-  /**
-   * Shrink the crop when a new angle or perspective would show empty corners.
-   * `from` is the crop to fit; a slider gesture passes the crop it started with.
-   */
   const withFit = (
     patch: Partial<EditRecipe>,
     from: EditRecipe['crop'] = recipe.crop
-  ): Partial<EditRecipe> => {
-    if (!W || !H) return patch
-    const next = { ...recipe, ...patch }
-    const base = 'crop' in patch ? (patch.crop ?? null) : from
-    const fitted = fitCrop(base ?? FULL, next.straighten, next.pitch, next.yaw, W, H)
-    const crop = fitted === (base ?? FULL) ? base : fitted
-    return crop === recipe.crop && !('crop' in patch) ? patch : { ...patch, crop }
-  }
+  ): Partial<EditRecipe> => fit(recipe, patch, from, W, H)
   // Slider moves refit from the crop at the start of the drag, so dragging back
   // restores the frame. A drag ends with a saved change or the commit at release.
   // A drag that returns to its start value has no commit, so any other crop
@@ -110,32 +200,8 @@ export function CropControls({
       change(withFit({ crop: ratioCrop(portrait ? b / a : a / b, rotation, W, H) }))
     }
   }
-  const clamp = (value: number, limit: number): number => Math.max(-limit, Math.min(limit, value))
-  const straightenPicture = (): void => {
-    const angle = ready ? level(picture, { pitch: recipe.pitch, yaw: recipe.yaw }, W!, H!) : null
-    setStatus(angle === null ? t('editor.noLines') : '')
-    if (angle !== null) change(withFit({ straighten: clamp(angle, 45) }), true)
-  }
-  const uprightPicture = (): void => {
-    const found = ready ? upright(picture, { pitch: recipe.pitch, yaw: recipe.yaw }, W, H) : null
-    setStatus(found ? '' : t('editor.noLines'))
-    if (!found) return
-    const straighten = clamp(found.straighten, 45)
-    const pitch = clamp(found.pitch, 40)
-    const yaw = clamp(found.yaw, 40)
-    const aspect = (crop.width * W!) / (crop.height * H!)
-    change(
-      {
-        straighten,
-        pitch,
-        yaw,
-        crop: centeredCrop(aspect, straighten, pitch, yaw, W!, H!) ?? crop
-      },
-      true
-    )
-  }
   return (
-    <div className="space-y-4 border-t border-ink/10 px-4 py-3">
+    <div className="space-y-4 px-4 py-3">
       <div className="flex items-center justify-between gap-2">
         <h2 className="control-label font-bold tracking-[0.16em]">{t('editor.geometry')}</h2>
         <Button
@@ -150,41 +216,26 @@ export function CropControls({
           }}
         >
           <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
-          {t('editor.reset')}
         </Button>
       </div>
       <div className="flex items-center justify-between gap-2">
         <span className="control-label text-tone-500">{t('editor.aspectRatio')}</span>
         {/* Choosing the other orientation swaps the frame's sides. A square frame has neither. */}
-        <div
-          role="group"
+        <GlassGroup<string>
+          display="icon"
+          size="sm"
           aria-label={t('editor.orientation')}
-          className="flex rounded-lg border border-ink/15 p-0.5"
-        >
-          {(
-            [
-              ['landscape', RectangleHorizontal, !portrait],
-              ['portrait', RectangleVertical, portrait]
-            ] as const
-          ).map(([name, Icon, checked]) => (
-            <button
-              key={name}
-              type="button"
-              aria-pressed={checked}
-              aria-label={t(`editor.${name}`)}
-              title={t(`editor.${name}`)}
-              disabled={!W || !H || Math.abs(current - 1) < 0.001}
-              onClick={(event) => {
-                if (!checked && W && H)
-                  change(withFit({ crop: ratioCrop(1 / current, rotation, W, H) }))
-                blurOnClick(event)
-              }}
-              className="flex h-6 w-7 items-center justify-center rounded-md text-tone-400 hover:text-tone-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/50 disabled:opacity-40 aria-pressed:bg-ink/15 aria-pressed:text-ink"
-            >
-              <Icon aria-hidden="true" className="h-4 w-4" />
-            </button>
-          ))}
-        </div>
+          disabled={!W || !H || Math.abs(current - 1) < 0.001}
+          value={Math.abs(current - 1) < 0.001 ? '' : portrait ? 'portrait' : 'landscape'}
+          onValueChange={(value) => {
+            if (value !== (portrait ? 'portrait' : 'landscape') && W && H)
+              change(withFit({ crop: ratioCrop(1 / current, rotation, W, H) }))
+          }}
+          items={[
+            { value: 'landscape', icon: RectangleHorizontal, label: t('editor.landscape') },
+            { value: 'portrait', icon: RectangleVertical, label: t('editor.portrait') }
+          ]}
+        />
       </div>
       <div
         role="radiogroup"
@@ -220,33 +271,6 @@ export function CropControls({
         reset={() => change(withFit({ straighten: 0 }))}
         commit={release}
       />
-      <div className="flex flex-wrap gap-2">
-        <Button
-          size="sm"
-          variant="bordered"
-          title={t('editor.levelPictureHint')}
-          disabled={!ready}
-          onClick={straightenPicture}
-        >
-          <Spline aria-hidden="true" className="h-3.5 w-3.5" />
-          {t('editor.levelPicture')}
-        </Button>
-        <Button
-          size="sm"
-          variant="bordered"
-          title={t('editor.uprightHint')}
-          disabled={!ready}
-          onClick={uprightPicture}
-        >
-          <MoveVertical aria-hidden="true" className="h-3.5 w-3.5" />
-          {t('editor.upright')}
-        </Button>
-      </div>
-      {status && (
-        <p role="status" className="text-[12px] leading-snug text-tone-400">
-          {status}
-        </p>
-      )}
       <p className="control-label pt-1 font-bold text-tone-500">{t('editor.perspective')}</p>
       <Adjustment
         label={t('editor.perspectiveVertical')}
@@ -270,7 +294,6 @@ export function CropControls({
         reset={() => change(withFit({ yaw: 0 }))}
         commit={release}
       />
-      <p className="text-[12px] leading-snug text-tone-500">{t('editor.cropCanvas')}</p>
     </div>
   )
 }

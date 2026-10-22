@@ -42,7 +42,7 @@ import { BatchProgress } from './BatchProgress'
 import { EditorControls, EmulsionControls } from './EditorControls'
 import { LookPicker } from './LookPicker'
 import { PhotoInfo } from './PhotoInfo'
-import { CropControls } from './CropControls'
+import { CropAutoButtons, CropControls } from './CropControls'
 import { CropPreview } from './CropPreview'
 import { FULL, matchAspect } from '../lib/cropGeometry'
 import { DevelopingPreview } from './DevelopingPreview'
@@ -150,6 +150,13 @@ export function EditorScreen(): React.JSX.Element {
   }, [sidebarPage])
   // The aspect option is fixed on entering crop mode so resizing keeps its shape.
   const [aspect, setAspect] = useState('free')
+  // A short notice over the crop preview, such as an Upright failure.
+  const [cropNotice, setCropNotice] = useState<{ text: string } | null>(null)
+  useEffect(() => {
+    if (!cropNotice) return
+    const timer = setTimeout(() => setCropNotice(null), 3000)
+    return () => clearTimeout(timer)
+  }, [cropNotice])
   const active = files.find((file) => file.id === activeId)
   const file = files.find((file) => file.path === editor.session?.path)
   const currentFile = active ?? file
@@ -733,6 +740,9 @@ export function EditorScreen(): React.JSX.Element {
               >
                 <RotateCwSquare className="h-4 w-4" />
               </Button>
+              {doc && (
+                <CropAutoButtons recipe={doc.recipe} notify={(text) => setCropNotice({ text })} />
+              )}
               <div
                 role="separator"
                 aria-orientation="vertical"
@@ -903,6 +913,16 @@ export function EditorScreen(): React.JSX.Element {
         <FileFilmstrip
           preview={
             <div className="relative h-full w-full">
+              <div
+                role="status"
+                className="pointer-events-none absolute inset-x-0 top-3 z-30 flex justify-center px-3"
+              >
+                {editor.cropping && cropNotice && (
+                  <p className="glass-overlay rounded-full px-3.5 py-1.5 text-xs text-white">
+                    {cropNotice.text}
+                  </p>
+                )}
+              </div>
               {/* Always present, so turning the inversion on does not mount the preview again. */}
               <div className={cn('contents', inverted && '[&_canvas]:invert [&_img]:invert')}>
                 {displayFile && editor.preview && doc && editor.cropping && !unavailable ? (

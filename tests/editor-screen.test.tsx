@@ -119,7 +119,8 @@ vi.mock('../src/renderer/src/components/CropPreview', () => ({
   )
 }))
 vi.mock('../src/renderer/src/components/CropControls', () => ({
-  CropControls: () => <div data-crop-controls />
+  CropControls: () => <div data-crop-controls />,
+  CropAutoButtons: () => null
 }))
 vi.mock('../src/renderer/src/components/ColorScope', () => ({
   ColorScope: ({
