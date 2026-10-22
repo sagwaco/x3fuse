@@ -16,7 +16,7 @@ import { displayPreviewUrl } from '@shared/preview'
 import { useQueueStore, type ExportDraft } from '../stores/queueStore'
 import { isTextEditing, useEditorStore } from '../stores/editorStore'
 import { runCommand } from '../lib/commands'
-import { useScopeSourceStore } from '../stores/scopeSourceStore'
+import { areaFor, previewFraming, useScopeSourceStore } from '../stores/scopeSourceStore'
 import { qualifySquare } from '../lib/qualifySquare'
 import { useFileDrop } from '../hooks/useFileDrop'
 import { useQueueSelection, type QueueSelection } from '../hooks/useQueueSelection'
@@ -73,9 +73,9 @@ export function FileFilmstrip({
   // Focus the surface on mount so arrow-key navigation works without a click.
   useEffect(() => rootRef.current?.focus(), [])
 
-  // The inspector scope measures this preview: its visible part and the Qualifier area.
+  // The inspector scope measures this preview, or its Qualifier area.
   const shownId = active?.id
-  // Only a painted preview of the one selected photo takes Visible and Qualifier. Its size
+  // Only a painted preview of the one selected photo takes the Qualifier. Its size
   // gives the Qualifier point its shape, also for an edited preview of other geometry.
   // The paint counts only for the preview that the inspector measures. A new preview of the
   // same photo, as after a paste of edits, waits for its own paint.
@@ -90,7 +90,6 @@ export function FileFilmstrip({
   const size = painted?.id === shownId && painted.source === source ? painted : null
   const zoomable = !preview && !!active && !active.pending && !!size && selectedIds.size <= 1
   const paintedUrl = size?.url
-  // A new preview clears the Qualifier area, which belongs to the pixels that it was set on.
   useEffect(() => {
     if (!zoomable) return
     const { setPreview } = useScopeSourceStore.getState()
@@ -98,20 +97,16 @@ export function FileFilmstrip({
     return () => setPreview(null)
   }, [zoomable, shownId, paintedUrl])
   const qualifying = useScopeSourceStore((s) => s.qualifying && s.previewId === shownId)
+  // The editor shares the area. Another framing, as after a paste of edits, hides it.
+  const framing = useMemo(() => (active ? previewFraming(active) : []), [active])
   const qualified = useScopeSourceStore((s) =>
-    s.source === 'qualifier' && s.qualified?.id === shownId ? s.qualified.region : null
-  )
-  const onViewportChange = useCallback(
-    (region: PreviewRegion | null) => {
-      if (shownId) useScopeSourceStore.getState().setViewport(shownId, region)
-    },
-    [shownId]
+    s.source === 'qualifier' ? areaFor(s.qualified, active?.path, framing) : null
   )
   const qualify = useCallback(
     (region: PreviewRegion) => {
-      if (shownId) useScopeSourceStore.getState().qualify(shownId, region)
+      if (active) useScopeSourceStore.getState().qualify({ path: active.path, framing, region })
     },
-    [shownId]
+    [active, framing]
   )
   const disarm = useScopeSourceStore.getState().disarm
   // Escape disarms the Qualifier. Else in the library it goes back to the grid, as in
@@ -149,7 +144,6 @@ export function FileFilmstrip({
                 key={active.id}
                 file={active}
                 digitZoom={!!draft}
-                onViewportChange={draft ? undefined : onViewportChange}
                 onPaint={(url, { width, height }) =>
                   setPainted({
                     id: active.id,

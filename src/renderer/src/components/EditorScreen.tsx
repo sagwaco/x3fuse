@@ -22,13 +22,15 @@ import {
   isTextEditing,
   needsX3iMerge,
   previewCurrent,
-  geometryKey
+  geometryKey,
+  asShotRecipe
 } from '../stores/editorStore'
 import { useQueueStore } from '../stores/queueStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { t } from '../lib/strings'
 import { Button } from './ui/button'
 import { ScopeSourceControls, type ScopeSource } from './ScopeSourceControls'
+import { AS_SHOT, areaFor, useScopeSourceStore } from '../stores/scopeSourceStore'
 import { ResizablePanel } from './ui/resizablePanel'
 import { useToolbarSwap } from '../hooks/useToolbarSwap'
 import { ZoomControls } from './ZoomControls'
@@ -92,21 +94,21 @@ export function EditorScreen(): React.JSX.Element {
   }, [])
   // W arms the picker only while its controls are enabled. It can always turn it off.
   const canPick = useRef(false)
-  const [scopeSource, setScopeSource] = useState<ScopeSource>('entire')
+  const scopeSource = useScopeSourceStore((s) => s.source)
   // While armed, a click or a drag on the photo sets the area that the Qualifier measures.
   const [qualifying, setQualifying] = useState(false)
-  const [qualified, setQualified] = useState<{ key: string; region: PreviewRegion } | null>(null)
+  const qualified = useScopeSourceStore((s) => s.qualified)
   // The white balance picker and the Qualifier use the same clicks, so one disarms the other.
   if (picking && qualifying) setQualifying(false)
   if (picking && mixPicking !== null) setMixPickingState(null)
-  // Choosing the Qualifier arms it again, so a new area can replace the last one.
+  // Turning the Qualifier on arms it. Turning it off clears its area.
   const chooseScope = (next: ScopeSource): void => {
     if (next === 'qualifier') {
       setPicking(false)
       setMixPickingState(null)
-    } else setQualified(null)
+    }
     setQualifying(next === 'qualifier')
-    setScopeSource(next)
+    useScopeSourceStore.getState().choose(next, false)
   }
   const [sidebarPage, setSidebarPage] = useState<SidebarPage>('edit')
   const sidebarBody = useRef<HTMLDivElement>(null)
@@ -152,10 +154,20 @@ export function EditorScreen(): React.JSX.Element {
   const file = files.find((file) => file.path === editor.session?.path)
   const currentFile = active ?? file
   const doc = editor.session ? editor.documents[editor.session.path] : undefined
-  // A qualified area belongs to one photo and its geometry. A change clears it.
+  // A qualified area belongs to one photo and its framing. It shows only while both match,
+  // so it comes back after the library, a reopen, or an undone crop. The as-shot framing
+  // matches the embedded JPEG that the library shows.
   const geometry = doc && geometryKey(doc.recipe)
-  const areaKey = `${editor.session?.sessionId}:${geometry}`
-  if (qualified && qualified.key !== areaKey) setQualified(null)
+  const framing = useMemo(
+    () =>
+      !geometry
+        ? []
+        : geometry === geometryKey(asShotRecipe(editor.session, 0))
+          ? [geometry, AS_SHOT]
+          : [geometry],
+    [geometry, editor.session]
+  )
+  const frameKey = `${editor.session?.sessionId}:${geometry}`
   // The photo and the geometry of the frame on screen. A new preview shows only after it
   // decodes, so until then the previous frame, of other geometry, can stay on screen.
   const [shownArea, setShownArea] = useState<string | null>(null)
@@ -163,8 +175,9 @@ export function EditorScreen(): React.JSX.Element {
     // A frame of other geometry, as before an undone rotation paints, shows other pixels.
     // The latest render must match too: a point gets its square from that render's size,
     // which can differ after an undo and a redo before either frame paints.
-    if (shownArea !== areaKey || editor.previewGeometry !== geometry) return
-    setQualified({ key: areaKey, region })
+    if (shownArea !== frameKey || editor.previewGeometry !== geometry) return
+    if (editor.session)
+      useScopeSourceStore.getState().qualify({ path: editor.session.path, framing, region })
     setQualifying(false)
   }
   // An X3I whose SFD RAW is not stored yet merges it, and only its SFD RAW section works.
@@ -426,20 +439,16 @@ export function EditorScreen(): React.JSX.Element {
   const inverted =
     editor.negativePreview && !editor.before && !!doc && negativePrint(doc.recipe.film)
   // While zoomed, an edit renders the tile first, and the whole-image preview later.
-  // Visible area reads the tile of the current view; the other sources read the
-  // preview of the current recipe. Until it arrives, the scope keeps its last paint as pending.
-  const sourceUrl =
-    scopeSource === 'visible' && editor.viewport
-      ? viewTile
-        ? editor.tile?.url
-        : undefined
-      : !editor.viewport || previewCurrent(editor)
-        ? editor.preview?.url
-        : undefined
+  // The scope reads the preview of the current recipe. Until it arrives, the scope keeps
+  // its last paint as pending.
+  const sourceUrl = !editor.viewport || previewCurrent(editor) ? editor.preview?.url : undefined
   // The preview gives points and rectangles as 0 to 1 of the image that it shows: the
   // rendered preview, cropped and oriented. The scope reads the same preview, so they
   // need no conversion. Crop mode renders the photo without its crop, so it measures all of it.
-  const scopeRegion = scopeSource === 'qualifier' && !editor.cropping ? qualified?.region : null
+  const scopeRegion =
+    scopeSource === 'qualifier' && !editor.cropping
+      ? areaFor(qualified, editor.session?.path, framing)
+      : null
   const qualifyPoint = (x: number, y: number): void => {
     // A point measures a square of about 2 percent of the long edge, in preview pixels.
     const { width = 1, height = 1 } = editor.preview ?? {}
@@ -483,7 +492,7 @@ export function EditorScreen(): React.JSX.Element {
   const showScope = (): void => {
     const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
     sidebarBody.current?.scrollTo({ top: 0, behavior: reduce ? 'auto' : 'smooth' })
-    document.getElementById(`scope-tab-${scopeSource}`)?.focus({ preventScroll: true })
+    document.getElementById('scope-qualifier')?.focus({ preventScroll: true })
   }
   // WebKit before Safari 27 ignores the scroll padding when it shows the keyboard focus.
   // Each section around the focus can have a stuck header of 40 px above it. A header
@@ -1106,13 +1115,7 @@ export function EditorScreen(): React.JSX.Element {
                       <ScopeSourceControls value={scopeSource} onChange={chooseScope} />
                     </div>
                     {/* While out of view, only the header scope renders. */}
-                    <div
-                      id="scope-panel"
-                      role="tabpanel"
-                      aria-labelledby={`scope-tab-${scopeSource}`}
-                    >
-                      <ColorScope {...scopeProps} paused={scopeHidden} />
-                    </div>
+                    <ColorScope {...scopeProps} paused={scopeHidden} />
                     {/* For screen readers only: it gives the keyboard instructions. */}
                     {qualifying && (
                       <p role="status" className="sr-only">

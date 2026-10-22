@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { DEFAULT_SETTINGS, type X3FFileDTO } from '@shared/types'
-import type { PreviewRegion } from '@shared/editor'
+import { defaultRecipe, type PreviewRegion } from '@shared/editor'
 import { Inspector } from '../src/renderer/src/components/Inspector'
 import { FileFilmstrip } from '../src/renderer/src/components/FileFilmstrip'
 import { qualifySquare } from '../src/renderer/src/lib/qualifySquare'
@@ -67,19 +67,6 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-it('measures the visible part of the filmstrip preview', () => {
-  view()
-  paint()
-  const visible = screen.getByRole('tab', { name: 'Visible area' })
-  expect(scope.current.region).toBeNull()
-  fireEvent.click(visible)
-  act(() => (zoom.current.onViewportChange as (r: PreviewRegion | null) => void)(region))
-  expect(scope.current.region).toEqual(region)
-  // Another photo does not reuse the area.
-  act(() => useQueueStore.setState({ activeId: 'b', selectedIds: new Set(['b']) }))
-  expect(scope.current.region).toBeNull()
-})
-
 it('arms the qualifier on the filmstrip preview and disarms after one use or Escape', () => {
   view()
   paint()
@@ -92,12 +79,15 @@ it('arms the qualifier on the filmstrip preview and disarms after one use or Esc
   expect(zoom.current.onImageRegion).toBeUndefined()
   expect(zoom.current.outline).toEqual(region)
   expect(scope.current.region).toEqual(region)
+  // A second click turns the Qualifier off and clears the area. A third arms it.
+  fireEvent.click(screen.getByRole('button', { name: 'Qualifier' }))
+  expect(zoom.current.outline).toBeNull()
+  expect(scope.current.region).toBeNull()
   fireEvent.click(screen.getByRole('button', { name: 'Qualifier' }))
   expect(zoom.current.onImagePoint).toBeDefined()
   // Escape that ends a selection in progress goes through the preview.
   act(() => (zoom.current.onSelectionCancel as () => void)())
   expect(zoom.current.onImagePoint).toBeUndefined()
-  expect(zoom.current.outline).toEqual(region)
 })
 
 it('goes back to the grid with Escape after the Qualifier and outside text fields', () => {
@@ -120,14 +110,26 @@ it('goes back to the grid with Escape after the Qualifier and outside text field
   expect(update).toHaveBeenCalledWith({ queueViewMode: 'grid' })
 })
 
-it('drops the area when the photo changes and comes back', () => {
+it('hides the area on another photo or framing, and shows it again on its photo', () => {
   view()
   paint()
   fireEvent.click(screen.getByRole('button', { name: 'Qualifier' }))
   act(() => (zoom.current.onImageRegion as (r: PreviewRegion) => void)(region))
   act(() => useQueueStore.setState({ activeId: 'b', selectedIds: new Set(['b']) }))
   paint()
+  expect(zoom.current.outline).toBeNull()
+  expect(scope.current.region).toBeNull()
   act(() => useQueueStore.setState({ activeId: 'a', selectedIds: new Set(['a']) }))
+  paint()
+  expect(zoom.current.outline).toEqual(region)
+  expect(scope.current.region).toEqual(region)
+  // Saved edits of other geometry frame other pixels.
+  const edit = { recipe: { ...defaultRecipe(), rotation: 1 }, revision: 1, previewUrl: 'e' }
+  act(() =>
+    useQueueStore.setState({
+      files: files.map((file) => (file.id === 'a' ? { ...file, edit } : file))
+    })
+  )
   paint()
   expect(zoom.current.outline).toBeNull()
   expect(scope.current.region).toBeNull()
@@ -155,7 +157,7 @@ it('shapes a point by the painted image', () => {
   expect(area.width / area.height).toBeCloseTo(2)
 })
 
-it('disables Visible and Qualifier without a zoomable preview of the photo', () => {
+it('disables the Qualifier without a zoomable preview of the photo', () => {
   useQueueStore.setState({ selectedIds: new Set(['a', 'b']) })
   const { rerender } = view()
   expect(screen.queryByRole('button', { name: 'Qualifier' })).toBeNull()
@@ -164,7 +166,6 @@ it('disables Visible and Qualifier without a zoomable preview of the photo', () 
   expect((screen.getByRole('button', { name: 'Qualifier' }) as HTMLButtonElement).disabled).toBe(
     true
   )
-  expect(screen.getByRole('tab', { name: 'Visible area' }).hasAttribute('disabled')).toBe(true)
 })
 
 it('sizes the qualifier square by the oriented shape', () => {
@@ -190,4 +191,20 @@ it('waits for the paint of a new preview of the same photo', () => {
   expect(qualifier.disabled).toBe(true)
   paint()
   expect(qualifier.disabled).toBe(false)
+})
+
+it('keeps the area when the view changes', () => {
+  const { unmount } = view()
+  paint()
+  fireEvent.click(screen.getByRole('button', { name: 'Qualifier' }))
+  act(() => (zoom.current.onImageRegion as (r: PreviewRegion) => void)(region))
+  unmount()
+  // The grid has no filmstrip preview. The inspector still measures the area.
+  render(<Inspector />)
+  expect(scope.current.region).toEqual(region)
+  cleanup()
+  view()
+  paint()
+  expect(zoom.current.outline).toEqual(region)
+  expect(scope.current.region).toEqual(region)
 })

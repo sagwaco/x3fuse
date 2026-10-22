@@ -12,7 +12,7 @@ import { t } from '../lib/strings'
 import { ColorScope } from './ColorScope'
 import { ScopeMenu } from './ScopeMenu'
 import { ScopeSourceControls } from './ScopeSourceControls'
-import { useScopeSourceStore } from '../stores/scopeSourceStore'
+import { areaFor, previewFraming, useScopeSourceStore } from '../stores/scopeSourceStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { PreviewMinimap } from './PreviewMinimap'
 import { OrientedImage } from './OrientedImage'
@@ -29,16 +29,16 @@ export function Inspector(): React.JSX.Element {
   const activeId = useQueueStore((s) => s.activeId)
   const active = selected.find((file) => file.id === activeId) ?? selected[0]
   const multiple = selected.length > 1
-  // Visible and Qualifier need the zoomable preview of this photo in the filmstrip.
+  // A new Qualifier area needs the zoomable preview of this photo in the filmstrip. The area
+  // stays in other views, and the editor shares it, while the photo keeps its framing.
   const zoomable = useScopeSourceStore((s) => !!active && s.previewId === active.id) && !multiple
-  const source = useScopeSourceStore((s) => (zoomable ? s.source : 'entire'))
+  const source = useScopeSourceStore((s) => s.source)
   const qualifying = useScopeSourceStore((s) => zoomable && s.qualifying)
-  const region = useScopeSourceStore((s) => {
-    if (!active || !zoomable) return null
-    if (source === 'visible') return s.viewport?.id === active.id ? s.viewport.region : null
-    if (source === 'qualifier') return s.qualified?.id === active.id ? s.qualified.region : null
-    return null
-  })
+  const qualified = useScopeSourceStore((s) => s.qualified)
+  const region =
+    active && !multiple && source === 'qualifier'
+      ? areaFor(qualified, active.path, previewFraming(active))
+      : null
   const title = multiple ? t('batch.image_count', { count: selected.length }) : t('inspector.title')
 
   return (
@@ -87,17 +87,15 @@ export function Inspector(): React.JSX.Element {
                     zoomable={zoomable}
                   />
                 </div>
-                <div id="scope-panel" role="tabpanel" aria-labelledby={`scope-tab-${source}`}>
-                  <ColorScope
-                    url={active.pending ? undefined : displayPreviewUrl(active)}
-                    fileId={active.id}
-                    pending={active.pending}
-                    aspectRatio={isRenderedPreview(active) ? undefined : active.aspectRatio}
-                    orientation={isRenderedPreview(active) ? 1 : active.orientation}
-                    region={region}
-                    mode={scopeMode}
-                  />
-                </div>
+                <ColorScope
+                  url={active.pending ? undefined : displayPreviewUrl(active)}
+                  fileId={active.id}
+                  pending={active.pending}
+                  aspectRatio={isRenderedPreview(active) ? undefined : active.aspectRatio}
+                  orientation={isRenderedPreview(active) ? 1 : active.orientation}
+                  region={region}
+                  mode={scopeMode}
+                />
                 {qualifying && (
                   <p role="status" className="sr-only">
                     {t('editor.scopeQualifyHint')}

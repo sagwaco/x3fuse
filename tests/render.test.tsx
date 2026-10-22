@@ -107,7 +107,7 @@ describe('renderer smoke', () => {
     expect(
       screen.getByRole('button', { name: 'Photo info' }).previousElementSibling?.textContent
     ).toBe('first.X3F')
-    expect(screen.getByRole('tab', { name: 'Entire image' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Qualifier' })).toBeTruthy()
     expect(screen.queryByText('Sigma DP2 Merrill')).toBeNull()
 
     await act(async () => {

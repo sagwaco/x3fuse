@@ -6,6 +6,12 @@ import { DEFAULT_FILM, defaultRecipe, negativePrint, type PreviewRegion } from '
 import { displayPreviewUrl, previewUrl } from '@shared/preview'
 import { DEFAULT_SETTINGS, type X3FFileDTO } from '@shared/types'
 import { EditorScreen } from '../src/renderer/src/components/EditorScreen'
+import {
+  AS_SHOT,
+  areaFor,
+  previewFraming,
+  useScopeSourceStore
+} from '../src/renderer/src/stores/scopeSourceStore'
 import { useEditorStore as editor, geometryKey } from '../src/renderer/src/stores/editorStore'
 import { useQueueStore as queue } from '../src/renderer/src/stores/queueStore'
 import { useSettingsStore } from '../src/renderer/src/stores/settingsStore'
@@ -229,6 +235,7 @@ const frame = {
 }
 
 beforeEach(() => {
+  useScopeSourceStore.setState(useScopeSourceStore.getInitialState())
   vi.stubGlobal(
     'ResizeObserver',
     class {
@@ -835,11 +842,9 @@ function scopeAttribute(name: string): string | null | undefined {
 function previewAttribute(name: string): string | null | undefined {
   return document.querySelector('[data-editor-frame]')?.getAttribute(name)
 }
-const selectedScope = (): string | null =>
-  screen.getByRole('tab', { selected: true }).getAttribute('id')
 const renderKey = (value = recipe): string => `${session.sessionId}:${JSON.stringify(value)}`
 
-it('measures the entire image or the visible area, and waits for current pixels while zoomed', () => {
+it('measures the entire image, and waits for current pixels while zoomed', () => {
   editor.setState({
     session,
     documents: { [file.path]: doc },
@@ -848,23 +853,13 @@ it('measures the entire image or the visible area, and waits for current pixels 
     previewKey: renderKey()
   })
   const view = render(<EditorScreen />)
-  // The scope view menu leads the scope row, and icon tabs choose the area. The header
+  // The scope view menu leads the scope row, and the Qualifier toggle ends it. The header
   // has no menu.
-  const tablist = screen.getByRole('tablist', { name: 'Scope area' })
-  const tabs = within(tablist).getAllByRole('tab')
-  expect(tablist.parentElement!.parentElement!.firstElementChild).toBe(
-    screen.getByText('Scope view')
-  )
+  const qualifier = screen.getByRole('button', { name: 'Qualifier' })
+  expect(qualifier.parentElement!.firstElementChild).toBe(screen.getByText('Scope view'))
   expect(view.container.querySelectorAll('[data-scope-menu]')).toHaveLength(1)
-  expect(tabs.map((tab) => [tab.getAttribute('aria-label'), tab.getAttribute('title')])).toEqual([
-    ['Entire image', 'Entire image'],
-    ['Visible area', 'Visible area']
-  ])
-  // The Qualifier is a toggle button beside the group.
-  expect(screen.getByRole('button', { name: 'Qualifier' }).getAttribute('aria-pressed')).toBe(
-    'false'
-  )
-  expect(selectedScope()).toBe('scope-tab-entire')
+  expect(screen.queryByRole('tablist')).toBeNull()
+  expect(qualifier.getAttribute('aria-pressed')).toBe('false')
   expect(scopeAttribute('data-scope-url')).toBe(frame.url)
   expect(scopeAttribute('data-pending')).toBe('false')
   // Entire image keeps the whole-image preview while zoomed.
@@ -891,30 +886,13 @@ it('measures the entire image or the visible area, and waits for current pixels 
   expect(scopeAttribute('data-scope-url')).toBeNull()
   expect(scopeAttribute('data-pending')).toBe('true')
   // Also for a new qualified area: it waits for the current preview.
-  fireEvent.click(screen.getByRole('button', { name: 'Qualifier' }))
+  fireEvent.click(qualifier)
   expect(scopeAttribute('data-scope-url')).toBeNull()
   expect(scopeAttribute('data-pending')).toBe('true')
-  fireEvent.click(tabs[0])
+  fireEvent.click(qualifier)
+  expect(qualifier.getAttribute('aria-pressed')).toBe('false')
   const refreshed = { ...frame, revision: 2, url: 'x3f-edit://localhost/live-b' }
   act(() => editor.setState({ preview: refreshed, previewKey: renderKey(brighter) }))
-  expect(scopeAttribute('data-scope-url')).toBe(refreshed.url)
-  expect(scopeAttribute('data-pending')).toBe('false')
-
-  fireEvent.click(tabs[1])
-  expect(selectedScope()).toBe('scope-tab-visible')
-  expect(scopeAttribute('data-scope-url')).toBe('x3f-edit://localhost/tile-b')
-  expect(scopeAttribute('data-pending')).toBe('false')
-  // A pan keeps the old tile on screen, but the scope does not measure it.
-  const next = { ...region, x: 0.3 }
-  act(() => editor.setState({ viewport: next }))
-  expect(scopeAttribute('data-scope-url')).toBeNull()
-  expect(scopeAttribute('data-pending')).toBe('true')
-  const panned = { ...tile, url: 'x3f-edit://localhost/tile-c', region: next, viewport: next }
-  act(() => editor.setState({ tile: panned }))
-  expect(scopeAttribute('data-scope-url')).toBe(panned.url)
-  expect(scopeAttribute('data-pending')).toBe('false')
-  // At Fit, the visible area is the whole-image preview.
-  act(() => editor.setState({ viewport: null, tile: null }))
   expect(scopeAttribute('data-scope-url')).toBe(refreshed.url)
   expect(scopeAttribute('data-pending')).toBe('false')
 })
@@ -931,25 +909,24 @@ it('qualifies a point or a dragged area, apart from the white balance picker', (
   })
   const view = render(<EditorScreen />)
   fireEvent.click(view.container.querySelector('[data-paint]')!)
-  const [entire] = within(screen.getByRole('tablist', { name: 'Scope area' })).getAllByRole('tab')
   const qualifier = screen.getByRole('button', { name: 'Qualifier' })
+  // A click turns the Qualifier off when it is on, so a new area starts from off.
+  const rearm = (): void => {
+    if (qualifier.getAttribute('aria-pressed') === 'true') fireEvent.click(qualifier)
+    fireEvent.click(qualifier)
+  }
   const picker = (): HTMLElement => screen.getByRole('button', { name: 'Pick white balance' })
   const qualifying = (): string | null | undefined => previewAttribute('data-qualifying')
   const region = (): unknown => JSON.parse(scopeAttribute('data-scope-region') ?? 'null')
   const outline = (): unknown => JSON.parse(previewAttribute('data-outline') ?? 'null')
   const hint = (): HTMLElement | null => screen.queryByText(t('editor.scopeQualifyHint'))
 
-  // The arrow keys move between the tabs. The Qualifier arms the photo and disarms the picker.
+  // The Qualifier arms the photo and disarms the picker.
   fireEvent.click(picker())
   expect(picker().getAttribute('aria-pressed')).toBe('true')
   expect(qualifying()).toBe('false')
   fireEvent.click(qualifier)
   expect(qualifier.getAttribute('aria-pressed')).toBe('true')
-  expect(
-    within(screen.getByRole('tablist', { name: 'Scope area' })).queryAllByRole('tab', {
-      selected: true
-    })
-  ).toHaveLength(0)
   expect(qualifying()).toBe('true')
   expect(picker().getAttribute('aria-pressed')).toBe('false')
   expect(hint()?.getAttribute('role')).toBe('status')
@@ -960,8 +937,10 @@ it('qualifies a point or a dragged area, apart from the white balance picker', (
   fireEvent.click(picker())
   expect(qualifying()).toBe('false')
   expect(hint()).toBeNull()
-  // A click on the selected Qualifier arms it again.
+  // A click on the Qualifier turns it off, and another arms it again.
   expect(qualifier.getAttribute('aria-pressed')).toBe('true')
+  fireEvent.click(qualifier)
+  expect(qualifier.getAttribute('aria-pressed')).toBe('false')
   fireEvent.click(qualifier)
   expect(qualifying()).toBe('true')
   expect(hint()).not.toBeNull()
@@ -971,7 +950,7 @@ it('qualifies a point or a dragged area, apart from the white balance picker', (
   expect(qualifying()).toBe('false')
 
   // A point measures a square of 2 percent of the long edge, in pixels, centered on it.
-  fireEvent.click(qualifier)
+  rearm()
   fireEvent.click(view.container.querySelector('[data-point]')!)
   expect(qualifying()).toBe('false')
   const point = region() as PreviewRegion
@@ -982,15 +961,15 @@ it('qualifies a point or a dragged area, apart from the white balance picker', (
   expect(point.height).toBeCloseTo(height)
   expect(outline()).toEqual(point)
 
-  // Escape disarms the Qualifier before it closes the editor, and keeps the area.
-  fireEvent.click(qualifier)
+  // Escape disarms the Qualifier before it closes the editor, and keeps it on.
+  rearm()
   fireEvent.keyDown(document, { key: 'Escape' })
   expect(qualifying()).toBe('false')
   expect(close).not.toHaveBeenCalled()
-  expect(region()).toEqual(point)
+  expect(qualifier.getAttribute('aria-pressed')).toBe('true')
   // A drag measures its rectangle.
   const drawn = { x: 0.1, y: 0.2, width: 0.3, height: 0.4 }
-  fireEvent.click(qualifier)
+  rearm()
   fireEvent.click(view.container.querySelector('[data-drag]')!)
   expect(region()).toEqual(drawn)
   expect(outline()).toEqual(drawn)
@@ -1008,7 +987,7 @@ it('qualifies a point or a dragged area, apart from the white balance picker', (
   change(rotated)
   expect(region()).toBeNull()
   expect(outline()).toBeNull()
-  fireEvent.click(qualifier)
+  rearm()
   drag()
   expect(region()).toBeNull()
   rendered(rotated, 'x3f-edit://localhost/portrait')
@@ -1022,7 +1001,7 @@ it('qualifies a point or a dragged area, apart from the white balance picker', (
   change(recipe)
   rendered(recipe, 'x3f-edit://localhost/landscape')
   expect(region()).toBeNull()
-  fireEvent.click(qualifier)
+  rearm()
   fireEvent.click(view.container.querySelector('[data-point]')!)
   drag()
   expect(region()).toBeNull()
@@ -1030,22 +1009,89 @@ it('qualifies a point or a dragged area, apart from the white balance picker', (
   paint()
   drag()
   expect(region()).toEqual(drawn)
-  // Leaving the tab clears the area.
-  fireEvent.click(qualifier)
+  // Turning the Qualifier off clears the area.
+  rearm()
   fireEvent.click(view.container.querySelector('[data-drag]')!)
   expect(region()).toEqual(drawn)
-  fireEvent.click(entire)
+  fireEvent.click(qualifier)
   expect(region()).toBeNull()
   fireEvent.click(qualifier)
   expect(region()).toBeNull()
   // Another photo clears the area and disarms the Qualifier.
   fireEvent.click(view.container.querySelector('[data-drag]')!)
   expect(region()).toEqual(drawn)
-  fireEvent.click(qualifier)
+  rearm()
   const other = { ...session, sessionId: 'session-b' }
   act(() => editor.setState({ session: other, preview: { ...frame, sessionId: 'session-b' } }))
   expect(region()).toBeNull()
   expect(qualifying()).toBe('false')
+})
+
+it('keeps the qualified area across screens, reopens, and an undone geometry change', () => {
+  editor.setState({
+    session,
+    documents: { [file.path]: doc },
+    loading: false,
+    preview: frame,
+    previewGeometry: geometryKey(recipe)
+  })
+  const first = render(<EditorScreen />)
+  const region = (): unknown => JSON.parse(scopeAttribute('data-scope-region') ?? 'null')
+  const drawn = { x: 0.1, y: 0.2, width: 0.3, height: 0.4 }
+  fireEvent.click(first.container.querySelector('[data-paint]')!)
+  fireEvent.click(screen.getByRole('button', { name: 'Qualifier' }))
+  fireEvent.click(first.container.querySelector('[data-drag]')!)
+  expect(region()).toEqual(drawn)
+  // The library and back.
+  first.unmount()
+  render(<EditorScreen />)
+  expect(region()).toEqual(drawn)
+  // A new session of the same photo keeps it.
+  const reopened = { ...session, sessionId: 'session-b' }
+  act(() => editor.setState({ session: reopened, preview: { ...frame, sessionId: 'session-b' } }))
+  expect(region()).toEqual(drawn)
+  // A geometry change hides it, and an undo shows it again.
+  const rotated = { ...recipe, rotation: 1 }
+  act(() => editor.setState({ documents: { [file.path]: { ...doc, recipe: rotated } } }))
+  expect(region()).toBeNull()
+  act(() => editor.setState({ documents: { [file.path]: doc } }))
+  expect(region()).toEqual(drawn)
+  // Another photo does not show it.
+  act(() => editor.setState({ session: { ...reopened, path: '/photos/other.X3F' } }))
+  expect(region()).toBeNull()
+})
+
+it('shares the qualified area with the library', () => {
+  const drawn = { x: 0.1, y: 0.2, width: 0.3, height: 0.4 }
+  // An area set on the library preview of the saved edit.
+  useScopeSourceStore.setState({
+    source: 'qualifier',
+    qualified: { path: file.path, framing: previewFraming(file), region: drawn }
+  })
+  editor.setState({
+    session,
+    documents: { [file.path]: doc },
+    loading: false,
+    preview: frame,
+    previewGeometry: geometryKey(recipe)
+  })
+  const view = render(<EditorScreen />)
+  const region = (): unknown => JSON.parse(scopeAttribute('data-scope-region') ?? 'null')
+  expect(screen.getByRole('button', { name: 'Qualifier' }).getAttribute('aria-pressed')).toBe(
+    'true'
+  )
+  expect(region()).toEqual(drawn)
+  // An area set in the editor at the as-shot framing matches the embedded JPEG too.
+  fireEvent.click(view.container.querySelector('[data-paint]')!)
+  fireEvent.click(screen.getByRole('button', { name: 'Qualifier' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Qualifier' }))
+  fireEvent.click(view.container.querySelector('[data-point]')!)
+  const { qualified } = useScopeSourceStore.getState()
+  expect(qualified?.path).toBe(file.path)
+  expect(qualified?.framing).toContain(AS_SHOT)
+  expect(areaFor(qualified, file.path, previewFraming({ ...file, edit: undefined }))).toEqual(
+    region()
+  )
 })
 
 it('keeps a qualified point square through an undo and a redo before the frames paint', () => {
@@ -1215,7 +1261,7 @@ it('inverts a negative print on request and shows a tiny scope while the scope i
   fireEvent.click(show)
   expect(scrollTo.mock.contexts[0]).toBe(show.closest('aside')!.querySelector('.overflow-y-auto'))
   expect(scrollTo).toHaveBeenLastCalledWith({ top: 0, behavior: 'smooth' })
-  expect(document.activeElement?.id).toBe('scope-tab-entire')
+  expect(document.activeElement?.id).toBe('scope-qualifier')
   vi.stubGlobal('matchMedia', () => ({ matches: true }))
   fireEvent.click(show)
   expect(scrollTo).toHaveBeenLastCalledWith({ top: 0, behavior: 'auto' })
@@ -1253,7 +1299,7 @@ it('scrolls a keyboard focus out from under the stuck section headers', () => {
   expect(body.scrollTop).toBe(420)
   // A field below the headers stays, and so does a control out of the sections.
   tab(field, 140)
-  tab(screen.getByRole('tab', { name: 'Entire image' }), 0)
+  tab(screen.getByRole('button', { name: 'Qualifier' }), 0)
   expect(body.scrollTop).toBe(420)
   // A click focus does not scroll, so a click or a drag does not jump.
   place(field, 130)
