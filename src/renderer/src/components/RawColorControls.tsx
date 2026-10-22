@@ -20,7 +20,6 @@ import { cn } from '../lib/cn'
 
 const channels = ['red', 'green', 'blue'] as const
 const layers = ['Bottom', 'Middle', 'Top'] as const
-const BALANCE_SCALE = 100 / Math.log2(RAW_GAIN_RANGE[1])
 const MIX_PRESETS = [
   ['identity', IDENTITY_RAW_MATRIX],
   ['aerochrome', AEROCHROME_MATRIX]
@@ -54,11 +53,11 @@ export function GainWhiteBalance({
     // Limit the edited axis so the other balance value does not move.
     if (axis === 'temperature') {
       const limit = Math.min(hi - green - tint, green + tint - lo)
-      nextTemperature = Math.max(-limit, Math.min(limit, value / BALANCE_SCALE))
+      nextTemperature = Math.max(-limit, Math.min(limit, value))
     } else {
       nextTint = Math.max(
         lo + Math.abs(temperature) - green,
-        Math.min(hi - Math.abs(temperature) - green, value / BALANCE_SCALE)
+        Math.min(hi - Math.abs(temperature) - green, value)
       )
     }
     const gain = (stops: number): number =>
@@ -76,25 +75,32 @@ export function GainWhiteBalance({
     <>
       <Adjustment
         label={t('editor.rawTemperature')}
-        value={temperature * BALANCE_SCALE}
+        value={temperature}
+        min={lo}
+        max={hi}
+        step={0.01}
+        unit="EV"
         track={TEMPERATURE}
         change={(value, save) => setBalance('temperature', value, save)}
         reset={() =>
           asShot &&
-          setBalance('temperature', (Math.log2(asShot[0] / asShot[2]) * BALANCE_SCALE) / 2)
+          setBalance('temperature', Math.log2(asShot[0] / asShot[2]) / 2)
         }
         commit={commit}
         disabled={disabled}
       />
       <Adjustment
         label={t('editor.tint')}
-        value={tint * BALANCE_SCALE}
-        min={Math.floor((lo - green) * BALANCE_SCALE)}
-        max={Math.ceil((hi - green) * BALANCE_SCALE)}
+        value={tint}
+        // The limits stay on the step grid, so the slider can return to 0.
+        min={Math.floor((lo - green) * 100) / 100}
+        max={Math.ceil((hi - green) * 100) / 100}
+        step={0.01}
+        unit="EV"
         track={TINT}
         change={(value, save) => setBalance('tint', value, save)}
         reset={() =>
-          asShot && setBalance('tint', (Math.log2(asShot[0] * asShot[2]) * BALANCE_SCALE) / 2)
+          asShot && setBalance('tint', Math.log2(asShot[0] * asShot[2]) / 2)
         }
         commit={commit}
         disabled={disabled}

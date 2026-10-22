@@ -42,8 +42,8 @@ import { ChannelSwap, RawMatrixControls } from './RawColorControls'
 import { WhiteBalanceControls } from './WhiteBalanceControls'
 
 /** Tracks that show which way a slider moves the picture. */
-export const TEMPERATURE = 'linear-gradient(to right, #4f7cff, #d4d4d4, #ffb43d)'
-export const TINT = 'linear-gradient(to right, #3fbf5a, #d4d4d4, #e14fd0)'
+export const TEMPERATURE = 'linear-gradient(to right, #3d5fc2, #8c8c8c, #c48a2f)'
+export const TINT = 'linear-gradient(to right, #318f45, #8c8c8c, #a83b9c)'
 /** Saturation and Vibrance fade from dark gray to color. */
 const RAINBOW =
   'linear-gradient(to right, #525252, #737373 40%, #60a5fa 55%, #4ade80 70%, #facc15 85%, #f87171)'
