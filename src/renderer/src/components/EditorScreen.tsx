@@ -12,7 +12,9 @@ import {
   SquareSplitHorizontal,
   ArrowLeft,
   PanelRight,
-  Upload
+  Upload,
+  X,
+  TriangleAlert
 } from 'lucide-react'
 import { negativePrint, type EditRecipe, type PreviewRegion } from '@shared/editor'
 import {
@@ -1030,6 +1032,28 @@ export function EditorScreen(): React.JSX.Element {
                     <ArrowLeft className="h-4 w-4" aria-hidden="true" />
                   </Button>
                   <h2>{t(sidebarPage === 'emulsion' ? 'editor.look' : 'editor.paperStock')}</h2>
+                </div>
+              )}
+            </div>
+            <div
+              role="status"
+              aria-atomic="true"
+              className="pointer-events-none absolute inset-x-0 top-11 z-30"
+            >
+              {editor.mixNotice && (
+                <div className="glass-overlay pointer-events-auto flex items-start gap-2 rounded-xl px-3 py-3 text-xs leading-relaxed text-white">
+                  <TriangleAlert aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />
+                  <p className="min-w-0 flex-1 break-words">{editor.mixNotice}</p>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="-mr-1 -mt-1 h-7 w-7 shrink-0 text-white hover:bg-white/10 hover:text-white focus-visible:ring-white/70"
+                    aria-label={t('button.close')}
+                    title={t('button.close')}
+                    onClick={() => useEditorStore.setState({ mixNotice: null })}
+                  >
+                    <X aria-hidden="true" className="h-4 w-4" />
+                  </Button>
                 </div>
               )}
             </div>

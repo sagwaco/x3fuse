@@ -1729,7 +1729,9 @@ it.each([0, 1, 2] as const)(
         ? Promise.resolve({ rawColor: { ...rawColor, gains: [0.5, 1, 0.25] } })
         : real(command, payload)
     )
+    editor.setState({ mixNotice: 'Previous sample cannot reach the target' })
     await editor.getState().pickRawMix(0.25, 0.75, output)
+    expect(editor.getState().mixNotice).toBeNull()
     const after = editor.getState().documents[file.path].recipe
     expect(after.rawColor!.gains).toEqual(rawColor.gains)
     expect({ ...after, rawColor: null }).toEqual({ ...before, rawColor: null })
@@ -1766,7 +1768,8 @@ it('rejects a neutral qualifier sample without changing the recipe', async () =>
   )
   await editor.getState().pickRawMix(0.25, 0.75, 0)
   expect(editor.getState().documents[file.path].recipe).toBe(before)
-  expect(editor.getState().error).toMatch(/^This sample.*mix limits/)
+  expect(editor.getState().mixNotice).toMatch(/^This sample.*mix limits/)
+  expect(editor.getState().error).toBeNull()
 })
 
 it.each(['edit', 'session', 'new-picker'] as const)(
@@ -1820,6 +1823,34 @@ it.each([
     command === 'editor:pickWhiteBalance' ? Promise.reject(message) : real(command, payload)
   )
   await editor.getState().pickRawMix(0.5, 0.5, 0)
-  expect(editor.getState().error).toMatch(/^This sample.*mix limits/)
+  expect(editor.getState().mixNotice).toMatch(/^This sample.*mix limits/)
+  expect(editor.getState().error).toBeNull()
   expect(editor.getState().documents[file.path].recipe).toBe(before)
+})
+
+it('clears qualifier notices on photo change and close', async () => {
+  await editor.getState().open(file)
+  editor.setState({ mixNotice: 'Cannot reach target' })
+  await editor.getState().open({ ...file, id: 'b', path: '/photos/b.X3F' })
+  expect(editor.getState().mixNotice).toBeNull()
+  editor.setState({ mixNotice: 'Cannot reach target' })
+  await editor.getState().close()
+  expect(editor.getState().mixNotice).toBeNull()
+})
+
+it('keeps qualifier infrastructure errors in the error banner', async () => {
+  await editor.getState().open(file)
+  editor.getState().change({
+    cameraProfile: null,
+    rawColor: { gains: [1, 1, 1], matrix: [1, 0, 0, 0, 1, 0, 0, 0, 1] }
+  })
+  const real = invoke.getMockImplementation()!
+  invoke.mockImplementation((command: string, payload: Record<string, unknown>) =>
+    command === 'editor:pickWhiteBalance'
+      ? Promise.reject('Renderer unavailable')
+      : real(command, payload)
+  )
+  await editor.getState().pickRawMix(0.5, 0.5, 0)
+  expect(editor.getState().error).toBe('Renderer unavailable')
+  expect(editor.getState().mixNotice).toBeNull()
 })

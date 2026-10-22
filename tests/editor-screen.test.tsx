@@ -1511,3 +1511,28 @@ it('routes the mix qualifier to the selected output and cancels it with Escape o
     screen.getByRole('button', { name: 'Pick white balance' }).getAttribute('aria-pressed')
   ).toBe('true')
 })
+
+it('shows a dismissible qualifier toast outside the sidebar scroll body without an error banner', () => {
+  editor.setState({
+    session,
+    documents: { [file.path]: doc },
+    loading: false,
+    preview: frame,
+    mixNotice: t('editor.mixQualifierCannotFit')
+  })
+  const view = render(<EditorScreen />)
+  const toast = screen.getByText(t('editor.mixQualifierCannotFit')).closest('[role="status"]')!
+  expect(toast.closest('aside')).toBeTruthy()
+  expect(toast.closest('.overflow-y-auto')).toBeNull()
+  expect(toast.className).toContain('absolute inset-x-0')
+  expect(toast.querySelector('.glass-overlay')).toBeTruthy()
+  expect(screen.queryByRole('alert')).toBeNull()
+  const dismiss = within(toast as HTMLElement).getByRole('button', { name: t('button.close') })
+  dismiss.focus()
+  expect(document.activeElement).toBe(dismiss)
+  fireEvent.click(dismiss)
+  expect(editor.getState().mixNotice).toBeNull()
+  expect(view.container.contains(toast)).toBe(true)
+  expect(toast.textContent).toBe('')
+  expect(within(toast as HTMLElement).queryByRole('button')).toBeNull()
+})

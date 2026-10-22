@@ -34,6 +34,7 @@ interface EditorState {
   closing: boolean
   rendering: boolean
   error: string | null
+  mixNotice: string | null
   preview: RenderedPreview | null
   /** The pitch and yaw `preview` was rendered with; analysis must not use it with other angles. */
   previewPose: { pitch: number; yaw: number } | null
@@ -511,6 +512,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
     closing: false,
     rendering: false,
     error: null,
+    mixNotice: null,
     preview: null,
     previewPose: null,
     previewGeometry: null,
@@ -583,7 +585,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
         if (previous) useQueueStore.getState().setSelection(new Set([previous.id]), previous.id)
         return
       }
-      set({ loading: true, error: null })
+      set({ loading: true, error: null, mixNotice: null })
       useNavStore.getState().goToEditor()
       prefetchMisses = { key: '', regions: new Set() }
       movedAt = -Infinity
@@ -840,7 +842,8 @@ export const useEditorStore = create<EditorState>((set, get) => {
           viewport: null,
           tile: null,
           cache: null,
-          error: null
+          error: null,
+          mixNotice: null
         })
         useNavStore.getState().goToQueue()
         return true
@@ -919,6 +922,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
       get().commit()
       const recipe = get().documents[session.path]?.recipe
       if (!recipe?.rawColor) return
+      set({ mixNotice: null })
       const request = ++colorPick
       const current = (): boolean =>
         request === colorPick &&
@@ -945,18 +949,16 @@ export const useEditorStore = create<EditorState>((set, get) => {
         ]
         const matrix = qualifyMix(recipe.rawColor.matrix, sample, output)
         if (!matrix) {
-          set({ error: t('editor.mixQualifierCannotFit') })
+          set({ mixNotice: t('editor.mixQualifierCannotFit') })
           return
         }
         get().change({ rawColor: { ...recipe.rawColor, matrix } })
       } catch (error) {
         if (current()) {
           const message = error instanceof Error ? error.message : String(error)
-          set({
-            error: /neutral|channel gains/.test(message)
-              ? t('editor.mixQualifierCannotFit')
-              : message
-          })
+          if (/neutral|channel gains/.test(message))
+            set({ mixNotice: t('editor.mixQualifierCannotFit') })
+          else set({ error: message })
         }
       }
     },
