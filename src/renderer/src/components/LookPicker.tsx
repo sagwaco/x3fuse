@@ -180,7 +180,8 @@ export function LookPicker({
           })),
           ...FILMS.map((stock) => ({
             id: stock.key,
-            name: stock.name,
+            // Keep "(Push 1)" on one line.
+            name: stock.name.replace(' (Push ', '\u00a0(Push\u00a0'),
             group: family(stock),
             recipe: {
               ...recipe,
@@ -212,13 +213,8 @@ export function LookPicker({
             }
           })),
           ...[
-            {
-              id: 'full-spectrum',
-              name: 'CIR',
-              help: t('editor.cirHelp'),
-              matrix: IDENTITY_RAW_MATRIX
-            },
-            { id: 'mir', name: 'MIR', help: t('editor.mirHelp'), matrix: MONOCHROME_RAW_MATRIX }
+            { id: 'full-spectrum', name: t('editor.cir'), matrix: IDENTITY_RAW_MATRIX },
+            { id: 'mir', name: t('editor.mir'), matrix: MONOCHROME_RAW_MATRIX }
           ].map(({ matrix, ...look }): Look => ({
             ...look,
             group: 'fullSpectrum',

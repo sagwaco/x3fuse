@@ -1444,7 +1444,7 @@ it('preserves color adjustments and monochrome settings when switching profiles'
 
 it('starts Full spectrum with as-shot gains and identity without a camera profile or film', async () => {
   render(<Controls />)
-  await chooseFilm('CIR')
+  await chooseFilm('False Color Infrared')
   expect(change.mock.lastCall?.[0]).toMatchObject({
     rawColor: { gains: [2, 1, 0.5], matrix: [1, 0, 0, 0, 1, 0, 0, 0, 1] },
     film: null,
@@ -1457,7 +1457,7 @@ it('starts Full spectrum with as-shot gains and identity without a camera profil
   expect(screen.getByRole('slider', { name: t('editor.tint') })).toBeTruthy()
   expect(screen.getByRole('button', { name: t('editor.whiteBalancePreset') })).toBeTruthy()
   picker(t('editor.profiles'))
-  expect((await look('CIR')).ariaPressed).toBe('true')
+  expect((await look('False Color Infrared')).ariaPressed).toBe('true')
   await waitFor(() =>
     expect(renderThumbnail).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1478,21 +1478,21 @@ it('keeps raw gains when reselecting Full spectrum and clears raw color for othe
       }}
     />
   )
-  await chooseFilm('CIR')
+  await chooseFilm('False Color Infrared')
   expect(change.mock.lastCall?.[0].rawColor).toEqual({
     gains: [3, 1, 0.25],
     matrix: [1, 0, 0, 0, 1, 0, 0, 0, 1]
   })
   await chooseFilm('Kodak Gold 200')
   expect(change.mock.lastCall?.[0].rawColor).toBeNull()
-  await chooseFilm('CIR')
+  await chooseFilm('False Color Infrared')
   await chooseFilm(t('editor.standard'))
   expect(change.mock.lastCall?.[0]).toMatchObject({ rawColor: null, cameraProfile: 'Standard' })
 })
 
-it('selects MIR as a raw color mix that averages the layers', async () => {
+it('selects Monochrome Infrared as a raw color mix that averages the layers', async () => {
   render(<Controls />)
-  await chooseFilm('MIR')
+  await chooseFilm('Monochrome Infrared')
   expect(change.mock.lastCall?.[0]).toMatchObject({
     rawColor: { gains: [2, 1, 0.5], matrix: MONOCHROME_RAW_MATRIX },
     film: null,
@@ -1500,8 +1500,8 @@ it('selects MIR as a raw color mix that averages the layers', async () => {
     monochrome: null
   })
   picker(t('editor.profiles'))
-  expect((await look('MIR')).ariaPressed).toBe('true')
-  expect((await look('CIR')).ariaPressed).toBe('false')
+  expect((await look('Monochrome Infrared')).ariaPressed).toBe('true')
+  expect((await look('False Color Infrared')).ariaPressed).toBe('false')
   expect(screen.getByText(t('editor.fullSpectrumNote'))).toBeTruthy()
 })
 
@@ -1509,7 +1509,7 @@ it('waits for as-shot gains before offering a new Full spectrum look', async () 
   editor.setState({ preview: { ...editor.getState().preview!, asShotGains: undefined } })
   render(<Controls />)
   picker(t('editor.profiles'))
-  expect(((await look('CIR')) as HTMLButtonElement).disabled).toBe(true)
+  expect(((await look('False Color Infrared')) as HTMLButtonElement).disabled).toBe(true)
 })
 
 it('edits raw gains and resets to as-shot without changing the matrix', () => {
