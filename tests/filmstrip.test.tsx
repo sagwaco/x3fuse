@@ -8,8 +8,6 @@ import { useQueueStore } from '../src/renderer/src/stores/queueStore'
 import { useSettingsStore } from '../src/renderer/src/stores/settingsStore'
 import { useEditorStore } from '../src/renderer/src/stores/editorStore'
 import { FileFilmstrip } from '../src/renderer/src/components/FileFilmstrip'
-import { FileQueue } from '../src/renderer/src/components/FileQueue'
-import { FileGrid } from '../src/renderer/src/components/FileGrid'
 import { ipc } from '../src/renderer/src/lib/ipc'
 import { DevelopingCloud } from '../src/renderer/src/lib/developingCloud'
 
@@ -29,52 +27,6 @@ afterEach(() => {
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
 })
-
-it.each([
-  ['list', FileQueue, false],
-  ['grid', FileGrid, true],
-  ['filmstrip', FileFilmstrip, true]
-] as const)(
-  'marks saved edits in the %s view without marking untouched previews',
-  async (_, View, overlay) => {
-    const edit = { recipe: defaultRecipe(), revision: 1 }
-    const files: X3FFileDTO[] = [
-      { id: 'saved', path: '/photos/saved.X3F', fileName: 'saved.X3F', edit },
-      { id: 'untouched', path: '/photos/untouched.X3F', fileName: 'untouched.X3F' },
-      {
-        id: 'draft',
-        path: '/photos/draft.X3F',
-        fileName: 'draft.X3F',
-        edit: { ...edit, revision: 0 },
-        displayPreviewUrl: 'default-development'
-      }
-    ]
-    useQueueStore.setState({ files, activeId: 'saved', selectedIds: new Set(['saved']) })
-    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS }, loaded: true })
-    vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(600)
-    vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(400)
-    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(600)
-    HTMLElement.prototype.scrollTo = () => {}
-    vi.stubGlobal(
-      'ResizeObserver',
-      class {
-        observe(): void {}
-        unobserve(): void {}
-        disconnect(): void {}
-      }
-    )
-    const view = render(<View />)
-    await waitFor(() => expect(view.container.querySelectorAll('[data-cell]')).toHaveLength(3))
-    const badges = view.getAllByRole('img', { name: 'Edited' })
-    expect(badges).toHaveLength(1)
-    expect(badges[0].closest('[title="saved.X3F"]')).toBeTruthy()
-    expect(badges[0].classList.contains('absolute')).toBe(overlay)
-    expect(badges[0].querySelector('svg')?.getAttribute('aria-hidden')).toBe('true')
-    expect(view.container.querySelector('[data-active] [aria-label="Edited"]')).toBeNull()
-    act(() => useQueueStore.setState({ files: [files[0], { ...files[1], edit }, files[2]] }))
-    expect(view.getAllByRole('img', { name: 'Edited' })).toHaveLength(2)
-  }
-)
 
 it('reuses the active editor frame for its thumbnail while preserving saved URLs and other photos', async () => {
   const files: X3FFileDTO[] = ['a', 'b'].map((id) => ({
@@ -197,4 +149,25 @@ it('keeps a thousand-file strip bounded, follows the cursor, and preserves previ
   fireEvent.keyDown(document.body, { key: 'ArrowRight' })
   expect(useQueueStore.getState().activeId).toBe('999')
   expect(view.container.querySelectorAll('[data-cell]').length).toBeLessThan(16)
+})
+
+it('selects the photo that it shows when nothing is selected', async () => {
+  const files: X3FFileDTO[] = ['a', 'b'].map((id) => ({
+    id,
+    path: `/photos/${id}.X3F`,
+    fileName: `${id}.X3F`
+  }))
+  useQueueStore.setState({ files, activeId: null, selectedIds: new Set() })
+  useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS }, loaded: true })
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    }
+  )
+  render(<FileFilmstrip />)
+  await waitFor(() => expect(useQueueStore.getState().selectedIds).toEqual(new Set(['a'])))
+  expect(useQueueStore.getState().activeId).toBe('a')
 })

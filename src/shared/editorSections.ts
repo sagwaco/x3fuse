@@ -23,14 +23,18 @@ export interface EditorSection {
   reset?: (recipe: EditRecipe) => Patch
 }
 
-/** Film settings of the Effects section. Light changes `evFilm`; Look changes the others. */
-const FILM_EFFECTS = [
+/** Film settings of the Grain section. */
+const FILM_GRAIN = [
   'grain',
   'grainParams',
   'grainSize',
   'grainAmount',
   'grainRoughness',
-  'grainSaturation',
+  'grainSaturation'
+] as const satisfies readonly (keyof FilmSettings)[]
+
+/** Film settings of the Halation section. */
+const FILM_HALATION = [
   'halation',
   'halationParams',
   'halationStrength',
@@ -40,6 +44,16 @@ const FILM_EFFECTS = [
   'scatterStrengthRgb',
   'halationSizeRgb',
   'halationStrengthRgb'
+] as const satisfies readonly (keyof FilmSettings)[]
+
+/** Print settings of the Darkroom section. The profile picks the film and its paper. */
+const FILM_DARKROOM = [
+  'evPaper',
+  'tuneY',
+  'tuneM',
+  'gammaFilm',
+  'gammaPaper',
+  'couplers'
 ] as const satisfies readonly (keyof FilmSettings)[]
 
 const pick = <T extends object, K extends keyof T>(object: T, keys: readonly K[]): Pick<T, K> =>
@@ -63,29 +77,41 @@ function effectsOf({ film, effects }: EditRecipe): EffectsSettings {
 const allowedFilter = (filter: MonochromeFilter, film: FilmSettings | null): MonochromeFilter =>
   !monochromeFilm(film) || FILM_MONOCHROME_FILTERS.includes(filter) ? filter : 'neutral'
 
-/** Grain and halation, of the film stock or of the look without one. */
-const effects: EditorSection = {
-  take: (from, to) =>
-    to.film
-      ? {
-          film: {
-            ...to.film,
-            ...(from.film ? pick(from.film, FILM_EFFECTS) : effectsOf(from))
+/**
+ * Grain or halation, of the film stock or of the profile without one. A reset sets the
+ * defaults of the film stock, or of the profile, and keeps the switch of the effect.
+ */
+function effectSection(effect: 'grain' | 'halation'): EditorSection {
+  const filmKeys = effect === 'grain' ? FILM_GRAIN : FILM_HALATION
+  const keys =
+    effect === 'grain'
+      ? (['grain', 'grainParams'] as const)
+      : (['halation', 'halationParams'] as const)
+  const params = keys[1]
+  return {
+    take: (from, to) =>
+      to.film
+        ? {
+            film: {
+              ...to.film,
+              ...(from.film ? pick(from.film, filmKeys) : pick(effectsOf(from), keys))
+            }
           }
-        }
-      : { effects: effectsOf(from) },
-  // The defaults of the film stock, or no effects.
-  reset: ({ film }) =>
-    film
-      ? {
-          film: {
-            ...film,
-            ...pick(DEFAULT_FILM, FILM_EFFECTS),
-            ...filmHalationDefaults(film.film),
-            grainParams: filmGrainDefaults(film.film)
+        : { effects: { ...effectsOf(to), ...pick(effectsOf(from), keys) } },
+    reset: (recipe) =>
+      recipe.film
+        ? {
+            film: {
+              ...recipe.film,
+              ...pick(DEFAULT_FILM, filmKeys),
+              ...(effect === 'grain'
+                ? { grainParams: filmGrainDefaults(recipe.film.film) }
+                : filmHalationDefaults(recipe.film.film)),
+              [effect]: recipe.film[effect]
+            }
           }
-        }
-      : { effects: null }
+        : { effects: { ...effectsOf(recipe), ...pick(DEFAULT_EFFECTS, [params]) } }
+  }
 }
 
 /**
@@ -129,21 +155,24 @@ export const EDITOR_SECTIONS = {
       recipe.rawColor ? { rawColor: { ...recipe.rawColor, matrix: [...IDENTITY_RAW_MATRIX] } } : {}
   },
   detail: { take: (from) => pick(from, ['sharpen', 'denoise', 'denoiseOptions']) },
-  look: {
-    // The camera look or the film stock, the paper, and the print. The film exposure, the
-    // effects, and the filter belong to other sections. They keep the values of `to`.
-    take: (from, to) => {
-      const look = pick(from, ['cameraProfile', 'monochrome', 'film', 'rawColor'])
-      if (to.rawColor && look.rawColor) look.rawColor.gains = [...to.rawColor.gains]
-      if (to.rawColor && !look.rawColor) look.rawColor = null
-      if (look.film) look.film.evFilm = to.film?.evFilm ?? DEFAULT_FILM.evFilm
-      if (look.monochrome)
-        look.monochrome.filter = allowedFilter(to.monochrome?.filter ?? 'neutral', look.film)
-      // Two camera looks keep `effects` as it is.
-      return to.film || look.film ? { ...look, ...effects.take(to, { ...to, ...look }) } : look
-    }
+  darkroom: {
+    // A paper prints only film of its own model, black-and-white or color.
+    take: (from, to) =>
+      from.film && to.film
+        ? {
+            film: {
+              ...to.film,
+              ...pick(from.film, FILM_DARKROOM),
+              ...(monochromeFilm(from.film) === monochromeFilm(to.film) && {
+                paper: from.film.paper
+              })
+            }
+          }
+        : {},
+    reset: ({ film }) => (film ? { film: { ...film, ...pick(DEFAULT_FILM, FILM_DARKROOM) } } : {})
   },
-  effects,
+  grain: effectSection('grain'),
+  halation: effectSection('halation'),
   filter: {
     take: (from, to) =>
       to.rawColor

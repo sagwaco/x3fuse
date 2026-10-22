@@ -478,7 +478,7 @@ export function EditorScreen(): React.JSX.Element {
       observer.disconnect()
       setScopeHidden(false)
     }
-  }, [sidebarShown])
+  }, [sidebarShown, editor.cropping])
   // The tiny scope goes away when the full one shows, so the focus moves to the scope area.
   const showScope = (): void => {
     const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
@@ -816,13 +816,13 @@ export function EditorScreen(): React.JSX.Element {
                 <Button
                   ref={cropButton}
                   variant="ghost"
-                  size="md"
+                  size="icon"
+                  aria-label={t('editor.crop')}
                   title={withShortcut(t('editor.crop'), 'crop')}
                   disabled={unavailable || x3iPending}
                   onClick={enterCrop}
                 >
                   <Crop className="h-4 w-4" aria-hidden="true" />
-                  {t('editor.crop')}
                 </Button>
               )}
               {(copyGroup || editGroup) && shows('done', 'export', 'panel') && (
@@ -1031,7 +1031,7 @@ export function EditorScreen(): React.JSX.Element {
                   >
                     <ArrowLeft className="h-4 w-4" aria-hidden="true" />
                   </Button>
-                  <h2>{t(sidebarPage === 'emulsion' ? 'editor.look' : 'editor.paperStock')}</h2>
+                  <h2>{t(sidebarPage === 'emulsion' ? 'editor.profiles' : 'editor.paperStock')}</h2>
                 </div>
               )}
             </div>
@@ -1085,27 +1085,42 @@ export function EditorScreen(): React.JSX.Element {
                 </div>
               )}
               <div hidden={sidebarPage !== 'edit'}>
-                <div ref={scopeBox} className="p-3">
-                  <div className="mb-2 flex items-center justify-between gap-2">
-                    {/* Shifted so the text lines up with the file name above. */}
-                    <ScopeMenu className="-ml-2 h-7 px-2.5" />
-                    <ScopeSourceControls value={scopeSource} onChange={chooseScope} />
-                  </div>
-                  {/* While out of view, only the header scope renders. */}
-                  <div
-                    id="scope-panel"
-                    role="tabpanel"
-                    aria-labelledby={`scope-tab-${scopeSource}`}
+                {doc && !editor.cropping && (
+                  <fieldset
+                    disabled={unavailable || editor.before || !!cloudFile}
+                    className="block px-3 pt-3"
                   >
-                    <ColorScope {...scopeProps} paused={scopeHidden} />
+                    <LookPicker
+                      kind="film"
+                      recipe={doc.recipe}
+                      onOpen={() => navigateSidebar('emulsion')}
+                    />
+                  </fieldset>
+                )}
+                {/* Crop mode has no scope. */}
+                {!editor.cropping && (
+                  <div ref={scopeBox} className="p-3">
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      {/* Shifted so the text lines up with the file name above. */}
+                      <ScopeMenu className="-ml-2 h-7 px-2.5" />
+                      <ScopeSourceControls value={scopeSource} onChange={chooseScope} />
+                    </div>
+                    {/* While out of view, only the header scope renders. */}
+                    <div
+                      id="scope-panel"
+                      role="tabpanel"
+                      aria-labelledby={`scope-tab-${scopeSource}`}
+                    >
+                      <ColorScope {...scopeProps} paused={scopeHidden} />
+                    </div>
+                    {/* For screen readers only: it gives the keyboard instructions. */}
+                    {qualifying && (
+                      <p role="status" className="sr-only">
+                        {t('editor.scopeQualifyHint')}
+                      </p>
+                    )}
                   </div>
-                  {/* For screen readers only: it gives the keyboard instructions. */}
-                  {qualifying && (
-                    <p role="status" className="sr-only">
-                      {t('editor.scopeQualifyHint')}
-                    </p>
-                  )}
-                </div>
+                )}
                 {doc && (
                   <>
                     {doc.storage === 'backup' && (

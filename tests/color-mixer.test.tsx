@@ -127,7 +127,7 @@ it('edits and resets all eight tone bands independently of HSL and warmth', asyn
     COLORS.map((color) => t(`editor.${color}`))
   )
   for (const color of COLORS) {
-    expect(screen.getByTitle(t(`editor.${color}`)).textContent).toBe(t(`editor.${color}`))
+    expect(screen.getByTitle(t(`editor.${color}`)).textContent).toBe(t(`editor.${color}`)[0])
     const slider = screen.getByRole('slider', { name: t(`editor.${color}`) })
     expect(slider.getAttribute('aria-valuenow')).toBe('0')
     expect(slider.getAttribute('aria-valuemin')).toBe('-100')

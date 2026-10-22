@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { useState, type Dispatch, type SetStateAction } from 'react'
+import { useEffect, useState, type Dispatch, type SetStateAction } from 'react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import {
@@ -23,6 +23,8 @@ let setRecipe: Dispatch<SetStateAction<EditRecipe>>
 function Effects({ initial = defaultRecipe() }: { initial?: EditRecipe }): React.JSX.Element {
   const [recipe, update] = useState(initial)
   setRecipe = update
+  // A section reset reads the recipe of the open photo.
+  useEffect(() => editor.setState({ documents: { '/a.X3F': { recipe } } } as never), [recipe])
   return <EffectsSection recipe={recipe} />
 }
 const lookRecipe = (): EditRecipe => ({ ...defaultRecipe(), film: null })
@@ -34,15 +36,18 @@ function adjust(label: string, value: number): void {
     target: { value: String(value) }
   })
 }
-function resetByLabel(effect: 'grain' | 'halation'): void {
-  fireEvent.click(screen.getByText(t(`editor.${effect}`), { selector: '.slider-label > span' }), {
-    shiftKey: true
-  })
+const header = (effect: 'grain' | 'halation'): HTMLElement =>
+  screen.getByText(t(`editor.${effect}`), { selector: 'summary' })
+/** Option-click on the section header resets the section. */
+function resetSection(effect: 'grain' | 'halation'): void {
+  fireEvent.click(header(effect), { altKey: true })
 }
 const film = (): EditRecipe['film'] => change.mock.lastCall?.[0].film
 const effects = (): EditRecipe['effects'] => change.mock.lastCall?.[0].effects
 const toggle = (effect: 'grain' | 'halation'): HTMLButtonElement =>
-  screen.getByRole('switch', { name: t(`editor.${effect}`) }) as HTMLButtonElement
+  screen.getByRole('switch', {
+    name: t(effect === 'grain' ? 'editor.enableGrain' : 'editor.enableHalation')
+  }) as HTMLButtonElement
 
 beforeEach(() => {
   vi.stubGlobal(
@@ -92,39 +97,40 @@ afterEach(() => {
 })
 
 it.each(['grain', 'halation'] as const)(
-  'resets %s with Shift-click on the label and guards disabled resets',
+  'resets %s with Option-click on the header and guards disabled resets',
   (effect) => {
     const recipe = defaultRecipe()
     recipe.film!.grainParams!.blur = 2
     recipe.film!.halationParams!.halationAmount = 3
     render(<Effects initial={recipe} />)
     const key = effect === 'grain' ? 'grainParams' : 'halationParams'
-    const label = screen.getByText(t(`editor.${effect}`), { selector: '.slider-label > span' })
-    fireEvent.click(label)
+    fireEvent.click(header(effect))
     expect(change).not.toHaveBeenCalled()
-    resetByLabel(effect)
+    resetSection(effect)
     expect(film()?.[effect]).toBe(recipe.film![effect])
     expect(film()?.[key]).toEqual(DEFAULT_FILM[key])
     act(() => editor.setState({ closing: true }))
     change.mockClear()
-    resetByLabel(effect)
+    resetSection(effect)
     expect(change).not.toHaveBeenCalled()
   }
 )
 
-it('puts each help button right after its label text, before the switch', () => {
+it('puts each switch in its section, also while the effect is off, with halation help after its label', () => {
   for (const recipe of [defaultRecipe(), lookRecipe()]) {
     const view = render(<Effects initial={recipe} />)
     for (const effect of ['grain', 'halation'] as const) {
-      const label = screen.getByText(t(`editor.${effect}`), {
-        selector: '.slider-label > span'
-      }).parentElement!
-      const help = label.nextElementSibling as HTMLElement
-      expect(help.tagName).toBe('BUTTON')
-      expect(help.getAttribute('aria-label')).toBe(t(`editor.${effect}`))
-      expect(label.parentElement).toBe(help.parentElement)
-      expect(label.parentElement!.nextElementSibling).toBe(toggle(effect).parentElement)
+      const section = header(effect).closest('details')!
+      expect(header(effect).querySelector('button')).toBeNull()
+      expect(section.contains(toggle(effect))).toBe(true)
     }
+    const label = screen.getByText(t('editor.enableHalation'), { selector: 'span' })
+    expect(label.querySelector('button')!.getAttribute('aria-label')).toBe(
+      t('editor.enableHalation')
+    )
+    expect(
+      screen.getByText(t('editor.enableGrain'), { selector: 'span' }).querySelector('button')
+    ).toBeNull()
     view.unmount()
   }
 })
@@ -150,7 +156,7 @@ it('moves all grain channels with the main slider and changes offsets independen
   fireEvent.click(toggle('grain'))
   expect(film()?.grain).toBe(false)
   expect(screen.queryByRole('slider', { name: t('editor.grainBlur') })).toBeNull()
-  resetByLabel('grain')
+  resetSection('grain')
   expect(film()).toMatchObject({ grain: false, grainParams: filmGrainDefaults(2) })
 })
 
@@ -211,7 +217,7 @@ it('keeps scatter and halation amount and size independent', () => {
   reset(t('editor.halationAmount'))
   expect(film()?.halationParams?.halationAmount).toBe(1)
   expect(film()?.halationParams?.halationSpatialScale).toBe(3)
-  resetByLabel('halation')
+  resetSection('halation')
   expect(film()?.halationParams).toEqual(DEFAULT_FILM.halationParams)
 })
 
@@ -233,7 +239,7 @@ it('preserves saved legacy effects until each effect is explicitly reset', () =>
   expect(screen.getAllByText(t('editor.legacyFilmEffect'))).toHaveLength(2)
   expect(screen.queryByRole('slider', { name: t('editor.grainBlur') })).toBeNull()
   expect(screen.queryByRole('slider', { name: t('editor.halationAmount') })).toBeNull()
-  resetByLabel('grain')
+  resetSection('grain')
   expect(film()).toMatchObject({
     grainParams: filmGrainDefaults(2),
     grainAmount: 1,
@@ -242,7 +248,7 @@ it('preserves saved legacy effects until each effect is explicitly reset', () =>
     halationParams: null,
     halationRadius: 0.004
   })
-  resetByLabel('halation')
+  resetSection('halation')
   expect(film()?.halationParams).toEqual(DEFAULT_FILM.halationParams)
 })
 
@@ -262,8 +268,8 @@ it('keeps effects off during reset and enables them only through native switches
     fireEvent.click(toggle(effect))
   }
   expect(change).not.toHaveBeenCalled()
-  resetByLabel('grain')
-  resetByLabel('halation')
+  resetSection('grain')
+  resetSection('halation')
   expect(film()).toMatchObject({ grain: false, halation: false })
   for (const effect of ['grain', 'halation'] as const) {
     expect(toggle(effect).disabled).toBe(false)
@@ -305,10 +311,10 @@ it('edits generic grain and halation sliders and resets them to the defaults', (
   expect(effects()?.grainParams).toMatchObject({ blur: 1.5, multUsmAmount: 0 })
   adjust(t('editor.halationAmount'), 2)
   expect(effects()?.halationParams.halationAmount).toBe(2)
-  resetByLabel('grain')
+  resetSection('grain')
   expect(effects()?.grainParams).toEqual(DEFAULT_EFFECTS.grainParams)
   expect(effects()).toMatchObject({ grain: true, halation: true })
-  resetByLabel('halation')
+  resetSection('halation')
   expect(effects()?.halationParams).toEqual(DEFAULT_EFFECTS.halationParams)
 })
 
@@ -351,26 +357,6 @@ it('explains the channel offsets once, beside their title', () => {
     expect(screen.queryByRole('button', { name: t(`editor.${channel}`) })).toBeNull()
 })
 
-it.each(['grain', 'halation'] as const)(
-  'resets %s from the focusable button between the help text and the switch',
-  (effect) => {
-    const recipe = defaultRecipe()
-    recipe.film!.halationParams!.halationAmount = 3
-    recipe.film!.grainParams!.blur = 2
-    render(<Effects initial={recipe} />)
-    const key = effect === 'grain' ? 'grainParams' : 'halationParams'
-    const button = screen.getByRole('button', {
-      name: t(effect === 'grain' ? 'editor.resetGrain' : 'editor.resetHalation')
-    })
-    expect(button.nextElementSibling).toBe(toggle(effect))
-    button.focus()
-    expect(document.activeElement).toBe(button)
-    // jsdom has no key activation, so the click stands for Enter or Space on a native button.
-    fireEvent.click(button)
-    expect(film()?.[key]).toEqual(DEFAULT_FILM[key])
-  }
-)
-
 it('initializes a legacy effect with the reset button while its switch is disabled', () => {
   const recipe = defaultRecipe()
   Object.assign(recipe.film!, { grainParams: null })
@@ -380,7 +366,7 @@ it('initializes a legacy effect with the reset button while its switch is disabl
   expect(film()?.grainParams).toEqual(filmGrainDefaults(2))
 })
 
-it('loads stock grain defaults and preserves adjustments when selecting the active stock', () => {
+it('loads stock grain defaults and preserves adjustments when selecting the active stock', async () => {
   const recipe = defaultRecipe()
   recipe.film!.grainParams = { rmsBase: 7, rmsGranularity: [9, 7, 5], blur: 1.2, multUsmAmount: 0 }
   function Both(): React.JSX.Element {
@@ -395,19 +381,24 @@ it('loads stock grain defaults and preserves adjustments when selecting the acti
   }
   render(<Both />)
   // The gallery shows one group of looks at a time.
-  const choose = (name: string, group?: string): void => {
-    if (group) fireEvent.click(screen.getByRole('button', { name: t(`editor.${group}`) }))
+  const choose = async (name: string, group?: string): Promise<void> => {
+    if (group) {
+      vi.stubGlobal('x3f', { invoke: () => Promise.resolve(group), on: () => () => {} })
+      await act(async () =>
+        fireEvent.click(screen.getByRole('button', { name: t('editor.filmGroups') }))
+      )
+    }
     fireEvent.click(screen.getByRole('button', { name }))
   }
-  choose('Kodak Portra 400')
+  await choose('Kodak Portra 400')
   expect(film()?.grainParams).toEqual(recipe.film!.grainParams)
-  choose('Kodak Gold 200')
+  await choose('Kodak Gold 200')
   expect(film()?.grainParams?.rmsGranularity).toEqual([5, 5, 5])
   expect(film()?.grainParams?.rmsBase).toBeUndefined()
   expect(film()?.grainParams).toMatchObject({ blur: 1.2, multUsmAmount: 0 })
-  choose('Kodak Vision3 500T', 'cinemaFilm')
+  await choose('Kodak Vision3 500T', 'cinemaFilm')
   expect(film()?.grainParams?.rmsGranularity).toEqual([9, 13, 30])
-  choose('Kodak Tri-X 7266', 'bwFilm')
+  await choose('Kodak Tri-X 7266', 'bwFilm')
   expect(film()?.grainParams?.rmsGranularity).toEqual([44, 44, 44])
   expect(screen.queryByRole('slider', { name: t('editor.green') })).toBeNull()
   adjust(t('editor.grainRmsGranularity'), 25)

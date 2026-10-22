@@ -173,9 +173,6 @@ vi.mock('../src/renderer/src/components/EditorControls', async () => {
           >
             Qualify blue
           </button>
-          <button data-sidebar-page="emulsion" onClick={() => onNavigate('emulsion')}>
-            Choose emulsion
-          </button>
           <button data-sidebar-page="paper" onClick={() => onNavigate('paper')}>
             Choose paper
           </button>
@@ -728,9 +725,9 @@ it('puts a divider before Done, then the Export menu and the panel toggle', asyn
   act(() => queue.setState({ selectedIds: new Set(), openExport }))
   fireEvent.click(screen.getByRole('button', { name: t('button.convert') }))
   expect(openExport).toHaveBeenCalledWith(new Set([file.id]), 'editor')
-  // Crop sits before the divider and Done, with its name shown.
+  // Crop sits before the divider and Done, as an icon only.
   const crop = screen.getByRole('button', { name: t('editor.crop') })
-  expect(crop.textContent).toBe(t('editor.crop'))
+  expect(crop.textContent).toBe('')
   expect(crop.nextElementSibling).toBe(done.previousElementSibling)
   expect(toggle.getAttribute('aria-pressed')).toBe('true')
   fireEvent.click(toggle)
@@ -795,13 +792,15 @@ it('names the photo in the panel header and shows its capture details from the i
   // ExifTool writes On for some flashes that fired, and Off with red-eye for one that did not.
   const flash = (): string | null =>
     within(card).getByRole('img', { name: /^O/ }).firstElementChild!.getAttribute('class')
-  expect(flash()).toContain('text-tone-100')
+  expect(flash()).toContain('lucide-zap ')
   act(() =>
     queue.setState({
       files: [{ ...file, exif: [...exif, { label: 'Flash', value: 'Off, Red-eye reduction' }] }]
     })
   )
-  expect(flash()).not.toContain('text-tone-100')
+  // A flash that did not fire shows crossed out, in the color of the other icons.
+  expect(flash()).toContain('lucide-zap-off')
+  expect(flash()).toContain('text-tone-400')
 })
 
 it('toggles the neutral picker with W', () => {
@@ -1267,6 +1266,10 @@ function openPaper(): void {
   fireEvent.click(screen.getByRole('button', { name: 'Choose paper' }))
 }
 
+/** The profile button above the scopes. */
+const profileButton = (): HTMLElement =>
+  screen.getByText(t('editor.profile'), { selector: '[data-sidebar-page] *' }).closest('button')!
+
 it('returns from the stock pages with focus and scroll restored', () => {
   const close = vi.fn(async () => true)
   editor.setState({
@@ -1280,16 +1283,18 @@ it('returns from the stock pages with focus and scroll restored', () => {
   const view = render(<EditorScreen />)
   const body = view.container.querySelector('aside .overflow-y-auto')!
   body.scrollTop = 120
-  fireEvent.click(screen.getByRole('button', { name: 'Choose emulsion' }))
+  fireEvent.click(profileButton())
   expect(screen.queryByRole('dialog')).toBeNull()
   expect(screen.queryByRole('button', { name: 'Pick white balance' })).toBeNull()
-  expect(screen.getByRole('button', { name: t('editor.cameraMatching') })).toBeTruthy()
+  expect(screen.getByRole('button', { name: t('editor.filmGroups') }).textContent).toBe(
+    t('editor.negativeFilm')
+  )
   const back = screen.getByRole('button', { name: t('editor.backToAdjustments') })
   expect(document.activeElement).toBe(back)
   expect(back.closest('.overflow-y-auto')).toBeNull()
   expect(body.scrollTop).toBe(0)
   fireEvent.click(screen.getByRole('button', { name: t('editor.backToAdjustments') }))
-  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Choose emulsion' }))
+  expect(document.activeElement).toBe(profileButton())
   expect(body.scrollTop).toBe(120)
   body.scrollTop = 64
   const paper = screen.getByRole('button', { name: 'Choose paper' })
@@ -1304,9 +1309,9 @@ it('returns from the stock pages with focus and scroll restored', () => {
   fireEvent.click(paper)
   fireEvent.click(screen.getByRole('button', { name: t('editor.backToAdjustments') }))
   expect(document.activeElement).toBe(paper)
-  fireEvent.click(screen.getByRole('button', { name: 'Choose emulsion' }))
+  fireEvent.click(profileButton())
   fireEvent.keyDown(document.body, { key: 'Escape' })
-  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Choose emulsion' }))
+  expect(document.activeElement).toBe(profileButton())
   fireEvent.keyDown(document.body, { key: 'Escape', repeat: true })
   expect(close).not.toHaveBeenCalled()
 })
@@ -1320,7 +1325,7 @@ it('returns to adjustments when crop opens or the photo changes', () => {
     renderThumbnail: vi.fn(async () => null)
   })
   render(<EditorScreen />)
-  fireEvent.click(screen.getByRole('button', { name: 'Choose emulsion' }))
+  fireEvent.click(profileButton())
   act(() => editor.setState({ cropping: true }))
   expect(screen.queryByRole('button', { name: t('editor.backToAdjustments') })).toBeNull()
   act(() => editor.setState({ cropping: false }))
@@ -1340,7 +1345,7 @@ it('keeps an X3I zoomable and its SFD RAW toggle usable while it merges, and mor
     renderThumbnail: vi.fn(async () => null)
   })
   const view = render(<EditorScreen />)
-  const controls = (): HTMLElement => screen.getByRole('button', { name: 'Choose emulsion' })
+  const controls = (): HTMLElement => screen.getByRole('button', { name: 'Choose paper' })
   const clouds = (): NodeListOf<Element> =>
     view.container.querySelectorAll('[data-placeholder], [data-condensing]')
   // Without a render, the embedded preview still zooms and pans. Its viewport stays

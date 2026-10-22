@@ -23,7 +23,6 @@ import { useQueueSelection, type QueueSelection } from '../hooks/useQueueSelecti
 import { useShownFiles } from '../hooks/useCulling'
 import { cn } from '../lib/cn'
 import { Thumbnail } from './Thumbnail'
-import { EditedBadge } from './EditedBadge'
 import { CullBadge } from './CullBadge'
 import { StackBadge } from './StackBadge'
 import { ZoomablePreview } from './ZoomablePreview'
@@ -53,6 +52,11 @@ export function FileFilmstrip({
     sorted.findIndex((f) => f.id === activeId)
   )
   const active = sorted[activeIndex]
+  // Select the fallback photo, so that the inspector shows the photo in the preview.
+  useEffect(() => {
+    if (active && active.id !== activeId)
+      useQueueStore.getState().setSelection(new Set([active.id]), active.id)
+  }, [active, activeId])
   // The strip loads the editor's pixels after the developing cloud leaves.
   const cloud = useContext(DevelopingCloud)
   const editorPreviewUrl = useEditorStore((state) =>
@@ -271,11 +275,12 @@ const FilmstripCell = memo(function FilmstripCell({
       onContextMenu={() => sel.handleItemContextMenu(file.id)}
       title={file.fileName}
       className={cn(
-        'relative h-[76px] w-[76px] shrink-0 cursor-default overflow-hidden rounded-md border',
+        'group relative h-[76px] w-[76px] shrink-0 cursor-default overflow-hidden rounded-md border',
+        // The offset leaves a clear gap between the image and the outline.
         active
-          ? 'border-accent ring-2 ring-accent/60'
+          ? 'border-transparent outline outline-2 outline-offset-2 outline-yellow-400'
           : selected
-            ? 'border-accent/70'
+            ? 'border-yellow-400/70'
             : 'border-ink/10 hover:border-ink/25'
       )}
     >
@@ -284,7 +289,6 @@ const FilmstripCell = memo(function FilmstripCell({
         className={cn('h-full w-full', file.flag === 'reject' && 'opacity-40')}
       />
       <CullBadge file={file} overlay />
-      <EditedBadge edit={file.edit} overlay />
       <StackBadge file={file} overlay />
     </div>
   )

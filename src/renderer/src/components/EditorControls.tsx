@@ -504,10 +504,12 @@ export const EditorControls = memo(function EditorControls({
   // Memo skips the parent's render, so this renders again for a new language.
   useLanguage()
   const [tab, setPanelTab] = useState<(typeof PANEL_TABS)[number][0]>('raw')
-  // The white balance picker lives on RAW, so leaving it disarms the picker.
+  // The white balance and mix pickers live on Grading, so leaving it disarms them.
   const setTab = (next: (typeof PANEL_TABS)[number][0]): void => {
-    if (next !== 'raw') setPicking(false)
-    if (next !== 'grading') setMixPicking?.(null)
+    if (next !== 'grading') {
+      setPicking(false)
+      setMixPicking?.(null)
+    }
     setPanelTab(next)
   }
   const change = useEditorStore((state) => state.change)
@@ -518,7 +520,7 @@ export const EditorControls = memo(function EditorControls({
   // While an X3I merges an SFD RAW that it uses, only the SFD RAW section works.
   const pending = useEditorStore(needsX3iMerge)
   const inert = pending ? { inert: '', className: 'opacity-50' } : {}
-  // When such a merge starts, RAW shows, because its progress is in the SFD RAW section.
+  // When such a merge starts, Develop shows, because its progress is in the SFD RAW section.
   const [wasPending, setWasPending] = useState(pending)
   if (pending !== wasPending) {
     setWasPending(pending)
@@ -605,14 +607,6 @@ export const EditorControls = memo(function EditorControls({
               >
                 <Curves recipe={recipe} />
               </Section>
-              <Section id="whiteBalance" name={t('editor.whiteBalance')}>
-                <WhiteBalanceControls
-                  key={`${useEditorStore.getState().session?.sessionId}:${!!recipe.rawColor}`}
-                  recipe={recipe}
-                  picking={picking}
-                  setPicking={setPicking}
-                />
-              </Section>
               <Section id="detail" name={t('editor.detail')}>
                 {control('sharpen', { min: 0, max: 100 })}
                 {control('denoise', { min: 0, max: 10, help: t('editor.denoiseHelp') })}
@@ -629,20 +623,30 @@ export const EditorControls = memo(function EditorControls({
           )}
           {tab === 'film' && (
             <>
-              <Section id="look" name={t('editor.look')}>
-                <LookPicker kind="film" recipe={recipe} onOpen={() => onNavigate('emulsion')} />
-                {/* A positive (slide) film is viewed directly. Printing it on negative
-                    paper inverts it, so offer the papers only to undo that. */}
-                {recipe.film && (!positiveFilm(recipe.film) || !recipe.film.negative) && (
-                  <LookPicker kind="paper" recipe={recipe} onOpen={() => onNavigate('paper')} />
-                )}
-                {recipe.film && <FilmControls film={recipe.film} />}
-              </Section>
+              {/* Only a film stock has a print to make. */}
+              {recipe.film && (
+                <Section id="darkroom" name={t('editor.darkroom')}>
+                  {/* A positive (slide) film is viewed directly. Printing it on negative
+                      paper inverts it, so offer the papers only to undo that. */}
+                  {(!positiveFilm(recipe.film) || !recipe.film.negative) && (
+                    <LookPicker kind="paper" recipe={recipe} onOpen={() => onNavigate('paper')} />
+                  )}
+                  <FilmControls film={recipe.film} />
+                </Section>
+              )}
               <EffectsSection recipe={recipe} />
             </>
           )}
           {tab === 'grading' && (
             <>
+              <Section id="whiteBalance" name={t('editor.whiteBalance')}>
+                <WhiteBalanceControls
+                  key={`${useEditorStore.getState().session?.sessionId}:${!!recipe.rawColor}`}
+                  recipe={recipe}
+                  picking={picking}
+                  setPicking={setPicking}
+                />
+              </Section>
               {recipe.rawColor && (
                 <>
                   <Section

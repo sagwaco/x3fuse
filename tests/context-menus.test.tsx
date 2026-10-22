@@ -42,15 +42,16 @@ function changed(before: object, after: object, nested = true): string[] {
     })
     .sort()
 }
-const LOOK = ['film', 'paper', 'negative', 'evPaper', 'couplers', 'couplersRadius']
-const PRINT = ['gammaFilm', 'gammaPaper', 'tuneM', 'tuneY']
-const EFFECTS = [
+const DARKROOM = ['paper', 'evPaper', 'couplers', 'gammaFilm', 'gammaPaper', 'tuneM', 'tuneY']
+const GRAIN = [
   'grain',
   'grainParams',
   'grainSize',
   'grainAmount',
   'grainRoughness',
-  'grainSaturation',
+  'grainSaturation'
+]
+const HALATION = [
   'halation',
   'halationParams',
   'halationStrength',
@@ -92,8 +93,9 @@ describe('editor sections', () => {
     whiteBalance: ['temperature', 'tint', 'whiteBalanceGains'],
     channels: [],
     detail: ['denoise', 'denoiseOptions', 'sharpen'],
-    look: ['cameraProfile', 'monochrome', ...film([...LOOK, ...PRINT])],
-    effects: film(EFFECTS),
+    darkroom: film(DARKROOM),
+    grain: film(GRAIN),
+    halation: film(HALATION),
     filter: ['monochrome'],
     color: ['saturation', 'vibrance', 'warmth'],
     toneMixer: ['toneMixer'],
@@ -108,16 +110,23 @@ describe('editor sections', () => {
 
   it('moves effects and film exposure between film and camera looks', () => {
     const camera = { ...to, film: null }
-    expect(EDITOR_SECTIONS.effects.take(to, camera)).toEqual({
+    expect(EDITOR_SECTIONS.grain.take(to, camera)).toEqual({
       effects: {
+        ...DEFAULT_EFFECTS,
         grain: DEFAULT_FILM.grain,
-        grainParams: DEFAULT_FILM.grainParams,
+        grainParams: DEFAULT_FILM.grainParams
+      }
+    })
+    expect(EDITOR_SECTIONS.halation.take(to, camera)).toEqual({
+      effects: {
+        ...DEFAULT_EFFECTS,
         halation: DEFAULT_FILM.halation,
         halationParams: DEFAULT_FILM.halationParams
       }
     })
-    const withEffects = { ...camera, ...EDITOR_SECTIONS.effects.take(from, camera) }
+    const withEffects = { ...camera, ...EDITOR_SECTIONS.grain.take(from, camera) }
     expect(changed(camera, withEffects)).toEqual(['effects'])
+    expect(EDITOR_SECTIONS.darkroom.take(from, camera)).toEqual({})
     expect(changed(camera, { ...camera, ...EDITOR_SECTIONS.light.take(from, camera) })).toEqual([
       'blacks',
       'contrast',
@@ -129,59 +138,14 @@ describe('editor sections', () => {
     ])
   })
 
-  it('pastes a look and keeps the film exposure, effects, and filter of the target', () => {
-    const paste = (source: EditRecipe, target: EditRecipe): EditRecipe => ({
-      ...target,
-      ...EDITOR_SECTIONS.look.take(source, target)
-    })
-    const camera: EditRecipe = {
-      ...to,
-      film: null,
-      effects: { ...DEFAULT_EFFECTS, grain: true },
-      monochrome: { filter: 'green' }
-    }
-    const target: EditRecipe = { ...to, film: { ...DEFAULT_FILM, evFilm: 1.5, grain: false } }
-    // Film on a camera look: the stock comes, and the exposure and effects of the target stay.
-    const filmOnCamera = paste(from, camera)
-    expect(filmOnCamera.film).toEqual({
-      ...from.film,
-      evFilm: DEFAULT_FILM.evFilm,
-      ...camera.effects
-    })
-    expect(filmOnCamera.monochrome).toEqual({ filter: 'green' })
-    // A camera look on a film: the grain and halation of the film become the camera effects.
-    const cameraOnFilm = paste({ ...camera, cameraProfile: 'Vivid' }, target)
-    expect(cameraOnFilm).toMatchObject({
-      cameraProfile: 'Vivid',
-      film: null,
-      monochrome: { filter: 'neutral' },
-      effects: {
-        grain: false,
-        grainParams: DEFAULT_FILM.grainParams,
-        halation: DEFAULT_FILM.halation,
-        halationParams: DEFAULT_FILM.halationParams
-      }
-    })
-    // Two camera looks do not write the effects.
-    expect(EDITOR_SECTIONS.look.take(camera, { ...camera, effects: null })).not.toHaveProperty(
-      'effects'
-    )
-    // Film on film.
-    expect(paste(from, target).film).toMatchObject({
-      film: from.film!.film,
-      evFilm: 1.5,
-      grain: false
-    })
-  })
-
   it('pastes only the filters that a black-and-white stock can use', () => {
     const stock = stocks.find((item) => !item.isPaper && item.monochrome)!
     const film: EditRecipe = { ...to, film: { ...DEFAULT_FILM, film: stock.index } }
     const blue: EditRecipe = { ...to, film: null, monochrome: { filter: 'blue' } }
     expect(EDITOR_SECTIONS.filter.take(blue, film)).toEqual({ monochrome: { filter: 'neutral' } })
     expect(EDITOR_SECTIONS.filter.take(blue, to)).toEqual({ monochrome: { filter: 'blue' } })
-    const look = EDITOR_SECTIONS.look.take({ ...film, monochrome: { filter: 'red' } }, blue)
-    expect(look.monochrome).toEqual({ filter: 'neutral' })
+    // A paper prints only film of its own model.
+    expect(EDITOR_SECTIONS.darkroom.take(to, film).film).toMatchObject({ paper: film.film!.paper })
   })
 
   it('resets Light with a film look and keeps the stock, paper, and effects', () => {
@@ -193,34 +157,37 @@ describe('editor sections', () => {
     expect(changed(recipe, after)).toEqual(expected.light.sort())
   })
 
-  it('resets the effects to the defaults of the stock, and the look to the camera', () => {
+  it('resets the effects to the defaults of the stock or the profile, and the darkroom print', () => {
     const recipe = { ...to, film: { ...from.film!, film: DEFAULT_FILM.film } }
     const defaults = { ...defaultRecipe(), film: null, cameraProfile: 'Standard' }
-    const effects = { ...recipe, ...resetSection(EDITOR_SECTIONS.effects, recipe, defaults) }
-    expect(effects.film).toMatchObject({
+    const reset = (id: SectionId, value: EditRecipe): EditRecipe => ({
+      ...value,
+      ...resetSection(EDITOR_SECTIONS[id], value, defaults)
+    })
+    expect(reset('grain', recipe).film).toMatchObject({
       film: DEFAULT_FILM.film,
       evFilm: recipe.film.evFilm,
       paper: recipe.film.paper,
-      grain: DEFAULT_FILM.grain,
+      grain: recipe.film.grain,
       grainParams: filmGrainDefaults(DEFAULT_FILM.film),
+      halation: recipe.film.halation
+    })
+    expect(reset('halation', recipe).film).toMatchObject({
+      grain: recipe.film.grain,
+      halation: recipe.film.halation,
       halationParams: DEFAULT_FILM.halationParams
     })
-    expect(resetSection(EDITOR_SECTIONS.effects, from, defaults)).not.toHaveProperty('effects')
-    const camera = { ...to, film: null, effects: DEFAULT_EFFECTS }
-    expect(resetSection(EDITOR_SECTIONS.effects, camera, defaults)).toEqual({ effects: null })
-    // The effects of the film stay as the effects of the camera look.
-    expect(resetSection(EDITOR_SECTIONS.look, recipe, defaults)).toEqual({
-      cameraProfile: 'Standard',
-      monochrome: null,
-      rawColor: null,
-      film: null,
-      effects: {
-        grain: recipe.film.grain,
-        grainParams: recipe.film.grainParams,
-        halation: recipe.film.halation,
-        halationParams: recipe.film.halationParams
-      }
+    expect(reset('darkroom', recipe).film).toMatchObject({
+      paper: recipe.film.paper,
+      gammaFilm: DEFAULT_FILM.gammaFilm,
+      evPaper: DEFAULT_FILM.evPaper
     })
+    expect(resetSection(EDITOR_SECTIONS.grain, from, defaults)).not.toHaveProperty('effects')
+    // Without a film stock, the settings reset and the switch stays.
+    const grainParams = { ...DEFAULT_EFFECTS.grainParams, blur: 3 }
+    const camera = { ...to, film: null, effects: { ...DEFAULT_EFFECTS, grain: true, grainParams } }
+    expect(reset('grain', camera).effects).toEqual({ ...DEFAULT_EFFECTS, grain: true })
+    expect(resetSection(EDITOR_SECTIONS.darkroom, camera, defaults)).toEqual({})
   })
 })
 

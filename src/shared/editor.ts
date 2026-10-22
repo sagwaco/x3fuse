@@ -236,6 +236,8 @@ export const DEFAULT_EFFECTS: EffectsSettings = {
   halation: false,
   halationParams: { ...DEFAULT_FILM.halationParams! }
 }
+/** The effects that a camera matching profile starts with: grain and halation on. */
+export const CAMERA_EFFECTS: EffectsSettings = { ...DEFAULT_EFFECTS, grain: true, halation: true }
 /** RMS values from the bundled Spektrafilm grain presets. */
 export function filmGrainDefaults(film: number): GrainParams {
   const stock = stocks.find((item) => !item.isPaper && item.index === film)

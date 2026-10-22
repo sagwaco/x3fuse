@@ -83,7 +83,7 @@ export function ToneMixer({ recipe }: { recipe: EditRecipe }): React.JSX.Element
         <Adjustment
           key={name}
           label={t(`editor.${name}`)}
-          row
+          short={Array.from(t(`editor.${name}`))[0]}
           value={values[band]}
           track={`linear-gradient(to right, ${hsl(hue, 70, 15)}, ${hsl(hue, 70, 85)})`}
           change={(value, save) => set(band, value, save)}

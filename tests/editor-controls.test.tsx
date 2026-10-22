@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import {
   AEROCHROME_MATRIX,
+  CAMERA_EFFECTS,
   DEFAULT_FILM,
   FILM_MONOCHROME_FILTERS,
   MONOCHROME_FILTERS,
@@ -57,12 +58,16 @@ function Controls({ initial = defaultRecipe() }: { initial?: EditRecipe }): Reac
     <>
       {page !== 'edit' && <button onClick={() => setPage('edit')}>Back</button>}
       {page === 'edit' ? (
-        <EditorControls
-          recipe={recipe}
-          picking={false}
-          setPicking={setPicking}
-          onNavigate={setPage}
-        />
+        <>
+          {/* The editor screen shows the profile above the scopes. */}
+          <LookPicker kind="film" recipe={recipe} onOpen={() => setPage('emulsion')} />
+          <EditorControls
+            recipe={recipe}
+            picking={false}
+            setPicking={setPicking}
+            onNavigate={setPage}
+          />
+        </>
       ) : (
         <>
           <div hidden={page !== 'emulsion'}>
@@ -101,7 +106,7 @@ function darkroom(): void {
 function picker(caption: string): HTMLElement {
   panelTab('film')
   fireEvent.click(
-    screen.getByText(caption === t('editor.paperStock') ? caption : t('editor.look'), {
+    screen.getByText(caption === t('editor.paperStock') ? caption : t('editor.profile'), {
       selector: '[data-sidebar-page] *'
     })
   )
@@ -116,17 +121,28 @@ const GROUPS = [
   'fullSpectrum'
 ]
 /** A look button of the gallery, which shows one group at a time. */
-function look(name: string): HTMLElement {
+async function look(name: string): Promise<HTMLElement> {
   for (const group of GROUPS) {
     const found = screen.queryByRole('button', { name })
     if (found) return found
-    fireEvent.click(screen.getByRole('button', { name: t(`editor.${group}`) }))
+    await chooseGroup(group)
   }
   return screen.getByRole('button', { name })
 }
-function chooseFilm(name: string): void {
-  picker(t('editor.filmStock'))
-  fireEvent.click(look(name))
+/** Shows a group of the gallery through its native menu. */
+async function chooseGroup(group: string): Promise<void> {
+  const base = invoke.getMockImplementation()
+  invoke.mockImplementation((command, payload) =>
+    command === 'menu:popup' ? Promise.resolve(group) : base?.(command, payload)
+  )
+  await act(async () =>
+    fireEvent.click(screen.getByRole('button', { name: t('editor.filmGroups') }))
+  )
+  invoke.mockImplementation(base ?? (() => undefined))
+}
+async function chooseFilm(name: string): Promise<void> {
+  picker(t('editor.profiles'))
+  fireEvent.click(await look(name))
   back()
 }
 function reset(label: string): void {
@@ -208,7 +224,7 @@ afterEach(() => {
 const sections = (container: HTMLElement): Array<string | null> =>
   [...container.querySelectorAll('summary')].map((node) => node.textContent)
 
-it('groups the sidebar into RAW, FILM and GRADING tabs that start on RAW', () => {
+it('groups the sidebar into DEVELOP, FILM and GRADING tabs that start on DEVELOP', () => {
   const view = render(<Controls />)
   expect(screen.getAllByRole('tab').map((tab) => tab.getAttribute('aria-selected'))).toEqual([
     'true',
@@ -218,40 +234,43 @@ it('groups the sidebar into RAW, FILM and GRADING tabs that start on RAW', () =>
   expect(sections(view.container)).toEqual([
     t('editor.light'),
     t('editor.curves'),
-    t('editor.whiteBalance'),
     t('editor.detail'),
     t('denoise.advanced')
   ])
   panelTab('film')
   expect(sections(view.container)).toEqual([
-    t('editor.look'),
-    t('editor.effects'),
-    t('editor.grainChannelOffsets')
+    t('editor.darkroom'),
+    t('editor.grain'),
+    t('editor.grainChannelOffsets'),
+    t('editor.halation')
   ])
-  const button = screen.getByText(t('editor.look'), { selector: '[data-sidebar-page] *' })
+  const button = screen.getByText(t('editor.profile'), { selector: '[data-sidebar-page] *' })
   const paper = screen.getByText(t('editor.paperStock'), { selector: '[data-sidebar-page] *' })
   expect(button.compareDocumentPosition(paper) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   expect(screen.getByRole('slider', { name: t('editor.gammaFilm') })).toBeTruthy()
   panelTab('grading')
-  expect(sections(view.container).slice(0, 1)).toEqual([t('editor.color')])
-  expect(sections(view.container)).not.toContain(t('editor.effects'))
+  expect(sections(view.container).slice(0, 2)).toEqual([
+    t('editor.whiteBalance'),
+    t('editor.color')
+  ])
+  expect(sections(view.container)).not.toContain(t('editor.grain'))
 })
 
-it('supports arrow keys between the panel tabs and shows only the film button without a stock', () => {
+it('supports arrow keys between the panel tabs and hides the darkroom without a stock', () => {
   const view = render(<Controls />)
   const tabs = screen.getAllByRole('tab')
   expect(tabs.map((tab) => tab.textContent)).toEqual(
     ['tabRaw', 'tabFilm', 'tabGrading'].map((key) => t(`editor.${key}`))
   )
   fireEvent.keyDown(tabs[0], { key: 'ArrowRight' })
-  expect(setPicking).toHaveBeenLastCalledWith(false)
   expect(tabs[1].getAttribute('aria-selected')).toBe('true')
   expect(document.activeElement).toBe(tabs[1])
-  fireEvent.keyDown(tabs[1], { key: 'End' })
-  expect(tabs[2].getAttribute('aria-selected')).toBe('true')
   setPicking.mockClear()
-  fireEvent.keyDown(tabs[2], { key: 'ArrowRight' })
+  fireEvent.keyDown(tabs[1], { key: 'End' })
   expect(setPicking).not.toHaveBeenCalled()
+  expect(tabs[2].getAttribute('aria-selected')).toBe('true')
+  fireEvent.keyDown(tabs[2], { key: 'ArrowRight' })
+  expect(setPicking).toHaveBeenLastCalledWith(false)
   expect(tabs[0].getAttribute('aria-selected')).toBe('true')
   fireEvent.keyDown(tabs[0], { key: 'ArrowLeft' })
   expect(tabs[2].getAttribute('aria-selected')).toBe('true')
@@ -260,7 +279,8 @@ it('supports arrow keys between the panel tabs and shows only the film button wi
   fireEvent.click(tabs[1])
   expect(setPicking).toHaveBeenCalledWith(false)
   act(() => setRecipe({ ...defaultRecipe(), film: null }))
-  expect(sections(view.container)).toEqual([t('editor.look'), t('editor.effects')])
+  // Without a film stock, there is no darkroom.
+  expect(sections(view.container)).toEqual([t('editor.grain'), t('editor.halation')])
   expect(
     screen.queryByText(t('editor.paperStock'), { selector: '[data-sidebar-page] *' })
   ).toBeNull()
@@ -272,13 +292,10 @@ it('opens every section until it is closed, and keeps closed sections closed', a
   const details = (label: string): HTMLDetailsElement =>
     screen.getByText(label, { selector: 'summary' }).closest('details')!
   const advanced = t('denoise.advanced')
-  const raw = [
-    ...['light', 'curves', 'whiteBalance', 'detail'].map((key) => t(`editor.${key}`)),
-    advanced
-  ]
+  const raw = [...['light', 'curves', 'detail'].map((key) => t(`editor.${key}`)), advanced]
   const open = (): boolean[] => raw.map((label) => details(label).open)
   render(<Controls />)
-  expect(open()).toEqual([true, true, true, true, true])
+  expect(open()).toEqual([true, true, true, true])
   // Each write keeps the states that the other sections stored.
   for (const label of [t('editor.curves'), t('editor.detail'), advanced])
     fireEvent.click(screen.getByText(label, { selector: 'summary' }))
@@ -291,22 +308,22 @@ it('opens every section until it is closed, and keeps closed sections closed', a
   )
   cleanup()
   render(<Controls />)
-  expect(open()).toEqual([true, false, true, false, false])
+  expect(open()).toEqual([true, false, false, false])
   panelTab('film')
-  expect(details(t('editor.look')).open && details(t('editor.effects')).open).toBe(true)
+  expect(details(t('editor.darkroom')).open && details(t('editor.grain')).open).toBe(true)
   panelTab('raw')
-  expect(open()).toEqual([true, false, true, false, false])
+  expect(open()).toEqual([true, false, false, false])
   // A fresh storage, or one that fails, opens every section.
   cleanup()
   localStorage.clear()
   render(<Controls />)
-  expect(open()).toEqual([true, true, true, true, true])
+  expect(open()).toEqual([true, true, true, true])
   const failing = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
     throw new Error('denied')
   })
   cleanup()
   render(<Controls />)
-  expect(open()).toEqual([true, true, true, true, true])
+  expect(open()).toEqual([true, true, true, true])
   failing.mockRestore()
   // Without a storage id, as in the conversion form, Advanced starts closed and stores nothing.
   cleanup()
@@ -380,79 +397,50 @@ it('binds Exposure to the film when a stock is chosen and to the digital pipelin
   expect(change).toHaveBeenLastCalledWith({ film: DEFAULT_FILM })
 })
 
-it('shows the chosen film stock as a labeled canister on the Emulsion button', () => {
-  const canister = (kind: 'film' | 'paper', recipe: Partial<EditRecipe>): string[] | null => {
-    const view = render(<LookPicker kind={kind} recipe={{ ...defaultRecipe(), ...recipe }} />)
-    const label = view.container.querySelector('svg text')
-    view.unmount()
-    return label && [label.textContent!, label.getAttribute('fill')!]
-  }
-  const film = (index: number): Partial<EditRecipe> => ({ film: { ...DEFAULT_FILM, film: index } })
-  expect(canister('film', film(14))).toEqual(['200', '#009a49'])
-  expect(canister('film', film(11))).toEqual(['500T', '#f7b218'])
-  expect(canister('film', { ...film(20), monochrome: { filter: 'neutral' } })).toEqual([
-    '5222',
-    '#f2f2ec'
-  ])
-  expect(
-    canister('film', {
-      film: { ...DEFAULT_FILM, film: 15, negative: true },
-      rawColor: { gains: [2, 1, 0.5], matrix: AEROCHROME_MATRIX }
-    })
-  ).toEqual(['IR', '#f7b218'])
-  expect(
-    canister('film', {
-      film: { ...DEFAULT_FILM, film: 15, negative: true },
-      cameraProfile: 'FCBlue'
-    })
-  ).toEqual(['100', '#f7b218'])
-  expect(canister('film', { film: null })).toBeNull()
-  expect(canister('paper', film(14))).toBeNull()
-})
-
 it('previews every film stock on the photo and pairs each with its print paper', async () => {
   vi.stubGlobal('PointerEvent', MouseEvent)
   render(<Controls />)
   panelTab('film')
   expect(screen.queryByRole('tooltip')).toBeNull()
   expect(renderThumbnail).not.toHaveBeenCalled()
-  const gallery = picker(t('editor.filmStock'))
+  const gallery = picker(t('editor.profiles'))
   expect(screen.queryByRole('dialog')).toBeNull()
   // The gallery opens on the group of the selected look and renders only its thumbnails.
-  const groupButton = (group: string): HTMLElement =>
-    screen.getByRole('button', { name: t(`editor.${group}`) })
-  expect(groupButton('negativeFilm').ariaPressed).toBe('true')
+  const shownGroup = (): string | null =>
+    screen.getByRole('button', { name: t('editor.filmGroups') }).textContent
+  expect(shownGroup()).toBe(t('editor.negativeFilm'))
   expect(screen.queryAllByRole('heading')).toHaveLength(0)
   expect(screen.queryByRole('button', { name: t('editor.standard') })).toBeNull()
-  fireEvent.click(groupButton('cameraMatching'))
+  await chooseGroup('cameraMatching')
   await waitFor(() => expect(renderThumbnail).toHaveBeenCalledTimes(2))
   expect(renderThumbnail.mock.calls[0][0].film).toBeNull()
   expect(renderThumbnail.mock.calls[1][0].monochrome).toEqual({ filter: 'neutral' })
   await waitFor(() => expect(gallery.querySelectorAll('img')).toHaveLength(2))
   expect(screen.queryByRole('button', { name: 'Kodak Vision3 250D' })).toBeNull()
-  fireEvent.click(groupButton('cinemaFilm'))
-  expect(groupButton('cinemaFilm').ariaPressed).toBe('true')
-  expect(groupButton('cameraMatching').ariaPressed).toBe('false')
+  await chooseGroup('cinemaFilm')
+  expect(shownGroup()).toBe(t('editor.cinemaFilm'))
   expect(screen.queryByRole('button', { name: t('editor.standard') })).toBeNull()
-  fireEvent.click(look('Kodak Vision3 250D'))
+  fireEvent.click(await look('Kodak Vision3 250D'))
   expect(film()).toMatchObject({ film: 9, paper: 5, negative: false })
   // Slides are scanned directly, so they show the film itself.
-  fireEvent.click(look('Fujifilm Velvia 100'))
+  fireEvent.click(await look('Fujifilm Velvia 100'))
   expect(film()).toMatchObject({ film: 18, paper: 5, negative: true })
-  expect(look('Fujifilm Velvia 100').ariaPressed).toBe('true')
-  fireEvent.click(look(t('editor.standard')))
+  expect((await look('Fujifilm Velvia 100')).ariaPressed).toBe('true')
+  fireEvent.click(await look(t('editor.standard')))
   expect(change).toHaveBeenLastCalledWith({
     film: null,
     monochrome: null,
     cameraProfile: 'Standard',
-    rawColor: null
+    rawColor: null,
+    // Camera matching starts with grain and halation on.
+    effects: CAMERA_EFFECTS
   })
-  expect(screen.queryByRole('switch', { name: t('editor.grain') })).toBeNull()
+  expect(screen.queryByRole('switch', { name: t('editor.enableGrain') })).toBeNull()
   panelTab('film')
   expect(screen.getByText(t('editor.standard'), { selector: '[data-sidebar-page] *' })).toBeTruthy()
 })
 
-it('offers black-and-white looks with their own filters, papers and darkroom', () => {
+it('offers black-and-white looks with their own filters, papers and darkroom', async () => {
   render(<Controls />)
   const filters = (): Array<string | null> => {
     panelTab('grading')
@@ -468,7 +456,7 @@ it('offers black-and-white looks with their own filters, papers and darkroom', (
     return names
   }
   expect(papers()).not.toContain('Kodak 2302')
-  chooseFilm('Kodak Double-X 5222')
+  await chooseFilm('Kodak Double-X 5222')
   expect(change).toHaveBeenLastCalledWith({
     film: {
       ...DEFAULT_FILM,
@@ -489,7 +477,7 @@ it('offers black-and-white looks with their own filters, papers and darkroom', (
   back()
   fireEvent.click(swatch(t('editor.filter'), t('editor.red')))
   expect(change).toHaveBeenLastCalledWith({ monochrome: { filter: 'red' } })
-  chooseFilm('Kodak Tri-X 7266')
+  await chooseFilm('Kodak Tri-X 7266')
   expect(film()).toMatchObject({ film: 21, paper: 8, negative: true })
   darkroom()
   expect(screen.queryByText(t('editor.paperStock'))).toBeNull()
@@ -498,18 +486,20 @@ it('offers black-and-white looks with their own filters, papers and darkroom', (
   // A reversal film is already a positive, so there is nothing to invert.
   expect(screen.queryByRole('switch', { name: t('editor.negativePreview') })).toBeNull()
   expect(screen.getByRole('slider', { name: t('editor.gammaFilm') })).toBeTruthy()
-  chooseFilm(t('editor.monochrome'))
+  await chooseFilm(t('editor.monochrome'))
   expect(change).toHaveBeenLastCalledWith({
     film: null,
     monochrome: { filter: 'red' },
     cameraProfile: 'Monochrome',
-    rawColor: null
+    rawColor: null,
+    // Camera matching starts with grain and halation on.
+    effects: CAMERA_EFFECTS
   })
   expect(filters()).toEqual(MONOCHROME_FILTERS.map((filter) => t(`editor.${filter}`)))
   fireEvent.click(swatch(t('editor.filter'), t('editor.blue')))
-  chooseFilm('Kodak Double-X 5222')
+  await chooseFilm('Kodak Double-X 5222')
   expect(change.mock.lastCall?.[0].monochrome).toEqual({ filter: 'neutral' })
-  chooseFilm('Kodak Portra 400')
+  await chooseFilm('Kodak Portra 400')
   expect(change).toHaveBeenLastCalledWith({
     film: DEFAULT_FILM,
     monochrome: null,
@@ -635,7 +625,7 @@ it('sets Fill Light on the SIGMA Photo Pro scale, -2 to 2 in steps of 0.1', () =
   expect(change.mock.lastCall?.[0].fillLight).toBeCloseTo(0.5)
 })
 
-it('selects the logged camera profile and separates camera matching from film stocks', () => {
+it('selects the logged camera profile and separates camera matching from film stocks', async () => {
   editor.setState({
     session: {
       ...editor.getState().session!,
@@ -651,23 +641,25 @@ it('selects the logged camera profile and separates camera matching from film st
   render(<Controls initial={{ ...defaultRecipe(), film: null, cameraProfile: 'FCBlue' }} />)
   panelTab('film')
   expect(screen.getByText('FOV Blue')).toBeTruthy()
-  picker(t('editor.filmStock'))
+  picker(t('editor.profiles'))
   expect(screen.getByRole('button', { name: 'FOV Blue' }).ariaPressed).toBe('true')
   fireEvent.click(screen.getByRole('button', { name: 'Forest Green' }))
   expect(change).toHaveBeenLastCalledWith({
     cameraProfile: 'ForestGreen',
     film: null,
     monochrome: null,
-    rawColor: null
+    rawColor: null,
+    // Camera matching starts with grain and halation on.
+    effects: CAMERA_EFFECTS
   })
-  fireEvent.click(look('Kodak Portra 400'))
+  fireEvent.click(await look('Kodak Portra 400'))
   expect(change.mock.lastCall?.[0].cameraProfile).toBeNull()
 })
 
 /** Hover the Aerochrome thumbnail and return its tooltip text. */
 async function aerochromeHelp(): Promise<string> {
   vi.stubGlobal('PointerEvent', MouseEvent)
-  const button = look(t('editor.aerochrome'))
+  const button = await look(t('editor.aerochrome'))
   fireEvent.pointerMove(button.parentElement!, { pointerType: 'mouse' })
   return (await screen.findByRole('tooltip')).textContent!
 }
@@ -681,7 +673,7 @@ it('selects and restores Aerochrome with raw gains and Ektachrome without inject
     film: { ...DEFAULT_FILM, film: 20, paper: 8, evFilm: 0.5 }
   }
   render(<Controls initial={initial} />)
-  chooseFilm(t('editor.aerochrome'))
+  await chooseFilm(t('editor.aerochrome'))
   expect(change.mock.lastCall?.[0]).toMatchObject({
     cameraProfile: null,
     rawColor: { gains: [2, 1, 0.5], matrix: AEROCHROME_MATRIX },
@@ -699,7 +691,7 @@ it('selects and restores Aerochrome with raw gains and Ektachrome without inject
   const saved: EditRecipe = JSON.parse(JSON.stringify({ ...initial, ...change.mock.lastCall?.[0] }))
   expect(saved.temperature).toBe(2335)
   expect(saved.tint).toBe(115)
-  panelTab('raw')
+  panelTab('grading')
   expect(screen.getByRole('slider', { name: t('editor.rawTemperature') })).toBeTruthy()
   expect(screen.queryByRole('slider', { name: t('editor.temperature') })).toBeNull()
   expect(screen.getByRole('slider', { name: t('editor.tint') })).toBeTruthy()
@@ -710,8 +702,8 @@ it('selects and restores Aerochrome with raw gains and Ektachrome without inject
   expect(
     screen.getByText(t('editor.aerochrome'), { selector: '[data-sidebar-page] *' })
   ).toBeTruthy()
-  picker(t('editor.filmStock'))
-  expect(look(t('editor.aerochrome')).ariaPressed).toBe('true')
+  picker(t('editor.profiles'))
+  expect((await look(t('editor.aerochrome'))).ariaPressed).toBe('true')
   expect(await aerochromeHelp()).toContain(t('editor.aerochromeHelp'))
   // Selecting the active look keeps raw gains and grain edits, and resets the matrix.
   act(() =>
@@ -722,14 +714,14 @@ it('selects and restores Aerochrome with raw gains and Ektachrome without inject
     })
   )
   act(() => editor.setState({ preview: { ...editor.getState().preview!, asShotGains: undefined } }))
-  fireEvent.click(look(t('editor.aerochrome')))
+  fireEvent.click(await look(t('editor.aerochrome')))
   expect(change.mock.lastCall?.[0]).toMatchObject({
     rawColor: { gains: [3, 1, 0.25], matrix: AEROCHROME_MATRIX },
     film: { grainParams: { blur: 2 } }
   })
   darkroom()
   expect(screen.queryByText(t('editor.paperStock'))).toBeNull()
-  chooseFilm('Kodak Ektachrome 100')
+  await chooseFilm('Kodak Ektachrome 100')
   expect(change.mock.lastCall?.[0].cameraProfile).toBeNull()
   expect(change.mock.lastCall?.[0].rawColor).toBeNull()
   panelTab('film')
@@ -743,8 +735,8 @@ it('offers an Aerochrome matrix preview with ready gains when FCBlue is missing'
     session: { ...editor.getState().session!, sessionId: 'no-fcblue', cameraProfiles: [] }
   })
   render(<Controls />)
-  picker(t('editor.filmStock'))
-  const button = look(t('editor.aerochrome')) as HTMLButtonElement
+  picker(t('editor.profiles'))
+  const button = (await look(t('editor.aerochrome'))) as HTMLButtonElement
   expect(button.disabled).toBe(false)
   expect(await aerochromeHelp()).toContain(t('editor.aerochromeHelp'))
   await waitFor(() =>
@@ -766,8 +758,8 @@ it('offers an Aerochrome matrix preview with ready gains when FCBlue is missing'
 it('waits for gains before offering a new Aerochrome look', async () => {
   editor.setState({ preview: { ...editor.getState().preview!, asShotGains: undefined } })
   render(<Controls />)
-  picker(t('editor.filmStock'))
-  const button = look(t('editor.aerochrome')) as HTMLButtonElement
+  picker(t('editor.profiles'))
+  const button = (await look(t('editor.aerochrome'))) as HTMLButtonElement
   expect(button.disabled).toBe(true)
   // The wrapper lets a disabled look receive focus and show its help.
   act(() => button.parentElement!.focus())
@@ -780,7 +772,7 @@ it('waits for gains before offering a new Aerochrome look', async () => {
   expect(button.disabled).toBe(false)
 })
 
-it('labels a legacy FCBlue sidecar as Ektachrome and keeps its render fields unchanged', () => {
+it('labels a legacy FCBlue sidecar as Ektachrome and keeps its render fields unchanged', async () => {
   const legacy: EditRecipe = {
     ...defaultRecipe(),
     cameraProfile: 'FCBlue',
@@ -794,9 +786,9 @@ it('labels a legacy FCBlue sidecar as Ektachrome and keeps its render fields unc
   expect(
     screen.getByText('Kodak Ektachrome 100', { selector: '[data-sidebar-page] *' })
   ).toBeTruthy()
-  picker(t('editor.filmStock'))
-  expect(look('Kodak Ektachrome 100').ariaPressed).toBe('true')
-  expect(look(t('editor.aerochrome')).ariaPressed).toBe('false')
+  picker(t('editor.profiles'))
+  expect((await look('Kodak Ektachrome 100')).ariaPressed).toBe('true')
+  expect((await look(t('editor.aerochrome'))).ariaPressed).toBe('false')
   expect(change).not.toHaveBeenCalled()
   expect(pasted).toEqual(legacy)
 })
@@ -806,6 +798,7 @@ const whiteBalance = (): HTMLElement =>
 
 it('starts white balance from the camera reading so leaving As shot does not jump', async () => {
   render(<Controls />)
+  panelTab('grading')
   expect(
     screen.getByRole('slider', { name: t('editor.temperature') }).getAttribute('aria-valuenow')
   ).toBe('5150')
@@ -835,6 +828,7 @@ it('starts white balance from the camera reading so leaving As shot does not jum
 
 it('offers white balance presets in a menu before the picker and reset icons', async () => {
   render(<Controls />)
+  panelTab('grading')
   invoke.mockResolvedValueOnce('tungsten')
   fireEvent.click(whiteBalance())
   await waitFor(() =>
@@ -885,6 +879,7 @@ it.each([false, true])(
         }}
       />
     )
+    panelTab('grading')
     const toggle = screen.getByRole('switch', { name: t('editor.extendedRange') })
     expect(toggle.getAttribute('aria-checked')).toBe(String(raw))
     expect(screen.getByRole('button', { name: t('editor.whiteBalancePreset') })).toBeTruthy()
@@ -906,6 +901,7 @@ it.each([false, true])(
 
 it('uses direct gains for standard Extended Range and retains its camera profile', async () => {
   render(<Controls initial={{ ...defaultRecipe(), cameraProfile: 'Standard' }} />)
+  panelTab('grading')
   fireEvent.click(screen.getByRole('switch', { name: t('editor.extendedRange') }))
   adjust(t('editor.rawTemperature'), 50)
   expect(change).toHaveBeenLastCalledWith({ whiteBalanceGains: [8, 1, 1 / 8] }, true)
@@ -934,6 +930,7 @@ it('loads older extended Kelvin recipes without changing their balance', async (
   const gains = [4, 1, 0.25]
   invoke.mockResolvedValueOnce({ temperature: 1500, tint: 0, gains })
   render(<Controls initial={{ ...defaultRecipe(), temperature: 1500 }} />)
+  panelTab('grading')
   expect(
     screen.getByRole('switch', { name: t('editor.extendedRange') }).getAttribute('aria-checked')
   ).toBe('true')
@@ -957,6 +954,7 @@ it('turns the controls on and shows the camera reading after the developing clou
       <Controls />
     </DevelopingCloud.Provider>
   )
+  panelTab('grading')
   const temperature = (): HTMLElement =>
     screen.getByRole('slider', { name: t('editor.temperature') })
   const field = (): HTMLInputElement =>
@@ -1002,6 +1000,7 @@ it('resets sliders to actual nonzero and nullable defaults and prevents resets w
   document.querySelectorAll('details').forEach((details) => (details.open = true))
   reset(t('editor.denoise'))
   expect(change).toHaveBeenLastCalledWith({ denoise: 10 })
+  panelTab('grading')
   reset(t('editor.temperature'))
   expect(change.mock.lastCall?.[0]).toMatchObject({ temperature: null, whiteBalanceGains: null })
   reset(t('editor.tint'))
@@ -1013,7 +1012,7 @@ it('resets sliders to actual nonzero and nullable defaults and prevents resets w
   expect(film()?.couplers).toBe(0.25)
   reset(t('editor.evPaper'))
   expect(film()?.evPaper).toBeNull()
-  panelTab('raw')
+  panelTab('grading')
   act(() => editor.setState({ closing: true }))
   change.mockClear()
   reset(t('editor.temperature'))
@@ -1022,6 +1021,7 @@ it('resets sliders to actual nonzero and nullable defaults and prevents resets w
 
 it('resets a slider on Shift-click of its label, which reads Reset while Shift is held', () => {
   render(<Controls initial={{ ...defaultRecipe(), tint: 30 }} />)
+  panelTab('grading')
   // Double-clicking the knob and Shift-clicking the label replace the reset buttons.
   expect(
     screen.queryByRole('button', { name: `${t('editor.reset')} ${t('editor.tint')}` })
@@ -1044,15 +1044,16 @@ it('resets a slider on Shift-click of its label, which reads Reset while Shift i
   fireEvent.keyUp(window, { key: 'Shift', shiftKey: false })
   expect([shows(name), shows(resetText)]).toEqual([true, false])
   expect(label.hasAttribute('data-resetting')).toBe(false)
-  const help = screen.getByRole('button', { name: t('editor.fillLight') })
-  expect(help.closest('.group\\/reset')).not.toBeNull()
-  expect(help.className).toContain('group-has-[[data-resetting]]/reset:invisible')
   fireEvent.keyDown(window, { key: 'Shift', shiftKey: true })
   fireEvent.pointerLeave(label)
   expect([shows(name), shows(resetText)]).toEqual([true, false]) // Delete on the focused slider is the keyboard reset.
   change.mockClear()
   fireEvent.keyDown(screen.getByRole('slider', { name: t('editor.tint') }), { key: 'Delete' })
   expect(change.mock.lastCall?.[0]).toMatchObject({ tint: 0, whiteBalanceGains: null })
+  panelTab('raw')
+  const help = screen.getByRole('button', { name: t('editor.fillLight') })
+  expect(help.closest('.group\\/reset')).not.toBeNull()
+  expect(help.className).toContain('group-has-[[data-resetting]]/reset:invisible')
 })
 
 it('offers Negative print among the papers, with a Negative preview toggle below it', () => {
@@ -1101,7 +1102,7 @@ it('maps the darkroom sliders so dragging right does what the label says', () =>
   expect(film()?.couplers).toBe(0.6)
 })
 
-it('keeps legacy grain when choosing another stock or the Aerochrome look', () => {
+it('keeps legacy grain when choosing another stock or the Aerochrome look', async () => {
   render(
     <Controls
       initial={{
@@ -1118,7 +1119,7 @@ it('keeps legacy grain when choosing another stock or the Aerochrome look', () =
     />
   )
   for (const name of ['Kodak Gold 200', t('editor.aerochrome')]) {
-    chooseFilm(name)
+    await chooseFilm(name)
     expect(film()).toMatchObject({
       grainParams: null,
       halationParams: null,
@@ -1132,7 +1133,11 @@ it('keeps legacy grain when choosing another stock or the Aerochrome look', () =
 it('adjusts color ranges in the color mixer and edits curve points from the keyboard', async () => {
   const view = render(<Controls />)
   panelTab('grading')
-  expect(sections(view.container).slice(0, 2)).toEqual([t('editor.color'), t('editor.colorMixer')])
+  expect(sections(view.container).slice(0, 3)).toEqual([
+    t('editor.whiteBalance'),
+    t('editor.color'),
+    t('editor.colorMixer')
+  ])
   // Grain channel offsets also have a Blue slider.
   const mixer = within(screen.getByRole('tabpanel', { name: t('editor.hue') }))
   fireEvent.change(mixer.getByRole('spinbutton', { name: t('editor.blue') }), {
@@ -1431,7 +1436,7 @@ it('shows Standard when a copied camera profile is unavailable in the photo', ()
   render(<Controls initial={{ ...defaultRecipe(), film: null, cameraProfile: 'FCBlue' }} />)
   panelTab('film')
   expect(screen.getByText(t('editor.standard'), { selector: '[data-sidebar-page] *' })).toBeTruthy()
-  picker(t('editor.filmStock'))
+  picker(t('editor.profiles'))
   expect(screen.getByRole('button', { name: t('editor.standard'), exact: true }).ariaPressed).toBe(
     'true'
   )
@@ -1440,6 +1445,7 @@ it('shows Standard when a copied camera profile is unavailable in the photo', ()
 
 it('selects the value of a slider field on focus', () => {
   render(<Controls />)
+  panelTab('grading')
   const field = screen.getByRole('spinbutton', {
     name: t('editor.temperature')
   }) as HTMLInputElement
@@ -1468,6 +1474,7 @@ it.each<Partial<EditRecipe>>([
   )
   panelTab('grading')
   expect(sections(view.container)).toEqual([
+    t('editor.whiteBalance'),
     t('editor.filter'),
     t('editor.color'),
     t('editor.toneMixer')
@@ -1492,7 +1499,7 @@ it.each<Partial<EditRecipe>>([
   expect(change).toHaveBeenLastCalledWith({ warmth: 0 })
 })
 
-it('preserves color adjustments and monochrome settings when switching profiles', () => {
+it('preserves color adjustments and monochrome settings when switching profiles', async () => {
   const initial: EditRecipe = {
     ...defaultRecipe(),
     saturation: 35,
@@ -1510,12 +1517,12 @@ it('preserves color adjustments and monochrome settings when switching profiles'
   expect(
     screen.getByRole('slider', { name: t('editor.saturation') }).getAttribute('aria-valuenow')
   ).toBe('35')
-  chooseFilm(t('editor.monochrome'))
+  await chooseFilm(t('editor.monochrome'))
   panelTab('grading')
   adjust(t('editor.warmth'), 40)
   adjust(t('editor.red'), -30)
   fireEvent.click(swatch(t('editor.filter'), t('editor.red')))
-  chooseFilm(t('editor.standard'))
+  await chooseFilm(t('editor.standard'))
   panelTab('grading')
   expect(screen.queryByRole('slider', { name: t('editor.warmth') })).toBeNull()
   expect(screen.queryByText(t('editor.toneMixer'), { selector: 'summary' })).toBeNull()
@@ -1534,7 +1541,7 @@ it('preserves color adjustments and monochrome settings when switching profiles'
       .getByRole('slider', { name: `${t('editor.midtones')} ${t('editor.luminance')}` })
       .getAttribute('aria-valuenow')
   ).toBe('10')
-  chooseFilm(t('editor.monochrome'))
+  await chooseFilm(t('editor.monochrome'))
   panelTab('grading')
   expect(
     screen.getByRole('slider', { name: t('editor.warmth') }).getAttribute('aria-valuenow')
@@ -1546,19 +1553,20 @@ it('preserves color adjustments and monochrome settings when switching profiles'
 
 it('starts Full spectrum with as-shot gains and identity without a camera profile or film', async () => {
   render(<Controls />)
-  chooseFilm(t('editor.fullSpectrumLook'))
+  await chooseFilm(t('editor.fullSpectrumLook'))
   expect(change.mock.lastCall?.[0]).toMatchObject({
     rawColor: { gains: [2, 1, 0.5], matrix: [1, 0, 0, 0, 1, 0, 0, 0, 1] },
     film: null,
     cameraProfile: null,
     monochrome: null
   })
+  panelTab('grading')
   expect(screen.queryByRole('slider', { name: t('editor.temperature') })).toBeNull()
   expect(screen.getByRole('slider', { name: t('editor.rawTemperature') })).toBeTruthy()
   expect(screen.getByRole('slider', { name: t('editor.tint') })).toBeTruthy()
   expect(screen.getByRole('button', { name: t('editor.whiteBalancePreset') })).toBeTruthy()
-  picker(t('editor.filmStock'))
-  expect(look(t('editor.fullSpectrumLook')).ariaPressed).toBe('true')
+  picker(t('editor.profiles'))
+  expect((await look(t('editor.fullSpectrumLook'))).ariaPressed).toBe('true')
   await waitFor(() =>
     expect(renderThumbnail).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1568,7 +1576,7 @@ it('starts Full spectrum with as-shot gains and identity without a camera profil
   )
 })
 
-it('keeps raw gains when reselecting Full spectrum and clears raw color for other looks', () => {
+it('keeps raw gains when reselecting Full spectrum and clears raw color for other looks', async () => {
   render(
     <Controls
       initial={{
@@ -1579,23 +1587,23 @@ it('keeps raw gains when reselecting Full spectrum and clears raw color for othe
       }}
     />
   )
-  chooseFilm(t('editor.fullSpectrumLook'))
+  await chooseFilm(t('editor.fullSpectrumLook'))
   expect(change.mock.lastCall?.[0].rawColor).toEqual({
     gains: [3, 1, 0.25],
     matrix: [1, 0, 0, 0, 1, 0, 0, 0, 1]
   })
-  chooseFilm('Kodak Gold 200')
+  await chooseFilm('Kodak Gold 200')
   expect(change.mock.lastCall?.[0].rawColor).toBeNull()
-  chooseFilm(t('editor.fullSpectrumLook'))
-  chooseFilm(t('editor.standard'))
+  await chooseFilm(t('editor.fullSpectrumLook'))
+  await chooseFilm(t('editor.standard'))
   expect(change.mock.lastCall?.[0]).toMatchObject({ rawColor: null, cameraProfile: 'Standard' })
 })
 
-it('waits for as-shot gains before offering a new Full spectrum look', () => {
+it('waits for as-shot gains before offering a new Full spectrum look', async () => {
   editor.setState({ preview: { ...editor.getState().preview!, asShotGains: undefined } })
   render(<Controls />)
-  picker(t('editor.filmStock'))
-  expect((look(t('editor.fullSpectrumLook')) as HTMLButtonElement).disabled).toBe(true)
+  picker(t('editor.profiles'))
+  expect(((await look(t('editor.fullSpectrumLook'))) as HTMLButtonElement).disabled).toBe(true)
 })
 
 it('edits raw gains and resets to as-shot without changing the matrix', () => {
@@ -1610,6 +1618,7 @@ it('edits raw gains and resets to as-shot without changing the matrix', () => {
       }}
     />
   )
+  panelTab('grading')
   const temperature = screen.getByRole('slider', { name: t('editor.rawTemperature') })
   expect(screen.queryByRole('application', { name: t('editor.whiteBalance') })).toBeNull()
   expect(screen.getByRole('slider', { name: t('editor.tint') })).toBeTruthy()
@@ -1627,7 +1636,7 @@ it('edits raw gains and resets to as-shot without changing the matrix', () => {
   expect(change.mock.lastCall?.[0].rawColor).toEqual({ gains: [2, 1, 0.5], matrix })
   fireEvent.click(screen.getByRole('button', { name: t('editor.picker') }))
   expect(setPicking).toHaveBeenCalledWith(true)
-  panelTab('grading')
+  panelTab('raw')
   expect(screen.queryByRole('slider', { name: t('editor.rawTemperature') })).toBeNull()
 })
 
@@ -1642,6 +1651,7 @@ it('moves full spectrum temperature away from its lower gain bound', () => {
       }}
     />
   )
+  panelTab('grading')
   fireEvent.keyDown(screen.getByRole('slider', { name: t('editor.rawTemperature') }), {
     key: 'ArrowRight'
   })
@@ -1653,6 +1663,7 @@ it('moves full spectrum temperature away from its lower gain bound', () => {
 it('balances blue/red and green/magenta independently and resets each slider', () => {
   const matrix = [...AEROCHROME_MATRIX]
   render(<Controls initial={{ ...defaultRecipe(), rawColor: { gains: [1, 1, 1], matrix } }} />)
+  panelTab('grading')
   const gains = (): [number, number, number] => change.mock.lastCall?.[0].rawColor.gains
   adjust(t('editor.rawTemperature'), 50)
   expect(gains()).toEqual([8, 1, 1 / 8])
@@ -1685,6 +1696,7 @@ it('keeps zero on the tint step grid with a non-unit stored green gain', () => {
       }}
     />
   )
+  panelTab('grading')
   const tint = screen.getByRole('slider', { name: t('editor.tint') })
   expect(Number.isInteger(Number(tint.getAttribute('aria-valuemin')))).toBe(true)
   expect(Number.isInteger(Number(tint.getAttribute('aria-valuemax')))).toBe(true)
@@ -1712,6 +1724,7 @@ it.each([
         }}
       />
     )
+    panelTab('grading')
     expect(change).not.toHaveBeenCalled()
     adjust(t(`editor.${axis}`), value)
     const raw = change.mock.lastCall?.[0].rawColor
@@ -1783,6 +1796,7 @@ it('keeps valid non-unit-middle gains in range when editing another channel', ()
       }}
     />
   )
+  panelTab('grading')
   fireEvent.keyDown(screen.getByRole('slider', { name: t('editor.tint') }), {
     key: 'ArrowRight'
   })

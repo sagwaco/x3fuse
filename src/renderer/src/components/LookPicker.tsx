@@ -1,17 +1,8 @@
 import { Fragment, useContext, useEffect, useState } from 'react'
-import {
-  Camera,
-  ChevronRight,
-  Clapperboard,
-  Contrast,
-  Film,
-  Info,
-  Projector,
-  Rainbow,
-  type LucideIcon
-} from 'lucide-react'
+import { ChevronRight, Info } from 'lucide-react'
 import {
   AEROCHROME_MATRIX,
+  CAMERA_EFFECTS,
   DEFAULT_FILM,
   IDENTITY_RAW_MATRIX,
   FILM_MONOCHROME_FILTERS,
@@ -25,9 +16,8 @@ import { useEditorStore, previewCurrent } from '../stores/editorStore'
 import { t } from '../lib/strings'
 import { blurOnClick } from '../lib/commitFocus'
 import { DevelopingCloud } from '../lib/developingCloud'
-import { GlassGroup } from './ui/glassGroup'
+import { Select } from './ui/select'
 import { Tooltip } from './ui/tooltip'
-import { FilmCanister } from './FilmCanister'
 
 type Stock = (typeof stocks)[number]
 const FAMILIES = ['negativeFilm', 'slideFilm', 'cinemaFilm', 'bwFilm']
@@ -46,33 +36,6 @@ const PAPERS = stocks.filter((stock) => stock.isPaper)
 const AEROCHROME_FILM = FILMS.find((stock) => stock.key === 'kodak_ektachrome_100')!
 /** Black-and-white film prints only on black-and-white paper, and color on color. */
 const sameModel = (a: Stock | undefined, b: Stock): boolean => !!a?.monochrome === !!b.monochrome
-
-/** Canister colors as [body, text]: a look's own, else its family's, else its maker's. */
-const CANISTERS: Record<string, [string, string]> = {
-  aerochrome: ['#7d1838', '#f7b218'],
-  monochrome: ['#1c1c1c', '#f2f2ec'],
-  kodak: ['#d71f26', '#f7b218'],
-  fujifilm: ['#f2f2ec', '#009a49']
-}
-const canister = (
-  stock: Stock,
-  aerochrome: boolean
-): { color: string; ink: string; text: string } => {
-  const look = aerochrome ? 'aerochrome' : stock.monochrome ? 'monochrome' : stock.key.split('_')[0]
-  const [color, ink] = CANISTERS[look] ?? ['#d4d4d4', '#262626']
-  // The film speed, such as 400 in "Portra 400" or 500T in "Vision3 500T".
-  return { color, ink, text: aerochrome ? 'IR' : (stock.name.match(/\d{2,}[A-Z]?/)?.[0] ?? '') }
-}
-
-/** The icon of each look group. */
-const GROUP_ICONS: Record<string, LucideIcon> = {
-  cameraMatching: Camera,
-  negativeFilm: Film,
-  slideFilm: Projector,
-  cinemaFilm: Clapperboard,
-  bwFilm: Contrast,
-  fullSpectrum: Rainbow
-}
 
 interface Look {
   id: string
@@ -212,7 +175,9 @@ export function LookPicker({
               film: null,
               cameraProfile: profile.id,
               rawColor: null,
-              monochrome: profile.id === 'Monochrome' ? { filter } : null
+              monochrome: profile.id === 'Monochrome' ? { filter } : null,
+              // Camera matching starts with grain and halation, until the photo has its own.
+              effects: recipe.effects ?? CAMERA_EFFECTS
             }
           })),
           ...FILMS.map((stock) => ({
@@ -332,36 +297,24 @@ export function LookPicker({
   const shownGroup = groups.includes(chosenGroup)
     ? chosenGroup
     : (looks.find((look) => look.id === selected)?.group ?? groups[0])
-  const filters = groups.map((group) => ({
-    value: group,
-    label: t(`editor.${group}`),
-    icon: GROUP_ICONS[group]
-  }))
   // Only the shown looks render thumbnails.
   const shown = groups.length ? looks.filter((look) => look.group === shownGroup) : looks
   const [thumbnails, forget] = useThumbnails(gallery ? shown : [])
   const caption = t(
-    kind === 'film' ? (gallery ? 'editor.filmStock' : 'editor.look') : 'editor.paperStock'
+    kind === 'film' ? (gallery ? 'editor.profiles' : 'editor.profile') : 'editor.paperStock'
   )
-  const stock = kind === 'film' && FILMS.find((film) => film.index === recipe.film?.film)
   if (gallery)
     return (
       <div role="group" aria-label={caption} className="grid grid-cols-3 gap-x-2 gap-y-3 p-4">
-        {/* Two groups of three act as one choice: a value of the other row selects nothing here. */}
         {groups.length > 0 && (
-          <div role="group" aria-label={t('editor.filmGroups')} className="col-span-3 space-y-1.5">
-            {[filters.slice(0, 3), filters.slice(3)].map((row) => (
-              <GlassGroup
-                key={row[0].value}
-                variant="split"
-                display="stacked"
-                size="sm"
-                aria-label={row.map((item) => item.label).join(', ')}
-                value={shownGroup}
-                onValueChange={setChosenGroup}
-                items={row}
-              />
-            ))}
+          <div className="col-span-3">
+            <Select
+              className="w-full"
+              aria-label={t('editor.filmGroups')}
+              value={shownGroup}
+              onValueChange={setChosenGroup}
+              options={groups.map((group) => ({ value: group, label: t(`editor.${group}`) }))}
+            />
           </div>
         )}
         {shown.map((look) => (
@@ -383,7 +336,8 @@ export function LookPicker({
                     film: look.recipe.film,
                     monochrome: look.recipe.monochrome,
                     cameraProfile: look.recipe.cameraProfile,
-                    rawColor: look.recipe.rawColor ?? null
+                    rawColor: look.recipe.rawColor ?? null,
+                    ...(look.recipe.effects !== recipe.effects && { effects: look.recipe.effects })
                   })
                   blurOnClick(event)
                 }}
@@ -417,7 +371,6 @@ export function LookPicker({
     )
   return (
     <div className="relative flex items-center gap-2 rounded-xl border border-ink/15 bg-ink/[0.03] px-3 py-2.5 hover:border-ink/25 has-[:disabled]:opacity-50">
-      {stock && <FilmCanister {...canister(stock, aerochrome)} className="-my-1 h-10 shrink-0" />}
       {/* The button's ::after covers the box, so all of it opens the picker. */}
       <button
         type="button"

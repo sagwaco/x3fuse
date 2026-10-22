@@ -11,6 +11,7 @@ export interface QueueSelection {
   handleItemDoubleClick: (id: string) => void
   handleItemContextMenu: (id: string) => void
   handleContainerContextMenu: () => void
+  handleContainerClick: (e: MouseEvent) => void
   handleKeyDown: (e: KeyboardEvent) => void
 }
 
@@ -32,6 +33,8 @@ export function useQueueSelection(ordered: X3FFileDTO[], nav?: ArrowNav): QueueS
   const anchorRef = useRef<string | null>(null)
   // Set by a row's onContextMenu so the container handler can tell row vs. empty.
   const itemHandledCtx = useRef(false)
+  // Set by an item's onClick so the container handler can tell item vs. empty.
+  const itemHandledClick = useRef(false)
   const order = useMemo(() => {
     const ids = ordered.map((file) => file.id)
     return { ids, indices: new Map(ids.map((id, index) => [id, index])) }
@@ -42,6 +45,7 @@ export function useQueueSelection(ordered: X3FFileDTO[], nav?: ArrowNav): QueueS
   navRef.current = nav
 
   const handleItemClick = useCallback((e: MouseEvent, id: string, index: number): void => {
+    itemHandledClick.current = true
     const store = useQueueStore.getState()
     const current = store.selectedIds
     if (e.metaKey || e.ctrlKey) {
@@ -93,6 +97,13 @@ export function useQueueSelection(ordered: X3FFileDTO[], nav?: ArrowNav): QueueS
     // Bubbles up after any item handler; if no item claimed it, it was empty space.
     if (!itemHandledCtx.current) useQueueStore.getState().deselectAll()
     itemHandledCtx.current = false
+  }, [])
+
+  const handleContainerClick = useCallback((e: MouseEvent): void => {
+    // A plain click on empty space clears the selection.
+    if (!itemHandledClick.current && !e.metaKey && !e.ctrlKey && !e.shiftKey)
+      useQueueStore.getState().deselectAll()
+    itemHandledClick.current = false
   }, [])
 
   /** Move the cursor to `target`; plain = single-select, shift = extend range. */
@@ -183,6 +194,7 @@ export function useQueueSelection(ordered: X3FFileDTO[], nav?: ArrowNav): QueueS
       handleItemDoubleClick,
       handleItemContextMenu,
       handleContainerContextMenu,
+      handleContainerClick,
       handleKeyDown
     }),
     [
@@ -190,6 +202,7 @@ export function useQueueSelection(ordered: X3FFileDTO[], nav?: ArrowNav): QueueS
       handleItemDoubleClick,
       handleItemContextMenu,
       handleContainerContextMenu,
+      handleContainerClick,
       handleKeyDown
     ]
   )

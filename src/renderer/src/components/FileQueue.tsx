@@ -6,6 +6,8 @@ import { exportSettings, useQueueStore, type ExportDraft } from '../stores/queue
 import { useSettingsStore } from '../stores/settingsStore'
 import { useFileDrop } from '../hooks/useFileDrop'
 import { useQueueSelection, type QueueSelection } from '../hooks/useQueueSelection'
+import { useMarquee } from '../hooks/useMarquee'
+import { MarqueeBox } from './ui/marqueeBox'
 import { useScrollToActive } from '../hooks/useScrollToActive'
 import { useElementWidth } from '../hooks/useElementWidth'
 import { useShownFiles } from '../hooks/useCulling'
@@ -14,7 +16,6 @@ import { t, useLanguage } from '../lib/strings'
 import { cn } from '../lib/cn'
 import { QueueContextMenu } from './QueueContextMenu'
 import { Thumbnail } from './Thumbnail'
-import { EditedBadge } from './EditedBadge'
 import { CullBadge } from './CullBadge'
 import { StackBadge } from './StackBadge'
 import { ResizeHandle } from './ui/resizeHandle'
@@ -22,6 +23,9 @@ import { ResizeHandle } from './ui/resizeHandle'
 const ROW_HEIGHT = 30
 const HEADER_HEIGHT = 32
 const GRID = 'file-queue-row grid grid-cols-[var(--queue-columns)] items-center gap-2 px-3'
+// At this width or more, rows are inset with rounded corners, as in macOS lists.
+const WIDE = 720
+const INSET = 8
 const COLUMNS = [
   { key: 'name', field: 'File Name', min: 180, max: 2000 },
   { key: 'date', field: 'Date', min: 80, max: 1000 },
@@ -41,19 +45,19 @@ export function FileQueue({ draft }: { draft?: ExportDraft }): React.JSX.Element
   const parentRef = useRef<HTMLDivElement>(null)
   const available = useElementWidth(parentRef)
   const requested = resizing ?? savedWidths
+  const inset = available >= WIDE
+  // Padding and gaps around the columns.
+  const chrome = 40 + (inset ? 2 * INSET : 0) + (draft ? 140 : 0)
   const widths = {
     ...requested,
     name:
       requested.name ||
       Math.max(
         COLUMNS[0].min,
-        Math.min(
-          COLUMNS[0].max,
-          Math.floor(available - requested.date - requested.size - 40 - (draft ? 140 : 0))
-        )
+        Math.min(COLUMNS[0].max, Math.floor(available - requested.date - requested.size - chrome))
       )
   }
-  const tableWidth = widths.name + widths.date + widths.size + 40 + (draft ? 140 : 0)
+  const tableWidth = widths.name + widths.date + widths.size + chrome
   const { isDragOver, dropHandlers } = useFileDrop()
   const sel = useQueueSelection(sorted, { mode: 'vertical' })
   const virtualizer = useVirtualizer({
@@ -65,6 +69,15 @@ export function FileQueue({ draft }: { draft?: ExportDraft }): React.JSX.Element
     overscan: 14
   })
   useEffect(() => parentRef.current?.focus(), [])
+  // Rows span the table, so only the vertical extent matters.
+  const marquee = useMarquee(parentRef, ({ top, bottom }) =>
+    sorted
+      .slice(
+        Math.max(0, Math.floor((top - HEADER_HEIGHT) / ROW_HEIGHT)),
+        Math.max(0, Math.floor((bottom - HEADER_HEIGHT) / ROW_HEIGHT) + 1)
+      )
+      .map((file) => file.id)
+  )
   useScrollToActive(virtualizer, sorted, activeId)
 
   function toggleSort(field: SortField): void {
@@ -118,6 +131,8 @@ export function FileQueue({ draft }: { draft?: ExportDraft }): React.JSX.Element
             if (event.target === event.currentTarget) sel.handleKeyDown(event)
           }}
           onContextMenu={sel.handleContainerContextMenu}
+          onClick={sel.handleContainerClick}
+          onPointerDown={marquee.onPointerDown}
           {...(draft ? {} : dropHandlers)}
           className="relative min-h-0 flex-1 overflow-auto outline-none [scrollbar-gutter:stable]"
         >
@@ -132,8 +147,11 @@ export function FileQueue({ draft }: { draft?: ExportDraft }): React.JSX.Element
             <div
               className={cn(
                 GRID,
-                'sticky top-0 z-10 h-8 border-b border-ink/10 bg-tone-950 text-xs font-medium text-tone-400'
+                'sticky top-0 z-10 h-8 border-b border-ink/10 bg-tone-950 text-xs font-medium text-tone-400',
+                inset && 'px-5'
               )}
+              onClick={(e) => e.stopPropagation()}
+              data-no-marquee
             >
               {COLUMNS.map((column) => (
                 <div key={column.key} className="relative flex h-full min-w-0 items-center">
@@ -172,14 +190,18 @@ export function FileQueue({ draft }: { draft?: ExportDraft }): React.JSX.Element
             <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
               {virtualizer.getVirtualItems().map((vi) => {
                 const file = sorted[vi.index]
+                const selected = selectedIds.has(file.id)
                 return (
                   <Row
                     key={file.id}
                     file={file}
                     exportFormat={draft ? exportSettings(draft, file.id).outputFormat : undefined}
                     index={vi.index}
-                    selected={selectedIds.has(file.id)}
-                    active={activeId === file.id}
+                    selected={selected}
+                    // Adjacent selected rows join into one block.
+                    joinTop={selected && selectedIds.has(sorted[vi.index - 1]?.id)}
+                    joinBottom={selected && selectedIds.has(sorted[vi.index + 1]?.id)}
+                    inset={inset}
                     height={vi.size}
                     translateY={vi.start - HEADER_HEIGHT}
                     sel={sel}
@@ -188,6 +210,7 @@ export function FileQueue({ draft }: { draft?: ExportDraft }): React.JSX.Element
               })}
             </div>
           </div>
+          <MarqueeBox box={marquee.box} />
           {!draft && isDragOver && (
             <div className="pointer-events-none absolute inset-0 rounded-md ring-2 ring-inset ring-accent/40 bg-accent/5" />
           )}
@@ -203,7 +226,9 @@ const Row = memo(function Row({
   exportFormat,
   index,
   selected,
-  active,
+  joinTop,
+  joinBottom,
+  inset,
   height,
   translateY,
   sel
@@ -212,7 +237,9 @@ const Row = memo(function Row({
   exportFormat?: string
   index: number
   selected: boolean
-  active: boolean
+  joinTop: boolean
+  joinBottom: boolean
+  inset: boolean
   height: number
   translateY: number
   sel: QueueSelection
@@ -224,31 +251,35 @@ const Row = memo(function Row({
       style={{
         position: 'absolute',
         top: 0,
-        left: 0,
-        width: '100%',
+        left: inset ? INSET : 0,
+        width: inset ? `calc(100% - ${2 * INSET}px)` : '100%',
         height,
         transform: `translateY(${translateY}px)`
       }}
       onClick={(e) => sel.handleItemClick(e, file.id, index)}
       onDoubleClick={() => sel.handleItemDoubleClick(file.id)}
       onContextMenu={() => sel.handleItemContextMenu(file.id)}
+      data-selected={selected || undefined}
       className={cn(
         GRID,
-        'cursor-default text-sm',
-        selected ? 'bg-accent/30 text-tone-50' : 'text-tone-200 hover:bg-ink/5',
-        active && 'ring-1 ring-inset ring-accent/40'
+        'group cursor-default text-[13px]',
+        inset && 'rounded-md',
+        joinTop && 'rounded-t-none',
+        joinBottom && 'rounded-b-none',
+        selected
+          ? 'bg-yellow-400/20 text-tone-50'
+          : cn('text-tone-200 hover:bg-ink/5', index % 2 === 1 && 'bg-ink/[0.03]')
       )}
     >
       <div className="flex min-w-0 items-center gap-2" title={file.fileName}>
         <div aria-hidden="true" className="shrink-0">
-          <Thumbnail file={file} maxEdge={84} className="h-6 w-7 rounded-sm" />
+          <Thumbnail file={file} maxEdge={84} className="h-6 w-7 [&_canvas]:rounded-[3px]" />
         </div>
         <span className="truncate">{file.fileName}</span>
         <CullBadge file={file} />
-        <EditedBadge edit={file.edit} />
         <StackBadge file={file} />
       </div>
-      <span className="truncate pl-2 text-tone-400">
+      <span className="truncate pl-2 text-tone-400 group-data-[selected]:text-tone-100">
         {file.pending ? (
           <Skeleton className="w-28" />
         ) : file.capturedDate ? (
@@ -257,7 +288,7 @@ const Row = memo(function Row({
           t('placeholder.dash')
         )}
       </span>
-      <span className="truncate pl-2 text-tone-400">
+      <span className="truncate pl-2 text-tone-400 group-data-[selected]:text-tone-100">
         {file.pending ? (
           <Skeleton className="w-12" />
         ) : file.fileSize != null ? (
@@ -267,7 +298,7 @@ const Row = memo(function Row({
         )}
       </span>
       {exportFormat && (
-        <span className="truncate pl-2 text-tone-400">
+        <span className="truncate pl-2 text-tone-400 group-data-[selected]:text-tone-100">
           {exportFormat === 'embeddedJpg' ? 'Embedded JPG' : exportFormat.toUpperCase()}
         </span>
       )}

@@ -117,23 +117,26 @@ it.each([
   ['Size', 2, 'ArrowRight'],
   ['Date', 1, 'Enter'],
   ['Size', 2, 'Enter']
-] as const)('preserves other columns when resizing %s (column %i) with %s', async (name, index, key) => {
-  const view = render(<FileQueue />)
-  const initial = columnWidths(view.container)
-  await act(async () =>
-    fireEvent.keyDown(screen.getByRole('separator', { name: `Resize ${name} column` }), { key })
-  )
-  const resized = columnWidths(view.container)
-  expect(resized[index]).not.toBe(initial[index])
-  expect(resized.filter((_, column) => column !== index)).toEqual(
-    initial.filter((_, column) => column !== index)
-  )
-  expect(useSettingsStore.getState().settings.listColumnWidths.name).toBe(initial[0])
-  expect(useQueueStore.getState().activeId).toBe('0')
-})
+] as const)(
+  'preserves other columns when resizing %s (column %i) with %s',
+  async (name, index, key) => {
+    const view = render(<FileQueue />)
+    const initial = columnWidths(view.container)
+    await act(async () =>
+      fireEvent.keyDown(screen.getByRole('separator', { name: `Resize ${name} column` }), { key })
+    )
+    const resized = columnWidths(view.container)
+    expect(resized[index]).not.toBe(initial[index])
+    expect(resized.filter((_, column) => column !== index)).toEqual(
+      initial.filter((_, column) => column !== index)
+    )
+    expect(useSettingsStore.getState().settings.listColumnWidths.name).toBe(initial[0])
+    expect(useQueueStore.getState().activeId).toBe('0')
+  }
+)
 
 it.each([
-  [960.75, 590],
+  [960.75, 574],
   [420, 180],
   [3840, 2000]
 ])(
@@ -265,3 +268,33 @@ it.each(['inspector', 'export'] as const)(
     expect(useSettingsStore.getState().settings[key]).toBe(initial)
   }
 )
+
+it('clears the selection on a click in empty space, but not on a header click', () => {
+  const view = render(<FileQueue />)
+  const scroller = view.container.querySelector<HTMLElement>('[tabindex="0"]')!
+  fireEvent.click(screen.getByRole('separator', { name: 'Resize Date column' }))
+  fireEvent.click(scroller, { metaKey: true })
+  expect(useQueueStore.getState().selectedIds).toEqual(new Set(['0']))
+  fireEvent.click(scroller)
+  expect(useQueueStore.getState().selectedIds.size).toBe(0)
+})
+
+it('selects the rows that a drag rectangle touches and keeps them after the click', () => {
+  const view = render(<FileQueue />)
+  const scroller = view.container.querySelector<HTMLElement>('[tabindex="0"]')!
+  // The header is 32 px and each row is 30 px, from the top of the scroll content.
+  fireEvent.pointerDown(scroller, { button: 0, clientX: 5, clientY: 40 })
+  fireEvent.pointerMove(window, { clientX: 5, clientY: 110 })
+  fireEvent.pointerUp(window, { clientX: 5, clientY: 110 })
+  fireEvent.click(scroller)
+  // Names sort as text: image-0, image-1, image-10.
+  expect(useQueueStore.getState().selectedIds).toEqual(new Set(['0', '1', '10']))
+  fireEvent.pointerDown(screen.getByRole('separator', { name: 'Resize Date column' }), {
+    button: 0,
+    clientX: 5,
+    clientY: 10
+  })
+  fireEvent.pointerMove(window, { clientX: 5, clientY: 200 })
+  fireEvent.pointerUp(window, { clientX: 5, clientY: 200 })
+  expect(useQueueStore.getState().selectedIds).toEqual(new Set(['0', '1', '10']))
+})

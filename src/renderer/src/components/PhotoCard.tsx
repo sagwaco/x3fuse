@@ -1,8 +1,9 @@
-import { Zap } from 'lucide-react'
+import { Crosshair, Focus, Scan, Zap, ZapOff } from 'lucide-react'
 import type { ExifPair, X3FFileDTO } from '@shared/types'
 import { cn } from '../lib/cn'
 import { formatBytes } from '../lib/format'
 import { t } from '../lib/strings'
+import { CutoutTag } from './ui/cutoutTag'
 
 /** The capture details of one file, in the layout of the Photos app info card. */
 export function PhotoCard({
@@ -26,6 +27,7 @@ export function PhotoCard({
   const [width, height] = (exif.get('Dimensions') ?? '').split(' × ').map(Number)
   const dimensions = width > 0 && height > 0
   const flash = exif.get('Flash')
+  const FlashIcon = flash && flashFired(flash) ? Zap : ZapOff
   const metering = exif.get('Metering')
   const focal = number('Focal length')
   const aperture = number('Aperture')
@@ -54,10 +56,7 @@ export function PhotoCard({
           <div className="flex shrink-0 items-center gap-2">
             {flash && (
               <span role="img" aria-label={flash} title={flash}>
-                <Zap
-                  aria-hidden="true"
-                  className={cn('h-4 w-4', flashFired(flash) ? 'text-tone-100' : 'text-tone-600')}
-                />
+                <FlashIcon aria-hidden="true" className="h-4 w-4 text-tone-400" />
               </span>
             )}
             {metering && <MeteringIcon mode={metering} />}
@@ -74,9 +73,15 @@ export function PhotoCard({
           )}
           {file.fileSize != null && <span>{formatBytes(file.fileSize)}</span>}
           {extension && (
-            <span className="rounded bg-tone-500 px-1 text-[12px] font-bold leading-4 text-tone-900">
-              {extension}
-            </span>
+            <CutoutTag
+              label={extension}
+              className="font-mono text-[12px] font-bold text-tone-500"
+              style={{ width: `calc(${extension.length}ch + 0.5rem)` }}
+            >
+              <text x="50%" y="50%" textAnchor="middle" dominantBaseline="central" fill="black">
+                {extension}
+              </text>
+            </CutoutTag>
           )}
         </div>
       </div>
@@ -94,24 +99,15 @@ export function PhotoCard({
 /** ExifTool writes "Fired" or "On" for a flash that fired, as in "On, Return detected". */
 const flashFired = (flash: string): boolean => /Fired|^On(?!, Did not fire)/.test(flash)
 
-/** A frame with marks for the metering area, as on a camera display. */
+/**
+ * The metering area as a camera display shows it: the whole frame for multi-segment
+ * (evaluative) metering, a point for spot, and the center for the others.
+ */
 function MeteringIcon({ mode }: { mode: string }): React.JSX.Element {
-  const spot = /spot|partial/i.test(mode)
+  const Icon = /segment|pattern/i.test(mode) ? Scan : /spot|partial/i.test(mode) ? Crosshair : Focus
   return (
-    <svg
-      viewBox="0 0 24 24"
-      role="img"
-      aria-label={mode}
-      className="h-5 w-5 text-tone-400"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.5}
-    >
-      <title>{mode}</title>
-      <rect x="2" y="4" width="20" height="16" rx="3" />
-      {mode === 'Multi-segment' && <rect x="5.5" y="7.5" width="13" height="9" rx="1.5" />}
-      {!spot && <circle cx="12" cy="12" r="2.75" />}
-      <circle cx="12" cy="12" r="1" fill="currentColor" />
-    </svg>
+    <span role="img" aria-label={mode} title={mode}>
+      <Icon aria-hidden="true" className="h-4 w-4 text-tone-400" />
+    </span>
   )
 }

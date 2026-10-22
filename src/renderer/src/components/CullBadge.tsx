@@ -30,7 +30,7 @@ export function CullBadge({
         // Five stars and a flag fit in a 76 px filmstrip cell.
         overlay
           ? 'absolute bottom-1 left-1 rounded bg-tone-950/80 p-1 text-[12px] text-tone-100'
-          : 'text-[12px] text-tone-300'
+          : 'text-[12px] text-tone-300 group-data-[selected]:text-tone-50'
       )}
     >
       {flag === 'pick' && <Flag aria-hidden="true" className="h-3 w-3 fill-current" />}

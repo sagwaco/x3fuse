@@ -1,7 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import {
-  DEFAULT_EFFECTS,
-  DEFAULT_FILM,
   IDENTITY_RAW_MATRIX,
   RAW_GAIN_RANGE,
   defaultRecipe,
@@ -114,79 +112,6 @@ describe('raw color sections', () => {
     expect(patch.rawColor!.matrix).not.toBe(IDENTITY_RAW_MATRIX)
     expect(resetSection(EDITOR_SECTIONS.channels, defaultRecipe(), defaultRecipe())).toEqual({})
     expect(EDITOR_SECTIONS.channels.take(defaultRecipe(), defaultRecipe())).toEqual({})
-  })
-
-  it('copies a raw look with its gains and matrix and keeps the target effects', () => {
-    const source = rawRecipe()
-    const target = {
-      ...defaultRecipe(),
-      cameraProfile: 'Monochrome',
-      monochrome: { filter: 'red' as const },
-      film: { ...DEFAULT_FILM, grain: false, evFilm: 1.5 }
-    }
-    const patch = EDITOR_SECTIONS.look.take(source, target)
-    expect(patch).toMatchObject({
-      rawColor: source.rawColor,
-      cameraProfile: null,
-      monochrome: null,
-      film: null,
-      effects: {
-        grain: false,
-        grainParams: DEFAULT_FILM.grainParams,
-        halation: DEFAULT_FILM.halation,
-        halationParams: DEFAULT_FILM.halationParams
-      }
-    })
-    expect(patch.rawColor).not.toBe(source.rawColor)
-    expect(patch.rawColor!.matrix).not.toBe(source.rawColor!.matrix)
-    expect(patch).not.toHaveProperty('temperature')
-    expect(patch).not.toHaveProperty('tint')
-  })
-
-  it('copies a raw look matrix while preserving the target white balance gains', () => {
-    const source = { ...rawRecipe(), rawColor: structuredClone(sourceRaw) }
-    const target = rawRecipe()
-    const patch = EDITOR_SECTIONS.look.take(source, target)
-    expect(patch.rawColor).toEqual({ gains: target.rawColor!.gains, matrix: sourceRaw.matrix })
-    expect(patch.rawColor!.gains).not.toBe(target.rawColor!.gains)
-    expect(patch.rawColor!.matrix).not.toBe(source.rawColor.matrix)
-    expect(source.rawColor).toEqual(sourceRaw)
-  })
-
-  it.each([null, undefined])(
-    'clears raw color when a visible camera look has rawColor %s',
-    (rawColor) => {
-      const source: EditRecipe = {
-        ...defaultRecipe(),
-        rawColor,
-        film: null,
-        cameraProfile: 'Standard'
-      }
-      const target = { ...rawRecipe(), effects: { ...DEFAULT_EFFECTS, grain: true } }
-      const patch = EDITOR_SECTIONS.look.take(source, target)
-      expect(patch).toMatchObject({ rawColor: null, cameraProfile: 'Standard', monochrome: null })
-      expect(patch).not.toHaveProperty('effects')
-      expect({ ...target, ...patch }.effects).toEqual(target.effects)
-    }
-  )
-
-  it('clears raw color for a film look while preserving the target effects', () => {
-    const source = defaultRecipe()
-    const target = { ...rawRecipe(), effects: { ...DEFAULT_EFFECTS, grain: true, halation: true } }
-    expect(EDITOR_SECTIONS.look.take(source, target)).toMatchObject({
-      rawColor: null,
-      film: { ...DEFAULT_FILM, ...target.effects }
-    })
-  })
-
-  it('resets a raw look to the camera defaults', () => {
-    const defaults = { ...defaultRecipe(), film: null, cameraProfile: 'Standard' }
-    expect(resetSection(EDITOR_SECTIONS.look, rawRecipe(), defaults)).toEqual({
-      film: null,
-      cameraProfile: 'Standard',
-      monochrome: null,
-      rawColor: null
-    })
   })
 
   it('does not paste a monochrome filter onto raw color', () => {
