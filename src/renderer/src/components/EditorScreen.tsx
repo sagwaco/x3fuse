@@ -1108,10 +1108,11 @@ export function EditorScreen(): React.JSX.Element {
                 )}
                 {/* Crop mode has no scope. */}
                 {!editor.cropping && (
-                  <div ref={scopeBox} className="p-3">
+                  <div ref={scopeBox} className="mt-3 border-y border-ink/10 p-3">
+                    {/* The rules divide the scope from the look picker and the panel tabs. */}
                     <div className="mb-2 flex h-[15px] items-center justify-between gap-2">
-                      {/* The row has the height of a section title. The buttons overflow it, and the menu text lines up with the panel text. */}
-                      <ScopeMenu className="-ml-2.5" />
+                      {/* The row has the height of a section title. The buttons overflow it, and the menu text lines up with the section titles. */}
+                      <ScopeMenu className="-ml-1.5" />
                       <ScopeSourceControls value={scopeSource} onChange={chooseScope} />
                     </div>
                     {/* While out of view, only the header scope renders. */}
