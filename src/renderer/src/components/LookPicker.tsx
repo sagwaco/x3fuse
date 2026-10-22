@@ -317,7 +317,7 @@ export function LookPicker({
                   })
                   blurOnClick(event)
                 }}
-                className="group self-start rounded-md text-left font-sans focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50"
+                className="group w-full self-start rounded-md text-left font-sans focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50"
               >
                 <span className="look-thumbnail relative block aspect-[3/2] overflow-hidden rounded-md bg-ink/[0.06] group-hover:ring-1 group-hover:ring-ink/30 group-focus-visible:ring-2 group-focus-visible:ring-ink/60 group-aria-pressed:ring-2 group-aria-pressed:ring-ink">
                   {thumbnails[look.id] && (
