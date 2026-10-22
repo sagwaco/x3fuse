@@ -40,6 +40,7 @@ export function useMarquee(
     const base = toggle || event.shiftKey ? useQueueStore.getState().selectedIds : new Set<string>()
     let client = { x: event.clientX, y: event.clientY }
     let dragging = false
+    let primary: string | undefined
 
     const update = (): void => {
       const end = point(client.x, client.y)
@@ -58,7 +59,11 @@ export function useMarquee(
         if (toggle && base.has(id)) selection.delete(id)
         else selection.add(id)
       }
-      useQueueStore.getState().setSelection(selection, ids.at(-1))
+      // The selected item under the pointer is primary. Over a gap, the last one stays.
+      const under = hitRef.current({ left: end.x, top: end.y, right: end.x, bottom: end.y })[0]
+      if (under && selection.has(under)) primary = under
+      else if (!primary || !selection.has(primary)) primary = ids.at(-1)
+      useQueueStore.getState().setSelection(selection, primary)
     }
     const move = (e: globalThis.PointerEvent): void => {
       client = { x: e.clientX, y: e.clientY }
