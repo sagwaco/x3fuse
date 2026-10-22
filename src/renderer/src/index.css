@@ -11,6 +11,90 @@
   font-display: block;
 }
 
+@font-face {
+  font-family: 'Sarasa Mono J';
+  src: url('./assets/fonts/SarasaMonoJ-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-display: swap;
+  unicode-range: U+2E80-9FFF, U+F900-FAFF, U+FE10-FE1F, U+FE30-FE4F, U+FF00-FFEF, U+20000-323AF;
+}
+
+@font-face {
+  font-family: 'Sarasa Mono J';
+  src: url('./assets/fonts/SarasaMonoJ-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-display: swap;
+  unicode-range: U+2E80-9FFF, U+F900-FAFF, U+FE10-FE1F, U+FE30-FE4F, U+FF00-FFEF, U+20000-323AF;
+}
+
+@font-face {
+  font-family: 'Sarasa Mono K';
+  src: url('./assets/fonts/SarasaMonoK-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-display: swap;
+  unicode-range:
+    U+1100-11FF, U+2E80-9FFF, U+A960-A97F, U+AC00-D7FF, U+F900-FAFF, U+FE10-FE1F, U+FE30-FE4F,
+    U+FF00-FFEF, U+20000-323AF;
+}
+
+@font-face {
+  font-family: 'Sarasa Mono K';
+  src: url('./assets/fonts/SarasaMonoK-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-display: swap;
+  unicode-range:
+    U+1100-11FF, U+2E80-9FFF, U+A960-A97F, U+AC00-D7FF, U+F900-FAFF, U+FE10-FE1F, U+FE30-FE4F,
+    U+FF00-FFEF, U+20000-323AF;
+}
+
+@font-face {
+  font-family: 'Sarasa Mono SC';
+  src: url('./assets/fonts/SarasaMonoSC-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-display: swap;
+  unicode-range: U+2E80-9FFF, U+F900-FAFF, U+FE10-FE1F, U+FE30-FE4F, U+FF00-FFEF, U+20000-323AF;
+}
+
+@font-face {
+  font-family: 'Sarasa Mono SC';
+  src: url('./assets/fonts/SarasaMonoSC-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-display: swap;
+  unicode-range: U+2E80-9FFF, U+F900-FAFF, U+FE10-FE1F, U+FE30-FE4F, U+FF00-FFEF, U+20000-323AF;
+}
+
+@font-face {
+  font-family: 'Sarasa Mono TC';
+  src: url('./assets/fonts/SarasaMonoTC-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-display: swap;
+  unicode-range: U+2E80-9FFF, U+F900-FAFF, U+FE10-FE1F, U+FE30-FE4F, U+FF00-FFEF, U+20000-323AF;
+}
+
+@font-face {
+  font-family: 'Sarasa Mono TC';
+  src: url('./assets/fonts/SarasaMonoTC-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-display: swap;
+  unicode-range: U+2E80-9FFF, U+F900-FAFF, U+FE10-FE1F, U+FE30-FE4F, U+FF00-FFEF, U+20000-323AF;
+}
+
+html:lang(ja) {
+  --font-mono-cjk: 'Sarasa Mono J';
+}
+
+html:lang(ko) {
+  --font-mono-cjk: 'Sarasa Mono K';
+}
+
+html:lang(zh-Hans) {
+  --font-mono-cjk: 'Sarasa Mono SC';
+}
+
+html:lang(zh-Hant) {
+  --font-mono-cjk: 'Sarasa Mono TC';
+}
+
 /* Titles and section headings use the monospace font. */
 @layer base {
   h1,

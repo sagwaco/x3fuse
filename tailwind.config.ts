@@ -4,9 +4,9 @@ import { fontFamily } from 'tailwindcss/defaultTheme'
 const steps = [50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950]
 const token = (name: string) => `rgb(var(--${name}) / <alpha-value>)`
 type Family = [string[], { fontFeatureSettings: string; fontVariationSettings: string }]
-// Kode Mono is bundled; see the @font-face rule in index.css. Titles and headings use it.
+// Bundled fonts use the document language to select the CJK fallback in index.css.
 const kodeMono: Family = [
-  ['Kode Mono', ...fontFamily.mono],
+  ['Kode Mono', 'var(--font-mono-cjk, ui-monospace)', ...fontFamily.mono],
   {
     fontFeatureSettings: "'calt' 1, 'ss01' 1, 'ss02' 1",
     fontVariationSettings: "'wght' 500, 'wdth' 87.5, 'ROND' 100"

@@ -1,0 +1,13 @@
+Sarasa Mono J, K, SC, and TC, release v1.0.42
+https://github.com/be5invis/Sarasa-Gothic/releases/tag/v1.0.42
+
+The regular and bold TTF files were compressed to WOFF2 with fontTools.
+No glyphs were removed. To reproduce each conversion with Python:
+
+from fontTools.ttLib import TTFont
+font = TTFont('SarasaMonoSC-Regular.ttf')
+font.flavor = 'woff2'
+font.save('SarasaMonoSC-Regular.woff2')
+
+Repeat for Bold and for the J, K, and TC families.
+See LICENSE for the SIL Open Font License 1.1 and copyright notices.
