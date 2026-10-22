@@ -143,7 +143,7 @@ export function TernaryMixPad({
         aria-keyshortcuts="ArrowLeft ArrowRight ArrowUp ArrowDown Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown Shift+ArrowLeft Shift+ArrowRight Shift+ArrowUp Shift+ArrowDown Delete Backspace Enter"
         tabIndex={disabled ? -1 : 0}
         className={cn(
-          'mix-pad relative aspect-[20/17] overflow-hidden w-full touch-none select-none rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/60',
+          'mix-pad relative aspect-[20/17] w-full touch-none select-none rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/60',
           disabled && 'opacity-40'
         )}
         style={{ '--mix-color': mixLight(value), '--glow': glow } as React.CSSProperties}
@@ -221,7 +221,7 @@ export function TernaryMixPad({
       >
         <div aria-hidden="true" className="mix-light" />
         <svg
-          className="relative h-full w-full overflow-visible"
+          className="relative h-full w-full overflow-visible [clip-path:inset(0_round_0.75rem)]"
           viewBox="-8 -6.3 16 13.6"
           role="img"
           aria-label={labels

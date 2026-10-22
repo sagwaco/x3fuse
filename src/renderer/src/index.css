@@ -968,6 +968,7 @@ html:is([data-theme='light'], [data-theme='gray'])
 .curve-line {
   transition:
     --glow 300ms ease,
+    --spectrum-alpha 300ms ease,
     stroke 300ms ease;
 }
 
@@ -985,7 +986,45 @@ html:is([data-theme='light'], [data-theme='gray'])
     color-mix(in srgb, var(--glow) 20%, transparent),
     transparent 70%
   );
-  transition: opacity 300ms ease;
+  transition: opacity 700ms ease;
+}
+
+/* On the RGB curve, the glow is the visible spectrum, from red to violet. A
+   full spectrum recipe adds IR before red and UV after violet. The glow color
+   and the spectrum cross-fade through --spectrum-alpha. */
+@property --spectrum-alpha {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 0;
+}
+
+.glass-well {
+  --spectrum:
+    rgb(140 80 255 / var(--spectrum-alpha)), rgb(60 100 255 / var(--spectrum-alpha)),
+    rgb(0 200 255 / var(--spectrum-alpha)), rgb(60 230 90 / var(--spectrum-alpha)),
+    rgb(240 230 50 / var(--spectrum-alpha)), rgb(255 140 30 / var(--spectrum-alpha)),
+    rgb(255 40 40 / var(--spectrum-alpha));
+}
+
+.glass-well[data-spectrum='full'] {
+  --spectrum:
+    rgb(90 30 160 / var(--spectrum-alpha)), rgb(180 60 255 / var(--spectrum-alpha)) 18%,
+    rgb(60 100 255 / var(--spectrum-alpha)), rgb(0 200 255 / var(--spectrum-alpha)),
+    rgb(60 230 90 / var(--spectrum-alpha)), rgb(240 230 50 / var(--spectrum-alpha)),
+    rgb(255 140 30 / var(--spectrum-alpha)), rgb(255 40 40 / var(--spectrum-alpha)) 82%,
+    rgb(150 20 40 / var(--spectrum-alpha));
+}
+
+.glass-well[data-rgb] {
+  --spectrum-alpha: 0.2;
+}
+
+.glass-well::before {
+  background:
+    linear-gradient(-90deg, var(--spectrum)),
+    color-mix(in srgb, var(--glow) calc((0.2 - var(--spectrum-alpha)) * 100%), transparent);
+  -webkit-mask: radial-gradient(120% 60% at 50% 115%, #000, transparent 70%);
+  mask: radial-gradient(120% 60% at 50% 115%, #000, transparent 70%);
 }
 
 .mix-pad:is(:hover, [data-dragging]):not([aria-disabled])::before,
@@ -1070,12 +1109,34 @@ html:is([data-theme='light'], [data-theme='gray']) .mix-grid > :nth-child(3) {
   --mix-light: white;
   background: radial-gradient(
     circle 120px at var(--light-x, 50%) var(--light-y, 50%),
-    color-mix(in srgb, var(--mix-light) 8%, transparent),
+    color-mix(in srgb, var(--mix-light) 12%, transparent),
+    color-mix(in srgb, var(--mix-light) 3%, transparent) 25%,
+    color-mix(in srgb, var(--mix-light) 1%, transparent) 50%,
     transparent
   );
   transition:
-    opacity 200ms ease,
+    opacity 700ms ease,
     --mix-light 300ms ease;
+}
+
+/* The light also catches the bezel ring outside the pad's dark edge. The pad
+   does not clip its children, so this ring can extend past the pad. */
+.mix-light::before {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  padding: 2px;
+  border-radius: calc(0.75rem + 3px);
+  background: radial-gradient(
+    circle 80px at calc(var(--light-x, 50%) + 3px) calc(var(--light-y, 50%) + 3px),
+    color-mix(in srgb, var(--mix-light) 45%, transparent),
+    transparent
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
 }
 
 .mix-pad:is(:hover, [data-dragging]):not([aria-disabled]) .mix-light,

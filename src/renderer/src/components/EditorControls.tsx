@@ -900,7 +900,9 @@ function Curves({ recipe }: { recipe: EditRecipe }): React.JSX.Element {
         </Button>
       </div>
       <div
-        className="glass-well relative overflow-hidden rounded-xl"
+        className="glass-well relative rounded-xl"
+        data-spectrum={recipe.rawColor ? 'full' : 'visible'}
+        data-rgb={channel === 'master' || undefined}
         style={
           { '--glow': channel === 'master' ? undefined : CHANNELS[channel] } as React.CSSProperties
         }
