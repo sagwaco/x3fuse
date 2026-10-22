@@ -17,10 +17,11 @@ import {
   FILM_MONOCHROME_FILTERS,
   filmGrainDefaults,
   filmHalationDefaults,
+  boundedWhiteBalanceGains,
   type EditRecipe
 } from '@shared/editor'
 import stocks from '@shared/film-stocks.json'
-import { useEditorStore } from '../stores/editorStore'
+import { useEditorStore, previewCurrent } from '../stores/editorStore'
 import { t } from '../lib/strings'
 import { blurOnClick } from '../lib/commitFocus'
 import { DevelopingCloud } from '../lib/developingCloud'
@@ -176,7 +177,14 @@ export function LookPicker({
   const cameraProfiles = useEditorStore((state) => state.session?.cameraProfiles)
   const cloud = useContext(DevelopingCloud)
   const asShotGains = useEditorStore((state) => (cloud ? undefined : state.preview?.asShotGains))
-  const gains = recipe.rawColor?.gains ?? asShotGains
+  const balance = useEditorStore((state) =>
+    !cloud && previewCurrent(state) ? state.preview?.whiteBalance : undefined
+  )
+  const gains =
+    recipe.rawColor?.gains ??
+    recipe.whiteBalanceGains ??
+    (balance && boundedWhiteBalanceGains(balance.gains)) ??
+    asShotGains
   const base = recipe.film ?? DEFAULT_FILM
   const filter = recipe.monochrome?.filter ?? 'neutral'
   const aerochrome =

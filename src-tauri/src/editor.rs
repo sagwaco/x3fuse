@@ -317,6 +317,7 @@ pub struct RenderedPreview {
     as_shot_tint: Option<f32>,
     /// Raw color layer gains for the camera's own white balance.
     as_shot_gains: Option<[f32; 3]>,
+    white_balance: Option<x3f_render::WhiteBalance>,
 }
 
 impl Editor {
@@ -1133,7 +1134,28 @@ impl Editor {
                 x3f_render::as_shot_channel_gains(&p.image.image().white_balance),
             )
         });
+        let calibration = worker
+            .prepared
+            .as_ref()
+            .map(|p| p.image.image().white_balance);
         drop(worker);
+        let white_balance = calibration.and_then(|cal| {
+            if asset.recipe.raw_color.is_none()
+                && asset.recipe.white_balance_gains.is_none()
+                && asset.recipe.temperature.is_none()
+                && asset.recipe.tint == 0.
+            {
+                let ((temperature, tint), _) = as_shot?;
+                let n = cal.as_shot_neutral;
+                Some(x3f_render::WhiteBalance {
+                    temperature,
+                    tint,
+                    gains: [(n[1] / n[0]) as f32, 1., (n[1] / n[2]) as f32],
+                })
+            } else {
+                x3f_render::recipe_white_balance(&cal, &asset.recipe).ok()
+            }
+        });
         let preview = RenderedPreview {
             session_id: request.session_id,
             revision: request.revision,
@@ -1149,6 +1171,7 @@ impl Editor {
             as_shot_temperature: as_shot.map(|((k, _), _)| k),
             as_shot_tint: as_shot.map(|((_, t), _)| t),
             as_shot_gains: as_shot.map(|(_, gains)| gains),
+            white_balance,
         };
         let frame = Arc::new(frame_body(rendered)?);
         check_cancel(&cancel)?;
@@ -1601,14 +1624,31 @@ impl Editor {
         }
     }
 
-    /// Returns the recipe change for a neutral point: channel gains in raw
-    /// color, else temperature and tint.
+    /// Read calibration without preparing RAW data or changing the recipe.
+    pub fn white_balance(
+        &self,
+        id: &str,
+        recipe: EditRecipe,
+    ) -> Result<x3f_render::WhiteBalance, String> {
+        let session = self.session(id)?;
+        recipe.validate()?;
+        let worker = self.worker.lock().map_err(|_| "Renderer unavailable")?;
+        let prepared = worker
+            .prepared
+            .as_ref()
+            .filter(|p| p.matches_source(&session.path, &session.source_revision, &recipe))
+            .ok_or("White balance calibration is not ready")?;
+        x3f_render::recipe_white_balance(&prepared.image.image().white_balance, &recipe)
+    }
+
+    /// Return channel gains for raw or extended white balance, else Kelvin and tint.
     pub fn pick_white_balance(
         &self,
         id: &str,
         recipe: EditRecipe,
         x: f32,
         y: f32,
+        gains: bool,
     ) -> Result<serde_json::Value, String> {
         if self.paused.load(Ordering::SeqCst) {
             return Err("White balance sampling pauses during export".into());
@@ -1633,6 +1673,8 @@ impl Editor {
             Some(raw) => x3f_render::pick_channel_gains(image, &asset.recipe, x, y).map(|gains| {
                 serde_json::json!({ "rawColor": x3f_render::RawColor { gains, ..raw } })
             }),
+            None if gains => x3f_render::pick_channel_gains(image, &asset.recipe, x, y)
+                .map(|gains| serde_json::json!({ "whiteBalanceGains": gains })),
             None => x3f_render::pick_white_balance(image, &asset.recipe, x, y)
                 .map(|(temperature, tint)| serde_json::json!({ "temperature": temperature, "tint": tint })),
         }?;
@@ -1850,6 +1892,114 @@ pub fn protocol_id(uri: &str) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn white_balance_reads_only_matching_prepared_calibration() {
+        let temporary = tempfile::tempdir().unwrap();
+        let path = temporary.path().join("photo.X3F");
+        fs::write(&path, b"No RAW decoding should be needed").unwrap();
+        let path = path.canonicalize().unwrap();
+        let editor = Editor::new(temporary.path().join("edits"));
+        let revision = editor.edits.source_revision(&path).unwrap();
+        let recipe = EditRecipe::default();
+        assert!(editor.white_balance("missing", recipe.clone()).is_err());
+        *editor.session.lock().unwrap() = Some(Session {
+            id: "active".into(),
+            path: path.clone(),
+            source_revision: revision.clone(),
+            cancelled_revision: None,
+        });
+        assert!(editor.white_balance("active", recipe.clone()).is_err());
+        editor.worker.lock().unwrap().prepared = Some(Prepared {
+            path,
+            source_revision: revision.clone(),
+            denoise: recipe.denoise,
+            denoise_options: recipe.denoise_options,
+            denoise_free: false,
+            x3i_source: recipe.x3i_source,
+            image: PreparedImage::new(
+                SceneLinearImage {
+                    width: 1,
+                    height: 1,
+                    orientation: 1,
+                    data: vec![0.18; 3],
+                    white_balance: x3f_core::WhiteBalanceCalibration {
+                        camera_to_rgb: [1., 0., 0., 0., 1., 0., 0., 0., 1.],
+                        xyz_to_camera: [1., 0., 0., 0., 1., 0., 0., 0., 1.],
+                        as_shot_neutral: [0.5, 1., 2.],
+                    },
+                    color_mode_calibration: None,
+                },
+                &AtomicBool::new(false),
+            )
+            .unwrap(),
+        });
+        assert_eq!(
+            editor
+                .white_balance("active", recipe.clone())
+                .unwrap()
+                .gains,
+            [2., 1., 0.5]
+        );
+        let changed = EditRecipe {
+            white_balance_gains: Some([3., 1., 2.]),
+            ..recipe.clone()
+        };
+        assert_eq!(
+            editor.white_balance("active", changed).unwrap().gains,
+            [3., 1., 2.]
+        );
+        assert_eq!(
+            editor
+                .white_balance("active", recipe.clone())
+                .unwrap()
+                .gains,
+            [2., 1., 0.5]
+        );
+        let physical = editor
+            .pick_white_balance("active", recipe.clone(), 0.5, 0.5, false)
+            .unwrap();
+        assert!(physical.get("temperature").is_some());
+        assert!(physical.get("whiteBalanceGains").is_none());
+        let gains = editor
+            .pick_white_balance("active", recipe.clone(), 0.5, 0.5, true)
+            .unwrap();
+        assert!(gains.get("whiteBalanceGains").is_some());
+        assert!(gains.get("temperature").is_none());
+        let extended = EditRecipe {
+            white_balance_gains: Some([1.; 3]),
+            ..recipe.clone()
+        };
+        assert!(editor
+            .pick_white_balance("active", extended, 0.5, 0.5, false)
+            .unwrap()
+            .get("temperature")
+            .is_some());
+        let raw = EditRecipe {
+            raw_color: Some(x3f_render::RawColor {
+                gains: [1.; 3],
+                matrix: [1., 0., 0., 0., 1., 0., 0., 0., 1.],
+            }),
+            ..recipe.clone()
+        };
+        for gains in [false, true] {
+            let result = editor
+                .pick_white_balance("active", raw.clone(), 0.5, 0.5, gains)
+                .unwrap();
+            assert!(result.get("rawColor").is_some());
+            assert!(result.get("whiteBalanceGains").is_none());
+        }
+        assert!(editor.worker.lock().unwrap().renderer.is_none());
+        editor
+            .worker
+            .lock()
+            .unwrap()
+            .prepared
+            .as_mut()
+            .unwrap()
+            .source_revision = "b".repeat(64);
+        assert!(editor.white_balance("active", recipe).is_err());
+    }
+
     #[test]
     #[ignore = "set X3F_CAMERA_PROFILE_INPUT to a real file with FCBlue calibration"]
     fn real_camera_defaults_do_not_save_and_existing_recipes_are_preserved() {

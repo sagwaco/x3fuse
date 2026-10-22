@@ -874,12 +874,38 @@ pub async fn editor_preview(
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct WhiteBalanceRequest {
+    session_id: String,
+    recipe: x3f_render::EditRecipe,
+}
+
+#[tauri::command]
+pub async fn editor_white_balance(
+    window: WebviewWindow,
+    state: State<'_, Arc<AppState>>,
+    payload: WhiteBalanceRequest,
+) -> Result<x3f_render::WhiteBalance, String> {
+    main_window(&window)?;
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        state
+            .editor
+            .white_balance(&payload.session_id, payload.recipe)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PickWhiteBalanceRequest {
     session_id: String,
     x: f32,
     y: f32,
     #[serde(default)]
     recipe: x3f_render::EditRecipe,
+    #[serde(default)]
+    gains: bool,
 }
 
 #[tauri::command]
@@ -891,9 +917,13 @@ pub async fn editor_pick_white_balance(
     main_window(&window)?;
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        state
-            .editor
-            .pick_white_balance(&payload.session_id, payload.recipe, payload.x, payload.y)
+        state.editor.pick_white_balance(
+            &payload.session_id,
+            payload.recipe,
+            payload.x,
+            payload.y,
+            payload.gains,
+        )
     })
     .await
     .map_err(|e| e.to_string())?
@@ -927,6 +957,34 @@ pub async fn editor_finish_close(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn white_balance_calibration_requires_recipe() {
+        assert!(serde_json::from_value::<WhiteBalanceRequest>(
+            serde_json::json!({ "sessionId": "session" })
+        )
+        .is_err());
+        assert!(serde_json::from_value::<WhiteBalanceRequest>(
+            serde_json::json!({ "sessionId": "session", "recipe": {} })
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn white_balance_picker_gain_request_is_optional() {
+        let mut payload = serde_json::json!({ "sessionId": "session", "x": 0.5, "y": 0.5 });
+        assert!(
+            !serde_json::from_value::<super::PickWhiteBalanceRequest>(payload.clone())
+                .unwrap()
+                .gains
+        );
+        payload["gains"] = serde_json::json!(true);
+        assert!(
+            serde_json::from_value::<super::PickWhiteBalanceRequest>(payload)
+                .unwrap()
+                .gains
+        );
+    }
 
     #[test]
     fn batch_preferences_keep_current_global_concurrency() {

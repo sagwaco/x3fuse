@@ -1,6 +1,6 @@
 import { memo, useContext, useEffect, useId, useRef, useState } from 'react'
 import { DenoiseControls } from './DenoiseControls'
-import { ChevronDown, Aperture, Film, Blend, RotateCcw, Pipette, Plus, Trash2 } from 'lucide-react'
+import { ChevronDown, Aperture, Film, Blend, RotateCcw, Plus, Trash2 } from 'lucide-react'
 import {
   DEFAULT_FILM,
   FILM_MONOCHROME_FILTERS,
@@ -23,11 +23,9 @@ import { invalidateNativeMenu, showNativeMenu } from '../lib/nativeMenu'
 import { DevelopingCloud } from '../lib/developingCloud'
 import { useQueueStore } from '../stores/queueStore'
 import { t, useLanguage } from '../lib/strings'
-import { withShortcut } from '../lib/shortcut'
 import { Button } from './ui/button'
 import { cn } from '../lib/cn'
 import { blurOnClick, blurOnEnter } from '../lib/commitFocus'
-import { Select } from './ui/select'
 import { GlassGroup } from './ui/glassGroup'
 import { Slider } from './ui/slider'
 import { HelpTooltip, ToggleRow } from './ui/settingsLayout'
@@ -38,36 +36,21 @@ import { useStoredOpen } from '../hooks/useStoredOpen'
 import { animateDetails } from '../lib/animateDetails'
 import { ColorMixer, ToneMixer } from './ColorMixer'
 import { ColorWheels } from './ColorWheels'
-import { RawMatrixControls, RawWhiteBalance } from './RawColorControls'
+import { RawMatrixControls } from './RawColorControls'
+import { WhiteBalanceControls } from './WhiteBalanceControls'
 
 /** Tracks that show which way a slider moves the picture. */
-const TEMPERATURE = 'linear-gradient(to right, #4f7cff, #d4d4d4, #ffb43d)'
-const TINT = 'linear-gradient(to right, #3fbf5a, #d4d4d4, #e14fd0)'
+export const TEMPERATURE = 'linear-gradient(to right, #4f7cff, #d4d4d4, #ffb43d)'
+export const TINT = 'linear-gradient(to right, #3fbf5a, #d4d4d4, #e14fd0)'
 /** Saturation and Vibrance fade from dark gray to color. */
 const RAINBOW =
   'linear-gradient(to right, #525252, #737373 40%, #60a5fa 55%, #4ade80 70%, #facc15 85%, #f87171)'
-/** White balance presets in kelvin at zero tint. As shot is the camera's own. */
-const WHITE_BALANCE = [
-  ['asShot', null],
-  ['daylight', 5500],
-  ['cloudy', 6500],
-  ['shade', 7500],
-  ['tungsten', 2850],
-  ['flash', 6000]
-] as const
 /** Maps values onto slider positions, for a slider that is not linear. */
 interface Scale {
   to: (value: number) => number
   from: (position: number) => number
   /** One arrow key step, in positions. */
   step: number
-}
-/** The extended range spaces temperature by ratio and tint finest near zero. */
-const KELVIN: Scale = { to: Math.log, from: Math.exp, step: 0.01 }
-const TINT_SCALE: Scale = {
-  to: (tint: number) => Math.asinh(tint / 100),
-  from: (position: number) => 100 * Math.sinh(position),
-  step: 0.01
 }
 const PANEL_TABS = [
   ['raw', 'tabRaw', Aperture],
@@ -520,21 +503,6 @@ export const EditorControls = memo(function EditorControls({
     setWasPending(pending)
     if (pending) setPanelTab('raw')
   }
-  const cloud = useContext(DevelopingCloud)
-  const asShotTemperature = useEditorStore((state) =>
-    cloud ? undefined : state.preview?.asShotTemperature
-  )
-  const asShotTint = useEditorStore((state) => (cloud ? undefined : state.preview?.asShotTint))
-  const [extended, setExtended] = useState(false)
-  const preset =
-    WHITE_BALANCE.find(([, kelvin]) => recipe.temperature === kelvin && recipe.tint === 0)?.[0] ??
-    'custom'
-  const temperature = recipe.temperature ?? Math.round(asShotTemperature ?? 6500)
-  // A value past the normal range enables the extended controls.
-  const wideTemperature =
-    extended || temperature < 2000 || temperature > 12000 || Math.abs(recipe.tint) > 100
-  // As shot, Tint is a green gain, not an offset from the light source.
-  const wideTint = (wideTemperature && recipe.temperature !== null) || Math.abs(recipe.tint) > 100
   const control = (
     key: keyof EditRecipe,
     options: Partial<Parameters<typeof Adjustment>[0]> = {}
@@ -613,97 +581,12 @@ export const EditorControls = memo(function EditorControls({
                 <Curves recipe={recipe} />
               </Section>
               <Section id="whiteBalance" name={t('editor.whiteBalance')}>
-                {recipe.rawColor ? (
-                  <RawWhiteBalance recipe={recipe} picking={picking} setPicking={setPicking} />
-                ) : (
-                  <>
-                    <div className="flex items-center gap-1.5">
-                      <Button
-                        size="icon"
-                        className="h-7 w-7 shrink-0"
-                        aria-label={t('editor.picker')}
-                        title={withShortcut(t('editor.picker'), 'whiteBalancePicker')}
-                        aria-keyshortcuts="W"
-                        aria-pressed={picking}
-                        onClick={() => setPicking(!picking)}
-                      >
-                        <Pipette aria-hidden="true" className="h-3.5 w-3.5" />
-                      </Button>
-                      <Select
-                        aria-label={t('editor.whiteBalancePreset')}
-                        className="flex-1"
-                        value={preset}
-                        options={[
-                          ...WHITE_BALANCE.map(([key]) => ({
-                            value: key,
-                            label: t(`editor.${key}`)
-                          })),
-                          // Custom only names a balance that is not a preset.
-                          ...(preset === 'custom'
-                            ? [
-                                {
-                                  value: preset,
-                                  label: t('editor.customWhiteBalance'),
-                                  disabled: true
-                                }
-                              ]
-                            : [])
-                        ]}
-                        onValueChange={(key) => {
-                          const kelvin = WHITE_BALANCE.find(([name]) => name === key)?.[1]
-                          if (kelvin !== undefined) change({ temperature: kelvin, tint: 0 })
-                        }}
-                      />
-                      <Button
-                        size="icon"
-                        className="h-7 w-7 shrink-0"
-                        aria-label={t('editor.resetWhiteBalance')}
-                        title={t('editor.resetWhiteBalance')}
-                        disabled={preset === 'asShot'}
-                        onClick={() => change({ temperature: null, tint: 0 })}
-                      >
-                        <RotateCcw aria-hidden="true" className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
-                    {picking && (
-                      <p role="status" className="control-label text-tone-100">
-                        {t('editor.pickNeutral')}
-                      </p>
-                    )}
-                    <Adjustment
-                      label={t('editor.temperature')}
-                      value={temperature}
-                      min={wideTemperature ? 500 : 2000}
-                      max={wideTemperature ? 50000 : 12000}
-                      step={wideTemperature ? 10 : 50}
-                      scale={wideTemperature ? KELVIN : undefined}
-                      track={TEMPERATURE}
-                      // Leaving As shot starts from the camera's own tint, so nothing jumps.
-                      change={(temperature, commit) =>
-                        change(
-                          recipe.temperature === null &&
-                            recipe.tint === 0 &&
-                            asShotTint !== undefined
-                            ? { temperature, tint: Math.round(asShotTint) }
-                            : { temperature },
-                          commit
-                        )
-                      }
-                      reset={() => change({ temperature: null })}
-                      commit={commit}
-                    />
-                    {control('tint', {
-                      track: TINT,
-                      ...(wideTint && { min: -2000, max: 2000, scale: TINT_SCALE })
-                    })}
-                    <ToggleRow
-                      label={t('editor.extendedRange')}
-                      help={t('editor.extendedRangeHelp')}
-                      checked={wideTemperature}
-                      onChange={setExtended}
-                    />
-                  </>
-                )}
+                <WhiteBalanceControls
+                  key={`${useEditorStore.getState().session?.sessionId}:${!!recipe.rawColor}`}
+                  recipe={recipe}
+                  picking={picking}
+                  setPicking={setPicking}
+                />
               </Section>
               <Section id="detail" name={t('editor.detail')}>
                 {control('sharpen', { min: 0, max: 100 })}

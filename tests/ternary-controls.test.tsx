@@ -4,10 +4,12 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { AEROCHROME_MATRIX, defaultRecipe, type EditRecipe } from '@shared/editor'
 import { RawMatrixControls } from '../src/renderer/src/components/RawColorControls'
+import { WhiteBalanceControls } from '../src/renderer/src/components/WhiteBalanceControls'
 import { useEditorStore as editor } from '../src/renderer/src/stores/editorStore'
 import { useQueueStore as queue } from '../src/renderer/src/stores/queueStore'
 import { t } from '../src/renderer/src/lib/strings'
 import { mixPadPoint } from '../src/renderer/src/lib/ternaryMix'
+import { DevelopingCloud } from '../src/renderer/src/lib/developingCloud'
 
 const original = editor.getState()
 const invoke = vi.fn()
@@ -27,6 +29,10 @@ class TestPointerEvent extends MouseEvent {
 function Controls(): React.JSX.Element {
   const recipe = editor((state) => state.documents[path].recipe)
   return <RawMatrixControls recipe={recipe} />
+}
+function WhiteBalance(): React.JSX.Element {
+  const recipe = editor((state) => state.documents[path].recipe)
+  return <WhiteBalanceControls recipe={recipe} picking={false} setPicking={vi.fn()} />
 }
 const recipe = (): EditRecipe => editor.getState().documents[path].recipe
 const row = (): number[] => recipe().rawColor!.matrix.slice(0, 3)
@@ -81,7 +87,13 @@ beforeEach(() => {
   editor.setState({
     session: { sessionId: 'ternary', path, recipe: initial, revision: 0 },
     documents: { [path]: { recipe: initial, revision: 0, past: [], future: [], dirty: false } },
-    preview: { sessionId: 'ternary' } as never,
+    preview: {
+      sessionId: 'ternary',
+      asShotGains: [2, 1, 0.5],
+      asShotTemperature: 5150,
+      asShotTint: 7,
+      whiteBalance: { temperature: 5150, tint: 7, gains: [2, 1, 0.5] }
+    } as never,
     before: false,
     loading: false,
     closing: false,
@@ -95,6 +107,247 @@ afterEach(async () => {
   editor.setState(original, true)
   vi.unstubAllGlobals()
 })
+
+it('edits full spectrum temperature and tint with save and undo, leaving the mix unchanged', async () => {
+  render(<WhiteBalance />)
+  const sliders = screen.getAllByRole('slider')
+  expect(sliders.map((slider) => slider.getAttribute('aria-label'))).toEqual([
+    t('editor.rawTemperature'),
+    t('editor.tint')
+  ])
+  expect(recipe()).toBe(initial)
+  expect(invoke).not.toHaveBeenCalled()
+  await act(async () => fireEvent.keyDown(sliders[0], { key: 'ArrowRight' }))
+  const warmer = recipe().rawColor!.gains
+  expect(warmer[0]).toBeGreaterThan(2)
+  expect(warmer[2]).toBeLessThan(0.5)
+  expect(warmer[0] * warmer[2]).toBeCloseTo(1)
+  expect(editor.getState().documents[path].past).toHaveLength(1)
+  await editor.getState().flush()
+  expect(invoke.mock.calls.filter(([command]) => command === 'editor:save')).toHaveLength(1)
+  act(() => editor.getState().undo())
+  expect(recipe()).toEqual(initial)
+  await act(async () => fireEvent.keyDown(sliders[1], { key: 'ArrowRight' }))
+  const magenta = recipe().rawColor!.gains
+  expect(magenta[0]).toBeGreaterThan(2)
+  expect(magenta[2]).toBeGreaterThan(0.5)
+  expect(magenta[0] / magenta[2]).toBeCloseTo(4)
+  expect(magenta[1]).toBe(1)
+  expect(recipe().rawColor!.matrix).toEqual(AEROCHROME_MATRIX)
+  expect(recipe().film).toEqual(initial.film)
+  act(() => editor.getState().undo())
+  expect(recipe()).toEqual(initial)
+})
+
+it('commits the final calibrated full spectrum slider response as one undo step', async () => {
+  let finish!: (value: unknown) => void
+  const base = invoke.getMockImplementation()!
+  invoke.mockImplementation((command, payload) =>
+    command === 'editor:whiteBalance'
+      ? new Promise((resolve) => {
+          finish = resolve
+        })
+      : base(command, payload)
+  )
+  render(<WhiteBalance />)
+  fireEvent.click(screen.getByRole('switch', { name: t('editor.extendedRange') }))
+  await act(async () =>
+    fireEvent.keyDown(screen.getByRole('slider', { name: t('editor.temperature') }), {
+      key: 'ArrowRight'
+    })
+  )
+  expect(recipe()).toBe(initial)
+  await act(async () => {
+    finish({ temperature: 5200, tint: 7, gains: [3, 1, 1 / 3] })
+  })
+  expect(recipe().rawColor).toEqual({ gains: [3, 1, 1 / 3], matrix: AEROCHROME_MATRIX })
+  expect(editor.getState().documents[path].past).toHaveLength(1)
+  await editor.getState().flush()
+  expect(invoke.mock.calls.filter(([command]) => command === 'editor:save')).toHaveLength(1)
+  act(() => editor.getState().undo())
+  expect(recipe()).toEqual(initial)
+})
+
+it('uses the latest physical draft and ignores an older conversion response', async () => {
+  const responses: Array<(value: unknown) => void> = []
+  const base = invoke.getMockImplementation()!
+  invoke.mockImplementation((command, payload) =>
+    command === 'editor:whiteBalance'
+      ? new Promise((resolve) => responses.push(resolve))
+      : base(command, payload)
+  )
+  render(<WhiteBalance />)
+  fireEvent.click(screen.getByRole('switch', { name: t('editor.extendedRange') }))
+  fireEvent.change(screen.getByRole('spinbutton', { name: t('editor.temperature') }), {
+    target: { value: '6000' }
+  })
+  fireEvent.change(screen.getByRole('spinbutton', { name: t('editor.tint') }), {
+    target: { value: '10' }
+  })
+  expect(
+    invoke.mock.calls.filter(([command]) => command === 'editor:whiteBalance').at(-1)?.[1].recipe
+  ).toMatchObject({ temperature: 6000, tint: 10 })
+  await act(async () => {
+    responses[0]({ temperature: 6000, tint: 7, gains: [3, 1, 0.4] })
+  })
+  expect(recipe()).toBe(initial)
+  await act(async () => {
+    responses[1]({ temperature: 6000, tint: 10, gains: [4, 1, 0.4] })
+  })
+  expect(recipe().rawColor!.gains).toEqual([4, 1, 0.4])
+  expect(editor.getState().documents[path].past).toHaveLength(1)
+})
+
+it('uses the current store recipe when a slider event runs before React updates', async () => {
+  const responses: Array<(value: unknown) => void> = []
+  const base = invoke.getMockImplementation()!
+  invoke.mockImplementation((command, payload) =>
+    command === 'editor:whiteBalance'
+      ? new Promise((resolve) => responses.push(resolve))
+      : base(command, payload)
+  )
+  render(<WhiteBalance />)
+  fireEvent.click(screen.getByRole('switch', { name: t('editor.extendedRange') }))
+  const field = screen.getByRole('spinbutton', { name: t('editor.temperature') })
+  act(() => {
+    editor.getState().change({ rawColor: { ...initial.rawColor!, gains: [3, 1, 0.25] } }, false)
+    fireEvent.change(field, { target: { value: '6000' } })
+  })
+  await act(async () => {
+    responses[0]({ temperature: 6000, tint: 7, gains: [4, 1, 0.4] })
+  })
+  expect(recipe().rawColor!.gains).toEqual([4, 1, 0.4])
+  expect(editor.getState().documents[path].past).toHaveLength(1)
+})
+
+it('restores the displayed physical balance when conversion fails', async () => {
+  invoke.mockRejectedValueOnce(new Error('calibration failed'))
+  render(<WhiteBalance />)
+  fireEvent.click(screen.getByRole('switch', { name: t('editor.extendedRange') }))
+  await act(async () => {
+    fireEvent.change(screen.getByRole('spinbutton', { name: t('editor.temperature') }), {
+      target: { value: '6000' }
+    })
+  })
+  expect(
+    (screen.getByRole('spinbutton', { name: t('editor.temperature') }) as HTMLInputElement).value
+  ).toBe('5150')
+  expect(screen.getByRole('status').textContent).toContain('calibration failed')
+  expect(recipe()).toBe(initial)
+})
+
+it('uses the common preset menu in full spectrum and keeps its channel matrix', async () => {
+  const base = invoke.getMockImplementation()!
+  invoke.mockImplementation((command, payload) =>
+    command === 'editor:whiteBalance'
+      ? Promise.resolve({ temperature: 5500, tint: 0, gains: [3, 1, 0.4] })
+      : command === 'menu:popup'
+        ? Promise.resolve('daylight')
+        : base(command, payload)
+  )
+  render(<WhiteBalance />)
+  await act(async () =>
+    fireEvent.click(screen.getByRole('button', { name: t('editor.whiteBalancePreset') }))
+  )
+  expect(recipe().rawColor).toEqual({ gains: [3, 1, 0.4], matrix: AEROCHROME_MATRIX })
+  expect(screen.getByRole('button', { name: t('editor.whiteBalancePreset') }).textContent).toBe(
+    t('editor.daylight')
+  )
+  expect(
+    screen.getByRole('switch', { name: t('editor.extendedRange') }).getAttribute('aria-checked')
+  ).toBe('true')
+})
+
+it('waits for matching calibration without showing a transient error', async () => {
+  editor.setState({ preview: { ...editor.getState().preview!, whiteBalance: undefined } })
+  invoke.mockRejectedValueOnce(new Error('White balance calibration is not ready'))
+  render(<WhiteBalance />)
+  await act(async () =>
+    fireEvent.click(screen.getByRole('switch', { name: t('editor.extendedRange') }))
+  )
+  expect(screen.queryByRole('status')).toBeNull()
+  await act(async () =>
+    editor.setState({
+      preview: {
+        ...editor.getState().preview!,
+        revision: 1,
+        whiteBalance: { temperature: 5150, tint: 7, gains: [2, 1, 0.5] }
+      }
+    })
+  )
+  expect(
+    (screen.getByRole('spinbutton', { name: t('editor.temperature') }) as HTMLInputElement).disabled
+  ).toBe(false)
+  expect(recipe()).toBe(initial)
+})
+
+it('rejects an unrepresentable extended balance without changing its recipe', async () => {
+  const loaded = { ...defaultRecipe(), temperature: 1500 }
+  editor.setState({
+    documents: { [path]: { ...editor.getState().documents[path], recipe: loaded } }
+  })
+  invoke.mockResolvedValueOnce({ temperature: 1500, tint: 0, gains: [2 ** 24, 1, 2 ** -24] })
+  await act(async () => {
+    render(<WhiteBalance />)
+  })
+  expect(
+    screen.getByRole('switch', { name: t('editor.extendedRange') }).getAttribute('aria-checked')
+  ).toBe('false')
+  expect(screen.getByRole('status').textContent).toBe(t('editor.extendedRangeUnavailable'))
+  expect(recipe()).toBe(loaded)
+})
+
+it('fits equivalent gains by a common scale before editing a standard balance', async () => {
+  const loaded = { ...defaultRecipe(), cameraProfile: 'Standard', temperature: 5000 }
+  editor.setState({
+    documents: { [path]: { ...editor.getState().documents[path], recipe: loaded } }
+  })
+  invoke.mockResolvedValueOnce({ temperature: 5000, tint: 0, gains: [128, 1, 2] })
+  render(<WhiteBalance />)
+  await act(async () =>
+    fireEvent.click(screen.getByRole('switch', { name: t('editor.extendedRange') }))
+  )
+  expect(recipe()).toBe(loaded)
+  await act(async () =>
+    fireEvent.keyDown(screen.getByRole('slider', { name: t('editor.rawTemperature') }), {
+      key: 'ArrowLeft'
+    })
+  )
+  const gains = recipe().whiteBalanceGains!
+  expect(gains[1]).toBe(0.5)
+  expect(gains[0] * gains[2]).toBeCloseTo(64)
+  expect(recipe().cameraProfile).toBe('Standard')
+  expect(recipe().rawColor).toBeNull()
+})
+
+it.each(['before', 'loading', 'closing', 'preview', 'busy', 'cloud', 'asShot'])(
+  'disables the white balance sliders when %s prevents edits',
+  (state) => {
+    if (state === 'before') editor.setState({ before: true })
+    if (state === 'loading') editor.setState({ loading: true })
+    if (state === 'closing') editor.setState({ closing: true })
+    if (state === 'preview') editor.setState({ preview: null })
+    if (state === 'busy') queue.setState({ isProcessing: true })
+    if (state === 'asShot')
+      editor.setState({ preview: { ...editor.getState().preview!, asShotGains: undefined } })
+    render(
+      <DevelopingCloud.Provider value={state === 'cloud'}>
+        <WhiteBalance />
+      </DevelopingCloud.Provider>
+    )
+    for (const element of screen.getAllByRole('slider')) {
+      expect(element.getAttribute('data-disabled')).not.toBeNull()
+      fireEvent.keyDown(element, { key: 'ArrowRight' })
+      fireEvent.doubleClick(element)
+    }
+    expect(
+      (screen.getByRole('spinbutton', { name: t('editor.rawTemperature') }) as HTMLInputElement)
+        .disabled
+    ).toBe(true)
+    expect(recipe()).toBe(initial)
+    expect(invoke).not.toHaveBeenCalled()
+  }
+)
 
 it('displays signed Aerochrome values without changing the recipe on load', () => {
   render(<Controls />)

@@ -10,6 +10,8 @@ pub struct EditRecipe {
     pub exposure: f32,
     pub temperature: Option<f32>,
     pub tint: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub white_balance_gains: Option<[f32; 3]>,
     /// Full spectrum raw color. It replaces white balance and the camera color
     /// matrix. None keeps the calibrated visible path and is not written.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -70,6 +72,7 @@ impl Default for EditRecipe {
             version: 1,
             camera_profile: None,
             exposure: 0.,
+            white_balance_gains: None,
             temperature: None,
             tint: 0.,
             raw_color: None,
@@ -452,6 +455,12 @@ impl EditRecipe {
         }
         let tint = crate::color::EXTENDED_TINT;
         range("tint", self.tint, -tint, tint)?;
+        if let Some(gains) = self.white_balance_gains {
+            let [lo, hi] = crate::color::RAW_GAIN;
+            for gain in gains {
+                range("white balance gain", gain, lo, hi)?;
+            }
+        }
         if let Some(raw) = &self.raw_color {
             let [lo, hi] = crate::color::RAW_GAIN;
             for gain in raw.gains {

@@ -392,8 +392,11 @@ from the model used in earlier alphas; no re-save is required.
 
 The Fspec group includes **Full spectrum**, which starts with an identity channel
 matrix, and **Aerochrome-style (Foveon)**, which uses an empirical 3x3 mix followed
-by Ektachrome 100. In these looks, White balance shows raw channel gains, and
-Grading adds a channel mixer and swaps. Use the neutral picker on a cloud for the
+by Ektachrome 100. All looks share the same White balance controls. **Extended Range**
+uses relative blue/red Temperature and green/magenta Tint. Full spectrum starts
+with it enabled; Standard starts with Kelvin controls. The switch keeps the current
+balance. Kelvin values approximate an arbitrary full spectrum balance.
+Grading adds a channel mixer and swaps in full spectrum looks. Use the neutral picker on a cloud for the
 capture filter. Painted walls and visible-gray materials may not be neutral in NIR.
 The Aerochrome mix was tuned on DP2 Merrill captures through a 550/660/850 nm
 filter. It does not require FCBlue or reconstruct measured visible and NIR bands;

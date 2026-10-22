@@ -4,6 +4,7 @@ import {
   pasteRecipe,
   pixelRecipe,
   usesSfd,
+  usesExtendedWhiteBalance,
   type EditRecipe,
   type EditRecord,
   type EditorSession,
@@ -39,6 +40,8 @@ interface EditorState {
   /** The `geometryKey` of the recipe that `preview` was rendered with. */
   previewGeometry: string | null
   before: boolean
+  /** The current white balance control mode, used by the neutral picker. */
+  whiteBalanceExtended: boolean
   /** Show a negative print inverted, as a positive. Only the view changes. */
   negativePreview: boolean
   cropping: boolean
@@ -512,6 +515,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
     previewPose: null,
     previewGeometry: null,
     before: false,
+    whiteBalanceExtended: false,
     negativePreview: false,
     clipboard: null,
     cropping: false,
@@ -608,6 +612,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
         }
         set((state) => ({
           session,
+          whiteBalanceExtended: usesExtendedWhiteBalance(doc.recipe),
           x3i: session.x3i ?? null,
           switching: false,
           documents: { ...state.documents, [file.path]: doc },
@@ -644,6 +649,9 @@ export const useEditorStore = create<EditorState>((set, get) => {
       const visible = !same(pixelRecipe(recipe), pixelRecipe(doc.recipe))
       set((state) => ({
         before: false,
+        ...(!!doc.recipe.rawColor !== !!recipe.rawColor && {
+          whiteBalanceExtended: usesExtendedWhiteBalance(recipe)
+        }),
         cache: visible ? null : state.cache,
         switching:
           !waitsForMerge(state, recipe) &&
@@ -821,6 +829,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
         if (session) await ipc.invoke('editor:close', { sessionId: session.sessionId })
         set({
           session: null,
+          whiteBalanceExtended: false,
           x3i: null,
           switching: false,
           preview: null,
@@ -876,14 +885,19 @@ export const useEditorStore = create<EditorState>((set, get) => {
           sessionId: session.sessionId,
           x,
           y,
-          recipe: get().documents[session.path].recipe
+          recipe: get().documents[session.path].recipe,
+          gains: get().whiteBalanceExtended
         })
         if (request !== colorPick || get().session?.sessionId !== session.sessionId) return
         const current = get().documents[session.path].recipe
         if ('rawColor' in result) {
           if (current.rawColor)
             get().change({ rawColor: { ...current.rawColor, gains: result.rawColor.gains } })
-        } else if (!current.rawColor) get().change(result)
+        } else if (!current.rawColor) {
+          get().change(
+            'whiteBalanceGains' in result ? result : { ...result, whiteBalanceGains: null }
+          )
+        }
       } catch (error) {
         if (request === colorPick && get().session?.sessionId === session.sessionId)
           set({ error: String(error) })

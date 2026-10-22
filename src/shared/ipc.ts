@@ -9,7 +9,14 @@ import type {
   Flag,
   X3FFileDTO
 } from './types'
-import type { EditRecipe, EditRecord, EditorSession, RenderedPreview, X3iStatus } from './editor'
+import type {
+  EditRecipe,
+  EditRecord,
+  EditorSession,
+  RenderedPreview,
+  WhiteBalanceValues,
+  X3iStatus
+} from './editor'
 
 /** A file the renderer asks main to act on (convert / existing-output check). */
 export interface ConvertFile {
@@ -183,10 +190,16 @@ export interface IpcRequestMap {
     }>
   }
   'editor:close': { payload: { sessionId: string }; result: void }
+  'editor:whiteBalance': {
+    payload: { sessionId: string; recipe: EditRecipe }
+    result: WhiteBalanceValues
+  }
   'editor:pickWhiteBalance': {
-    payload: { sessionId: string; x: number; y: number; recipe?: EditRecipe }
+    payload: { sessionId: string; x: number; y: number; recipe?: EditRecipe; gains?: boolean }
     result:
-      { temperature: number; tint: number } | { rawColor: NonNullable<EditRecipe['rawColor']> }
+      | { temperature: number; tint: number }
+      | { rawColor: NonNullable<EditRecipe['rawColor']> }
+      | { whiteBalanceGains: [number, number, number] }
   }
   /** Null for a photo that is not an X3I. The recipe selects the denoise. */
   'editor:x3iStatus': { payload: { path: string; recipe: EditRecipe }; result: X3iStatus | null }
@@ -291,6 +304,7 @@ export const IPC_REQUEST_CHANNELS: IpcRequestChannel[] = [
   'editor:save',
   'editor:load',
   'editor:close',
+  'editor:whiteBalance',
   'editor:pickWhiteBalance',
   'editor:x3iStatus',
   'editor:x3iProcess',

@@ -114,7 +114,10 @@ export const EDITOR_SECTIONS = {
       from.rawColor && to.rawColor
         ? { rawColor: { ...to.rawColor, gains: [...from.rawColor.gains] } }
         : !from.rawColor && !to.rawColor
-          ? pick(from, ['temperature', 'tint'])
+          ? {
+              ...pick(from, ['temperature', 'tint']),
+              whiteBalanceGains: from.whiteBalanceGains ? [...from.whiteBalanceGains] : null
+            }
           : {}
   },
   channels: {

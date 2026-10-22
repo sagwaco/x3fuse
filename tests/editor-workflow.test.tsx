@@ -1631,6 +1631,45 @@ it('applies picked raw gains without changing the matrix or visible white balanc
   )
 })
 
+it('picks direct gains in Extended Range and clears them after a normal pick', async () => {
+  await editor.getState().open(file)
+  editor.setState({ whiteBalanceExtended: true })
+  const real = invoke.getMockImplementation()!
+  invoke.mockImplementation(async (command: string, payload: Record<string, unknown>) =>
+    command === 'editor:pickWhiteBalance'
+      ? payload.gains
+        ? { whiteBalanceGains: [3, 1, 0.25] }
+        : { temperature: 5500, tint: 12 }
+      : real(command, payload)
+  )
+  await editor.getState().pickWhiteBalance(0.3, 0.4)
+  expect(editor.getState().documents[file.path].recipe.whiteBalanceGains).toEqual([3, 1, 0.25])
+  editor.setState({ whiteBalanceExtended: false })
+  await editor.getState().pickWhiteBalance(0.3, 0.4)
+  expect(editor.getState().documents[file.path].recipe).toMatchObject({
+    temperature: 5500,
+    tint: 12,
+    whiteBalanceGains: null
+  })
+})
+
+it('resets picker mode on photo open and close when its controls are not mounted', async () => {
+  editor.setState({ whiteBalanceExtended: true })
+  await editor.getState().open(file)
+  expect(editor.getState().whiteBalanceExtended).toBe(false)
+  const rawColor = {
+    gains: [2, 1, 0.5] as [number, number, number],
+    matrix: [1, 0, 0, 0, 1, 0, 0, 0, 1]
+  }
+  editor.getState().change({ rawColor })
+  expect(editor.getState().whiteBalanceExtended).toBe(true)
+  editor.getState().change({ rawColor: null })
+  expect(editor.getState().whiteBalanceExtended).toBe(false)
+  editor.setState({ whiteBalanceExtended: true })
+  await editor.getState().close()
+  expect(editor.getState().whiteBalanceExtended).toBe(false)
+})
+
 it('clears raw color on Reset and restores it with Undo', async () => {
   await editor.getState().open(file)
   const rawColor: NonNullable<EditRecipe['rawColor']> = {

@@ -1,5 +1,5 @@
 import { useContext, useEffect, useRef, useState } from 'react'
-import { Pipette, RotateCcw } from 'lucide-react'
+import { Pipette } from 'lucide-react'
 import {
   AEROCHROME_MATRIX,
   IDENTITY_RAW_MATRIX,
@@ -10,109 +10,90 @@ import { useEditorStore } from '../stores/editorStore'
 import { useQueueStore } from '../stores/queueStore'
 import { DevelopingCloud } from '../lib/developingCloud'
 import { t } from '../lib/strings'
-import { withShortcut } from '../lib/shortcut'
 import { Button } from './ui/button'
 import { GlassGroup } from './ui/glassGroup'
-import { Adjustment } from './EditorControls'
+import { Adjustment, TEMPERATURE, TINT } from './EditorControls'
 import { TernaryMixPad } from './TernaryMixPad'
 import type { LayerMix } from '../lib/ternaryMix'
 import { blurOnEnter } from '../lib/commitFocus'
 
-const gainScale = { to: Math.log2, from: (value: number): number => 2 ** value, step: 1 / 24 }
 const channels = ['red', 'green', 'blue'] as const
 const layers = ['Bottom', 'Middle', 'Top'] as const
+const BALANCE_SCALE = 100 / Math.log2(RAW_GAIN_RANGE[1])
 
 function normalizedGains(gains: [number, number, number]): [number, number, number] {
   return [gains[0] / gains[1], 1, gains[2] / gains[1]]
 }
 
-function rawGain(value: number, middle: number): number {
-  return Math.max(RAW_GAIN_RANGE[0], Math.min(RAW_GAIN_RANGE[1], value * middle))
-}
-
-export function RawWhiteBalance({
-  recipe,
-  picking,
-  setPicking
+export function GainWhiteBalance({
+  gains: storedGains,
+  asShot,
+  disabled,
+  change,
+  commit
 }: {
-  recipe: EditRecipe
-  picking: boolean
-  setPicking: (value: boolean) => void
+  gains: [number, number, number]
+  asShot: [number, number, number]
+  disabled: boolean
+  change: (gains: [number, number, number], save: boolean) => void
+  commit: () => void
 }): React.JSX.Element {
-  const asShotGains = useEditorStore((state) => state.preview?.asShotGains)
-  const change = useEditorStore((state) => state.change)
-  const commit = useEditorStore((state) => state.commit)
-  const unavailable = useEditorStore(
-    (state) => state.before || state.loading || state.closing || !state.preview
-  )
-  const busy = useQueueStore((state) => state.isProcessing || state.isPreparing)
-  const cloud = useContext(DevelopingCloud)
-  const asShot = asShotGains && normalizedGains(asShotGains)
-  const gains = recipe.rawColor?.gains ? normalizedGains(recipe.rawColor.gains) : asShot
-  const storedGains = recipe.rawColor?.gains ?? asShot
-  const matrix = recipe.rawColor?.matrix ?? IDENTITY_RAW_MATRIX
-  const setGain = (channel: 0 | 2, value: number, save = true): void => {
-    if (!storedGains) return
-    const next: [number, number, number] = [...storedGains]
-    next[channel] = rawGain(value, next[1])
-    change({ rawColor: { gains: next, matrix: [...matrix] } }, save)
-  }
-  const reset = (): void => {
-    if (asShot) change({ rawColor: { gains: asShot, matrix: [...matrix] } })
+  const gains = normalizedGains(storedGains)
+  const temperature = gains ? Math.log2(gains[0] / gains[2]) / 2 : 0
+  const tint = gains ? Math.log2(gains[0] * gains[2]) / 2 : 0
+  const green = Math.log2(storedGains[1])
+  const [lo, hi] = RAW_GAIN_RANGE.map(Math.log2)
+  const setBalance = (axis: 'temperature' | 'tint', value: number, save = true): void => {
+    let nextTemperature = temperature
+    let nextTint = tint
+    // Limit the edited axis so the other balance value does not move.
+    if (axis === 'temperature') {
+      const limit = Math.min(hi - green - tint, green + tint - lo)
+      nextTemperature = Math.max(-limit, Math.min(limit, value / BALANCE_SCALE))
+    } else {
+      nextTint = Math.max(
+        lo + Math.abs(temperature) - green,
+        Math.min(hi - Math.abs(temperature) - green, value / BALANCE_SCALE)
+      )
+    }
+    const gain = (stops: number): number =>
+      Math.max(RAW_GAIN_RANGE[0], Math.min(RAW_GAIN_RANGE[1], 2 ** stops))
+    change(
+      [
+        gain(green + nextTint + nextTemperature),
+        storedGains[1],
+        gain(green + nextTint - nextTemperature)
+      ],
+      save
+    )
   }
   return (
     <>
-      <div className="flex items-center gap-1.5">
-        <Button
-          size="icon"
-          className="h-7 w-7 shrink-0"
-          aria-label={t('editor.picker')}
-          title={withShortcut(t('editor.picker'), 'whiteBalancePicker')}
-          aria-keyshortcuts="W"
-          aria-pressed={picking}
-          disabled={!asShot || unavailable || busy || cloud}
-          onClick={() => setPicking(!picking)}
-        >
-          <Pipette aria-hidden="true" className="h-3.5 w-3.5" />
-        </Button>
-        <Button
-          size="sm"
-          className="ml-auto"
-          aria-label={t('editor.resetWhiteBalance')}
-          disabled={
-            !asShot ||
-            unavailable ||
-            busy ||
-            cloud ||
-            (gains?.[0] === asShot[0] && gains?.[2] === asShot[2])
-          }
-          onClick={reset}
-        >
-          <RotateCcw aria-hidden="true" className="h-3.5 w-3.5" />
-          {t('editor.asShot')}
-        </Button>
-      </div>
-      {picking && (
-        <p role="status" className="control-label text-tone-100">
-          {t('editor.pickNeutral')}
-        </p>
-      )}
-      {([0, 2] as const).map((channel) => (
-        <Adjustment
-          key={channel}
-          label={t(channel === 0 ? 'editor.redGain' : 'editor.blueGain')}
-          value={gains ? Number(gains[channel].toFixed(4)) : 1}
-          min={RAW_GAIN_RANGE[0]}
-          max={RAW_GAIN_RANGE[1]}
-          step={0.0001}
-          scale={gainScale}
-          change={(value, save) => setGain(channel, value, save)}
-          reset={() => asShot && setGain(channel, asShot[channel])}
-          commit={commit}
-          disabled={asShot ? undefined : true}
-        />
-      ))}
-      <p className="text-xs text-tone-500">{t('editor.greenGain')}: 1</p>
+      <Adjustment
+        label={t('editor.rawTemperature')}
+        value={temperature * BALANCE_SCALE}
+        track={TEMPERATURE}
+        change={(value, save) => setBalance('temperature', value, save)}
+        reset={() =>
+          asShot &&
+          setBalance('temperature', (Math.log2(asShot[0] / asShot[2]) * BALANCE_SCALE) / 2)
+        }
+        commit={commit}
+        disabled={disabled}
+      />
+      <Adjustment
+        label={t('editor.tint')}
+        value={tint * BALANCE_SCALE}
+        min={Math.floor((lo - green) * BALANCE_SCALE)}
+        max={Math.ceil((hi - green) * BALANCE_SCALE)}
+        track={TINT}
+        change={(value, save) => setBalance('tint', value, save)}
+        reset={() =>
+          asShot && setBalance('tint', (Math.log2(asShot[0] * asShot[2]) * BALANCE_SCALE) / 2)
+        }
+        commit={commit}
+        disabled={disabled}
+      />
     </>
   )
 }

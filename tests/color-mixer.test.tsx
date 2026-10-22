@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { useState, type Dispatch, type SetStateAction } from 'react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { defaultRecipe, type EditRecipe } from '@shared/editor'
 import { ColorMixer, ToneMixer } from '../src/renderer/src/components/ColorMixer'
 import { useEditorStore as editor } from '../src/renderer/src/stores/editorStore'
@@ -114,7 +114,7 @@ it('moves between tabs with the arrow, Home and End keys', () => {
   expect(change).not.toHaveBeenCalled()
 })
 
-it('edits and resets all eight tone bands independently of HSL and warmth', () => {
+it('edits and resets all eight tone bands independently of HSL and warmth', async () => {
   const initial = {
     ...defaultRecipe(),
     toneMixer: undefined,
@@ -141,7 +141,9 @@ it('edits and resets all eight tone bands independently of HSL and warmth', () =
     expect(change).toHaveBeenLastCalledWith({ toneMixer: recipe.toneMixer }, true)
     expect(recipe.toneMixer).toEqual(values.map((value, band) => (band <= index ? value : 0)))
   })
-  fireEvent.keyDown(screen.getByRole('slider', { name: t('editor.red') }), { key: 'ArrowRight' })
+  await act(async () => {
+    fireEvent.keyDown(screen.getByRole('slider', { name: t('editor.red') }), { key: 'ArrowRight' })
+  })
   expect(recipe.toneMixer).toEqual([-79, ...values.slice(1)])
   expect(change).toHaveBeenLastCalledWith({ toneMixer: recipe.toneMixer }, false)
   expect(commit).toHaveBeenCalledTimes(1)

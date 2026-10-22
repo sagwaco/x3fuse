@@ -428,7 +428,7 @@ fn raw_color_picks_channel_gains_and_previews_send_as_shot_gains() {
                 .into_iter()
                 .find_map(|(x, y)| {
                     editor
-                        .pick_white_balance(&session.session_id, recipe.clone(), x, y)
+                        .pick_white_balance(&session.session_id, recipe.clone(), x, y, false)
                         .ok()
                 })
                 .expect("no usable neutral point")

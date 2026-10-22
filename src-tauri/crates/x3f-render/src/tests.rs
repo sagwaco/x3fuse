@@ -3357,3 +3357,31 @@ fn effects_passes_keep_the_fill_light_gain_in_alpha() {
         );
     }
 }
+
+#[test]
+fn white_balance_gain_recipes_round_trip_and_validate() {
+    let legacy = EditRecipe::default();
+    assert!(!serde_json::to_value(&legacy)
+        .unwrap()
+        .as_object()
+        .unwrap()
+        .contains_key("whiteBalanceGains"));
+    assert_eq!(
+        serde_json::from_str::<EditRecipe>("{}")
+            .unwrap()
+            .white_balance_gains,
+        None
+    );
+    let mut recipe = EditRecipe {
+        white_balance_gains: Some([2., 1., 0.5]),
+        ..legacy
+    };
+    recipe.validate().unwrap();
+    let json = serde_json::to_string(&recipe).unwrap();
+    assert!(json.contains("whiteBalanceGains"));
+    assert_eq!(serde_json::from_str::<EditRecipe>(&json).unwrap(), recipe);
+    for value in [0., -1., f32::NAN, f32::INFINITY, 65., 1. / 128.] {
+        recipe.white_balance_gains = Some([value, 1., 1.]);
+        assert!(recipe.validate().is_err());
+    }
+}

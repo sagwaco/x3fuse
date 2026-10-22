@@ -62,12 +62,29 @@ describe('raw color sections', () => {
     const target = { ...defaultRecipe(), rawColor: undefined }
     expect(EDITOR_SECTIONS.whiteBalance.take(source, target)).toEqual({
       temperature: 6000,
-      tint: -20
+      tint: -20,
+      whiteBalanceGains: null
     })
     expect(resetSection(EDITOR_SECTIONS.whiteBalance, source, defaultRecipe())).toEqual({
       temperature: null,
-      tint: 0
+      tint: 0,
+      whiteBalanceGains: null
     })
+  })
+
+  it('copies direct gains without aliasing and clears a target override with a normal balance', () => {
+    const source = {
+      ...defaultRecipe(),
+      whiteBalanceGains: [3, 1, 0.25] as [number, number, number]
+    }
+    const target = { ...defaultRecipe(), whiteBalanceGains: [1, 1, 1] as [number, number, number] }
+    const copied = EDITOR_SECTIONS.whiteBalance.take(source, target)
+    expect(copied.whiteBalanceGains).toEqual(source.whiteBalanceGains)
+    expect(copied.whiteBalanceGains).not.toBe(source.whiteBalanceGains)
+    expect(EDITOR_SECTIONS.whiteBalance.take(defaultRecipe(), target).whiteBalanceGains).toBeNull()
+    expect(
+      resetSection(EDITOR_SECTIONS.whiteBalance, source, defaultRecipe()).whiteBalanceGains
+    ).toBeNull()
   })
 
   it.each([

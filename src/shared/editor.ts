@@ -111,6 +111,8 @@ export interface EditRecipe {
   exposure: number
   temperature: number | null
   tint: number
+  /** Direct layer gains for calibrated white balance. Missing or null uses temperature and tint. */
+  whiteBalanceGains?: Rgb | null
   /** Full spectrum raw color. It replaces white balance and the camera color matrix.
       Missing or null keeps the calibrated visible path. */
   rawColor?: RawColor | null
@@ -156,6 +158,17 @@ export interface RawColor {
 }
 export const IDENTITY_RAW_MATRIX: number[] = [1, 0, 0, 0, 1, 0, 0, 0, 1]
 export const RAW_GAIN_RANGE = [1 / 64, 64] as const
+/** A common scale preserves white balance while fitting the stored gain range. */
+export function boundedWhiteBalanceGains(gains: Rgb): Rgb | undefined {
+  if (gains.some((gain) => !Number.isFinite(gain) || gain <= 0)) return
+  const lower = Math.max(...gains.map((gain) => RAW_GAIN_RANGE[0] / gain))
+  const upper = Math.min(...gains.map((gain) => RAW_GAIN_RANGE[1] / gain))
+  if (lower > upper) return
+  const scale = Math.max(lower, Math.min(upper, 1))
+  return gains.map((gain) =>
+    Math.max(RAW_GAIN_RANGE[0], Math.min(RAW_GAIN_RANGE[1], gain * scale))
+  ) as Rgb
+}
 /** Empirical DP2 Merrill mix for a 550/660/850 nm filter, not measured band separation. */
 export const AEROCHROME_MATRIX: number[] = [1.7, 0, -0.7, -1, 3, -1, 0.5, -3.5, 4]
 /** The frames of an X3I (Super Fine Detail) photo: all merged, or the middle exposure only. */
@@ -248,6 +261,7 @@ export function defaultRecipe(): EditRecipe {
     exposure: 0,
     temperature: null,
     tint: 0,
+    whiteBalanceGains: null,
     rawColor: null,
     contrast: 0,
     highlights: 0,
@@ -314,6 +328,19 @@ export interface X3iStatus {
   /** Why the last merge failed. A cancelled merge has no error. */
   error?: string
 }
+export interface WhiteBalanceValues {
+  temperature: number
+  tint: number
+  gains: Rgb
+}
+export function usesExtendedWhiteBalance(recipe: EditRecipe): boolean {
+  return (
+    !!recipe.rawColor ||
+    !!recipe.whiteBalanceGains ||
+    (recipe.temperature !== null && (recipe.temperature < 2000 || recipe.temperature > 12000)) ||
+    Math.abs(recipe.tint) > 100
+  )
+}
 export interface RenderedPreview {
   sessionId: string
   revision: number
@@ -332,6 +359,8 @@ export interface RenderedPreview {
   asShotTint?: number
   /** Raw color layer gains for the camera's white balance, relative to the middle layer. */
   asShotGains?: [number, number, number]
+  /** Current balance in both calibrated and direct gain coordinates. */
+  whiteBalance?: WhiteBalanceValues
 }
 
 /** The recipe without the hue that a wheel keeps at zero strength: it changes no pixels. */

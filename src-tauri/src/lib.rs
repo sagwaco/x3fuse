@@ -398,6 +398,7 @@ pub fn run() {
             commands::editor_end_image_request,
             commands::editor_preview,
             commands::editor_pick_white_balance,
+            commands::editor_white_balance,
             commands::editor_finish_close,
             commands::editor_x3i_status,
             commands::editor_x3i_process,

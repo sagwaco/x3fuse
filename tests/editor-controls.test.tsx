@@ -177,7 +177,8 @@ beforeEach(() => {
       sourceHeight: 4000,
       asShotTemperature: 5150,
       asShotTint: 7,
-      asShotGains: [2, 1, 0.5]
+      asShotGains: [2, 1, 0.5],
+      whiteBalance: { temperature: 5150, tint: 7, gains: [2, 1, 0.5] }
     },
     previewPose: { pitch: 0, yaw: 0 },
     loading: false,
@@ -699,10 +700,10 @@ it('selects and restores Aerochrome with raw gains and Ektachrome without inject
   expect(saved.temperature).toBe(2335)
   expect(saved.tint).toBe(115)
   panelTab('raw')
-  expect(screen.getByRole('slider', { name: t('editor.redGain') })).toBeTruthy()
+  expect(screen.getByRole('slider', { name: t('editor.rawTemperature') })).toBeTruthy()
   expect(screen.queryByRole('slider', { name: t('editor.temperature') })).toBeNull()
-  expect(screen.queryByRole('slider', { name: t('editor.tint') })).toBeNull()
-  expect(screen.queryByRole('button', { name: t('editor.whiteBalancePreset') })).toBeNull()
+  expect(screen.getByRole('slider', { name: t('editor.tint') })).toBeTruthy()
+  expect(screen.getByRole('button', { name: t('editor.whiteBalancePreset') })).toBeTruthy()
   const pasted = pasteRecipe(saved, defaultRecipe())
   act(() => setRecipe(pasted))
   panelTab('film')
@@ -810,19 +811,39 @@ it('starts white balance from the camera reading so leaving As shot does not jum
   ).toBe('5150')
   expect(whiteBalance().textContent).toBe(t('editor.asShot'))
   adjust(t('editor.temperature'), 5600)
-  expect(change).toHaveBeenLastCalledWith({ temperature: 5600, tint: 7 }, true)
+  expect(change.mock.lastCall?.[0]).toMatchObject({
+    temperature: 5600,
+    tint: 7,
+    whiteBalanceGains: null
+  })
   adjust(t('editor.temperature'), 6000)
-  expect(change).toHaveBeenLastCalledWith({ temperature: 6000 }, true)
+  expect(change.mock.lastCall?.[0]).toMatchObject({
+    temperature: 6000,
+    tint: 7,
+    whiteBalanceGains: null
+  })
   invoke.mockResolvedValueOnce('asShot')
   fireEvent.click(whiteBalance())
-  await waitFor(() => expect(change).toHaveBeenLastCalledWith({ temperature: null, tint: 0 }))
+  await waitFor(() =>
+    expect(change.mock.lastCall?.[0]).toMatchObject({
+      temperature: null,
+      tint: 0,
+      whiteBalanceGains: null
+    })
+  )
 })
 
 it('offers white balance presets in a menu between the picker and reset icons', async () => {
   render(<Controls />)
   invoke.mockResolvedValueOnce('tungsten')
   fireEvent.click(whiteBalance())
-  await waitFor(() => expect(change).toHaveBeenLastCalledWith({ temperature: 2850, tint: 0 }))
+  await waitFor(() =>
+    expect(change.mock.lastCall?.[0]).toMatchObject({
+      temperature: 2850,
+      tint: 0,
+      whiteBalanceGains: null
+    })
+  )
   act(() => setRecipe({ ...defaultRecipe(), temperature: 7500 }))
   expect(whiteBalance().textContent).toBe(t('editor.shade'))
   // A tint makes it a custom balance. The menu names it but cannot select it.
@@ -844,119 +865,90 @@ it('offers white balance presets in a menu between the picker and reset icons', 
   const reset = screen.getByRole('button', { name: t('editor.resetWhiteBalance') })
   expect(whiteBalance().nextElementSibling).toBe(reset)
   fireEvent.click(reset)
-  expect(change).toHaveBeenLastCalledWith({ temperature: null, tint: 0 })
+  expect(change.mock.lastCall?.[0]).toMatchObject({
+    temperature: null,
+    tint: 0,
+    whiteBalanceGains: null
+  })
   act(() => setRecipe(defaultRecipe()))
   expect((reset as HTMLButtonElement).disabled).toBe(true)
 })
 
-it('extends the white balance range for infrared and full-spectrum photos', () => {
-  render(<Controls />)
-  const field = (name: string): HTMLInputElement => screen.getByRole('spinbutton', { name })
-  adjust(t('editor.temperature'), 900)
-  expect(change).toHaveBeenLastCalledWith({ temperature: 2000, tint: 7 }, true)
-  fireEvent.click(screen.getByRole('switch', { name: t('editor.extendedRange') }))
-  expect([field(t('editor.temperature')).min, field(t('editor.temperature')).max]).toEqual([
-    '500',
-    '50000'
-  ])
-  expect(field(t('editor.tint')).min).toBe('-2000')
-  adjust(t('editor.temperature'), 900)
-  expect(change).toHaveBeenLastCalledWith({ temperature: 900 }, true)
-  // The slider moves by ratio, so one step is about 1% at any temperature.
-  const slider = screen.getByRole('slider', { name: t('editor.temperature') })
-  expect(slider.getAttribute('aria-valuetext')).toBe('900')
-  fireEvent.keyDown(slider, { key: 'ArrowRight' })
-  expect(change).toHaveBeenLastCalledWith({ temperature: 910 }, true)
-  // Values where a rounded position used to give back the same value.
-  for (const [from, key, to] of [
-    [560, 'ArrowRight', 570],
-    [560, 'ArrowLeft', 550],
-    [6000, 'ArrowRight', 6060],
-    [6000, 'PageUp', 6630]
-  ] as const) {
-    act(() => setRecipe({ ...defaultRecipe(), temperature: from }))
-    fireEvent.keyDown(screen.getByRole('slider', { name: t('editor.temperature') }), { key })
-    expect(change).toHaveBeenLastCalledWith({ temperature: to }, true)
-  }
-  // As shot, Tint is a green gain and keeps its normal range.
-  act(() => setRecipe(defaultRecipe()))
-  expect(field(t('editor.tint')).min).toBe('-100')
-  // An out-of-range value enables Extended Range for both controls.
-  fireEvent.click(screen.getByRole('switch', { name: t('editor.extendedRange') }))
-  act(() => setRecipe({ ...defaultRecipe(), temperature: 5000, tint: -700 }))
-  expect(field(t('editor.temperature')).max).toBe('50000')
-  expect(field(t('editor.tint')).min).toBe('-2000')
-  expect(
-    screen.getByRole('slider', { name: t('editor.tint') }).getAttribute('aria-valuetext')
-  ).toBe('-700')
-})
-
-it.each([{ temperature: 1990 }, { temperature: 12010 }, { tint: -101 }, { tint: 101 }])(
-  'shows Extended Range for loaded or picked white balance %o',
-  (balance) => {
-    const field = (name: string): HTMLInputElement => screen.getByRole('spinbutton', { name })
-    render(<Controls initial={{ ...defaultRecipe(), temperature: 6500, ...balance }} />)
-    const toggle = (): HTMLElement =>
-      screen.getByRole('switch', { name: t('editor.extendedRange') })
-    expect(toggle().getAttribute('aria-checked')).toBe('true')
-    expect(field(t('editor.temperature')).min).toBe('500')
-    expect(field(t('editor.tint')).min).toBe('-2000')
-    fireEvent.click(toggle())
-    expect(toggle().getAttribute('aria-checked')).toBe('true')
+it.each([false, true])(
+  'shares white balance UI with full spectrum %s and defaults the mode',
+  (raw) => {
+    render(
+      <Controls
+        initial={{
+          ...defaultRecipe(),
+          rawColor: raw ? { gains: [2, 1, 0.5], matrix: [...AEROCHROME_MATRIX] } : null
+        }}
+      />
+    )
+    const toggle = screen.getByRole('switch', { name: t('editor.extendedRange') })
+    expect(toggle.getAttribute('aria-checked')).toBe(String(raw))
+    expect(screen.getByRole('button', { name: t('editor.whiteBalancePreset') })).toBeTruthy()
+    expect(screen.getByRole('button', { name: t('editor.picker') })).toBeTruthy()
+    expect(screen.getByRole('button', { name: t('editor.resetWhiteBalance') })).toBeTruthy()
+    expect(
+      screen.getByRole('slider', { name: t(raw ? 'editor.rawTemperature' : 'editor.temperature') })
+    ).toBeTruthy()
+    fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-checked')).toBe(String(!raw))
+    expect(
+      screen.getByRole('slider', { name: t(raw ? 'editor.temperature' : 'editor.rawTemperature') })
+    ).toBeTruthy()
+    fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-checked')).toBe(String(raw))
     expect(change).not.toHaveBeenCalled()
-    act(() => setRecipe(defaultRecipe()))
-    expect(toggle().getAttribute('aria-checked')).toBe('false')
-    act(() => setRecipe({ ...defaultRecipe(), ...balance }))
-    expect(toggle().getAttribute('aria-checked')).toBe('true')
   }
 )
 
-it('allows manual Extended Range changes within the normal white balance limits', () => {
-  render(<Controls initial={{ ...defaultRecipe(), temperature: 2000, tint: -100 }} />)
-  const toggle = (): HTMLElement => screen.getByRole('switch', { name: t('editor.extendedRange') })
-  expect(toggle().getAttribute('aria-checked')).toBe('false')
-  fireEvent.click(toggle())
-  act(() => setRecipe({ ...defaultRecipe(), temperature: 12000, tint: 100 }))
-  expect(toggle().getAttribute('aria-checked')).toBe('true')
-  fireEvent.click(toggle())
-  expect(toggle().getAttribute('aria-checked')).toBe('false')
-  expect(change).not.toHaveBeenCalled()
+it('uses direct gains for standard Extended Range and retains its camera profile', async () => {
+  render(<Controls initial={{ ...defaultRecipe(), cameraProfile: 'Standard' }} />)
+  fireEvent.click(screen.getByRole('switch', { name: t('editor.extendedRange') }))
+  adjust(t('editor.rawTemperature'), 50)
+  expect(change).toHaveBeenLastCalledWith({ whiteBalanceGains: [8, 1, 1 / 8] }, true)
+  adjust(t('editor.tint'), 25)
+  const gains = change.mock.lastCall?.[0].whiteBalanceGains
+  expect(gains[0] / gains[2]).toBeCloseTo(64)
+  invoke.mockResolvedValueOnce({ temperature: 6000, tint: 20, gains })
+  fireEvent.click(screen.getByRole('switch', { name: t('editor.extendedRange') }))
+  await waitFor(() =>
+    expect(
+      (screen.getByRole('spinbutton', { name: t('editor.temperature') }) as HTMLInputElement)
+        .disabled
+    ).toBe(false)
+  )
+  adjust(t('editor.temperature'), 6500)
+  expect(change).toHaveBeenLastCalledWith(
+    { temperature: 6500, tint: 20, whiteBalanceGains: null },
+    true
+  )
+  expect(
+    change.mock.calls.every(([patch]) => !('cameraProfile' in patch) && !('rawColor' in patch))
+  ).toBe(true)
 })
 
-it('keeps an extended slider extended while a drag brings it into the normal range', () => {
+it('loads older extended Kelvin recipes without changing their balance', async () => {
+  const gains = [4, 1, 0.25]
+  invoke.mockResolvedValueOnce({ temperature: 1500, tint: 0, gains })
   render(<Controls initial={{ ...defaultRecipe(), temperature: 1500 }} />)
-  vi.stubGlobal('PointerEvent', MouseEvent)
-  const proto = HTMLElement.prototype as unknown as Record<string, unknown>
-  const saved = ['setPointerCapture', 'releasePointerCapture', 'hasPointerCapture'].map((k) => [
-    k,
-    proto[k]
-  ])
-  proto.setPointerCapture = () => {}
-  proto.releasePointerCapture = () => {}
-  proto.hasPointerCapture = () => true
-  const rect = vi
-    .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
-    .mockReturnValue(DOMRect.fromRect({ x: 0, y: 0, width: 100, height: 10 }))
-  try {
-    const thumb = (): HTMLElement => screen.getByRole('slider', { name: t('editor.temperature') })
-    const root = thumb().closest('[data-orientation]')!.parentElement!.closest('[data-orientation]')
-    const track = root ?? thumb().closest('[data-orientation]')!
-    fireEvent.pointerDown(track, { clientX: 30, pointerId: 1, button: 0 })
-    expect(document.activeElement).toBe(thumb())
-    expect(change.mock.lastCall![0].temperature).toBeLessThan(2000)
-    // On the log scale, 41% of the track is about 3300 K. A linear slider would give 6000 K.
-    fireEvent.pointerMove(track, { clientX: 40, pointerId: 1 })
-    fireEvent.pointerMove(track, { clientX: 41, pointerId: 1 })
-    const temperature = change.mock.lastCall![0].temperature
-    expect(temperature).toBeGreaterThan(2000)
-    expect(temperature).toBeLessThan(4000)
-    fireEvent.pointerUp(track, { clientX: 41, pointerId: 1 })
-    expect(document.activeElement).toBe(document.body)
-    expect(thumb().getAttribute('aria-valuemax')).toBe('12000')
-  } finally {
-    rect.mockRestore()
-    for (const [k, v] of saved) proto[k as string] = v
-  }
+  expect(
+    screen.getByRole('switch', { name: t('editor.extendedRange') }).getAttribute('aria-checked')
+  ).toBe('true')
+  await waitFor(() =>
+    expect(
+      (screen.getByRole('spinbutton', { name: t('editor.rawTemperature') }) as HTMLInputElement)
+        .disabled
+    ).toBe(false)
+  )
+  expect(change).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('switch', { name: t('editor.extendedRange') }))
+  expect(
+    screen.getByRole('switch', { name: t('editor.extendedRange') }).getAttribute('aria-checked')
+  ).toBe('false')
+  expect(change).not.toHaveBeenCalled()
 })
 
 it('turns the controls on and shows the camera reading after the developing cloud leaves', () => {
@@ -1011,9 +1003,9 @@ it('resets sliders to actual nonzero and nullable defaults and prevents resets w
   reset(t('editor.denoise'))
   expect(change).toHaveBeenLastCalledWith({ denoise: 10 })
   reset(t('editor.temperature'))
-  expect(change).toHaveBeenLastCalledWith({ temperature: null })
+  expect(change.mock.lastCall?.[0]).toMatchObject({ temperature: null, whiteBalanceGains: null })
   reset(t('editor.tint'))
-  expect(change).toHaveBeenLastCalledWith({ tint: 0 })
+  expect(change.mock.lastCall?.[0]).toMatchObject({ tint: 0, whiteBalanceGains: null })
   darkroom()
   reset(t('editor.gammaFilm'))
   expect(film()?.gammaFilm).toBe(1)
@@ -1048,7 +1040,7 @@ it('resets a slider on Shift-click of its label, which reads Reset while Shift i
   // The row's help icon hides by CSS while the label is marked.
   expect(label.hasAttribute('data-resetting')).toBe(true)
   fireEvent.click(label, { shiftKey: true })
-  expect(change).toHaveBeenLastCalledWith({ tint: 0 })
+  expect(change.mock.lastCall?.[0]).toMatchObject({ tint: 0, whiteBalanceGains: null })
   fireEvent.keyUp(window, { key: 'Shift', shiftKey: false })
   expect([shows(name), shows(resetText)]).toEqual([true, false])
   expect(label.hasAttribute('data-resetting')).toBe(false)
@@ -1060,7 +1052,7 @@ it('resets a slider on Shift-click of its label, which reads Reset while Shift i
   expect([shows(name), shows(resetText)]).toEqual([true, false]) // Delete on the focused slider is the keyboard reset.
   change.mockClear()
   fireEvent.keyDown(screen.getByRole('slider', { name: t('editor.tint') }), { key: 'Delete' })
-  expect(change).toHaveBeenLastCalledWith({ tint: 0 })
+  expect(change.mock.lastCall?.[0]).toMatchObject({ tint: 0, whiteBalanceGains: null })
 })
 
 it('offers Negative print among the papers, with a Negative preview toggle below it', () => {
@@ -1457,7 +1449,7 @@ it.each<Partial<EditRecipe>>([
   { monochrome: { filter: 'red' } },
   { film: null, cameraProfile: 'Monochrome' },
   { film: { ...DEFAULT_FILM, film: 20 } }
-])('shows warmth and the tone mixer for monochrome recipes: %j', (profile) => {
+])('shows warmth and the tone mixer for monochrome recipes: %j', async (profile) => {
   const view = render(
     <Controls
       initial={{ ...defaultRecipe(), warmth: undefined, toneMixer: undefined, ...profile }}
@@ -1482,7 +1474,7 @@ it.each<Partial<EditRecipe>>([
   expect(track?.getAttribute('style')).toContain('#4f7cff, #d4d4d4, #ffb43d')
   adjust(t('editor.warmth'), -100)
   expect(change).toHaveBeenLastCalledWith({ warmth: -100 }, true)
-  fireEvent.keyDown(warmth, { key: 'ArrowRight' })
+  await act(async () => fireEvent.keyDown(warmth, { key: 'ArrowRight' }))
   expect(change).toHaveBeenLastCalledWith({ warmth: -99 }, false)
   expect(commit).toHaveBeenCalledTimes(1)
   reset(t('editor.warmth'))
@@ -1551,8 +1543,9 @@ it('starts Full spectrum with as-shot gains and identity without a camera profil
     monochrome: null
   })
   expect(screen.queryByRole('slider', { name: t('editor.temperature') })).toBeNull()
-  expect(screen.queryByRole('slider', { name: t('editor.tint') })).toBeNull()
-  expect(screen.queryByRole('combobox', { name: t('editor.whiteBalancePreset') })).toBeNull()
+  expect(screen.getByRole('slider', { name: t('editor.rawTemperature') })).toBeTruthy()
+  expect(screen.getByRole('slider', { name: t('editor.tint') })).toBeTruthy()
+  expect(screen.getByRole('button', { name: t('editor.whiteBalancePreset') })).toBeTruthy()
   picker(t('editor.filmStock'))
   expect(look(t('editor.fullSpectrumLook')).ariaPressed).toBe('true')
   await waitFor(() =>
@@ -1606,17 +1599,28 @@ it('edits raw gains and resets to as-shot without changing the matrix', () => {
       }}
     />
   )
-  adjust(t('editor.redGain'), 4)
-  expect(change.mock.lastCall?.[0].rawColor).toEqual({ gains: [4, 1, 0.25], matrix })
+  const temperature = screen.getByRole('slider', { name: t('editor.rawTemperature') })
+  expect(screen.queryByRole('application', { name: t('editor.whiteBalance') })).toBeNull()
+  expect(screen.getByRole('slider', { name: t('editor.tint') })).toBeTruthy()
+  fireEvent.keyDown(temperature, { key: 'ArrowRight' })
+  const raw = change.mock.lastCall?.[0].rawColor
+  expect(raw.gains[0]).toBeGreaterThan(3)
+  expect(raw.gains[1]).toBe(1)
+  expect(raw.gains[2]).toBeLessThan(0.25)
+  expect(raw.gains[0] * raw.gains[2]).toBeCloseTo(0.75)
+  expect(raw.matrix).toEqual(matrix)
+  fireEvent.click(screen.getByRole('button', { name: t('editor.resetWhiteBalance') }))
+  expect(change.mock.lastCall?.[0].rawColor).toEqual({ gains: [2, 1, 0.5], matrix })
+  fireEvent.keyDown(temperature, { key: 'ArrowLeft' })
   fireEvent.click(screen.getByRole('button', { name: t('editor.resetWhiteBalance') }))
   expect(change.mock.lastCall?.[0].rawColor).toEqual({ gains: [2, 1, 0.5], matrix })
   fireEvent.click(screen.getByRole('button', { name: t('editor.picker') }))
   expect(setPicking).toHaveBeenCalledWith(true)
   panelTab('grading')
-  expect(screen.queryByRole('slider', { name: t('editor.redGain') })).toBeNull()
+  expect(screen.queryByRole('slider', { name: t('editor.rawTemperature') })).toBeNull()
 })
 
-it('moves the logarithmic raw gain slider at its lower bound', () => {
+it('moves full spectrum temperature away from its lower gain bound', () => {
   render(
     <Controls
       initial={{
@@ -1627,13 +1631,84 @@ it('moves the logarithmic raw gain slider at its lower bound', () => {
       }}
     />
   )
-  fireEvent.keyDown(screen.getByRole('slider', { name: t('editor.redGain') }), {
+  fireEvent.keyDown(screen.getByRole('slider', { name: t('editor.rawTemperature') }), {
     key: 'ArrowRight'
   })
   const value = change.mock.lastCall?.[0].rawColor.gains[0]
   expect(value).toBeGreaterThan(1 / 64)
   expect(value).toBeLessThan(1 / 32)
 })
+
+it('balances blue/red and green/magenta independently and resets each slider', () => {
+  const matrix = [...AEROCHROME_MATRIX]
+  render(<Controls initial={{ ...defaultRecipe(), rawColor: { gains: [1, 1, 1], matrix } }} />)
+  const gains = (): [number, number, number] => change.mock.lastCall?.[0].rawColor.gains
+  adjust(t('editor.rawTemperature'), 50)
+  expect(gains()).toEqual([8, 1, 1 / 8])
+  adjust(t('editor.tint'), 25)
+  expect(gains()[0]).toBeGreaterThan(8)
+  expect(gains()[2]).toBeGreaterThan(1 / 8)
+  expect(gains()[0] / gains()[2]).toBeCloseTo(64)
+  adjust(t('editor.rawTemperature'), -25)
+  gains().forEach((gain, i) => expect(gain).toBeCloseTo([1, 1, 8][i]))
+  adjust(t('editor.tint'), -25)
+  gains().forEach((gain, i) => expect(gain).toBeCloseTo([1 / 8, 1, 1][i]))
+  reset(t('editor.rawTemperature'))
+  expect(gains()[0] / gains()[2]).toBeCloseTo(4)
+  expect(gains()[0] * gains()[2]).toBeCloseTo(1 / 8)
+  reset(t('editor.tint'))
+  gains().forEach((gain, i) => expect(gain).toBeCloseTo([2, 1, 0.5][i]))
+  expect(change.mock.lastCall?.[0].rawColor.matrix).toEqual(matrix)
+  expect(
+    (screen.getByRole('button', { name: t('editor.resetWhiteBalance') }) as HTMLButtonElement)
+      .disabled
+  ).toBe(true)
+})
+
+it('keeps zero on the tint step grid with a non-unit stored green gain', () => {
+  render(
+    <Controls
+      initial={{
+        ...defaultRecipe(),
+        rawColor: { gains: [3, 3, 3], matrix: [...AEROCHROME_MATRIX] }
+      }}
+    />
+  )
+  const tint = screen.getByRole('slider', { name: t('editor.tint') })
+  expect(Number.isInteger(Number(tint.getAttribute('aria-valuemin')))).toBe(true)
+  expect(Number.isInteger(Number(tint.getAttribute('aria-valuemax')))).toBe(true)
+  fireEvent.keyDown(tint, { key: 'ArrowRight' })
+  fireEvent.keyDown(tint, { key: 'ArrowLeft' })
+  const gains = change.mock.lastCall?.[0].rawColor.gains
+  gains.forEach((gain: number) => expect(gain).toBeCloseTo(3))
+  expect(gains[1]).toBe(3)
+})
+
+it.each([
+  { gains: [64, 1, 64], axis: 'rawTemperature', value: 100, expected: [64, 1, 64] },
+  { gains: [64, 1, 1 / 64], axis: 'tint', value: 100, expected: [64, 1, 1 / 64] },
+  { gains: [16, 0.125, 1], axis: 'rawTemperature', value: 100, expected: [64, 0.125, 0.25] },
+  { gains: [16, 0.125, 1], axis: 'tint', value: -100, expected: [0.25, 0.125, 1 / 64] }
+])(
+  'keeps the other white balance axis fixed at gain limits: $axis, $gains',
+  ({ gains, axis, value, expected }) => {
+    const matrix = [...AEROCHROME_MATRIX]
+    render(
+      <Controls
+        initial={{
+          ...defaultRecipe(),
+          rawColor: { gains: gains as [number, number, number], matrix }
+        }}
+      />
+    )
+    expect(change).not.toHaveBeenCalled()
+    adjust(t(`editor.${axis}`), value)
+    const raw = change.mock.lastCall?.[0].rawColor
+    raw.gains.forEach((gain: number, i: number) => expect(gain).toBeCloseTo(expected[i]))
+    expect(raw.gains[1]).toBe(gains[1])
+    expect(raw.matrix).toEqual(matrix)
+  }
+)
 
 it('applies the Aerochrome matrix in Grading without changing raw gains or film settings', () => {
   const gains: [number, number, number] = [3, 2, 0.25]
@@ -1697,11 +1772,11 @@ it('keeps valid non-unit-middle gains in range when editing another channel', ()
       }}
     />
   )
-  fireEvent.keyDown(screen.getByRole('slider', { name: t('editor.blueGain') }), {
+  fireEvent.keyDown(screen.getByRole('slider', { name: t('editor.tint') }), {
     key: 'ArrowRight'
   })
   const raw = change.mock.lastCall?.[0].rawColor
-  expect(raw.gains[0]).toBe(16)
+  expect(raw.gains[0]).toBeGreaterThan(16)
   expect(raw.gains[1]).toBe(0.125)
   expect(raw.gains[2]).toBeGreaterThan(1)
   for (const value of raw.gains) {

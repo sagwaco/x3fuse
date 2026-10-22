@@ -134,6 +134,86 @@ fn neutral(cal: &WhiteBalanceCalibration, k: f64, t: f64) -> [f64; 3] {
     }
     n.map(f64::exp)
 }
+fn legacy_neutral(cal: &WhiteBalanceCalibration, temperature: Option<f32>, tint: f32) -> [f64; 3] {
+    if let Some(k) = temperature {
+        neutral(cal, k as f64, tint as f64)
+    } else {
+        let mut n = cal.as_shot_neutral;
+        n[1] *= 2f64.powf(tint as f64 / 200.);
+        n
+    }
+}
+
+#[derive(Clone, Copy, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WhiteBalance {
+    pub temperature: f32,
+    pub tint: f32,
+    pub gains: [f32; 3],
+}
+
+/// Convert a recipe with the prepared image's camera calibration.
+pub fn recipe_white_balance(
+    cal: &WhiteBalanceCalibration,
+    recipe: &EditRecipe,
+) -> Result<WhiteBalance, String> {
+    recipe.validate()?;
+    inverse(cal.camera_to_rgb).map_err(|e| e.to_string())?;
+    if cal.xyz_to_camera.iter().any(|v| !v.is_finite())
+        || cal
+            .as_shot_neutral
+            .iter()
+            .any(|v| !v.is_finite() || *v <= 0.)
+    {
+        return Err("White balance calibration is unavailable".into());
+    }
+    let override_gains = recipe
+        .raw_color
+        .as_ref()
+        .map(|raw| raw.gains)
+        .or(recipe.white_balance_gains);
+    let target = match override_gains {
+        Some(gains) => gains.map(|g| 1. / f64::from(g)),
+        None => legacy_neutral(cal, recipe.temperature, recipe.tint),
+    };
+    if target.iter().any(|v| !v.is_finite() || *v <= 0.) {
+        return Err("White balance neutral is invalid".into());
+    }
+    let gains = override_gains.unwrap_or_else(|| target.map(|v| (target[1] / v) as f32));
+    let (temperature, tint) = match (override_gains, recipe.temperature) {
+        (None, Some(k)) => (k, recipe.tint),
+        _ => fit_neutral(cal, target.map(|v| v / target[1])),
+    };
+    Ok(WhiteBalance {
+        temperature,
+        tint,
+        gains,
+    })
+}
+
+pub(crate) fn gain_white_balance_matrix(
+    cal: &WhiteBalanceCalibration,
+    gains: [f32; 3],
+) -> Result<[f64; 9], RenderError> {
+    let inv = inverse(cal.camera_to_rgb)?;
+    let correction =
+        std::array::from_fn::<_, 3, _>(|c| f64::from(gains[c]) * cal.as_shot_neutral[c]);
+    let mut out = [0.; 9];
+    for row in 0..3 {
+        for col in 0..3 {
+            for c in 0..3 {
+                out[row * 3 + col] += cal.camera_to_rgb[row * 3 + c] * correction[c]
+                    / correction[1]
+                    * inv[c * 3 + col];
+            }
+        }
+    }
+    if out.iter().any(|v| !v.is_finite()) {
+        return Err(RenderError::Invalid("White balance is not finite".into()));
+    }
+    Ok(out)
+}
+
 pub(crate) fn white_balance_matrix(
     cal: &WhiteBalanceCalibration,
     temperature: Option<f32>,
@@ -142,13 +222,7 @@ pub(crate) fn white_balance_matrix(
     if temperature.is_none() && tint == 0. {
         return Ok([1., 0., 0., 0., 1., 0., 0., 0., 1.]);
     }
-    let target = if let Some(k) = temperature {
-        neutral(cal, k as f64, tint as f64)
-    } else {
-        let mut n = cal.as_shot_neutral;
-        n[1] *= 2f64.powf(tint as f64 / 200.);
-        n
-    };
+    let target = legacy_neutral(cal, temperature, tint);
     let inv = inverse(cal.camera_to_rgb)?;
     let gains = std::array::from_fn::<_, 3, _>(|i| cal.as_shot_neutral[i] / target[i]);
     if gains[1].abs() < 1e-12 {
@@ -390,6 +464,70 @@ pub(crate) fn curve_table(c: &Curves) -> Vec<[f32; 4]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn raw_gains_take_precedence_in_calibration() {
+        let cal = WhiteBalanceCalibration {
+            camera_to_rgb: [1., 0., 0., 0., 1., 0., 0., 0., 1.],
+            xyz_to_camera: [1., 0., 0., 0., 1., 0., 0., 0., 1.],
+            as_shot_neutral: [1.; 3],
+        };
+        let recipe = EditRecipe {
+            white_balance_gains: Some([2., 1., 3.]),
+            raw_color: Some(RawColor {
+                gains: [3., 1., 2.],
+                matrix: [1., 0., 0., 0., 1., 0., 0., 0., 1.],
+            }),
+            ..EditRecipe::default()
+        };
+        assert_eq!(
+            recipe_white_balance(&cal, &recipe).unwrap().gains,
+            [3., 1., 2.]
+        );
+    }
+
+    #[test]
+    fn standard_gain_balance_preserves_as_shot_scale_and_legacy_pixels() {
+        let cal = WhiteBalanceCalibration {
+            camera_to_rgb: [1.2, -0.1, -0.1, -0.2, 1.3, -0.1, 0.1, -0.2, 1.1],
+            xyz_to_camera: [1., 0., 0., 0., 1., 0., 0., 0., 1.],
+            as_shot_neutral: [0.8, 1., 0.6],
+        };
+        let identity = gain_white_balance_matrix(&cal, as_shot_channel_gains(&cal)).unwrap();
+        for (i, value) in identity.iter().enumerate() {
+            assert!((value - f64::from(i % 4 == 0)).abs() < 1e-6);
+        }
+        for (temperature, tint) in [
+            (None, 0.),
+            (None, 30.),
+            (Some(5200.), -17.),
+            (Some(3000.), 40.),
+        ] {
+            let recipe = EditRecipe {
+                temperature,
+                tint,
+                ..EditRecipe::default()
+            };
+            let balance = recipe_white_balance(&cal, &recipe).unwrap();
+            let direct = gain_white_balance_matrix(&cal, balance.gains).unwrap();
+            let scaled = gain_white_balance_matrix(&cal, balance.gains.map(|g| g * 2.)).unwrap();
+            let legacy = white_balance_matrix(&cal, temperature, tint).unwrap();
+            for i in 0..9 {
+                assert!((direct[i] - legacy[i]).abs() < 1e-5 * legacy[i].abs().max(1.));
+                assert!((direct[i] - scaled[i]).abs() < 1e-12);
+            }
+            let override_recipe = EditRecipe {
+                white_balance_gains: Some(balance.gains),
+                ..recipe
+            };
+            let fitted = recipe_white_balance(&cal, &override_recipe).unwrap();
+            assert_eq!(fitted.gains, balance.gains);
+            if let Some(k) = temperature {
+                assert!((fitted.temperature - k).abs() <= 2.);
+                assert!((fitted.tint - tint).abs() <= 1.);
+            }
+        }
+    }
 
     #[test]
     fn raw_color_recovers_layers_and_normalizes_gains() {

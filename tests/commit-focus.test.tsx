@@ -71,21 +71,33 @@ it('keeps the numeric value when Enter follows an empty field', () => {
   expect(document.activeElement).toBe(document.body)
 })
 
-it('keeps arrow adjustments focused and leaves the slider on Enter', () => {
+it('commits after the value changes, keeps arrows focused, and leaves on Enter', async () => {
   const commit = vi.fn()
+  const change = vi.fn()
   function Control(): React.JSX.Element {
     const [value, setValue] = useState(0)
     return (
-      <Slider value={value} min={0} max={100} onValueChange={setValue} onValueCommit={commit} />
+      <Slider
+        value={value}
+        min={0}
+        max={100}
+        onValueChange={(next) => {
+          change(next)
+          setValue(next)
+        }}
+        onValueCommit={commit}
+      />
     )
   }
   render(<Control />)
   const slider = screen.getByRole('slider')
   act(() => slider.focus())
-  fireEvent.keyDown(slider, { key: 'ArrowRight' })
-  fireEvent.keyDown(slider, { key: 'ArrowRight' })
+  await act(async () => fireEvent.keyDown(slider, { key: 'ArrowRight' }))
+  await act(async () => fireEvent.keyDown(slider, { key: 'ArrowRight' }))
   expect(slider.getAttribute('aria-valuenow')).toBe('2')
   expect(commit).toHaveBeenLastCalledWith(2)
+  expect(change.mock.invocationCallOrder[0]).toBeLessThan(commit.mock.invocationCallOrder[0])
+  expect(change.mock.invocationCallOrder[1]).toBeLessThan(commit.mock.invocationCallOrder[1])
   expect(document.activeElement).toBe(slider)
   fireEvent.keyDown(slider, { key: 'Enter' })
   expect(document.activeElement).toBe(document.body)

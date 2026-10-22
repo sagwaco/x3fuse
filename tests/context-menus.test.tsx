@@ -69,6 +69,7 @@ describe('editor sections', () => {
     ...(perturb(to) as EditRecipe),
     cameraProfile: 'Landscape',
     rawColor: null,
+    whiteBalanceGains: [3, 1, 0.5],
     temperature: 4000,
     crop: { x: 0.1, y: 0.1, width: 0.5, height: 0.5 },
     effects: { ...DEFAULT_EFFECTS, grain: true },
@@ -88,7 +89,7 @@ describe('editor sections', () => {
       'film.evFilm'
     ],
     curves: ['curves'],
-    whiteBalance: ['temperature', 'tint'],
+    whiteBalance: ['temperature', 'tint', 'whiteBalanceGains'],
     channels: [],
     detail: ['denoise', 'denoiseOptions', 'sharpen'],
     look: ['cameraProfile', 'monochrome', ...film([...LOOK, ...PRINT])],
@@ -324,7 +325,7 @@ describe('section menus', () => {
     expect(details.open).toBe(true)
     fireEvent.click(header('White balance'), { altKey: true })
     expect(details.open).toBe(true)
-    expect(change).toHaveBeenLastCalledWith({ temperature: null, tint: 0 })
+    expect(change).toHaveBeenLastCalledWith({ temperature: null, tint: 0, whiteBalanceGains: null })
     choice = null
     await act(async () => {
       fireEvent.keyDown(header('White balance'), { key: 'F10', shiftKey: true })

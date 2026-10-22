@@ -120,7 +120,8 @@ export function Slider({
         if (click) ipc.invoke('haptics:detent').catch(() => {})
         onValueChange(value)
       }}
-      onValueCommit={(v) => onValueCommit?.(v[0])}
+      // Radix can commit a keyboard step before it reports the new value.
+      onValueCommit={(v) => queueMicrotask(() => onValueCommit?.(v[0]))}
     >
       <SliderPrimitive.Track className={trackClass} style={trackStyle}>
         {fill}
