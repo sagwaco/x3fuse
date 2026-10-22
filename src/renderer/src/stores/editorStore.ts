@@ -16,6 +16,8 @@ import { ipc } from '../lib/ipc'
 import { isNative, nextPrefetch, MAX_RENDERS, type PreviewCache } from '../lib/previewTiles'
 import { useQueueStore } from './queueStore'
 import { useNavStore } from './navStore'
+import { qualifyMix } from '../lib/qualifyMix'
+import { t } from '../lib/strings'
 
 interface Document extends EditRecord {
   past: EditRecipe[]
@@ -69,6 +71,7 @@ interface EditorState {
   close: () => Promise<boolean>
   render: (navigation?: boolean) => void
   pickWhiteBalance: (x: number, y: number) => Promise<void>
+  pickRawMix: (x: number, y: number, output: 0 | 1 | 2) => Promise<void>
   /** A small look preview, rendered only while the editor is idle; edits preempt it. */
   renderThumbnail: (recipe: EditRecipe) => Promise<string | null>
   /** The merge state of an open X3I. Its SFD RAW renders only after its frames merge. */
@@ -95,6 +98,7 @@ const sameGeometry = (a: EditRecipe, b: EditRecipe): boolean => geometryKey(a) =
 const sameRegion = (a: PreviewRegion | null, b: PreviewRegion | null): boolean =>
   JSON.stringify(a) === JSON.stringify(b)
 const saves = new Set<Promise<void>>()
+let colorPick = 0
 let opening = 0
 let renderRevision = 0
 let renderTimer: ReturnType<typeof setTimeout> | undefined
@@ -866,6 +870,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
       if (get().closing || get().loading || unmerged(get())) return
       const session = get().session
       if (!session) return
+      const request = ++colorPick
       try {
         const result = await ipc.invoke('editor:pickWhiteBalance', {
           sessionId: session.sessionId,
@@ -873,14 +878,72 @@ export const useEditorStore = create<EditorState>((set, get) => {
           y,
           recipe: get().documents[session.path].recipe
         })
-        if (get().session?.sessionId !== session.sessionId) return
+        if (request !== colorPick || get().session?.sessionId !== session.sessionId) return
         const current = get().documents[session.path].recipe
         if ('rawColor' in result) {
           if (current.rawColor)
             get().change({ rawColor: { ...current.rawColor, gains: result.rawColor.gains } })
         } else if (!current.rawColor) get().change(result)
       } catch (error) {
-        set({ error: String(error) })
+        if (request === colorPick && get().session?.sessionId === session.sessionId)
+          set({ error: String(error) })
+      }
+    },
+    async pickRawMix(x, y, output) {
+      const state = get()
+      const session = state.session
+      if (
+        !session ||
+        state.before ||
+        state.loading ||
+        state.closing ||
+        unmerged(state) ||
+        useQueueStore.getState().isProcessing ||
+        useQueueStore.getState().isPreparing
+      )
+        return
+      get().commit()
+      const recipe = get().documents[session.path]?.recipe
+      if (!recipe?.rawColor) return
+      const request = ++colorPick
+      const current = (): boolean =>
+        request === colorPick &&
+        get().session?.sessionId === session.sessionId &&
+        get().documents[session.path]?.recipe === recipe &&
+        !get().closing &&
+        !get().loading &&
+        !get().before &&
+        !useQueueStore.getState().isProcessing &&
+        !useQueueStore.getState().isPreparing
+      try {
+        const result = await ipc.invoke('editor:pickWhiteBalance', {
+          sessionId: session.sessionId,
+          recipe,
+          x,
+          y
+        })
+        if (!current() || !('rawColor' in result)) return
+        // Neutral gains encode the sampled layer ratios without applying white balance.
+        const sample = recipe.rawColor.gains.map((gain, i) => gain / result.rawColor.gains[i]) as [
+          number,
+          number,
+          number
+        ]
+        const matrix = qualifyMix(recipe.rawColor.matrix, sample, output)
+        if (!matrix) {
+          set({ error: t('editor.mixQualifierCannotFit') })
+          return
+        }
+        get().change({ rawColor: { ...recipe.rawColor, matrix } })
+      } catch (error) {
+        if (current()) {
+          const message = error instanceof Error ? error.message : String(error)
+          set({
+            error: /neutral|channel gains/.test(message)
+              ? t('editor.mixQualifierCannotFit')
+              : message
+          })
+        }
       }
     },
     async renderThumbnail(recipe) {

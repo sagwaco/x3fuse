@@ -80,6 +80,14 @@ export function EditorScreen(): React.JSX.Element {
   const panelOpen = useSettingsStore((state) => state.settings.editorPanelOpen)
   const filterOpen = useQueueStore((state) => state.filterOpen)
   const [picking, setPicking] = useState(false)
+  const [mixPicking, setMixPickingState] = useState<0 | 1 | 2 | null>(null)
+  const setMixPicking = useCallback((output: 0 | 1 | 2 | null) => {
+    setMixPickingState(output)
+    if (output !== null) {
+      setPicking(false)
+      setQualifying(false)
+    }
+  }, [])
   // W arms the picker only while its controls are enabled. It can always turn it off.
   const canPick = useRef(false)
   const [scopeSource, setScopeSource] = useState<ScopeSource>('entire')
@@ -88,10 +96,13 @@ export function EditorScreen(): React.JSX.Element {
   const [qualified, setQualified] = useState<{ key: string; region: PreviewRegion } | null>(null)
   // The white balance picker and the Qualifier use the same clicks, so one disarms the other.
   if (picking && qualifying) setQualifying(false)
+  if (picking && mixPicking !== null) setMixPickingState(null)
   // Choosing the Qualifier arms it again, so a new area can replace the last one.
   const chooseScope = (next: ScopeSource): void => {
-    if (next === 'qualifier') setPicking(false)
-    else setQualified(null)
+    if (next === 'qualifier') {
+      setPicking(false)
+      setMixPickingState(null)
+    } else setQualified(null)
     setQualifying(next === 'qualifier')
     setScopeSource(next)
   }
@@ -103,6 +114,7 @@ export function EditorScreen(): React.JSX.Element {
   const navigateSidebar = useCallback(
     (page: SidebarPage): void => {
       setPicking(false)
+      setMixPickingState(null)
       setQualifying(false)
       sidebarScroll.current[sidebarPage] = sidebarBody.current?.scrollTop ?? 0
       setSidebarPage(page)
@@ -164,6 +176,7 @@ export function EditorScreen(): React.JSX.Element {
   const overflowButton = useRef<HTMLButtonElement>(null)
   const enterCrop = (): void => {
     setPicking(false)
+    setMixPickingState(null)
     setQualifying(false)
     editor.compare(false)
     const width = editor.preview?.sourceWidth
@@ -226,6 +239,7 @@ export function EditorScreen(): React.JSX.Element {
   }, [active, busy, editor])
   useEffect(() => {
     setPicking(false)
+    setMixPickingState(null)
     setQualifying(false)
     previousSidebar.current = 'edit'
     sidebarScroll.current = { edit: 0, emulsion: 0, paper: 0 }
@@ -260,14 +274,15 @@ export function EditorScreen(): React.JSX.Element {
       event.preventDefault()
       // Holding Escape must not cancel crop mode and then close the editor.
       if (event.repeat) return
-      if (picking) setPicking(false)
+      if (mixPicking !== null) setMixPickingState(null)
+      else if (picking) setPicking(false)
       else if (qualifying) setQualifying(false)
       else if (editor.cropping) cancelCrop()
       else if (!busy) void editor.close()
     }
     document.addEventListener('keydown', keydown)
     return () => document.removeEventListener('keydown', keydown)
-  }, [editor, busy, picking, qualifying, cancelCrop])
+  }, [editor, busy, picking, mixPicking, qualifying, cancelCrop])
   const displayFile = useMemo(
     () =>
       file &&
@@ -327,6 +342,10 @@ export function EditorScreen(): React.JSX.Element {
     return () => clearTimeout(timer)
   }, [previewShown])
   const unavailable = !doc || !displayFile || editor.loading || busy
+  useEffect(() => {
+    if (unavailable || editor.before || !doc?.recipe.rawColor || cloudFile || !panelOpen)
+      setMixPickingState(null)
+  }, [unavailable, editor.before, doc?.recipe.rawColor, cloudFile, panelOpen])
   canPick.current = !unavailable && !editor.before && !cloudFile
   // The editor commands of the menu bar and the keys, as the toolbar buttons do. They
   // register again after each render, so that they read the current state.
@@ -522,6 +541,7 @@ export function EditorScreen(): React.JSX.Element {
           disabled: !point || !canPick.current,
           run: () => {
             setPicking(false)
+            setMixPickingState(null)
             if (point) void editor.pickWhiteBalance(point.x, point.y)
           }
         },
@@ -906,14 +926,20 @@ export function EditorScreen(): React.JSX.Element {
                     // Digits rate the photo, as in Lightroom. Click and +/- still zoom.
                     digitZoom={false}
                     onImagePoint={
-                      picking && !unavailable
+                      mixPicking !== null && !unavailable
                         ? (x, y) => {
-                            setPicking(false)
-                            void editor.pickWhiteBalance(x, y)
+                            const output = mixPicking
+                            setMixPickingState(null)
+                            void editor.pickRawMix(x, y, output)
                           }
-                        : qualifying && displayFile
-                          ? qualifyPoint
-                          : undefined
+                        : picking && !unavailable
+                          ? (x, y) => {
+                              setPicking(false)
+                              void editor.pickWhiteBalance(x, y)
+                            }
+                          : qualifying && displayFile
+                            ? qualifyPoint
+                            : undefined
                     }
                     onImageRegion={qualifying && displayFile ? qualify : undefined}
                     outline={displayFile ? scopeRegion : null}
@@ -1080,6 +1106,8 @@ export function EditorScreen(): React.JSX.Element {
                           recipe={doc.recipe}
                           picking={picking}
                           setPicking={setPicking}
+                          mixPicking={mixPicking}
+                          setMixPicking={setMixPicking}
                           onNavigate={navigateSidebar}
                         />
                       )}

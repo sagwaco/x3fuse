@@ -486,11 +486,15 @@ export const EditorControls = memo(function EditorControls({
   recipe,
   picking,
   setPicking,
+  mixPicking,
+  setMixPicking,
   onNavigate
 }: {
   recipe: EditRecipe
   picking: boolean
   setPicking: (value: boolean) => void
+  mixPicking?: 0 | 1 | 2 | null
+  setMixPicking?: (output: 0 | 1 | 2 | null) => void
   onNavigate: (page: 'emulsion' | 'paper') => void
 }): React.JSX.Element {
   // Memo skips the parent's render, so this renders again for a new language.
@@ -499,6 +503,7 @@ export const EditorControls = memo(function EditorControls({
   // The white balance picker lives on RAW, so leaving it disarms the picker.
   const setTab = (next: (typeof PANEL_TABS)[number][0]): void => {
     if (next !== 'raw') setPicking(false)
+    if (next !== 'grading') setMixPicking?.(null)
     setPanelTab(next)
   }
   const change = useEditorStore((state) => state.change)
@@ -732,7 +737,11 @@ export const EditorControls = memo(function EditorControls({
             <>
               {recipe.rawColor && (
                 <Section id="channels" name={t('editor.rawChannels')}>
-                  <RawMatrixControls recipe={recipe} />
+                  <RawMatrixControls
+                    recipe={recipe}
+                    mixPicking={mixPicking}
+                    setMixPicking={setMixPicking}
+                  />
                 </Section>
               )}
               {monochrome && (

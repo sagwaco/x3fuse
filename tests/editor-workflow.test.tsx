@@ -1672,3 +1672,115 @@ it.each(['swap', 'undo'] as const)(
     else expect(current.rawColor).toBeNull()
   }
 )
+
+it.each([0, 1, 2] as const)(
+  'qualifies the sampled raw layers to output %s in one undo step',
+  async (output) => {
+    await editor.getState().open(file)
+    const rawColor: NonNullable<EditRecipe['rawColor']> = {
+      gains: [2, 1, 0.5],
+      matrix: [1, 0, 0, 0, 1, 0, 0, 0, 1]
+    }
+    editor.getState().change({ rawColor, cameraProfile: null, monochrome: null })
+    const before = editor.getState().documents[file.path].recipe
+    const past = editor.getState().documents[file.path].past.length
+    const real = invoke.getMockImplementation()!
+    invoke.mockImplementation((command: string, payload: Record<string, unknown>) =>
+      command === 'editor:pickWhiteBalance'
+        ? Promise.resolve({ rawColor: { ...rawColor, gains: [0.5, 1, 0.25] } })
+        : real(command, payload)
+    )
+    await editor.getState().pickRawMix(0.25, 0.75, output)
+    const after = editor.getState().documents[file.path].recipe
+    expect(after.rawColor!.gains).toEqual(rawColor.gains)
+    expect({ ...after, rawColor: null }).toEqual({ ...before, rawColor: null })
+    for (let row = 0; row < 3; row++) {
+      const weights = after.rawColor!.matrix.slice(row * 3, row * 3 + 3)
+      expect(weights.reduce((sum, v) => sum + v, 0)).toBeCloseTo(1, 10)
+      expect(weights.reduce((sum, v, c) => sum + v * [4, 1, 2][c], 0)).toBeCloseTo(
+        row === output ? 4 : 0,
+        9
+      )
+      expect(weights.every((v) => v >= -4 && v <= 4)).toBe(true)
+    }
+    expect(editor.getState().documents[file.path].past).toHaveLength(past + 1)
+    editor.getState().undo()
+    expect(editor.getState().documents[file.path].recipe).toEqual(before)
+    editor.getState().redo()
+    expect(editor.getState().documents[file.path].recipe).toEqual(after)
+    await editor.getState().flush()
+    expect(invoke).toHaveBeenCalledWith('editor:save', expect.objectContaining({ recipe: after }))
+  }
+)
+
+it('rejects a neutral qualifier sample without changing the recipe', async () => {
+  await editor.getState().open(file)
+  const rawColor: NonNullable<EditRecipe['rawColor']> = {
+    gains: [2, 1, 0.5],
+    matrix: [1, 0, 0, 0, 1, 0, 0, 0, 1]
+  }
+  editor.getState().change({ rawColor, cameraProfile: null, monochrome: null })
+  const before = editor.getState().documents[file.path].recipe
+  const real = invoke.getMockImplementation()!
+  invoke.mockImplementation((command: string, payload: Record<string, unknown>) =>
+    command === 'editor:pickWhiteBalance' ? Promise.resolve({ rawColor }) : real(command, payload)
+  )
+  await editor.getState().pickRawMix(0.25, 0.75, 0)
+  expect(editor.getState().documents[file.path].recipe).toBe(before)
+  expect(editor.getState().error).toMatch(/^This sample.*mix limits/)
+})
+
+it.each(['edit', 'session', 'new-picker'] as const)(
+  'drops a qualifier result after %s',
+  async (action) => {
+    await editor.getState().open(file)
+    const rawColor: NonNullable<EditRecipe['rawColor']> = {
+      gains: [2, 1, 0.5],
+      matrix: [1, 0, 0, 0, 1, 0, 0, 0, 1]
+    }
+    editor.getState().change({ rawColor, cameraProfile: null, monochrome: null })
+    let resolve!: (value: unknown) => void
+    const pending = new Promise((done) => {
+      resolve = done
+    })
+    const real = invoke.getMockImplementation()!
+    invoke.mockImplementation((command: string, payload: Record<string, unknown>) =>
+      command === 'editor:pickWhiteBalance' ? pending : real(command, payload)
+    )
+    const picking = editor.getState().pickRawMix(0.25, 0.75, 0)
+    if (action === 'edit') editor.getState().change({ exposure: 0.5 })
+    else if (action === 'session')
+      editor.setState({ session: { ...editor.getState().session!, sessionId: 'other' } })
+    else {
+      invoke.mockImplementation((command: string, payload: Record<string, unknown>) =>
+        command === 'editor:pickWhiteBalance'
+          ? Promise.resolve({ rawColor })
+          : real(command, payload)
+      )
+      await editor.getState().pickWhiteBalance(0.5, 0.5)
+    }
+    const before = editor.getState().documents[file.path].recipe
+    resolve({ rawColor: { ...rawColor, gains: [0.5, 1, 0.25] } })
+    await picking
+    expect(editor.getState().documents[file.path].recipe).toBe(before)
+  }
+)
+
+it.each([
+  'This point cannot define a camera neutral',
+  'This point requires channel gains outside the supported range'
+])('reports qualifier wording for sampler error: %s', async (message) => {
+  await editor.getState().open(file)
+  editor.getState().change({
+    cameraProfile: null,
+    rawColor: { gains: [1, 1, 1], matrix: [1, 0, 0, 0, 1, 0, 0, 0, 1] }
+  })
+  const before = editor.getState().documents[file.path].recipe
+  const real = invoke.getMockImplementation()!
+  invoke.mockImplementation((command: string, payload: Record<string, unknown>) =>
+    command === 'editor:pickWhiteBalance' ? Promise.reject(message) : real(command, payload)
+  )
+  await editor.getState().pickRawMix(0.5, 0.5, 0)
+  expect(editor.getState().error).toMatch(/^This sample.*mix limits/)
+  expect(editor.getState().documents[file.path].recipe).toBe(before)
+})

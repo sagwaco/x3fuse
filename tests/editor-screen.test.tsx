@@ -147,10 +147,14 @@ vi.mock('../src/renderer/src/components/EditorControls', async () => {
     EditorControls: function MockEditorControls({
       picking,
       setPicking,
+      mixPicking,
+      setMixPicking,
       onNavigate
     }: {
       picking: boolean
       setPicking: (value: boolean) => void
+      mixPicking?: 0 | 1 | 2 | null
+      setMixPicking?: (output: 0 | 1 | 2 | null) => void
       onNavigate: (page: 'emulsion' | 'paper') => void
     }) {
       return (
@@ -161,6 +165,13 @@ vi.mock('../src/renderer/src/components/EditorControls', async () => {
             onClick={() => setPicking(true)}
           >
             Pick white balance
+          </button>
+          <button
+            data-mix-qualify
+            aria-pressed={mixPicking === 2}
+            onClick={() => setMixPicking?.(mixPicking === 2 ? null : 2)}
+          >
+            Qualify blue
           </button>
           <button data-sidebar-page="emulsion" onClick={() => onNavigate('emulsion')}>
             Choose emulsion
@@ -1457,4 +1468,46 @@ it('opens a preview context menu that acts on the open photo', async () => {
   await act(async () => choose('compare'))
   expect(ran).toHaveLength(commands.length)
   unregister()
+})
+
+it('routes the mix qualifier to the selected output and cancels it with Escape or white balance', () => {
+  const rawRecipe = {
+    ...recipe,
+    cameraProfile: null,
+    rawColor: { gains: [1, 1, 1] as [number, number, number], matrix: [1, 0, 0, 0, 1, 0, 0, 0, 1] }
+  }
+  const pickRawMix = vi.fn(async () => {})
+  editor.setState({
+    session: { ...session, recipe: rawRecipe },
+    documents: { [file.path]: { ...doc, recipe: rawRecipe } },
+    loading: false,
+    preview: frame,
+    pickRawMix
+  })
+  const view = render(<EditorScreen />)
+  const arm = (): void => {
+    fireEvent.click(view.container.querySelector('[data-mix-qualify]')!)
+  }
+  arm()
+  expect(view.container.querySelector('[data-editor-frame]')?.getAttribute('data-picking')).toBe(
+    'true'
+  )
+  fireEvent.click(view.container.querySelector('[data-point]')!)
+  expect(pickRawMix).toHaveBeenCalledWith(0.5, 0.5, 2)
+  expect(view.container.querySelector('[data-mix-qualify]')?.getAttribute('aria-pressed')).toBe(
+    'false'
+  )
+  arm()
+  fireEvent.keyDown(document, { key: 'Escape' })
+  expect(view.container.querySelector('[data-editor-frame]')?.getAttribute('data-picking')).toBe(
+    'false'
+  )
+  arm()
+  fireEvent.click(screen.getByRole('button', { name: 'Pick white balance' }))
+  expect(view.container.querySelector('[data-mix-qualify]')?.getAttribute('aria-pressed')).toBe(
+    'false'
+  )
+  expect(
+    screen.getByRole('button', { name: 'Pick white balance' }).getAttribute('aria-pressed')
+  ).toBe('true')
 })

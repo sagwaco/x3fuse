@@ -1673,7 +1673,7 @@ it('composes channel swaps and preserves gains and neutral row totals', () => {
     expect(
       swapped.matrix.slice(row * 3, row * 3 + 3).reduce((a: number, b: number) => a + b, 0)
     ).toBeCloseTo(1)
-  fireEvent.click(screen.getByRole('tab', { name: t('editor.outputGreen') }))
+  fireEvent.click(screen.getByRole('tab', { name: t('editor.green') }))
   adjust(t('editor.sourceBottom'), -50)
   expect(change.mock.lastCall?.[0].rawColor.matrix[3]).toBe(-0.5)
   fireEvent.click(screen.getByRole('button', { name: t('editor.monochrome') }))
@@ -1740,7 +1740,8 @@ it.each([
     )
     panelTab('grading')
     const labels = ['editor.sourceBottom', 'editor.sourceMiddle', 'editor.sourceTop']
-    for (const label of labels) expect(screen.getByRole('slider', { name: t(label) })).toBeTruthy()
+    for (const label of labels)
+      expect(screen.getByRole('spinbutton', { name: t(label) })).toBeTruthy()
     adjust(t(labels[column]), value)
     const raw = change.mock.lastCall?.[0].rawColor
     expect(raw.gains).toEqual(gains)
@@ -1756,7 +1757,7 @@ it.each([
   }
 )
 
-it('uses the gesture source ratio after passing through 100% and rebalances slider reset', () => {
+it('uses the gesture source ratio after passing through 100% and resets the selected output', () => {
   const gains: [number, number, number] = [2, 1, 0.5]
   const base = {
     ...defaultRecipe(),
@@ -1778,9 +1779,10 @@ it('uses the gesture source ratio after passing through 100% and rebalances slid
   const row = change.mock.lastCall?.[0].rawColor.matrix.slice(0, 3)
   row.forEach((value: number, index: number) => expect(value).toBeCloseTo([0.6, 0.3, 0.1][index]))
   editor.setState({ documents: originalDocuments })
-  reset(t('editor.sourceMiddle'))
+  fireEvent.keyDown(screen.getByRole('application', { name: t('editor.mixPad') }), {
+    key: 'Delete'
+  })
   const resetRow = change.mock.lastCall?.[0].rawColor.matrix.slice(0, 3)
-  expect(resetRow[1]).toBe(0)
-  expect(resetRow[0] / resetRow[2]).toBeCloseTo(6)
+  expect(resetRow).toEqual([1, 0, 0])
   expect(resetRow.reduce((sum: number, value: number) => sum + value, 0)).toBeCloseTo(1)
 })
