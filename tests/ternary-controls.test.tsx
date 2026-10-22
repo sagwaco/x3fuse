@@ -2,7 +2,7 @@
 import { useState } from 'react'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { AEROCHROME_MATRIX, defaultRecipe, type EditRecipe } from '@shared/editor'
+import { defaultRecipe, type EditRecipe } from '@shared/editor'
 import { ChannelSwap, RawMatrixControls } from '../src/renderer/src/components/RawColorControls'
 import { WhiteBalanceControls } from '../src/renderer/src/components/WhiteBalanceControls'
 import { useEditorStore as editor } from '../src/renderer/src/stores/editorStore'
@@ -14,10 +14,12 @@ import { DevelopingCloud } from '../src/renderer/src/lib/developingCloud'
 const original = editor.getState()
 const invoke = vi.fn()
 const path = '/ternary.X3F'
+// A signed mix with round values. It is independent of the shipped Aerochrome preset.
+const MIX = [1.7, 0, -0.7, -1, 3, -1, 0.5, -3.5, 4]
 const initial: EditRecipe = {
   ...defaultRecipe(),
   cameraProfile: null,
-  rawColor: { gains: [2, 1, 0.5], matrix: [...AEROCHROME_MATRIX] }
+  rawColor: { gains: [2, 1, 0.5], matrix: [...MIX] }
 }
 class TestPointerEvent extends MouseEvent {
   pointerId: number
@@ -63,7 +65,7 @@ function valid(): void {
     expect(value).toBeLessThanOrEqual(4)
   }
   expect(recipe().rawColor!.gains).toEqual(initial.rawColor!.gains)
-  expect(recipe().rawColor!.matrix.slice(3)).toEqual(AEROCHROME_MATRIX.slice(3))
+  expect(recipe().rawColor!.matrix.slice(3)).toEqual(MIX.slice(3))
   expect(recipe().film).toEqual(initial.film)
 }
 beforeEach(() => {
@@ -133,7 +135,7 @@ it('edits full spectrum temperature and tint with save and undo, leaving the mix
   expect(magenta[2]).toBeGreaterThan(0.5)
   expect(magenta[0] / magenta[2]).toBeCloseTo(4)
   expect(magenta[1]).toBe(1)
-  expect(recipe().rawColor!.matrix).toEqual(AEROCHROME_MATRIX)
+  expect(recipe().rawColor!.matrix).toEqual(MIX)
   expect(recipe().film).toEqual(initial.film)
   act(() => editor.getState().undo())
   expect(recipe()).toEqual(initial)
@@ -160,7 +162,7 @@ it('commits the final calibrated full spectrum slider response as one undo step'
   await act(async () => {
     finish({ temperature: 5200, tint: 7, gains: [3, 1, 1 / 3] })
   })
-  expect(recipe().rawColor).toEqual({ gains: [3, 1, 1 / 3], matrix: AEROCHROME_MATRIX })
+  expect(recipe().rawColor).toEqual({ gains: [3, 1, 1 / 3], matrix: MIX })
   expect(editor.getState().documents[path].past).toHaveLength(1)
   await editor.getState().flush()
   expect(invoke.mock.calls.filter(([command]) => command === 'editor:save')).toHaveLength(1)
@@ -249,7 +251,7 @@ it('uses the common preset menu in full spectrum and keeps its channel matrix', 
   await act(async () =>
     fireEvent.click(screen.getByRole('button', { name: t('editor.whiteBalancePreset') }))
   )
-  expect(recipe().rawColor).toEqual({ gains: [3, 1, 0.4], matrix: AEROCHROME_MATRIX })
+  expect(recipe().rawColor).toEqual({ gains: [3, 1, 0.4], matrix: MIX })
   expect(screen.getByRole('button', { name: t('editor.whiteBalancePreset') }).textContent).toBe(
     t('editor.daylight')
   )
@@ -503,7 +505,7 @@ it('resets the selected output on a point double-click', () => {
   const point = mixPadPoint([0.5, -3.5, 4])
   fireEvent.doubleClick(pad(), displayAt(point))
   expect(recipe().rawColor!.matrix.slice(6)).toEqual([0, 0, 1])
-  expect(recipe().rawColor!.matrix.slice(0, 6)).toEqual(AEROCHROME_MATRIX.slice(0, 6))
+  expect(recipe().rawColor!.matrix.slice(0, 6)).toEqual(MIX.slice(0, 6))
 })
 
 it('uses the prior slider keyboard and reset controls with a 100% row total', () => {
@@ -551,8 +553,8 @@ it('arms the qualifier for the selected output and disarms it on output or view 
 })
 
 it('infers the channel map and swaps the displaced input on a move', () => {
-  expect(channelMap(AEROCHROME_MATRIX)).toEqual([0, 1, 2])
-  const swapped = swapChannel(AEROCHROME_MATRIX, 0, 2)
+  expect(channelMap(MIX)).toEqual([0, 1, 2])
+  const swapped = swapChannel(MIX, 0, 2)
   expect(swapped).toEqual([0.5, -3.5, 4, -1, 3, -1, 1.7, 0, -0.7])
   expect(channelMap(swapped)).toEqual([2, 1, 0])
   expect(channelMap(swapChannel(swapped, 1, 0))).toEqual([1, 2, 0])
@@ -578,7 +580,7 @@ it('swaps outputs by dragging an input onto an output', async () => {
     ).toEqual(['M 5 10 C 70 10, 70 50, 135 50', 'M 5 50 C 70 50, 70 10, 135 10'])
   )
   fireEvent.pointerUp(graph, { clientX: 132, clientY: 50, pointerId: 1 })
-  expect(recipe().rawColor!.matrix).toEqual(swapChannel(AEROCHROME_MATRIX, 0, 2))
+  expect(recipe().rawColor!.matrix).toEqual(swapChannel(MIX, 0, 2))
   // Output red now shows input blue. Dragging that end to green moves blue to green.
   const output = graph.querySelector('[data-output="0"] circle')!
   fireEvent.pointerDown(output, { clientX: 132, clientY: 10, button: 0, pointerId: 2 })

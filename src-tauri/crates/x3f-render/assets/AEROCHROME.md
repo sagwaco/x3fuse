@@ -21,16 +21,17 @@ matrix has infinity-norm condition number 572.46. One trial target required a
 coefficient above 23, outside the recipe limit of 4. Clamping that solve would
 break neutral preservation. No such solve is used by the application.
 
-The shipped mix is manually tuned and empirical:
+The shipped mix is manually tuned by eye on `aero_P2M1159.X3F` and is empirical:
 
 ```
- 1.7   0    -0.7
--1     3    -1
- 0.5  -3.5   4
+ 1.6874   0.7225  -1.4099
+-0.7473   2.965   -1.2177
+-1.5352   1.93     0.6052
 ```
 
-The first row increases the bottom/top layer difference. The other rows give
-foliage a red/magenta bias while keeping the clear sky blue. Every row sums to 1,
+The first row increases the bottom/top layer difference. Before film, measured
+foliage is red to orange (hue 24 to 36 degrees) and the clear sky stays blue.
+Every row sums to 1,
 so a picked neutral remains neutral before film. These are creative coefficients,
 not a fitted sensor response. The source means and rectangles are recorded in
 `src/shared/aerochrome-patches.json`. Tests check the bounds, row totals, and
@@ -38,6 +39,10 @@ measured development/check patch colors; they do not claim to recover this mix
 from target colors.
 
 ## Checks and limits
+
+The checks in this section used the previous mix, `[1.7, 0, -0.7; -1, 3, -1;
+0.5, -3.5, 4]`, which gave foliage a red/magenta bias. They were not repeated
+for the current mix.
 
 All 16 captures rendered through the GPU with denoise and grain disabled for
 inspection. Neutral choices were explicit: clouds where available, crosswalk
