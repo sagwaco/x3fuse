@@ -39,7 +39,7 @@
   "ratingDown": "BracketLeft",
   "rotateLeft": "CmdOrCtrl+BracketLeft",
   "rotateRight": "CmdOrCtrl+BracketRight",
-  "crop": "R",
+  "crop": ["R", "C"],
   "whiteBalancePicker": "W",
   "shortcuts": "CmdOrCtrl+Slash",
   "showLogs": "CmdOrCtrl+Shift+L"
