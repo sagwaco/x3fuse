@@ -1854,3 +1854,34 @@ it('keeps qualifier infrastructure errors in the error banner', async () => {
   expect(editor.getState().error).toBe('Renderer unavailable')
   expect(editor.getState().mixNotice).toBeNull()
 })
+
+it('refreshes SFD status on focus without changing the saved recipe', async () => {
+  let status: X3iStatus = { frames: 7, processed: true }
+  const original = invoke.getMockImplementation()!
+  invoke.mockImplementation(async (command, payload) => {
+    if (command === 'editor:open')
+      return { ...session(), recipe: { ...defaultRecipe(), x3iSource: 'merge' }, x3i: status }
+    if (command === 'editor:x3iStatus') return status
+    return original(command, payload)
+  })
+  await editor.getState().open(file)
+  const { unmount } = renderHook(useIpcEvents)
+  status = { frames: 7, processed: false }
+  await act(async () => {
+    window.dispatchEvent(new Event('focus'))
+    await tick()
+  })
+  expect(editor.getState().x3i?.processed).toBe(false)
+  expect(editor.getState().documents[file.path].recipe.x3iSource).toBe('merge')
+  expect(needsX3iMerge(editor.getState())).toBe(true)
+  editor.setState({ x3i: null })
+  invoke.mockClear()
+  window.dispatchEvent(new Event('focus'))
+  await tick()
+  expect(invoke).not.toHaveBeenCalledWith('editor:x3iStatus', expect.anything())
+  unmount()
+  invoke.mockClear()
+  window.dispatchEvent(new Event('focus'))
+  await tick()
+  expect(invoke).not.toHaveBeenCalledWith('editor:x3iStatus', expect.anything())
+})

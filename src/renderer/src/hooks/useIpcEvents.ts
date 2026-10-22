@@ -11,6 +11,10 @@ import { useEditorStore } from '../stores/editorStore'
 export function useIpcEvents(): void {
   useEffect(() => {
     const frame = requestAnimationFrame(() => void checkForUpdates(false))
+    const refreshSfd = (): void => {
+      if (useEditorStore.getState().x3i) void useEditorStore.getState().refreshX3i()
+    }
+    window.addEventListener('focus', refreshSfd)
     const q = useQueueStore.getState
 
     const unsubscribers = [
@@ -38,6 +42,7 @@ export function useIpcEvents(): void {
     ]
 
     return () => {
+      window.removeEventListener('focus', refreshSfd)
       cancelAnimationFrame(frame)
       unsubscribers.forEach((off) => off())
     }

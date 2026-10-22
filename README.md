@@ -182,7 +182,10 @@ editor opens an X3I as its unfused RAW: the middle exposure, which needs no fuse
 To use the SFD RAW, which fuses all exposures into one image, turn on Use SFD RAW
 or select Fuse in the SFD RAW section. The first fuse takes about 30 seconds and
 up to 3 GB of memory. You can edit, leave the photo, or cancel while it runs. The
-editor keeps the SFD RAW in its cache, so it opens quickly after that. DNG and TIFF
+editor keeps the SFD RAW in its cache, so it opens quickly after that. Settings >
+Cache shows SFD cache usage and clears merged SFD RAWs separately from thumbnails.
+Originals and edits stay unchanged. An open photo that uses SFD RAW can rebuild
+its cache when you return to the editor. DNG and TIFF
 exports fuse the frames again, one X3I at a time, unless the X3I frames export
 setting is Unfused RAW. Embedded JPG exports use the middle exposure.
 

@@ -143,7 +143,12 @@ export function SettingsWindow(): React.JSX.Element {
           </Section>
         )}
 
-        {tab === 'cache' && <CachePage />}
+        {tab === 'cache' && (
+          <>
+            <CachePage />
+            <SfdCacheSection />
+          </>
+        )}
 
         {tab === 'advanced' && (
           <>
@@ -377,6 +382,58 @@ function CachePage(): React.JSX.Element {
       {clearFailed && (
         <p role="alert" className="text-xs text-danger">
           {t('settings.cache.clear_failed')}
+        </p>
+      )}
+    </Section>
+  )
+}
+
+function SfdCacheSection(): React.JSX.Element {
+  const [used, setUsed] = useState<number | null>(null)
+  const [clearFailed, setClearFailed] = useState(false)
+  const [clearing, setClearing] = useState(false)
+  const refresh = (): void => {
+    void ipc.invoke('cache:sfdSize').then(setUsed, console.error)
+  }
+  useEffect(() => {
+    refresh()
+    window.addEventListener('focus', refresh)
+    return () => window.removeEventListener('focus', refresh)
+  }, [])
+
+  return (
+    <Section title={t('settings.sfd_cache.title')}>
+      <p className="text-xs text-tone-400">{t('settings.sfd_cache.help')}</p>
+      <Row label={t('settings.cache.used')}>
+        <span className="text-sm text-tone-400">
+          {used === null ? t('placeholder.dash') : formatBytes(used)}
+        </span>
+        {/* One Clear at a time, so that an older result cannot show after a newer one. */}
+        <Button
+          variant="bordered"
+          size="sm"
+          disabled={clearing}
+          onClick={() => {
+            setClearing(true)
+            setClearFailed(false)
+            void ipc
+              .invoke('cache:sfdClear')
+              .catch((error: unknown) => {
+                console.error('Could not clear the SFD cache', error)
+                setClearFailed(true)
+              })
+              .finally(() => {
+                setClearing(false)
+                refresh()
+              })
+          }}
+        >
+          {t('settings.sfd_cache.clear')}
+        </Button>
+      </Row>
+      {clearFailed && (
+        <p role="alert" className="text-xs text-danger">
+          {t('settings.sfd_cache.clear_failed')}
         </p>
       )}
     </Section>

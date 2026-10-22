@@ -423,6 +423,8 @@ pub fn run() {
             commands::logs_sizes,
             commands::cache_size,
             commands::cache_clear,
+            commands::cache_sfd_size,
+            commands::cache_sfd_clear,
             commands::app_info,
             commands::haptics_detent,
             updater::update_check

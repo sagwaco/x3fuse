@@ -410,6 +410,50 @@ fn hit(file: &Path) -> bool {
     true
 }
 
+/// Lists merged scenes only. Frame copies and temporary files stay separate.
+fn cached_scenes(cache: &Path) -> Result<Vec<(PathBuf, u64)>, String> {
+    let entries = match fs::read_dir(cache) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error.to_string()),
+    };
+    let mut scenes = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|e| e.to_string())?;
+        if entry.path().extension().is_some_and(|ext| ext == "sfd") {
+            let info = match entry.path().symlink_metadata() {
+                Ok(info) => info,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(error.to_string()),
+            };
+            if info.is_file() {
+                scenes.push((entry.path(), info.len()));
+            }
+        }
+    }
+    Ok(scenes)
+}
+
+/// Returns the bytes used by merged SFD scenes.
+pub fn cache_size(cache: &Path) -> Result<u64, String> {
+    Ok(cached_scenes(cache)?.iter().map(|(_, bytes)| bytes).sum())
+}
+
+/// Removes merged scenes. An active merge must finish before this can run.
+pub fn clear_cache(cache: &Path) -> Result<(), String> {
+    let _merge = MERGE
+        .try_lock()
+        .map_err(|_| "SFD merge in progress or unavailable")?;
+    for (file, _) in cached_scenes(cache)? {
+        match fs::remove_file(file) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    Ok(())
+}
+
 /// Removes the least recently used files, including abandoned temporary
 /// files, until the cache fits its budget. ponytail: files used in the last
 /// `IN_USE` stay, so a burst of imports can exceed the budget until a later
@@ -444,6 +488,33 @@ pub fn prune(cache: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sfd_cache_controls_preserve_other_files_and_refuse_an_active_merge() {
+        let directory = tempfile::tempdir().unwrap();
+        let cache = directory.path().join("x3i-v1");
+        assert_eq!(cache_size(&cache).unwrap(), 0);
+        clear_cache(&cache).unwrap();
+        fs::create_dir(&cache).unwrap();
+        fs::write(cache.join("merged.sfd"), b"scene").unwrap();
+        fs::write(cache.join("frame.X3F"), b"metadata").unwrap();
+        fs::write(cache.join("working.tmp"), b"partial").unwrap();
+        fs::create_dir(cache.join("folder.sfd")).unwrap();
+        fs::write(directory.path().join("thumbnail.jpg"), b"thumbnail").unwrap();
+        assert_eq!(cache_size(&cache).unwrap(), 5);
+        {
+            let _merge = MERGE.lock().unwrap();
+            assert!(clear_cache(&cache).is_err());
+            assert_eq!(cache_size(&cache).unwrap(), 5);
+        }
+        clear_cache(&cache).unwrap();
+        assert_eq!(cache_size(&cache).unwrap(), 0);
+        assert!(cache.join("frame.X3F").exists());
+        assert!(cache.join("working.tmp").exists());
+        assert!(cache.join("folder.sfd").is_dir());
+        assert!(directory.path().join("thumbnail.jpg").exists());
+        clear_cache(&cache).unwrap();
+    }
 
     #[test]
     fn denoise_settings_change_x3i_scenes_only_with_the_experimental_filter() {

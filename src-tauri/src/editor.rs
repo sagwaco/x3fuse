@@ -649,6 +649,26 @@ impl Editor {
         crate::x3i::remove_scene(&self.x3i, &path, &source_revision, &merge_options(recipe))
     }
 
+    pub fn sfd_cache_size(&self) -> Result<u64, String> {
+        crate::x3i::cache_size(&self.x3i)
+    }
+
+    pub fn clear_sfd_cache(&self) -> Result<(), String> {
+        // Keep registration blocked until clear ends, including the final merge checks.
+        let jobs = self.x3i_jobs.lock().map_err(|_| "Editor unavailable")?;
+        for job in jobs.values() {
+            if job
+                .result
+                .lock()
+                .map_err(|_| "Editor unavailable")?
+                .is_none()
+            {
+                return Err("SFD merge in progress".into());
+            }
+        }
+        crate::x3i::clear_cache(&self.x3i)
+    }
+
     /// Stops the merge of an X3I. `x3i_status` then reports no error.
     pub fn x3i_cancel(&self, path: &Path) -> Result<(), String> {
         let path = path.canonicalize().map_err(|e| e.to_string())?;
@@ -1892,6 +1912,21 @@ pub fn protocol_id(uri: &str) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn sfd_cache_clear_waits_for_registered_jobs_to_finish() {
+        let temporary = tempfile::tempdir().unwrap();
+        let editor = Editor::new(temporary.path().join("edits"));
+        let job = Arc::new(X3iJob::default());
+        editor
+            .x3i_jobs
+            .lock()
+            .unwrap()
+            .insert(PathBuf::from("photo.X3I"), job.clone());
+        assert!(editor.clear_sfd_cache().is_err());
+        *job.result.lock().unwrap() = Some(Ok(()));
+        assert!(editor.clear_sfd_cache().is_ok());
+    }
+
     #[test]
     fn white_balance_reads_only_matching_prepared_calibration() {
         let temporary = tempfile::tempdir().unwrap();

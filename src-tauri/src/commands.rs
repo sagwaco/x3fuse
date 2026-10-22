@@ -537,6 +537,20 @@ pub async fn cache_clear(state: State<'_, Arc<AppState>>) -> Result<(), String> 
         .map_err(|e| e.to_string())?
 }
 #[tauri::command]
+pub async fn cache_sfd_size(state: State<'_, Arc<AppState>>) -> Result<u64, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.editor.sfd_cache_size())
+        .await
+        .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+pub async fn cache_sfd_clear(state: State<'_, Arc<AppState>>) -> Result<(), String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.editor.clear_sfd_cache())
+        .await
+        .map_err(|e| e.to_string())?
+}
+#[tauri::command]
 pub fn app_info(app: AppHandle) -> Value {
     let platform = if cfg!(target_os = "macos") {
         "darwin"

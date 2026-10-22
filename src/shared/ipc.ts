@@ -256,6 +256,10 @@ export interface IpcRequestMap {
   'cache:size': { payload: void; result: number }
   /** Removes the preview disk cache. The previews in memory stay. */
   'cache:clear': { payload: void; result: void }
+  /** Bytes used by merged SFD scenes. */
+  'cache:sfdSize': { payload: void; result: number }
+  /** Removes merged SFD scenes without changing thumbnails or recipes. */
+  'cache:sfdClear': { payload: void; result: void }
 
   'app:info': { payload: void; result: AppInfo }
   /** Trackpad click as a slider drag reaches a detent (macOS only). */
@@ -329,6 +333,8 @@ export const IPC_REQUEST_CHANNELS: IpcRequestChannel[] = [
   'logs:sizes',
   'cache:size',
   'cache:clear',
+  'cache:sfdSize',
+  'cache:sfdClear',
   'app:info',
   'haptics:detent',
   'update:check'
