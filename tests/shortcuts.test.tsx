@@ -122,6 +122,8 @@ describe('runCommand', () => {
     expect(update).toHaveBeenLastCalledWith({ sortAscending: false })
     expect(runCommand('toggleFilterBar')).toBe(true)
     expect(queue.getState().filterOpen).toBe(true)
+    // The strip shows only in the filmstrip and the editor.
+    expect(runCommand('toggleStrip')).toBe(false)
     expect(runCommand('togglePanel')).toBe(true)
     expect(update).toHaveBeenLastCalledWith({ inspectorOpen: !DEFAULT_SETTINGS.inspectorOpen })
     useNavStore.setState({ screen: 'editor' })
@@ -131,6 +133,8 @@ describe('runCommand', () => {
     expect(update).toHaveBeenLastCalledWith({
       editorPanelOpen: !DEFAULT_SETTINGS.editorPanelOpen
     })
+    expect(runCommand('toggleStrip')).toBe(true)
+    expect(queue.getState().stripOpen).toBe(false)
     useNavStore.setState({ screen: 'export' })
     expect(runCommand('togglePanel')).toBe(false)
   })

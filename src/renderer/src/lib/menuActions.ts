@@ -33,6 +33,7 @@ const LABELS: Partial<Record<MenuCommand, string>> = {
   viewSurvey: 'menu.view.survey',
   toggleFilterBar: 'menu.view.filter_bar',
   togglePanel: 'menu.view.info_panel',
+  toggleStrip: 'menu.view.thumbnail_strip',
   zoomIn: 'menu.view.zoom_in',
   zoomOut: 'menu.view.zoom_out',
   zoomFit: 'menu.view.zoom_fit',

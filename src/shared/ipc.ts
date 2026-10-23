@@ -89,6 +89,7 @@ export type MenuCommand =
   | 'sortAscending'
   | 'sortDescending'
   | 'toggleFilterBar'
+  | 'toggleStrip'
   | 'togglePanel'
   | 'zoomIn'
   | 'zoomOut'

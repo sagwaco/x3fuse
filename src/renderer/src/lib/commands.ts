@@ -210,6 +210,10 @@ function runDefault(name: MenuCommand, { advance, toggle }: CommandOptions): boo
       if (!library || !q.files.length) return false
       q.toggleFilterBar()
       return true
+    case 'toggleStrip':
+      if (screen === 'export' || (library && mode !== 'filmstrip')) return false
+      q.toggleStrip()
+      return true
     case 'togglePanel':
       if (screen === 'export') return false
       void settings.update(

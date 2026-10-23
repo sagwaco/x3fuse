@@ -230,6 +230,7 @@ fn build(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         .separator()
         .item(&item("toggleFilterBar", "menu.view.filter_bar")?)
         .item(&item("togglePanel", "menu.view.info_panel")?)
+        .item(&item("toggleStrip", "menu.view.thumbnail_strip")?)
         .separator()
         .item(&item("zoomIn", "menu.view.zoom_in")?)
         .item(&item("zoomOut", "menu.view.zoom_out")?)

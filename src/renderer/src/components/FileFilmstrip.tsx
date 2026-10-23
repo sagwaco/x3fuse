@@ -39,6 +39,7 @@ export function FileFilmstrip({
   preview?: ReactNode
 }): React.JSX.Element {
   const selectedIds = useQueueStore((s) => s.selectedIds)
+  const stripOpen = useQueueStore((s) => s.stripOpen)
   const activeId = useQueueStore((s) => s.activeId)
   const sorted = useShownFiles(draft)
 
@@ -166,12 +167,14 @@ export function FileFilmstrip({
             ) : null)}
         </div>
 
-        <FilmstripStrip
-          files={sorted}
-          active={activeThumbnail}
-          selectedIds={selectedIds}
-          sel={sel}
-        />
+        {stripOpen && (
+          <FilmstripStrip
+            files={sorted}
+            active={activeThumbnail}
+            selectedIds={selectedIds}
+            sel={sel}
+          />
+        )}
 
         {!draft && isDragOver && (
           <div className="pointer-events-none absolute inset-0 rounded-md ring-2 ring-inset ring-accent/40 bg-accent/5" />

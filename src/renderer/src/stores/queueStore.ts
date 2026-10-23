@@ -95,10 +95,13 @@ interface QueueState {
   error: string | null
   filter: CullFilter
   filterOpen: boolean
+  /** Whether the filmstrip and the editor show the thumbnail strip. */
+  stripOpen: boolean
   /** The last failed flag or rating save. A later save clears it. */
   cullError: string | null
   setFilter: (patch: Partial<CullFilter>) => void
   toggleFilterBar: () => void
+  toggleStrip: () => void
   /** Flags and/or rates photos. `advance` then moves to the next shown photo. */
   setCull: (ids: Set<string>, patch: { flag?: Flag; rating?: number }, advance?: boolean) => void
   setSelection: (ids: Set<string>, active?: string | null) => void
@@ -293,10 +296,12 @@ export const useQueueStore = create<QueueState>((set, get) => {
     error: null,
     filter: NO_FILTER,
     filterOpen: false,
+    stripOpen: true,
     cullError: null,
 
     setFilter: (patch) => set((s) => ({ filter: { ...s.filter, ...patch } })),
     toggleFilterBar: () => set((s) => ({ filterOpen: !s.filterOpen })),
+    toggleStrip: () => set((s) => ({ stripOpen: !s.stripOpen })),
 
     setCull(ids, patch, advance = false) {
       if (useEditorStore.getState().closing) return
