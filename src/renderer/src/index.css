@@ -800,14 +800,6 @@ html[data-theme='gray'] .glass-group {
       > .glass-group-indicator {
       box-shadow: none;
     }
-
-    /* The default glass is almost clear on a light surface. This variant has a stronger
-       edge, so it is easier to see. */
-    html[data-platform='darwin']:where([data-theme='light'], [data-theme='gray'])
-      .glass-group:is([data-variant='glass'], [data-variant='split'])
-      > .glass-group-indicator {
-      -apple-visual-effect: -apple-system-glass-material-media-controls;
-    }
   }
 }
 
