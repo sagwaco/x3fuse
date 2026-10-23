@@ -1023,13 +1023,14 @@ html[data-theme='gray'] .glass-group {
   }
 }
 
-/* The mix pad is a glass screen: a dark bezel, a cool gradient below, a light
-   rim at the bottom edge, and a gloss over the content. */
+/* The mix pad is a glass screen: a faint bezel, a cool gradient below, a light
+   rim at the bottom edge, and a gloss over the content. The edges fade to the
+   panel surface. */
 .mix-pad,
 .glass-well {
   background: linear-gradient(rgb(var(--ink) / 0.02), rgb(var(--ink) / 0.06));
   box-shadow:
-    0 0 0 1px rgb(0 0 0 / 0.6),
+    0 0 0 1px rgb(var(--ink) / 0.12),
     0 0 0 3px rgb(var(--ink) / 0.06);
 }
 
@@ -1121,7 +1122,7 @@ html[data-theme='gray'] .glass-group {
     inset 0 -1px 1px rgb(255 255 255 / 0.22),
     inset 1px 0 1px rgb(255 255 255 / 0.06),
     inset -1px 0 1px rgb(255 255 255 / 0.06),
-    inset 0 0 14px rgb(0 0 0 / 0.45);
+    inset 0 0 14px color-mix(in srgb, rgb(var(--tone-900)) 30%, rgb(var(--tone-950)));
 }
 
 .mix-pad:focus-visible {
