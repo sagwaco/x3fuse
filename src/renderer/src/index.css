@@ -119,27 +119,26 @@ html:lang(zh-Hant) {
 }
 
 .export-action {
-  color: #241c00;
-  background-color: #facc15;
+  color: rgb(var(--on-select));
+  background-color: rgb(var(--select));
 }
 
 button.export-action:hover:not(:disabled) {
-  color: #241c00;
-  background-color: #fde047;
+  background-color: color-mix(in srgb, rgb(var(--select)), white 25%);
 }
 
 @supports (-apple-visual-effect: -apple-system-glass-material) {
   html[data-platform='darwin'] .export-action {
     -apple-visual-effect: -apple-system-glass-material;
-    background-color: rgb(250 204 21 / 0.75);
-    box-shadow: inset 0 0 0 1px rgb(255 234 120 / 0.6);
+    background-color: rgb(var(--select) / 0.75);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, rgb(var(--select) / 0.6), white 40%);
   }
 }
 
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
   html[data-platform='darwin'] .export-action {
     -apple-visual-effect: none;
-    background-color: #facc15;
+    background-color: rgb(var(--select));
   }
 }
 
@@ -161,6 +160,10 @@ button.export-action:hover:not(:disabled) {
   --tone-50: 250 250 250;
   --ink: 255 255 255;
   --accent: 96 165 250;
+  /* Selection, toggles that are on, and the main action. Yellow, blue in the
+     light theme and dark gray in the gray theme. on-select is text on a select fill. */
+  --select: 250 204 21;
+  --on-select: 36 28 0;
   --danger: 248 113 113;
   --success: 74 222 128;
   --warning: 251 146 60;
@@ -181,6 +184,8 @@ html[data-theme='light'] {
   --tone-50: 10 10 10;
   --ink: 0 0 0;
   --accent: 37 99 235;
+  --select: 37 99 235;
+  --on-select: 255 255 255;
   --danger: 220 38 38;
   --success: 22 163 74;
   --warning: 234 88 12;
@@ -201,6 +206,8 @@ html[data-theme='gray'] {
   --tone-50: 4 4 4;
   --ink: 0 0 0;
   --accent: 30 64 175;
+  --select: 82 82 82;
+  --on-select: 255 255 255;
   --danger: 185 28 28;
   --success: 21 128 61;
   --warning: 194 65 12;

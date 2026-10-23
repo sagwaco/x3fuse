@@ -301,9 +301,9 @@ function SettingsTitlebar({
         </h1>
       </div>
       <div data-tauri-drag-region className="flex justify-center px-3 pb-3 pt-1">
-        {/* The selected tab sits on the macOS glass material, or in a ring. The gray
-            accent is below 3:1 on the gray surface, so there the selected icon keeps
-            the label color. */}
+        {/* The selected tab sits on the macOS glass material, or in a ring. The selected
+            icon has the select color. The gray select color is below 3:1 on the gray
+            surface, so there the selected icon keeps the label color. */}
         <GlassGroup
           kind="tabs"
           id="settings"
@@ -318,7 +318,7 @@ function SettingsTitlebar({
             icon,
             label: t(`settings.section.${value}`)
           }))}
-          className="[&_[data-selected]>svg]:text-accent [html[data-theme=gray]_&_[data-selected]>svg]:text-inherit p-1"
+          className="[&_[data-selected]>svg]:text-select [html[data-theme=gray]_&_[data-selected]>svg]:text-inherit p-1"
         />
       </div>
     </header>

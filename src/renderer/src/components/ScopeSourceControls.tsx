@@ -28,7 +28,7 @@ export function ScopeSourceControls({
       className={cn(
         'flex h-6 w-6 items-center justify-center rounded-md disabled:opacity-40',
         value === 'qualifier'
-          ? 'bg-yellow-400 text-neutral-900 enabled:hover:bg-yellow-300'
+          ? 'bg-select text-on-select enabled:hover:bg-select/85'
           : 'text-tone-300 enabled:hover:bg-tone-800'
       )}
     >

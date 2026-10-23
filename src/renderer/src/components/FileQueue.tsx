@@ -267,7 +267,7 @@ const Row = memo(function Row({
         joinTop && 'rounded-t-none',
         joinBottom && 'rounded-b-none',
         selected
-          ? 'bg-yellow-400/20 text-tone-50'
+          ? 'bg-select/20 text-tone-50'
           : cn('text-tone-200 hover:bg-ink/5', index % 2 === 1 && 'bg-ink/[0.03]')
       )}
     >

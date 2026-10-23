@@ -546,8 +546,9 @@ export const EditorControls = memo(function EditorControls({
   )
   return (
     <>
-      {/* Tabs that share the width, as in the settings header. The gray accent is
-          below 3:1 on the gray surface, so there the selected icon keeps the label color. */}
+      {/* Tabs that share the width, as in the settings header. The selected icon has
+          the select color. The gray select color is below 3:1 on the gray surface, so
+          there the selected icon keeps the label color. */}
       <div className="px-3 py-2.5">
         <GlassGroup
           kind="tabs"
@@ -556,7 +557,7 @@ export const EditorControls = memo(function EditorControls({
           panelId={(value) => `panel-${value}`}
           display="stacked"
           size="sm"
-          className="[&_[data-selected]>svg]:text-accent [html[data-theme=gray]_&_[data-selected]>svg]:text-inherit"
+          className="[&_[data-selected]>svg]:text-select [html[data-theme=gray]_&_[data-selected]>svg]:text-inherit"
           aria-label={t('editor.panels')}
           value={tab}
           onValueChange={setTab}

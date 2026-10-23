@@ -6,7 +6,7 @@ import { blurOnClick } from '../../lib/commitFocus'
 /** The track look, for the switch and for its copy in the glass lens. */
 const TRACK = cn(
   'rounded-full border transition-colors',
-  'data-[state=checked]:border-yellow-400 data-[state=checked]:bg-yellow-400',
+  'data-[state=checked]:border-select data-[state=checked]:bg-select',
   'data-[state=unchecked]:border-transparent data-[state=unchecked]:bg-ink/20'
 )
 
@@ -47,7 +47,7 @@ export function Switch({
       <SwitchPrimitive.Thumb
         className={cn(
           'switch-knob pointer-events-none relative block h-3.5 w-3.5 rounded-full',
-          'data-[state=checked]:bg-black data-[state=unchecked]:bg-tone-400'
+          'data-[state=checked]:bg-on-select data-[state=unchecked]:bg-tone-400'
         )}
       >
         <span className="glass-lens">

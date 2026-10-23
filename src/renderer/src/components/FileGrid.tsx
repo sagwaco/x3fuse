@@ -148,9 +148,9 @@ const GridCell = memo(function GridCell({
           'group relative rounded-md border',
           // The offset leaves a clear gap between the image and the outline.
           active
-            ? 'border-transparent outline outline-2 outline-offset-2 outline-yellow-400'
+            ? 'border-transparent outline outline-2 outline-offset-2 outline-select'
             : selected
-              ? 'border-yellow-400/70'
+              ? 'border-select/70'
               : 'border-ink/10 hover:border-ink/25'
         )}
         style={{ height: THUMB_H }}

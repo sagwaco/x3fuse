@@ -27,6 +27,8 @@ export default {
         tone: Object.fromEntries(steps.map((n) => [n, token(`tone-${n}`)])),
         ink: token('ink'),
         accent: token('accent'),
+        select: token('select'),
+        'on-select': token('on-select'),
         danger: token('danger'),
         success: token('success'),
         warning: token('warning')

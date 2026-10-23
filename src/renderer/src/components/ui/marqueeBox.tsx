@@ -6,7 +6,7 @@ export function MarqueeBox({ box }: { box: Box | null }): React.JSX.Element | nu
   return (
     <div
       aria-hidden="true"
-      className="pointer-events-none absolute z-20 rounded-sm border border-yellow-400/70 bg-yellow-400/15"
+      className="pointer-events-none absolute z-20 rounded-sm border border-select/70 bg-select/15"
       style={{
         left: box.left,
         top: box.top,
