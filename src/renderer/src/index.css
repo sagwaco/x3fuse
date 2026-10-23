@@ -1247,12 +1247,13 @@ html:is([data-theme='light'], [data-theme='gray']) .mix-grid > :nth-child(3) {
   }
 }
 
-/* Curve points show only while the pointer is on the curve or the curve has the focus. */
+/* Curve points show only while the pointer is on the curve, the curve has the focus, or
+   the curve Qualifier is armed. */
 .curve-handles {
   opacity: 0;
   transition: opacity 200ms ease;
 }
 
-.glass-well:is(:hover, :focus-within) .curve-handles {
+.glass-well:is(:hover, :focus-within, [data-qualifying]) .curve-handles {
   opacity: 1;
 }

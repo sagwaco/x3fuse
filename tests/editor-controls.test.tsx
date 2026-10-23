@@ -22,6 +22,7 @@ import { CropAutoButtons, CropControls } from '../src/renderer/src/components/Cr
 import { CropPreview } from '../src/renderer/src/components/CropPreview'
 import { DevelopingCloud } from '../src/renderer/src/lib/developingCloud'
 import { useEditorStore as editor } from '../src/renderer/src/stores/editorStore'
+import { useCurveQualifier } from '../src/renderer/src/stores/curveQualifierStore'
 import { useQueueStore as queue } from '../src/renderer/src/stores/queueStore'
 import { t } from '../src/renderer/src/lib/strings'
 import { cropToFrame, frameToCrop } from '../src/renderer/src/lib/cropGeometry'
@@ -1072,6 +1073,24 @@ it('adjusts color ranges in the color mixer and edits curve points from the keyb
   expect(change.mock.lastCall?.[0].curves.red).toHaveLength(3)
   fireEvent.click(screen.getByRole('button', { name: t('editor.resetCurve') }))
   expect(change.mock.lastCall?.[0].curves.red).toEqual(defaultRecipe().curves.red)
+})
+
+it('adds a curve point where a picked preview color falls on the curve', () => {
+  render(<Controls />)
+  panelTab('raw')
+  fireEvent.click(screen.getByRole('button', { name: t('editor.curveQualifier') }))
+  expect(useCurveQualifier.getState().armed).toBe(true)
+  // Hovering shows a ghost knob; a pick adds the point there.
+  act(() => useCurveQualifier.setState({ hover: [0.4, 0.4, 0.4] }))
+  const group = screen.getByRole('group', { name: t('editor.curves') })
+  expect(group.querySelector('circle[stroke-dasharray]')?.getAttribute('cx')).toBe('80')
+  act(() => useCurveQualifier.setState({ pick: [0.4, 0.4, 0.4] }))
+  const master = change.mock.lastCall?.[0].curves.master
+  expect(master).toHaveLength(3)
+  expect(master[1].x).toBeCloseTo(0.4)
+  expect(master[1].y).toBeCloseTo(0.4)
+  expect(useCurveQualifier.getState().pick).toBeNull()
+  act(() => useCurveQualifier.getState().arm(false))
 })
 
 it('uses camera framing for As shot and reset, and offers the aspect presets as shapes', () => {

@@ -44,6 +44,7 @@ function markerRegion({ x, y, width, height }: PreviewRegion): PreviewRegion {
 export function ZoomablePreview({
   file,
   onImagePoint,
+  onImageHover,
   onImageRegion,
   outline,
   selectionKey,
@@ -61,6 +62,8 @@ export function ZoomablePreview({
   file: X3FFileDTO
   /** Gets a clicked point, 0 to 1 of the image. */
   onImagePoint?: (x: number, y: number) => void
+  /** Gets the point under the pointer, 0 to 1 of the image, or null off the image. */
+  onImageHover?: (point: { x: number; y: number } | null) => void
   /** Gets a dragged rectangle, 0 to 1 of the image. A drag then selects instead of panning. */
   onImageRegion?: (region: PreviewRegion) => void
   /** A rectangle, 0 to 1 of the image, to show as a dashed outline. */
@@ -537,6 +540,7 @@ export function ZoomablePreview({
           } else setDragging(true)
         }}
         onPointerMove={(event) => {
+          onImageHover?.(pointOnImage(event.clientX, event.clientY))
           const previous = drag.current
           if (!previous || previous.id !== event.pointerId) return
           if (
@@ -574,6 +578,7 @@ export function ZoomablePreview({
           }
           stopDragging()
         }}
+        onPointerLeave={() => onImageHover?.(null)}
         onPointerCancel={(event) => {
           if (drag.current && drag.current.id !== event.pointerId) return
           moved.current = true

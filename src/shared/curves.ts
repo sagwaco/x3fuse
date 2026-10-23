@@ -58,3 +58,18 @@ export function curvePath(points: CurvePoint[]): string {
   }
   return path
 }
+
+/**
+ * The curve input that gives an output value: the point of the curve that changes a pixel
+ * of that value. Of equal matches, the input nearest the value wins.
+ */
+export function curveInput(points: CurvePoint[], value: number): number {
+  let best = value
+  let error = Infinity
+  for (let i = 0; i <= 1000; i++) {
+    const x = i / 1000
+    const e = Math.abs(evaluateCurve(points, x) - value) + Math.abs(x - value) * 1e-3
+    if (e < error) [best, error] = [x, e]
+  }
+  return best
+}

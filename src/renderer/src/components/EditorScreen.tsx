@@ -35,6 +35,8 @@ import { ResizablePanel } from './ui/resizablePanel'
 import { useToolbarSwap } from '../hooks/useToolbarSwap'
 import { ZoomControls } from './ZoomControls'
 import { ZoomablePreview } from './ZoomablePreview'
+import { useCurveQualifier } from '../stores/curveQualifierStore'
+import { useScopeImage } from '../hooks/useScopeImage'
 import { FileFilmstrip } from './FileFilmstrip'
 import { ColorScope } from './ColorScope'
 import { ScopeMenu } from './ScopeMenu'
@@ -101,6 +103,17 @@ export function EditorScreen(): React.JSX.Element {
   // The white balance picker and the Qualifier use the same clicks, so one disarms the other.
   if (picking && qualifying) setQualifying(false)
   if (picking && mixPicking !== null) setMixPickingState(null)
+  // The tone curve Qualifier uses the same clicks. The last armed tool wins.
+  const curvePicking = useCurveQualifier((s) => s.armed)
+  useEffect(() => {
+    if (picking || mixPicking !== null || qualifying) useCurveQualifier.getState().arm(false)
+  }, [picking, mixPicking, qualifying])
+  useEffect(() => {
+    if (!curvePicking) return
+    setPicking(false)
+    setMixPickingState(null)
+    setQualifying(false)
+  }, [curvePicking])
   // Turning the Qualifier on arms it. Turning it off clears its area.
   const chooseScope = (next: ScopeSource): void => {
     if (next === 'qualifier') {
@@ -296,13 +309,14 @@ export function EditorScreen(): React.JSX.Element {
       if (event.repeat) return
       if (mixPicking !== null) setMixPickingState(null)
       else if (picking) setPicking(false)
+      else if (curvePicking) useCurveQualifier.getState().arm(false)
       else if (qualifying) setQualifying(false)
       else if (editor.cropping) cancelCrop()
       else if (!busy) void editor.close()
     }
     document.addEventListener('keydown', keydown)
     return () => document.removeEventListener('keydown', keydown)
-  }, [editor, busy, picking, mixPicking, qualifying, cancelCrop])
+  }, [editor, busy, picking, mixPicking, curvePicking, qualifying, cancelCrop])
   const displayFile = useMemo(
     () =>
       file &&
@@ -367,6 +381,21 @@ export function EditorScreen(): React.JSX.Element {
       setMixPickingState(null)
   }, [unavailable, editor.before, doc?.recipe.rawColor, cloudFile, panelOpen])
   canPick.current = !unavailable && !editor.before && !cloudFile
+  // The curve Qualifier reads the edited preview, as the curve's histogram does.
+  const curveImage = useScopeImage(curvePicking ? displayFile?.displayPreviewUrl : undefined)
+  /** The mean color of 3 by 3 preview pixels at a point, 0 to 1. */
+  const curveSample = (x: number, y: number): [number, number, number] | null => {
+    if (!curveImage || curveImage === 'loading') return null
+    const { width, height, data } = curveImage
+    const cx = Math.round(x * (width - 1))
+    const cy = Math.round(y * (height - 1))
+    const sum: [number, number, number] = [0, 0, 0]
+    let n = 0
+    for (let j = Math.max(0, cy - 1); j <= Math.min(height - 1, cy + 1); j++)
+      for (let i = Math.max(0, cx - 1); i <= Math.min(width - 1, cx + 1); i++, n++)
+        for (let c = 0; c < 3; c++) sum[c] += data[(j * width + i) * 4 + c] / 255
+    return sum.map((v) => v / n) as [number, number, number]
+  }
   // The editor commands of the menu bar and the keys, as the toolbar buttons do. They
   // register again after each render, so that they read the current state.
   const rotate = (turns: number): boolean => {
@@ -945,9 +974,22 @@ export function EditorScreen(): React.JSX.Element {
                               setPicking(false)
                               void editor.pickWhiteBalance(x, y)
                             }
-                          : qualifying && displayFile
-                            ? qualifyPoint
-                            : undefined
+                          : curvePicking && !unavailable
+                            ? (x, y) => {
+                                const pick = curveSample(x, y)
+                                if (pick) useCurveQualifier.setState({ pick })
+                              }
+                            : qualifying && displayFile
+                              ? qualifyPoint
+                              : undefined
+                    }
+                    onImageHover={
+                      curvePicking
+                        ? (point) =>
+                            useCurveQualifier.setState({
+                              hover: point && !unavailable ? curveSample(point.x, point.y) : null
+                            })
+                        : undefined
                     }
                     onImageRegion={qualifying && displayFile ? qualify : undefined}
                     outline={displayFile ? scopeRegion : null}

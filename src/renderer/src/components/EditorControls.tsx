@@ -1,6 +1,6 @@
 import { memo, useContext, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { DenoiseControls } from './DenoiseControls'
-import { ChevronDown, Aperture, Film, Blend, RotateCcw } from 'lucide-react'
+import { ChevronDown, Aperture, Film, Blend, Pipette, RotateCcw } from 'lucide-react'
 import {
   DEFAULT_FILM,
   FILM_MONOCHROME_FILTERS,
@@ -16,7 +16,8 @@ import {
   type MonochromeFilter
 } from '@shared/editor'
 import stocks from '@shared/film-stocks.json'
-import { curvePath, evaluateCurve } from '@shared/curves'
+import { curveInput, curvePath, evaluateCurve } from '@shared/curves'
+import { useCurveQualifier } from '../stores/curveQualifierStore'
 import { asShotRecipe, needsX3iMerge, useEditorStore } from '../stores/editorStore'
 import { editorSection, resetSection } from '@shared/editorSections'
 import { invalidateNativeMenu, showNativeMenu } from '../lib/nativeMenu'
@@ -828,6 +829,46 @@ function Curves({ recipe }: { recipe: EditRecipe }): React.JSX.Element {
     setPoints(defaultRecipe().curves[channel])
     setSelected(0)
   }
+  // The Qualifier finds the curve input of a preview color: the RGB curve reads its luma.
+  const armed = useCurveQualifier((s) => s.armed)
+  const hover = useCurveQualifier((s) => s.hover)
+  const pick = useCurveQualifier((s) => s.pick)
+  const inputOf = (rgb: [number, number, number]): number =>
+    curveInput(
+      points,
+      channel === 'master'
+        ? rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722
+        : rgb[['red', 'green', 'blue'].indexOf(channel)]
+    )
+  /**
+   * What a pick of a color does: select the point at its input, else add one there.
+   * The ghost knob shows the same point, so the click lands where the ghost shows.
+   */
+  const target = (rgb: [number, number, number]): { point: CurvePoint; index: number } | null => {
+    const x = inputOf(rgb)
+    // As a click on the curve, a point at the same input is selected instead of doubled.
+    const index = points.findIndex((p) => Math.abs(p.x - x) <= 0.005)
+    if (index >= 0) return { point: points[index], index }
+    if (points.length >= 16 || x <= 0.01 || x >= 0.99) return null
+    return { point: { x, y: evaluateCurve(points, x) }, index: -1 }
+  }
+  const ghost = armed && hover ? target(hover)?.point : undefined
+  useEffect(() => {
+    if (!pick) return
+    useCurveQualifier.setState({ pick: null })
+    const found = target(pick)
+    if (!found || found.index >= 0) {
+      if (found) setSelected(found.index)
+      return
+    }
+    const next = [...points, found.point].sort((a, b) => a.x - b.x)
+    setPoints(next)
+    setSelected(next.indexOf(found.point))
+    // The handler reads the current curve when a pick arrives.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pick])
+  const session = useEditorStore((state) => state.session?.sessionId)
+  useEffect(() => () => useCurveQualifier.getState().arm(false), [session])
   const preset = matchPreset(points)
   const silhouette = useHistogramPath(channel)
   const menuId = useId()
@@ -835,7 +876,6 @@ function Curves({ recipe }: { recipe: EditRecipe }): React.JSX.Element {
   // The clip follows the pad's 12 px corner radius, in the 200 unit curve box.
   const corner = (12 * 200) / (useElementWidth(pad) || 200)
   const clipId = `curve-clip${useId().replace(/:/g, '')}`
-  const session = useEditorStore((state) => state.session?.sessionId)
   useEffect(() => () => invalidateNativeMenu(menuId), [menuId, session, channel])
   const position = (event: React.MouseEvent<SVGSVGElement>): CurvePoint => {
     const bounds = event.currentTarget.getBoundingClientRect()
@@ -898,22 +938,36 @@ function Curves({ recipe }: { recipe: EditRecipe }): React.JSX.Element {
             setSelected(0)
           }}
         />
-        <Button
-          variant="ghost"
-          size="icon"
-          className="ml-auto h-7 w-7"
-          aria-label={t('editor.resetCurve')}
-          title={t('editor.resetCurve')}
-          onClick={reset}
-        >
-          <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
-        </Button>
+        <div className="ml-auto flex gap-1">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            aria-label={t('editor.curveQualifier')}
+            title={t('editor.curveQualifierHelp')}
+            aria-pressed={armed}
+            onClick={() => useCurveQualifier.getState().arm(!armed)}
+          >
+            <Pipette className="h-3.5 w-3.5" aria-hidden="true" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            aria-label={t('editor.resetCurve')}
+            title={t('editor.resetCurve')}
+            onClick={reset}
+          >
+            <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+          </Button>
+        </div>
       </div>
       <div
         ref={pad}
         className="glass-well relative rounded-xl"
         data-spectrum={recipe.rawColor ? 'full' : 'visible'}
         data-rgb={channel === 'master' || undefined}
+        data-qualifying={armed || undefined}
         style={
           { '--glow': channel === 'master' ? undefined : CHANNELS[channel] } as React.CSSProperties
         }
@@ -1079,9 +1133,27 @@ function Curves({ recipe }: { recipe: EditRecipe }): React.JSX.Element {
                 }}
               />
             ))}
+            {ghost && (
+              <circle
+                aria-hidden="true"
+                pointerEvents="none"
+                cx={ghost.x * 200}
+                cy={(1 - ghost.y) * 200}
+                r="5"
+                fill="#fff"
+                stroke="#000"
+                strokeWidth="1.5"
+                strokeDasharray="2 1.5"
+              />
+            )}
           </g>
         </svg>
       </div>
+      {armed && (
+        <p role="status" className="text-xs text-tone-200">
+          {t('editor.curveQualifierHint')}
+        </p>
+      )}
     </>
   )
 }

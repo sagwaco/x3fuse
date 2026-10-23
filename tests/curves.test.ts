@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { curvePath, evaluateCurve } from '../src/shared/curves'
+import { curveInput, curvePath, evaluateCurve } from '../src/shared/curves'
 import type { CurvePoint } from '../src/shared/editor'
 
 const points = (values: [number, number][]): CurvePoint[] => values.map(([x, y]) => ({ x, y }))
@@ -121,4 +121,24 @@ it('draws cubic SVG segments through the same anchors and smooth tangent values'
   expect(evaluateCurve(curve, 0.125)).toBeCloseTo(1 / 3, 14)
   expect(evaluateCurve(curve, 0.5)).toBe(0.5)
   expect(evaluateCurve(curve, 0.875)).toBeCloseTo(2 / 3, 14)
+})
+
+it('finds the curve input of an output value', () => {
+  const lifted = points([
+    [0, 0],
+    [0.5, 0.7],
+    [1, 1]
+  ])
+  expect(evaluateCurve(lifted, curveInput(lifted, 0.7))).toBeCloseTo(0.7, 2)
+  expect(curveInput(lifted, 0.7)).toBeCloseTo(0.5, 2)
+  // A flat curve matches every input; the nearest to the value wins.
+  expect(
+    curveInput(
+      points([
+        [0, 0.5],
+        [1, 0.5]
+      ]),
+      0.3
+    )
+  ).toBeCloseTo(0.3, 2)
 })
