@@ -636,32 +636,6 @@ html[data-theme='gray'] .glass-group {
   --glass-fill: rgb(255 255 255 / 0.25);
 }
 
-/* Glass and split have no track in the dark theme. In the light and gray themes they
-   get a tint and a ring, because the bare buttons are hard to see on a light surface. */
-html:is([data-theme='light'], [data-theme='gray'])
-  .glass-group:is([data-variant='glass'], [data-variant='split']) {
-  --glass-tint: rgb(var(--ink) / 0.07);
-  --glass-ring: rgb(var(--ink) / 0.3);
-}
-
-html:is([data-theme='light'], [data-theme='gray']) .glass-group[data-variant='glass'] {
-  background-color: var(--glass-tint);
-  box-shadow: inset 0 0 0 1px var(--glass-ring);
-}
-
-html:is([data-theme='light'], [data-theme='gray'])
-  .glass-group[data-variant='split']
-  > button:not([data-selected]) {
-  --tw-ring-color: var(--glass-ring);
-  background-color: var(--glass-tint);
-}
-
-html:is([data-theme='light'], [data-theme='gray'])
-  .glass-group[data-variant='split']
-  > button[data-selected] {
-  --tw-ring-color: rgb(var(--ink) / 0.45);
-}
-
 .glass-group-indicator {
   position: absolute;
   top: 0;
@@ -731,39 +705,28 @@ html:is([data-theme='light'], [data-theme='gray'])
   box-shadow: inset 0 0 5px rgb(var(--ink) / 0.5);
 }
 
-/* Glass: the selected item has no fill, only a ring. The macOS glass material
-   below replaces the ring. */
-.glass-group[data-variant='glass'] > .glass-group-indicator {
+/* While an item is pressed, the glass grows with a bounce. */
+.glass-group:is([data-variant='glass'], [data-variant='split'])[data-pressed]
+  > .glass-group-indicator {
+  --glass-grow: 2px;
+}
+
+/* The items that are not selected are faint until hovered. */
+.glass-group:is([data-variant='glass'], [data-variant='split'])
+  > button:not([data-selected], :disabled, :hover) {
+  opacity: 0.6;
+}
+
+/* Glass and split: the selected item has no fill, only a ring. The macOS glass
+   material below replaces the ring. */
+.glass-group:is([data-variant='glass'], [data-variant='split']) > .glass-group-indicator {
   background-color: transparent;
   box-shadow: 0 0 0 1px rgb(var(--ink) / 0.3);
 }
 
-/* Split: when selected, the button squashes and bounces back. */
-@keyframes glass-squash {
-  0% {
-    scale: 1 1;
-  }
-  30% {
-    scale: 1.04 0.9;
-  }
-  60% {
-    scale: 0.98 1.04;
-  }
-  82% {
-    scale: 1.01 0.99;
-  }
-  100% {
-    scale: 1 1;
-  }
-}
-
-.glass-group[data-variant='split'][data-moving] > [data-selected] {
-  animation: glass-squash 380ms ease-out;
-}
-
 /* The native material follows the window appearance and the text follows the
    theme, so the material shows only when the two schemes agree. Otherwise the
-   ring (glass) or the fill (split) stays. */
+   ring stays. */
 @supports (-apple-visual-effect: -apple-system-glass-material) {
   @media (prefers-color-scheme: dark) {
     html[data-platform='darwin']:where([data-theme='dark'])
@@ -771,13 +734,13 @@ html:is([data-theme='light'], [data-theme='gray'])
       > .glass-group-indicator,
     html[data-platform='darwin']:where([data-theme='dark'])
       .glass-group[data-variant='split']
-      > [data-selected] {
+      > .glass-group-indicator {
       -apple-visual-effect: -apple-system-glass-material;
       background-color: transparent;
     }
 
     html[data-platform='darwin']:where([data-theme='dark'])
-      .glass-group[data-variant='glass']
+      .glass-group:is([data-variant='glass'], [data-variant='split'])
       > .glass-group-indicator {
       box-shadow: none;
     }
@@ -789,15 +752,23 @@ html:is([data-theme='light'], [data-theme='gray'])
       > .glass-group-indicator,
     html[data-platform='darwin']:where(:not([data-theme='dark']))
       .glass-group[data-variant='split']
-      > [data-selected] {
+      > .glass-group-indicator {
       -apple-visual-effect: -apple-system-glass-material;
       background-color: transparent;
     }
 
     html[data-platform='darwin']:where(:not([data-theme='dark']))
-      .glass-group[data-variant='glass']
+      .glass-group:is([data-variant='glass'], [data-variant='split'])
       > .glass-group-indicator {
       box-shadow: none;
+    }
+
+    /* The default glass is almost clear on a light surface. This variant has a stronger
+       edge, so it is easier to see. */
+    html[data-platform='darwin']:where([data-theme='light'], [data-theme='gray'])
+      .glass-group:is([data-variant='glass'], [data-variant='split'])
+      > .glass-group-indicator {
+      -apple-visual-effect: -apple-system-glass-material-media-controls;
     }
   }
 }
@@ -823,21 +794,20 @@ html:is([data-theme='light'], [data-theme='gray'])
     content: none;
   }
 
-  html[data-platform='darwin'] .glass-group[data-variant='glass'] > .glass-group-indicator {
+  html[data-platform='darwin']
+    .glass-group:is([data-variant='glass'], [data-variant='split'])
+    > .glass-group-indicator {
     -apple-visual-effect: none;
     box-shadow: 0 0 0 1px rgb(var(--ink) / 0.3);
   }
-
-  html[data-platform='darwin'] .glass-group[data-variant='split'] > [data-selected] {
-    -apple-visual-effect: none;
-    background-color: var(--glass-fill);
-  }
 }
 
-/* No growth. A selection change does not slide or squash (see GlassGroup). Same
-   specificity as the liquid rule, and later, so it wins. */
+/* No growth. A selection change does not slide (see GlassGroup). Same
+   specificity as the growth rules, and later, so it wins. */
 @media (prefers-reduced-motion: reduce) {
-  .glass-group[data-variant='liquid']:is([data-moving], [data-pressed]) > .glass-group-indicator {
+  .glass-group[data-variant='liquid']:is([data-moving], [data-pressed]) > .glass-group-indicator,
+  .glass-group:is([data-variant='glass'], [data-variant='split'])[data-pressed]
+    > .glass-group-indicator {
     --glass-grow: 0px;
   }
 }

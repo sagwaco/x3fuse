@@ -80,7 +80,7 @@ it('is solid by default: a press does not turn the indicator to glass', () => {
   expect(group.querySelector('.glass-group-lens')).toBeNull()
 })
 
-it('is a split group of buttons without an indicator', () => {
+it('is a split group of buttons that slides its indicator on a change', () => {
   vi.useFakeTimers()
   const { rerender } = render(
     <GlassGroup
@@ -92,13 +92,13 @@ it('is a split group of buttons without an indicator', () => {
     />
   )
   const group = screen.getByRole('group', { name: 'Mode' })
-  expect(group.querySelector('.glass-group-indicator')).toBeNull()
+  expect(group.querySelector('.glass-group-indicator')).not.toBeNull()
   expect(
     within(group)
       .getAllByRole('button')
       .every((b) => b.classList.contains('flex-1'))
   ).toBe(true)
-  // A selection change marks the group as moving, which squashes the new button.
+  // A selection change marks the group as moving, which slides the indicator.
   rerender(
     <GlassGroup
       variant="split"

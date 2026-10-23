@@ -5,7 +5,7 @@ import { usePress } from '../../hooks/usePress'
 import { blurOnClick } from '../../lib/commitFocus'
 
 /** Milliseconds that a selection change shows as moving. Keep it at least the
- * slide and the squash durations in index.css (.glass-group[data-moving]). */
+ * slide duration in index.css (.glass-group[data-moving]). */
 export const SLIDE = 400
 /** Tab keys and the direction in which each one looks for an enabled tab. */
 const STEPS: Record<string, 1 | -1> = { ArrowRight: 1, Home: 1, ArrowLeft: -1, End: -1 }
@@ -45,9 +45,8 @@ export interface GlassGroupProps<T extends string> {
    * `liquid`: as `solid`, but the fill turns to liquid glass while it moves or an item
    * is pressed, as the switch knob does.
    * `glass`: no group background. The selected item sits on the macOS glass material,
-   * or in a ring where that material is not available.
-   * `split`: separate buttons with a faint ring that fill the width. The selected button
-   * has the macOS glass material, or a fill, and squashes and bounces when selected.
+   * or in a ring where that material is not available. The glass grows while pressed.
+   * `split`: as `glass`, but the items share the full width.
    */
   variant?: 'solid' | 'liquid' | 'glass' | 'split'
   className?: string
@@ -61,8 +60,8 @@ interface Box {
 }
 
 /**
- * One choice of many, as tabs or buttons. Except in `split`, one indicator slides to
- * the selected item (see `variant` and .glass-group in index.css).
+ * One choice of many, as tabs or buttons. One indicator slides to the selected item
+ * (see `variant` and .glass-group in index.css).
  */
 export function GlassGroup<T extends string>({
   value,
@@ -90,7 +89,7 @@ export function GlassGroup<T extends string>({
       ? selected
       : items.findIndex((item) => !item.disabled)
 
-  // A new selection slides the indicator, or squashes a split button. The state
+  // A new selection slides the indicator. The state
   // changes in the same render as the position, so the transition applies to the move.
   const [shown, setShown] = useState(selected)
   const [moving, setMoving] = useState(false)
@@ -113,7 +112,6 @@ export function GlassGroup<T extends string>({
   const [boxes, setBoxes] = useState<Box[]>([])
   const order = items.map((item) => item.value).join('\n')
   useLayoutEffect(() => {
-    if (split) return
     const group = root.current!
     const buttons = Array.from(group.querySelectorAll<HTMLElement>(':scope > button'))
     const measure = (): void => {
@@ -130,7 +128,7 @@ export function GlassGroup<T extends string>({
     const observer = new ResizeObserver(measure)
     for (const element of [group, ...buttons]) observer.observe(element)
     return () => observer.disconnect()
-  }, [order, display, size, className, split])
+  }, [order, display, size, className])
 
   const move = (event: React.KeyboardEvent, index: number): void => {
     if (!tabs) return
@@ -193,7 +191,7 @@ export function GlassGroup<T extends string>({
       data-moving={moving || undefined}
       data-pressed={pressed || undefined}
       onPointerDown={
-        liquid
+        variant !== 'solid'
           ? (event) => {
               const button = (event.target as Element).closest('button')
               if (button && !button.disabled) press(event)
@@ -207,7 +205,7 @@ export function GlassGroup<T extends string>({
         className
       )}
     >
-      {box && !split && (
+      {box && (
         <span
           aria-hidden="true"
           className={cn('glass-group-indicator', radius, disabled && 'opacity-40')}
@@ -265,9 +263,7 @@ export function GlassGroup<T extends string>({
             onKeyDown={(event) => move(event, index)}
             className={cn(
               itemClass,
-              'relative hover:text-tone-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/60 disabled:opacity-40',
-              split &&
-                'ring-1 ring-inset ring-ink/10 hover:ring-ink/20 data-[selected]:bg-[var(--glass-fill)]'
+              'relative hover:text-tone-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/60 disabled:opacity-40'
             )}
           >
             {content(item)}
