@@ -159,6 +159,9 @@ export interface RawColor {
 export const IDENTITY_RAW_MATRIX: number[] = [1, 0, 0, 0, 1, 0, 0, 0, 1]
 /** Each output channel takes the mean of the three layers, for monochrome infrared. */
 export const MONOCHROME_RAW_MATRIX: number[] = Array(9).fill(1 / 3)
+/** True when all output rows are equal, so the mix gives a monochrome image. */
+export const monochromeRawMatrix = (matrix: number[]): boolean =>
+  matrix.every((value, i) => Math.abs(value - matrix[i % 3]) < 1e-6)
 export const RAW_GAIN_RANGE = [1 / 64, 64] as const
 /** A common scale preserves white balance while fitting the stored gain range. */
 export function boundedWhiteBalanceGains(gains: Rgb): Rgb | undefined {

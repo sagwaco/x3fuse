@@ -9,6 +9,7 @@ import {
   RAW_GAIN_RANGE,
   defaultRecipe,
   monochromeFilm,
+  monochromeRawMatrix,
   negativePrint,
   type EditRecipe,
   type FilmSettings,
@@ -518,8 +519,13 @@ export const EditorControls = memo(function EditorControls({
   }
   const change = useEditorStore((state) => state.change)
   const commit = useEditorStore((state) => state.commit)
+  // The RAW channel mix sets the gray mix of monochrome infrared, so it has no filter.
+  const monochromeRaw = !!recipe.rawColor && monochromeRawMatrix(recipe.rawColor.matrix)
   const monochrome =
-    !!recipe.monochrome || recipe.cameraProfile === 'Monochrome' || monochromeFilm(recipe.film)
+    !!recipe.monochrome ||
+    recipe.cameraProfile === 'Monochrome' ||
+    monochromeFilm(recipe.film) ||
+    monochromeRaw
   const x3i = useEditorStore((state) => state.x3i)
   // While an X3I merges an SFD RAW that it uses, only the SFD RAW section works.
   const pending = useEditorStore(needsX3iMerge)
@@ -669,12 +675,14 @@ export const EditorControls = memo(function EditorControls({
                       setMixPicking={setMixPicking}
                     />
                   </Section>
-                  <Section id="channelSwap" name={t('editor.channelSwap')}>
-                    <ChannelSwap recipe={recipe} />
-                  </Section>
+                  {!monochromeRaw && (
+                    <Section id="channelSwap" name={t('editor.channelSwap')}>
+                      <ChannelSwap recipe={recipe} />
+                    </Section>
+                  )}
                 </>
               )}
-              {monochrome && (
+              {monochrome && !monochromeRaw && (
                 <Section
                   id="filter"
                   name={t('editor.filter')}

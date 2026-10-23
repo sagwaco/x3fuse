@@ -32,7 +32,8 @@ pub use stocks::STOCKS_JSON;
 /// Version 9 uses smooth tone curves. Version 10 adds color wheels.
 /// Version 11 reduces the default grain blur.
 /// Version 12 adds monochrome warmth and source-color tone mixing.
-pub const RENDER_VERSION: u32 = 12;
+/// Version 13 renders a monochrome RAW mix as a monochrome image.
+pub const RENDER_VERSION: u32 = 13;
 
 use image::ImageEncoder;
 use serde::{Deserialize, Serialize};
@@ -1634,7 +1635,10 @@ impl Renderer {
         // only for colour film or no film. Both neutralize the output.
         let silver = r.film.is_some() && pair.is_some_and(|pair| pair.monochrome);
         let sensor_mix = r.monochrome.filter(|_| !silver);
-        let neutral = r.monochrome.is_some() || silver;
+        // A monochrome RAW mix takes its hue from the color infrared image, then
+        // mixes it to gray with the shared row, as the sensor-layer mix does.
+        let raw_row = r.raw_color.as_ref().and_then(RawColor::monochrome_row);
+        let neutral = r.monochrome.is_some() || silver || raw_row.is_some();
         p[1] = [
             g.scale,
             o.color_profile.index(),
@@ -1660,7 +1664,17 @@ impl Renderer {
                 monochrome.filter,
             )?);
         }
+        if let Some(row) = raw_row {
+            p[4][1..].copy_from_slice(&row);
+        }
         let wb = match &r.raw_color {
+            Some(raw) if raw_row.is_some() => color::raw_color_matrix(
+                &image.white_balance,
+                &RawColor {
+                    matrix: [1., 0., 0., 0., 1., 0., 0., 0., 1.],
+                    ..*raw
+                },
+            )?,
             Some(raw) => color::raw_color_matrix(&image.white_balance, raw)?,
             None => match r.white_balance_gains {
                 Some(gains) => color::gain_white_balance_matrix(&image.white_balance, gains)?,

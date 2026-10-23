@@ -2855,6 +2855,19 @@ fn gpu_raw_color(renderer: &Renderer) {
         };
         assert_eq!(render(&source, &warm), got);
     }
+    // Equal rows render gray, and warmth tones them as on other monochrome looks.
+    let row = [0.6, 0.3, 0.1];
+    let mono = EditRecipe {
+        raw_color: Some(RawColor {
+            gains,
+            matrix: [row, row, row].concat().try_into().unwrap(),
+        }),
+        ..plain.clone()
+    };
+    let gray = render(&source, &mono);
+    assert!(gray.chunks(3).all(|p| p[0] == p[1] && p[1] == p[2]), "{gray:?}");
+    let warm = render(&source, &EditRecipe { warmth: 80., ..mono });
+    assert!(warm[0] > warm[2], "{:?}", &warm[..3]);
 }
 
 #[test]

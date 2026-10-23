@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
   IDENTITY_RAW_MATRIX,
+  MONOCHROME_RAW_MATRIX,
   RAW_GAIN_RANGE,
   defaultRecipe,
+  monochromeRawMatrix,
   pasteRecipe,
   type EditRecipe,
   type RawColor
@@ -159,4 +161,18 @@ describe('raw color adjustment paste', () => {
       expect(pasted.cameraProfile).toBe('Standard')
     }
   )
+})
+
+describe('monochrome raw mix', () => {
+  it('detects equal rows and keeps them on a channel reset', () => {
+    const row = [0.6, 0.3, 0.1]
+    const matrix = [...row, ...row, ...row]
+    expect(monochromeRawMatrix(MONOCHROME_RAW_MATRIX)).toBe(true)
+    expect(monochromeRawMatrix(matrix)).toBe(true)
+    expect(monochromeRawMatrix(IDENTITY_RAW_MATRIX)).toBe(false)
+    const recipe = { ...rawRecipe(), rawColor: { gains: [2, 1, 0.5] as RawColor['gains'], matrix } }
+    expect(
+      resetSection(EDITOR_SECTIONS.channels, recipe, defaultRecipe()).rawColor?.matrix
+    ).toEqual(MONOCHROME_RAW_MATRIX)
+  })
 })

@@ -448,6 +448,7 @@
   "editor.filmGroups": "底片分組",
   "editor.identityMix": "BMT → RGB",
   "editor.aerochromeMix": "BMT → NRG (DP Merrill)",
+  "editor.equalMix": "均等混合",
   "editor.rawMixPreset": "通道混合預設",
   "editor.slideFilm": "正片",
   "editor.cinemaFilm": "電影底片",

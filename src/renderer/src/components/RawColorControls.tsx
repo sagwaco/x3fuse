@@ -3,7 +3,9 @@ import { Pipette, RotateCcw } from 'lucide-react'
 import {
   AEROCHROME_MATRIX,
   IDENTITY_RAW_MATRIX,
+  MONOCHROME_RAW_MATRIX,
   RAW_GAIN_RANGE,
+  monochromeRawMatrix,
   type EditRecipe
 } from '@shared/editor'
 import { useEditorStore } from '../stores/editorStore'
@@ -21,8 +23,16 @@ import { cn } from '../lib/cn'
 const channels = ['red', 'green', 'blue'] as const
 const layers = ['Bottom', 'Middle', 'Top'] as const
 const MIX_PRESETS = [
-  ['identity', IDENTITY_RAW_MATRIX],
-  ['aerochrome', AEROCHROME_MATRIX]
+  ['identityMix', IDENTITY_RAW_MATRIX],
+  ['aerochromeMix', AEROCHROME_MATRIX]
+] as const
+const everyRow = (mix: number[]): number[] => [0, 1, 2].flatMap(() => mix)
+/** Presets of a monochrome mix, which every output row shares. */
+const MONOCHROME_MIX_PRESETS = [
+  ['sourceBottom', everyRow([1, 0, 0])],
+  ['sourceMiddle', everyRow([0, 1, 0])],
+  ['sourceTop', everyRow([0, 0, 1])],
+  ['equalMix', MONOCHROME_RAW_MATRIX]
 ] as const
 
 function normalizedGains(gains: [number, number, number]): [number, number, number] {
@@ -145,8 +155,13 @@ export function RawMatrixControls({
   setMixPicking?: (output: 0 | 1 | 2 | null) => void
 }): React.JSX.Element {
   const [output, setOutput] = useState<(typeof channels)[number]>('red')
-  const { matrix, disabled, update, commit } = useRawMatrix(recipe)
-  const row = channels.indexOf(output)
+  const { matrix, disabled, update: updateMatrix, commit } = useRawMatrix(recipe)
+  // A monochrome mix has one row for all outputs, so edits keep the image monochrome.
+  const monochrome = monochromeRawMatrix(matrix)
+  const row = monochrome ? 0 : channels.indexOf(output)
+  const base = monochrome ? MONOCHROME_RAW_MATRIX : IDENTITY_RAW_MATRIX
+  const update = (next: number[], save = true): void =>
+    updateMatrix(monochrome ? [0, 1, 2].flatMap(() => next.slice(0, 3)) : next, save)
   const session = useEditorStore((state) => state.session?.sessionId)
   const mix = matrix.slice(row * 3, row * 3 + 3) as LayerMix
   // On a channel switch, the pad handle and the sliders glide from the previous mix.
@@ -170,50 +185,57 @@ export function RawMatrixControls({
     next[row * 3 + column] = value
     update(next, save)
   }
+  const presets: readonly (readonly [string, readonly number[]])[] = monochrome
+    ? MONOCHROME_MIX_PRESETS
+    : MIX_PRESETS
   const preset =
-    MIX_PRESETS.find(([, preset]) =>
-      preset.every((value, index) => value === matrix[index])
+    presets.find(([, preset]) =>
+      // The backend stores f32 values.
+      preset.every((value, index) => Math.abs(value - matrix[index]) < 1e-6)
     )?.[0] ?? 'custom'
   const reset = (): void => {
     const next = [...matrix]
-    next.splice(row * 3, 3, ...IDENTITY_RAW_MATRIX.slice(row * 3, row * 3 + 3))
+    next.splice(row * 3, 3, ...base.slice(row * 3, row * 3 + 3))
     update(next)
   }
   return (
     <>
       <div className="tool-row flex flex-wrap items-center gap-2">
-        <Swatches
-          label={t('editor.outputChannel')}
-          value={output}
-          options={channels.map((channel) => ({
-            value: channel,
-            label: t(`editor.${channel}`),
-            color: CHANNELS[channel]
-          }))}
-          onChange={(next) => {
-            setMixPicking?.(null)
-            commit()
-            setOutput(next)
-          }}
-        />
+        {!monochrome && (
+          <Swatches
+            label={t('editor.outputChannel')}
+            value={output}
+            options={channels.map((channel) => ({
+              value: channel,
+              label: t(`editor.${channel}`),
+              color: CHANNELS[channel]
+            }))}
+            onChange={(next) => {
+              setMixPicking?.(null)
+              commit()
+              setOutput(next)
+            }}
+          />
+        )}
         <Select
           aria-label={t('editor.rawMixPreset')}
-          className="tool-row-select min-w-0 flex-1"
+          // Without the channel swatches, the select stays on the row of the buttons.
+          className={cn(!monochrome && 'tool-row-select', 'min-w-0 flex-1')}
           value={preset}
           disabled={disabled}
           options={[
-            ...MIX_PRESETS.map(([value]) => ({ value, label: t(`editor.${value}Mix`) })),
+            ...presets.map(([value]) => ({ value, label: t(`editor.${value}`) })),
             ...(preset === 'custom'
               ? [{ value: 'custom', label: t('editor.customWhiteBalance'), disabled: true }]
               : [])
           ]}
           onValueChange={(value) => {
-            const selected = MIX_PRESETS.find(([name]) => name === value)
+            const selected = presets.find(([name]) => name === value)
             if (selected) update([...selected[1]])
           }}
         />
         <div className="ml-auto flex gap-1">
-          {setMixPicking && (
+          {setMixPicking && !monochrome && (
             <Button
               variant="ghost"
               size="icon"
@@ -271,7 +293,7 @@ export function RawMatrixControls({
             max={400}
             step={1}
             change={(value, save) => setSource(column, value / 100, save)}
-            reset={() => setSource(column, IDENTITY_RAW_MATRIX[row * 3 + column])}
+            reset={() => setSource(column, base[row * 3 + column])}
             commit={commit}
             disabled={disabled}
           />

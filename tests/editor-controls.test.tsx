@@ -1672,11 +1672,35 @@ it('applies the Aerochrome matrix preset in Grading without changing raw gains o
   panelTab('grading')
   const preset = screen.getByRole('button', { name: t('editor.rawMixPreset') })
   expect(preset.textContent).toBe(t('editor.customWhiteBalance'))
-  invoke.mockResolvedValueOnce('aerochrome')
+  invoke.mockResolvedValueOnce('aerochromeMix')
   fireEvent.click(preset)
   await waitFor(() =>
     expect(change).toHaveBeenLastCalledWith(
       { rawColor: { gains, matrix: AEROCHROME_MATRIX } },
+      true
+    )
+  )
+})
+
+it('keeps monochrome infrared gray with its presets and monochrome sections', async () => {
+  const gains: [number, number, number] = [3, 2, 0.25]
+  const matrix = Array(9).fill(1 / 3)
+  render(
+    <Controls
+      initial={{ ...defaultRecipe(), film: null, cameraProfile: null, rawColor: { gains, matrix } }}
+    />
+  )
+  panelTab('grading')
+  expect(screen.queryByText(t('editor.toneMixer'))).not.toBeNull()
+  for (const name of ['colorMixer', 'colorWheels', 'channelSwap', 'filter'])
+    expect(screen.queryByText(t(`editor.${name}`))).toBeNull()
+  const preset = screen.getByRole('button', { name: t('editor.rawMixPreset') })
+  expect(preset.textContent).toBe(t('editor.equalMix'))
+  invoke.mockResolvedValueOnce('sourceTop')
+  fireEvent.click(preset)
+  await waitFor(() =>
+    expect(change).toHaveBeenLastCalledWith(
+      { rawColor: { gains, matrix: [0, 0, 1, 0, 0, 1, 0, 0, 1] } },
       true
     )
   )

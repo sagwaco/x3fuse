@@ -4,6 +4,8 @@ import {
   DEFAULT_WHEELS,
   FILM_MONOCHROME_FILTERS,
   IDENTITY_RAW_MATRIX,
+  MONOCHROME_RAW_MATRIX,
+  monochromeRawMatrix,
   filmGrainDefaults,
   filmHalationDefaults,
   monochromeFilm,
@@ -152,7 +154,19 @@ export const EDITOR_SECTIONS = {
         ? { rawColor: { ...to.rawColor, matrix: [...from.rawColor.matrix] } }
         : {},
     reset: (recipe) =>
-      recipe.rawColor ? { rawColor: { ...recipe.rawColor, matrix: [...IDENTITY_RAW_MATRIX] } } : {}
+      recipe.rawColor
+        ? {
+            rawColor: {
+              ...recipe.rawColor,
+              // A monochrome mix stays monochrome.
+              matrix: [
+                ...(monochromeRawMatrix(recipe.rawColor.matrix)
+                  ? MONOCHROME_RAW_MATRIX
+                  : IDENTITY_RAW_MATRIX)
+              ]
+            }
+          }
+        : {}
   },
   detail: { take: (from) => pick(from, ['sharpen', 'denoise', 'denoiseOptions']) },
   darkroom: {

@@ -448,6 +448,7 @@
   "editor.filmGroups": "Film groups",
   "editor.identityMix": "BMT → RGB",
   "editor.aerochromeMix": "BMT → NRG (DP Merrill)",
+  "editor.equalMix": "Equal mix",
   "editor.rawMixPreset": "Channel mix preset",
   "editor.slideFilm": "Slide film",
   "editor.cinemaFilm": "Cinema film",

@@ -135,6 +135,17 @@ pub struct RawColor {
     /// bottom, middle, and top layers.
     pub matrix: [f32; 9],
 }
+impl RawColor {
+    /// Gives the shared row when all output rows are equal, so the mix is monochrome.
+    pub fn monochrome_row(&self) -> Option<[f32; 3]> {
+        let row = [self.matrix[0], self.matrix[1], self.matrix[2]];
+        self.matrix
+            .iter()
+            .enumerate()
+            .all(|(i, value)| (value - row[i % 3]).abs() < 1e-6)
+            .then_some(row)
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

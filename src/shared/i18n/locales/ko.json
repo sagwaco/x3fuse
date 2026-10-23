@@ -448,6 +448,7 @@
   "editor.filmGroups": "필름 그룹",
   "editor.identityMix": "BMT → RGB",
   "editor.aerochromeMix": "BMT → NRG (DP Merrill)",
+  "editor.equalMix": "균등 믹스",
   "editor.rawMixPreset": "채널 믹스 프리셋",
   "editor.slideFilm": "슬라이드",
   "editor.cinemaFilm": "영화용",

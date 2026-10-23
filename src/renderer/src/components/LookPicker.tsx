@@ -5,6 +5,7 @@ import {
   DEFAULT_FILM,
   IDENTITY_RAW_MATRIX,
   MONOCHROME_RAW_MATRIX,
+  monochromeRawMatrix,
   FILM_MONOCHROME_FILTERS,
   filmGrainDefaults,
   filmHalationDefaults,
@@ -254,10 +255,7 @@ export function LookPicker({
       : recipe.film
         ? FILMS.find((film) => film.index === recipe.film?.film)?.key
         : recipe.rawColor
-          ? // The backend stores f32 values.
-            recipe.rawColor.matrix.every(
-              (value, i) => Math.abs(value - MONOCHROME_RAW_MATRIX[i]) < 1e-6
-            )
+          ? monochromeRawMatrix(recipe.rawColor.matrix)
             ? 'mir'
             : 'full-spectrum'
           : recipe.monochrome
