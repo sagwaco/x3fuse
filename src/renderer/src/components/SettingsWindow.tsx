@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { AppearanceMode, LanguageSetting } from '@shared/types'
-import { HardDrive, Info, Palette, RefreshCw, Settings2 } from 'lucide-react'
+import { HardDrive, Info, PaintbrushVertical, RefreshCw, Settings2 } from 'lucide-react'
 import { MAX_CONCURRENCY } from '@shared/concurrency'
 import type { LogSizes } from '@shared/ipc'
 import { ipc } from '../lib/ipc'
@@ -16,7 +16,7 @@ import { Select } from './ui/select'
 import { Row, Section, ToggleRow } from './ui/settingsLayout'
 
 const TABS = [
-  ['appearance', Palette],
+  ['appearance', PaintbrushVertical],
   ['cache', HardDrive],
   ['advanced', Settings2],
   ['updates', RefreshCw],
