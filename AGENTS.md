@@ -5,7 +5,7 @@ This file provides guidance to coding agents like Claude Code (claude.ai/code) w
 ## Project overview
 
 X3Fuse is a cross-platform Tauri 2 app for converting and editing Sigma X3F RAW files.
-The renderer uses React, Zustand, and Vite. The Rust backend uses `x3f-core` 0.3.0
+The renderer uses React, Zustand, and Vite. The Rust backend uses `x3f-core` 0.4.0
 from crates.io for conversion and RAW preparation, and the in-repo `x3f-render`
 crate for GPU editing and the spektrafilm film model.
 
@@ -174,7 +174,7 @@ reuse the Debug probe executable. Release builds omit the probe.
 
 ## Dependencies
 
-Use published `x3f-core` and `x3f-sys` 0.3.0 dependencies. A temporary local
+Use published `x3f-core` and `x3f-sys` 0.4.0 dependencies. A temporary local
 `[patch.crates-io]` can test an unpublished core, but **never commit it** or its
 local-path lockfile changes. CI and release builds cannot access local checkouts.
 
@@ -218,9 +218,7 @@ Strings live in `src/shared/i18n/locales/`; locale detection is in
 
 ## Known issues
 
-- X3I support uses unreleased x3f-core APIs from the x3fuse-core `feat/x3i-sfd`
-  branch. Until a core release, local builds need a temporary `[patch.crates-io]`,
-  and CI and release builds fail. The first X3I merge takes about 30 s and 3 GB.
+- The first X3I merge takes about 30 s and 3 GB.
 - Compressed Foveon DNG support varies by destination editor. Check sample output
   before converting a library. Quick Look can render Foveon DNGs incorrectly.
 - Classic Foveon support comes from x3f-core 0.3.0. SD9, SD10, and SD14 conversion

@@ -198,7 +198,7 @@ and ratings are stored by file path; moving a photo does not carry them with it.
 X3Fuse 0.2.0 uses Tauri 2 with a React renderer and a Rust backend. Its bundle
 identifier is `com.sagwa.X3Fuse`.
 
-- [**x3f-core 0.3.0**](https://github.com/sagwaco/x3fuse-core): published on crates.io;
+- [**x3f-core 0.4.0**](https://github.com/sagwaco/x3fuse-core): published on crates.io;
   converts X3F files and prepares RAW data directly in Rust.
 - **x3f-render**: in-repo GPU renderer for RAW edits and the spektrafilm film model.
 - [**ExifTool 13.59**](https://github.com/exiftool/exiftool): bundled metadata handling.
@@ -254,7 +254,8 @@ Windows bundles the complete ExifTool standalone runtime. macOS and Linux use it
 Perl script and modules. `npm run sync:resources` includes renderer license and
 spectral-data notices in the app.
 
-Both the backend and `src-tauri/crates/x3f-render` use published `x3f-core` 0.3.0.
+Both the backend and `src-tauri/crates/x3f-render` use published `x3f-core` 0.4.0,
+which includes X3I support.
 `src-tauri/Cargo.lock` pins dependency versions. To test an unpublished core, use a
 temporary `[patch.crates-io]` for `x3f-core` and `x3f-sys`. Never commit this patch
 or its local-path lockfile changes; CI cannot access local checkouts.
