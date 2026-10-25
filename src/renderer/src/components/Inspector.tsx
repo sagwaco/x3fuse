@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { TriangleAlert } from 'lucide-react'
 import { ResizablePanel } from './ui/resizablePanel'
 import { displayPreviewUrl, isRenderedPreview } from '@shared/preview'
 import { useShallow } from 'zustand/react/shallow'
@@ -68,6 +69,16 @@ export function Inspector(): React.JSX.Element {
               <PreviewMinimap key={active.id} file={active} />
             )}
           </div>
+          {/* Why the photo could not open or load its edits, such as an unsupported DNG. */}
+          {!multiple && active.editError && (
+            <div
+              role="alert"
+              className="flex items-start gap-2 border-b border-ink/10 p-3 text-xs leading-relaxed text-danger"
+            >
+              <TriangleAlert aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />
+              <p className="min-w-0 flex-1 select-text break-words">{active.editError}</p>
+            </div>
+          )}
           <CullControls />
 
           {/* No title: the scope menu names the scope, as in the editor. */}

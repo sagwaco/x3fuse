@@ -1,0 +1,32 @@
+X3Fuse DNG input / x3f-dng
+==========================
+
+Adapter source: GPL-3.0-only, as part of X3Fuse.
+
+LibRaw 0.22.2
+-------------
+
+    Copyright (C) 2008-2025 LibRaw LLC (info@libraw.org)
+    https://www.libraw.org/
+
+The DNG decoder bundles the unmodified LibRaw 0.22.2 source from
+https://www.libraw.org/data/LibRaw-0.22.2.tar.gz (SHA-256
+de86b035655accff8d4010f1a221fdf50d353cb7b1422ba26f14a0db92612cfa), without
+the samples, documentation, build files, and three unused placeholder sources.
+LibRaw is available under either the GNU Lesser General Public License 2.1
+(LIBRAW_LICENSE.LGPL) or the Common Development and Distribution License 1.0
+(LIBRAW_LICENSE.CDDL); X3Fuse uses it under LGPL 2.1. LIBRAW_COPYRIGHT lists
+the code that LibRaw is based on, including dcraw by Dave Coffin.
+
+zlib
+----
+
+Deflate DNG decoding uses zlib, built from source by the libz-sys crate.
+License: ZLIB_LICENSE.txt.
+
+mozjpeg
+-------
+
+Lossy JPEG DNG decoding uses mozjpeg, built from source by the mozjpeg-sys
+crate. License: MOZJPEG_LICENSE.txt (IJG, BSD-3-Clause, and zlib terms).
+This software is based in part on the work of the Independent JPEG Group.

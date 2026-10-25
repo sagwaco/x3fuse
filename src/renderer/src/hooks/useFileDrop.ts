@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
+import { RAW_PATH } from '@shared/types'
 import { useQueueStore } from '../stores/queueStore'
 
 /** Native file drops supply absolute paths on all supported webviews. */
@@ -19,7 +20,7 @@ export function useFileDrop(): { isDragOver: boolean; dropHandlers: Record<strin
         }
         setDragOver(payload.type === 'enter' || payload.type === 'over')
         if (payload.type === 'drop') {
-          const paths = payload.paths.filter((path) => /\.x3[fi]$/i.test(path))
+          const paths = payload.paths.filter((path) => RAW_PATH.test(path))
           if (paths.length) void useQueueStore.getState().addFiles(paths)
         }
       })

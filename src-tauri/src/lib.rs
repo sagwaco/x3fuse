@@ -9,6 +9,7 @@ pub mod model;
 pub mod preview;
 #[cfg(debug_assertions)]
 mod smoke;
+pub mod source;
 pub mod storage;
 mod updater;
 mod x3i;

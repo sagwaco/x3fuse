@@ -46,6 +46,17 @@ it('creates fresh ZIPs with complete native layouts, launch instructions, and Un
     await file(`${mac}/Resources/resources/exiftool/exiftool`)
     await file(`${mac}/Resources/resources/exiftool/lib/Image/ExifTool.pm`)
     await file(`${mac}/Resources/resources/opcodes/${opcode}`)
+    const notices = [
+      'NOTICE',
+      'LIBRAW_COPYRIGHT',
+      'LIBRAW_LICENSE.LGPL',
+      'MOZJPEG_LICENSE.txt',
+      'ZLIB_LICENSE.txt'
+    ]
+    for (const notice of notices) {
+      await file(`src-tauri/resources/licenses/x3f-dng/${notice}`, `${notice} fixture`)
+      await file(`${mac}/Resources/resources/licenses/x3f-dng/${notice}`, `${notice} fixture`)
+    }
     if (!windows) {
       await chmod(join(root, 'src-tauri/target/release/x3fuse'), 0o755)
       await chmod(join(root, mac, 'MacOS/x3fuse'), 0o755)
@@ -90,6 +101,8 @@ it('creates fresh ZIPs with complete native layouts, launch instructions, and Un
           (platform === 'win32' ? 'exiftool_files/perl532.dll' : 'lib/Image/ExifTool.pm')
       )
       expect(entries).toContain(prefix + 'LICENSE')
+      for (const notice of notices)
+        expect(entries).toContain(prefix + resources + `licenses/x3f-dng/${notice}`)
       expect(entries).toContain(prefix + resources + 'obsolete.txt')
 
       const extracted = join(workspace, name)
@@ -106,6 +119,10 @@ it('creates fresh ZIPs with complete native layouts, launch instructions, and Un
       expect(readme).toContain('macOS alpha builds use the separate bundle identifier com.sagwa.X3Fuse.alpha')
       expect(readme).toContain('offer the stable release when it is newer.')
       expect(readme).toContain('Windows and Linux alpha builds do not support automatic updates.')
+      if (platform === 'win32')
+        expect(readme).toContain(
+          'Microsoft WebView2 Runtime and the Microsoft Visual C++ x64 runtime must be installed.'
+        )
       if (platform === 'darwin') {
         expect(readme).toContain('Apple Silicon (M-series): x3fuse-alpha-macos-arm64.zip')
         expect(readme).toContain('Intel Mac: x3fuse-alpha-macos-x64.zip')
@@ -120,6 +137,25 @@ it('creates fresh ZIPs with complete native layouts, launch instructions, and Un
       expect(await packageArtifact(root, platform, arch)).toBe(archive)
       expect(entriesIn(archive)).not.toContain('obsolete.txt')
     }
+    // Each platform fails without the notices of the bundled DNG decoder and codecs.
+    const notice = 'src-tauri/resources/licenses/x3f-dng/NOTICE'
+    await rm(join(root, notice))
+    await expect(packageArtifact(root, 'linux', 'x64')).rejects.toThrow(
+      'x3f-dng notice is missing: NOTICE'
+    )
+    await expect(packageArtifact(root, 'win32', 'x64')).rejects.toThrow(
+      'x3f-dng notice is missing: NOTICE'
+    )
+    await file(notice, '')
+    await expect(packageArtifact(root, 'linux', 'x64')).rejects.toThrow(
+      'x3f-dng notice is missing: NOTICE'
+    )
+    await file(notice, 'NOTICE fixture')
+    // The macOS archive checks the app bundle, even when the source resources are complete.
+    await rm(join(root, mac, 'Resources/resources/licenses/x3f-dng/LIBRAW_LICENSE.LGPL'))
+    await expect(packageArtifact(root, 'darwin', 'arm64')).rejects.toThrow(
+      'x3f-dng notice is missing: LIBRAW_LICENSE.LGPL'
+    )
     await rm(join(root, 'src-tauri/resources/opcodes', opcode))
     await mkdir(join(root, 'src-tauri/resources/opcodes', opcode))
     await expect(packageArtifact(root, 'linux', 'x64')).rejects.toThrow('Opcode data is missing')

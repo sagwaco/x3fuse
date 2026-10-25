@@ -1,6 +1,6 @@
 # X3Fuse
 
-A cross-platform app for converting and editing Sigma classic, Merrill, and Quattro X3F RAW files.
+A cross-platform app for converting and editing Sigma X3F RAW files and editing DNG files.
 
 ![X3Fuse logo and app screenshot](app-screenshot.png)
 
@@ -52,7 +52,7 @@ If your camera is not listed, please open an issue with a sample X3F.
 ## System Requirements
 
 - **macOS release**: macOS 14.0 (Sonoma) or later, Intel or Apple Silicon.
-- **Windows alpha**: x64, with Microsoft WebView2 Runtime.
+- **Windows alpha**: x64, with Microsoft WebView2 Runtime and the Microsoft Visual C++ x64 runtime.
 - **Linux alpha**: x64, with WebKitGTK 4.1, GTK 3, and Perl.
 - **RAW editor**: Metal on macOS, DirectX 12 on Windows, or Vulkan on Linux.
   Original conversion can run without a GPU.
@@ -92,7 +92,7 @@ You do not need a separate ExifTool installation or a sibling core checkout.
 
 ## Usage
 
-1. Open X3Fuse. Drag X3F files onto the window, or add files from the File menu.
+1. Open X3Fuse. Drag X3F, X3I, or DNG files onto the window, or add files from the File menu.
 2. Browse the queue in list, grid, or filmstrip view. Use flags and ratings to cull photos.
 3. To edit a photo, select it and choose **Edit**. Adjustments save automatically.
 4. Choose **Export all** or **Export selected**. Review the output format, folder,
@@ -101,7 +101,16 @@ You do not need a separate ExifTool installation or a sibling core checkout.
 5. Click **Export** and monitor progress. Review any overwrite confirmation before
    replacing existing output files.
 
-For DNG and TIFF, Settings provides NLM and BM3D denoising, separate luminance and color
+DNG inputs use the bundled LibRaw decoder. They export edited JPEG or 16-bit TIFF
+only. A selection that includes DNG inputs offers these two formats. Original DNG,
+original TIFF, and Embedded JPG export remain available for X3F and X3I inputs.
+An unsupported DNG shows an error beside the photo; other imports can continue.
+Support depends on the bundled decoder and DNG metadata. JPEG XL and VC-5 DNGs
+need the Adobe DNG SDK, which is not bundled. Four-color sensor arrays and
+unimplemented required DNG operations also report an error. An embedded preview
+can still be shown when RAW decoding is unavailable.
+
+For X3F and X3I conversion to DNG and TIFF, Settings provides NLM and BM3D denoising, separate luminance and color
 noise controls, and the existing intensity slider. Advanced denoise settings provide a
 strength multiplier, NLM patch and search sizes in pixels, and Automatic, CPU, or GPU
 processing. Automatic uses the GPU when available and falls back to the CPU. Forced GPU
@@ -201,6 +210,8 @@ identifier is `com.sagwa.X3Fuse`.
 - [**x3f-core 0.3.0**](https://github.com/sagwaco/x3fuse-core): published on crates.io;
   converts X3F files and prepares RAW data directly in Rust.
 - **x3f-render**: in-repo GPU renderer for RAW edits and the spektrafilm film model.
+- **x3f-dng**: in-repo adapter for bundled [LibRaw 0.22.2](https://www.libraw.org/),
+  with static JPEG and Deflate codecs. It needs no installed LibRaw library.
 - [**ExifTool 13.59**](https://github.com/exiftool/exiftool): bundled metadata handling.
 - **tauri-plugin-updater**: macOS updates from `docs/Support/latest.json`.
   Windows and Linux portable alphas have no updater.
@@ -292,6 +303,16 @@ cargo test --manifest-path src-tauri/Cargo.toml --locked --test conversion_accep
 This checks full-strength denoising with compressed DNG/TIFF and DNG highlight
 recovery, with a 60-second limit per conversion. Use the default test profile to
 check development-build performance too.
+
+DNG acceptance uses a temporary copy of the input and needs a supported GPU:
+
+```sh
+X3FUSE_TEST_DNG=/absolute/path/photo.dng \
+cargo test --manifest-path src-tauri/Cargo.toml --test dng_acceptance -- --ignored
+```
+
+This checks import capabilities, editing, JPEG and TIFF export, sidecar reload,
+source protection, and rejection of incompatible recipes and original exports.
 
 Build a macOS app bundle with `npm run dist`, or a native executable with
 `npm run pack`. Windows/Linux currently use the executable build. Package it with:
@@ -388,10 +409,18 @@ manual check. Unit tests do not exercise WKWebView, WebView2, or WebKitGTK.
 Select a photo and choose **Edit**. The editor shares browsing's filmstrip,
 zoom/pan, and scopes. It provides light, calibrated white balance, curves, HSL,
 monochrome filters, crop/straighten, denoise, sharpening, and film controls.
-Film rendering starts enabled. Exposure adjusts film exposure while it is enabled.
+New X3F edits use the as-shot camera profile. New DNG edits use a neutral look.
+Select a film stock to enable film rendering. Exposure adjusts film exposure while it is enabled.
 The spektrafilm model simulates negative response, DIR couplers, grain, halation,
 and print paper. Existing film recipes load unchanged but render differently
 from the model used in earlier alphas; no re-save is required.
+
+DNG inputs have light, white balance, curves, HSL, geometry, sharpening, effects,
+and film controls. They do not have Sigma camera profiles, full spectrum looks,
+sensor-layer monochrome filters, Fill Light, or Foveon sensor denoise. A
+monochrome DNG also has no white balance controls. Black-and-white film stocks
+retain their film filters. Pasted adjustments exclude controls that the target
+photo cannot use.
 
 The Fspec group includes **Full spectrum**, which starts with an identity channel
 matrix, and **Aerochrome-style (Foveon)**, which uses an empirical 3x3 mix followed
@@ -417,7 +446,8 @@ strength controls and advanced settings. New edits use the camera's as-shot crop
 Monochrome filters mix calibrated Foveon sensor-layer responses and remain gray
 through color film and channel-curve processing.
 
-Edits autosave to `<photo>.X3F.x3fuse.json`; the RAW stays unchanged. Move the
+Edits autosave beside the source, for example `<photo>.X3F.x3fuse.json` or
+`<photo>.dng.x3fuse.json`; the RAW stays unchanged. Move the
 sidecar with the photo to carry its edits. Unwritable source folders use the
 application-data `edits/` backup directory, and the app shows its location.
 Invalid/newer recipes and source-content mismatches are reported without
@@ -428,8 +458,8 @@ and star ratings are separate, stored by path in app-data `culling.json`.
 Editor and main-view exports share the review screen. Rendered JPEG and 16-bit
 TIFF bake saved edits and carry sRGB, Adobe RGB, or ProPhoto RGB profiles with
 normalized orientation. TIFF batches with edited photos default to rendered
-mode; unedited photos in that batch use the default film recipe. Original DNG
-and Embedded JPG remain separate options and do not bake edits.
+mode; unedited photos in that batch use their default recipe. Original DNG
+and Embedded JPG remain separate options for X3F and X3I inputs and do not bake edits.
 
 NLM and BM3D controls are available in Detail and original-export settings.
 Advanced controls separate luminance/chroma reduction, strength, and NLM window

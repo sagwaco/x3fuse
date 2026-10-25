@@ -2,7 +2,12 @@ import * as Dialog from '@radix-ui/react-dialog'
 import { cameraModel } from '@shared/types'
 import { ResizablePanel } from './ui/resizablePanel'
 import { Loader2, Upload } from 'lucide-react'
-import { exportSettings, hasMixedExportSettings, useQueueStore } from '../stores/queueStore'
+import {
+  exportSettings,
+  hasMixedExportSettings,
+  renderedOnly,
+  useQueueStore
+} from '../stores/queueStore'
 import { t } from '../lib/strings'
 import { Button } from './ui/button'
 import { ConversionSettingsForm } from './ConversionSettingsForm'
@@ -33,6 +38,7 @@ export function ExportScreen(): React.JSX.Element {
   const count = targets.length
   const selected = targets.filter((file) => selectedIds.has(file.id))
   const x3iCount = selected.filter((file) => !!file.frames || /\.x3i$/i.test(file.path)).length
+  const hasDng = selected.some(renderedOnly)
   const active = selected.find((file) => file.id === activeId) ?? selected[0]
   const mixed = hasMixedExportSettings(draft, selectedIds)
 
@@ -121,7 +127,8 @@ export function ExportScreen(): React.JSX.Element {
                 key={active?.id}
                 settings={active ? exportSettings(draft, active.id) : draft.settings}
                 update={updateDraft}
-                renderedOnly={draft.returnScreen === 'editor'}
+                renderedOnly={draft.returnScreen === 'editor' || hasDng}
+                hasDng={hasDng}
                 hasX3i={x3iCount > 0}
                 partialX3i={x3iCount > 0 && x3iCount < selected.length}
                 cameraModels={selected.map(cameraModel)}

@@ -1,0 +1,30 @@
+[package]
+name = "x3f-dng"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+license = "GPL-3.0-only"
+description = "DNG decoding for X3Fuse through bundled LibRaw 0.22.2"
+build = "build.rs"
+
+[dependencies]
+x3f-core = "0.3.0"
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
+# Deflate DNG.
+libz-sys = { version = "1.1", default-features = false, features = ["static"] }
+# Lossy JPEG DNG. LibRaw throws C++ exceptions through libjpeg callbacks.
+mozjpeg-sys = { version = "2.2", default-features = false, features = ["unwinding"] }
+
+[dev-dependencies]
+# Writes Deflate strips for synthetic DNG fixtures.
+flate2 = "1"
+
+[build-dependencies]
+cc = "1"
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }

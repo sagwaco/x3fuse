@@ -12,7 +12,8 @@ import {
   type EditRecipe,
   type EffectsSettings,
   type FilmSettings,
-  type MonochromeFilter
+  type MonochromeFilter,
+  type SourceCapabilities
 } from './editor'
 
 type Patch = Partial<EditRecipe>
@@ -212,4 +213,32 @@ export function resetSection(
   defaults: EditRecipe
 ): Patch {
   return section.reset?.(recipe) ?? section.take(defaults, recipe)
+}
+
+/**
+ * A paste of a section from a photo with `from` capabilities. White balance gains and raw
+ * color belong to one sensor, so they do not go to another sensor. A DNG does not change
+ * the Foveon settings of an X3F. The editor removes the settings that the target does not support.
+ */
+export function pasteSection(
+  section: EditorSection,
+  id: string,
+  source: EditRecipe,
+  target: EditRecipe,
+  from: SourceCapabilities,
+  to: SourceCapabilities
+): Patch {
+  if (
+    id === 'whiteBalance' &&
+    (!from.whiteBalance ||
+      (from.foveon !== to.foveon && (source.rawColor || source.whiteBalanceGains)))
+  )
+    return {}
+  const patch = section.take(source, target)
+  if (!from.foveon && to.foveon) {
+    delete patch.fillLight
+    delete patch.denoise
+    delete patch.denoiseOptions
+  }
+  return patch
 }

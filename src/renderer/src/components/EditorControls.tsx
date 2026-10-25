@@ -2,7 +2,9 @@ import { memo, useContext, useEffect, useId, useMemo, useRef, useState } from 'r
 import { DenoiseControls } from './DenoiseControls'
 import { ChevronDown, Aperture, Film, Blend, Pipette, RotateCcw } from 'lucide-react'
 import {
+  capabilitiesOf,
   DEFAULT_FILM,
+  FOVEON_CAPABILITIES,
   FILM_MONOCHROME_FILTERS,
   IDENTITY_RAW_MATRIX,
   MONOCHROME_FILTERS,
@@ -14,13 +16,14 @@ import {
   type EditRecipe,
   type FilmSettings,
   type CurvePoint,
-  type MonochromeFilter
+  type MonochromeFilter,
+  type SourceCapabilities
 } from '@shared/editor'
 import stocks from '@shared/film-stocks.json'
 import { curveInput, curvePath, evaluateCurve } from '@shared/curves'
 import { useCurveQualifier } from '../stores/curveQualifierStore'
 import { asShotRecipe, needsX3iMerge, useEditorStore } from '../stores/editorStore'
-import { editorSection, resetSection } from '@shared/editorSections'
+import { editorSection, pasteSection, resetSection } from '@shared/editorSections'
 import { invalidateNativeMenu, showNativeMenu } from '../lib/nativeMenu'
 import { DevelopingCloud } from '../lib/developingCloud'
 import { useQueueStore } from '../stores/queueStore'
@@ -323,7 +326,13 @@ export function Adjustment({
 }
 
 /** A section's settings that its context menu copied, for this session. */
-let copiedSection: { id: string; recipe: EditRecipe } | null = null
+let copiedSection: { id: string; recipe: EditRecipe; capabilities: SourceCapabilities } | null =
+  null
+/** The capabilities of the open photo. */
+const openCapabilities = (): SourceCapabilities => {
+  const session = useEditorStore.getState().session
+  return session ? capabilitiesOf(session) : FOVEON_CAPABILITIES
+}
 
 export function Section({
   id,
@@ -399,9 +408,21 @@ export function Section({
       const recipe = editable()
       if (!recipe || useEditorStore.getState().session?.sessionId !== session) return
       if (value === 'reset') reset()
-      else if (value === 'copy') copiedSection = { id, recipe: structuredClone(recipe) }
+      else if (value === 'copy')
+        copiedSection = { id, recipe: structuredClone(recipe), capabilities: openCapabilities() }
       else if (value === 'paste' && copiedSection?.id === id)
-        useEditorStore.getState().change(section.take(copiedSection.recipe, recipe))
+        useEditorStore
+          .getState()
+          .change(
+            pasteSection(
+              section,
+              id,
+              copiedSection.recipe,
+              recipe,
+              copiedSection.capabilities,
+              openCapabilities()
+            )
+          )
     }).catch((error: unknown) => console.error('Could not open native context menu', error))
   }
   // Sections reach the panel edges, divided by rules; a nested one does too.
@@ -519,6 +540,11 @@ export const EditorControls = memo(function EditorControls({
   }
   const change = useEditorStore((state) => state.change)
   const commit = useEditorStore((state) => state.commit)
+  // A DNG has no Foveon settings, and a monochrome DNG has no white balance.
+  const foveon = useEditorStore((state) => !state.session || capabilitiesOf(state.session).foveon)
+  const whiteBalance = useEditorStore(
+    (state) => !state.session || capabilitiesOf(state.session).whiteBalance
+  )
   // The RAW channel mix sets the gray mix of monochrome infrared, so it has no filter.
   const monochromeRaw = !!recipe.rawColor && monochromeRawMatrix(recipe.rawColor.matrix)
   const monochrome =
@@ -606,12 +632,13 @@ export const EditorControls = memo(function EditorControls({
                 {(['contrast', 'highlights', 'shadows', 'whites', 'blacks'] as const).map((key) =>
                   control(key)
                 )}
-                {control('fillLight', {
-                  min: -2,
-                  max: 2,
-                  step: 0.1,
-                  help: t('editor.fillLightHelp')
-                })}
+                {foveon &&
+                  control('fillLight', {
+                    min: -2,
+                    max: 2,
+                    step: 0.1,
+                    help: t('editor.fillLightHelp')
+                  })}
               </Section>
               <Section
                 id="curves"
@@ -622,8 +649,8 @@ export const EditorControls = memo(function EditorControls({
               </Section>
               <Section id="detail" name={t('editor.detail')}>
                 {control('sharpen', { min: 0, max: 100 })}
-                {control('denoise', { min: 0, max: 10, help: t('editor.denoiseHelp') })}
-                {recipe.denoise > 0 && (
+                {foveon && control('denoise', { min: 0, max: 10, help: t('editor.denoiseHelp') })}
+                {foveon && recipe.denoise > 0 && (
                   <DenoiseControls
                     storageId="denoiseAdvanced"
                     value={recipe.denoiseOptions}
@@ -652,14 +679,16 @@ export const EditorControls = memo(function EditorControls({
           )}
           {tab === 'grading' && (
             <>
-              <Section id="whiteBalance" name={t('editor.whiteBalance')}>
-                <WhiteBalanceControls
-                  key={`${useEditorStore.getState().session?.sessionId}:${!!recipe.rawColor}`}
-                  recipe={recipe}
-                  picking={picking}
-                  setPicking={setPicking}
-                />
-              </Section>
+              {whiteBalance && (
+                <Section id="whiteBalance" name={t('editor.whiteBalance')}>
+                  <WhiteBalanceControls
+                    key={`${useEditorStore.getState().session?.sessionId}:${!!recipe.rawColor}`}
+                    recipe={recipe}
+                    picking={picking}
+                    setPicking={setPicking}
+                  />
+                </Section>
+              )}
               {recipe.rawColor && (
                 <>
                   <Section

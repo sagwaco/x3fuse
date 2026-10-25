@@ -12,6 +12,7 @@ import { cn } from '../lib/cn'
 import { Thumbnail } from './Thumbnail'
 import { CullBadge } from './CullBadge'
 import { StackBadge } from './StackBadge'
+import { EditErrorBadge } from './EditErrorBadge'
 import { QueueContextMenu } from './QueueContextMenu'
 import { useLanguage } from '../lib/strings'
 
@@ -161,6 +162,7 @@ const GridCell = memo(function GridCell({
         />
         <CullBadge file={file} overlay />
         <StackBadge file={file} overlay />
+        <EditErrorBadge file={file} overlay />
       </div>
       <span
         className={cn(

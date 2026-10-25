@@ -1579,3 +1579,49 @@ it('shows a dismissible qualifier toast outside the sidebar scroll body without 
   expect(toast.textContent).toBe('')
   expect(within(toast as HTMLElement).queryByRole('button')).toBeNull()
 })
+
+it('offers no white balance picker for a monochrome DNG from a key, the menu, or the context menu', async () => {
+  let choose: (value: string | null) => void = () => {}
+  const invoke = vi.fn((channel: string, _payload?: unknown) =>
+    channel === 'menu:popup' ? new Promise((resolve) => (choose = resolve)) : Promise.resolve(null)
+  )
+  ;(window as unknown as { x3f: unknown }).x3f = { invoke, on: () => () => {} }
+  const capabilities = { foveon: false, whiteBalance: false, renderedOnly: true }
+  const pickWhiteBalance = vi.fn(async () => {})
+  editor.setState({
+    session: { ...session, sourceKind: 'dng', capabilities },
+    documents: { [file.path]: doc },
+    loading: false,
+    preview: frame,
+    pickWhiteBalance
+  })
+  const view = render(<EditorScreen />)
+  const picker = screen.getByRole('button', { name: 'Pick white balance' })
+  fireEvent.keyDown(document.body, { key: 'w' })
+  expect(runCommand('whiteBalancePicker', { source: 'menu' })).toBe(false)
+  expect(picker.ariaPressed).toBe('false')
+  fireEvent.click(view.container.querySelector('[data-menu]')!, { detail: 1 })
+  const request = invoke.mock.calls.filter(([channel]) => channel === 'menu:popup').at(-1)![1]
+  expect((request as NativeMenuRequest).items[2]).toMatchObject({
+    value: 'whiteBalance',
+    disabled: true
+  })
+  await act(async () => choose('whiteBalance'))
+  expect(pickWhiteBalance).not.toHaveBeenCalled()
+  // A color DNG keeps its white balance picker.
+  act(() =>
+    editor.setState({
+      session: {
+        ...session,
+        sourceKind: 'dng',
+        capabilities: { ...capabilities, whiteBalance: true }
+      }
+    })
+  )
+  let ran = false
+  act(() => {
+    ran = runCommand('whiteBalancePicker', { source: 'menu' })
+  })
+  expect(ran).toBe(true)
+  expect(picker.ariaPressed).toBe('true')
+})

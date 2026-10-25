@@ -188,7 +188,9 @@ pub struct EditorSession {
     pub recipe: EditRecipe,
     pub as_shot_crop: Option<Crop>,
     pub camera_profiles: Vec<x3f_render::CameraProfile>,
-    pub as_shot_camera_profile: String,
+    pub as_shot_camera_profile: Option<String>,
+    pub source_kind: crate::source::Kind,
+    pub capabilities: crate::source::Capabilities,
     pub revision: u64,
     pub source_revision: String,
     pub storage: String,
@@ -472,16 +474,8 @@ impl Editor {
         self.edits.flush()?;
         let saved = self.load(&path)?;
         let source_revision = self.edits.source_revision(&path)?;
-        let as_shot_crop = x3f_core::read_as_shot_crop(&path)
-            .map_err(|e| e.to_string())?
-            .map(|[x, y, width, height]| Crop {
-                x,
-                y,
-                width,
-                height,
-            });
-        let camera_profiles = x3f_render::read_camera_profiles(&path, &AtomicBool::new(false))
-            .map_err(|e| e.to_string())?;
+        let (source, as_shot_crop, camera_profiles) =
+            camera_defaults(&path, &AtomicBool::new(false))?;
         if self.edits.source_revision(&path)? != source_revision {
             return Err("Source changed while reading camera framing; reopen the photo".into());
         }
@@ -492,8 +486,14 @@ impl Editor {
             return Err("Source changed while opening; reopen the photo".into());
         }
         let recipe = saved.as_ref().map(|r| r.recipe.clone()).unwrap_or_else(|| {
-            as_shot_recipe(as_shot_crop, &camera_profiles.as_shot, &source_revision)
+            source_recipe(
+                source,
+                as_shot_crop,
+                &camera_profiles.as_shot,
+                &source_revision,
+            )
         });
+        source.validate_recipe(&recipe)?;
         let x3i = self.x3i_status(&path, &recipe)?;
         let session = Session {
             id: uuid::Uuid::new_v4().to_string(),
@@ -523,7 +523,12 @@ impl Editor {
             recipe,
             as_shot_crop,
             camera_profiles: camera_profiles.available,
-            as_shot_camera_profile: camera_profiles.as_shot,
+            as_shot_camera_profile: source
+                .capabilities
+                .foveon
+                .then_some(camera_profiles.as_shot),
+            source_kind: source.kind,
+            capabilities: source.capabilities,
             revision: saved.as_ref().map_or(0, |s| s.revision),
             storage: saved
                 .as_ref()
@@ -888,19 +893,16 @@ impl Editor {
         cancel: &AtomicBool,
     ) -> Result<EditRecipe, String> {
         check_cancel(cancel)?;
-        let crop = x3f_core::read_as_shot_crop(path)
-            .map_err(|e| e.to_string())?
-            .map(|[x, y, width, height]| Crop {
-                x,
-                y,
-                width,
-                height,
-            });
-        let profiles = x3f_render::read_camera_profiles(path, cancel).map_err(|e| e.to_string())?;
+        let (source, crop, profiles) = camera_defaults(path, cancel)?;
         if self.edits.source_revision(path)? != source_revision {
             return Err("Source changed while reading camera defaults".into());
         }
-        Ok(as_shot_recipe(crop, &profiles.as_shot, source_revision))
+        Ok(source_recipe(
+            source,
+            crop,
+            &profiles.as_shot,
+            source_revision,
+        ))
     }
 
     /// The photo's defaults when `recipe` is one of them (see `matches_defaults`).
@@ -930,7 +932,7 @@ impl Editor {
         max_edge: u32,
         region: Option<Crop>,
     ) -> Result<String, String> {
-        recipe.validate()?;
+        crate::source::validate_recipe(path, recipe)?;
         if !(1..=4096).contains(&max_edge) {
             return Err("Invalid preview dimensions".into());
         }
@@ -956,6 +958,7 @@ impl Editor {
         if let Some(identity) = crate::x3i::identity(&canonical) {
             key.extend(identity.as_bytes());
         }
+        key.extend(crate::source::decoder_identity(&canonical).as_bytes());
         let id = format!("{:x}", Sha256::digest(key));
         let mut assets = self
             .assets
@@ -996,6 +999,8 @@ impl Editor {
         if self.edits.source_revision(&asset.path)? != asset.source_revision {
             return Err("Source contents changed; reopen the photo".into());
         }
+        let source = crate::source::Info::read(&asset.path, cancel)?;
+        source.validate_recipe(&asset.recipe)?;
         let same_source = worker
             .prepared
             .as_ref()
@@ -1012,22 +1017,36 @@ impl Editor {
                 worker.prepared = None;
             }
             let options = scene_options(&asset.recipe);
-            let (image, denoise_free) = prepare_in_background(|| {
-                crate::x3i::prepare_scene(
-                    &self.x3i,
-                    &asset.path,
-                    &asset.source_revision,
-                    &options,
-                    cancel,
-                    merge.then_some(|| {
-                        self.edits.source_revision(&asset.path).as_ref()
-                            == Ok(&asset.source_revision)
-                    }),
-                    |_| (),
+            let (image, denoise_free) = if source.kind == crate::source::Kind::Dng {
+                (
+                    prepare_in_background(|| x3f_dng::prepare(&asset.path, cancel))?,
+                    true,
                 )
-            })?;
-            let profiles =
-                x3f_render::read_camera_profiles(&asset.path, cancel).map_err(|e| e.to_string())?;
+            } else {
+                prepare_in_background(|| {
+                    crate::x3i::prepare_scene(
+                        &self.x3i,
+                        &asset.path,
+                        &asset.source_revision,
+                        &options,
+                        cancel,
+                        merge.then_some(|| {
+                            self.edits.source_revision(&asset.path).as_ref()
+                                == Ok(&asset.source_revision)
+                        }),
+                        |_| (),
+                    )
+                })?
+            };
+            let mut image = PreparedImage::new(image, cancel).map_err(|e| e.to_string())?;
+            if source.kind == crate::source::Kind::Dng {
+                image = image.with_dng_source(!source.capabilities.white_balance);
+            } else {
+                image = image.with_camera_profiles(
+                    x3f_render::read_camera_profiles(&asset.path, cancel)
+                        .map_err(|e| e.to_string())?,
+                );
+            }
             check_cancel(cancel)?;
             if self.edits.source_revision(&asset.path)? != asset.source_revision {
                 return Err("Source contents changed during RAW preparation".into());
@@ -1039,9 +1058,7 @@ impl Editor {
                 denoise_options: asset.recipe.denoise_options,
                 denoise_free,
                 x3i_source: asset.recipe.x3i_source,
-                image: PreparedImage::new(image, cancel)
-                    .map_err(|e| e.to_string())?
-                    .with_camera_profiles(profiles),
+                image,
             });
         }
         Ok(worker
@@ -1148,15 +1165,23 @@ impl Editor {
         };
         let (rendered, (source_width, source_height)) =
             self.render_with_worker(&mut worker, &asset, &cancel)?;
-        let as_shot = worker.prepared.as_ref().map(|p| {
-            (
-                p.image.as_shot_white_balance(),
-                x3f_render::as_shot_channel_gains(&p.image.image().white_balance),
-            )
-        });
+        let white_balance_available = crate::source::Info::read(&asset.path, &cancel)?
+            .capabilities
+            .white_balance;
+        let as_shot = worker
+            .prepared
+            .as_ref()
+            .filter(|_| white_balance_available)
+            .map(|p| {
+                (
+                    p.image.as_shot_white_balance(),
+                    x3f_render::as_shot_channel_gains(&p.image.image().white_balance),
+                )
+            });
         let calibration = worker
             .prepared
             .as_ref()
+            .filter(|_| white_balance_available)
             .map(|p| p.image.image().white_balance);
         drop(worker);
         let white_balance = calibration.and_then(|cal| {
@@ -1651,7 +1676,11 @@ impl Editor {
         recipe: EditRecipe,
     ) -> Result<x3f_render::WhiteBalance, String> {
         let session = self.session(id)?;
-        recipe.validate()?;
+        let source = crate::source::Info::read(&session.path, &AtomicBool::new(false))?;
+        source.validate_recipe(&recipe)?;
+        if !source.capabilities.white_balance {
+            return Err("White balance is unavailable for monochrome DNG inputs".into());
+        }
         let worker = self.worker.lock().map_err(|_| "Renderer unavailable")?;
         let prepared = worker
             .prepared
@@ -1675,6 +1704,11 @@ impl Editor {
         }
         recipe.validate()?;
         let session = self.session(id)?;
+        let source = crate::source::Info::read(&session.path, &AtomicBool::new(false))?;
+        source.validate_recipe(&recipe)?;
+        if !source.capabilities.white_balance {
+            return Err("White balance is unavailable for monochrome DNG inputs".into());
+        }
         let _priority = self.foreground_request()?;
         let cancel = self.fresh_request()?;
         let asset = Asset {
@@ -1712,7 +1746,10 @@ impl Editor {
         output: &Path,
         cancel: &AtomicBool,
     ) -> Result<(), String> {
-        recipe.validate()?;
+        crate::source::validate_recipe(path, recipe)?;
+        crate::source::Kind::of(path).validate_export(settings)?;
+        crate::source::protect_output(output, [path.to_owned()])?;
+        self.edits.protect_backup(output)?;
         let expected_source = expected_source.ok_or("Review the source before edited export")?;
         let source_revision = self.edits.source_revision(path)?;
         if expected_source != source_revision {
@@ -1781,6 +1818,52 @@ impl Editor {
     }
 }
 
+fn camera_defaults(
+    path: &Path,
+    cancel: &AtomicBool,
+) -> Result<
+    (
+        crate::source::Info,
+        Option<Crop>,
+        x3f_render::CameraProfiles,
+    ),
+    String,
+> {
+    let source = crate::source::Info::read(path, cancel)?;
+    let (crop, profiles) = if source.kind == crate::source::Kind::Dng {
+        (source.crop, x3f_render::CameraProfiles::default())
+    } else {
+        (
+            x3f_core::read_as_shot_crop(path).map_err(|e| e.to_string())?,
+            x3f_render::read_camera_profiles(path, cancel).map_err(|e| e.to_string())?,
+        )
+    };
+    Ok((
+        source,
+        crop.map(|[x, y, width, height]| Crop {
+            x,
+            y,
+            width,
+            height,
+        }),
+        profiles,
+    ))
+}
+
+fn source_recipe(
+    source: crate::source::Info,
+    crop: Option<Crop>,
+    profile: &str,
+    revision: &str,
+) -> EditRecipe {
+    let mut recipe = as_shot_recipe(crop, profile, revision);
+    if source.kind == crate::source::Kind::Dng {
+        recipe.camera_profile = None;
+        recipe.denoise = 0;
+    }
+    recipe
+}
+
 fn as_shot_recipe(crop: Option<Crop>, profile: &str, source_revision: &str) -> EditRecipe {
     EditRecipe {
         camera_profile: Some(profile.into()),
@@ -1802,6 +1885,7 @@ fn near_default(recipe: &EditRecipe) -> bool {
         camera_profile: base.camera_profile.clone(),
         film: base.film.clone(),
         monochrome: base.monochrome,
+        denoise: base.denoise,
         crop: base.crop,
         seed: base.seed,
         ..recipe.pixels()
@@ -2059,7 +2143,7 @@ mod tests {
         drop(file);
         let editor = Editor::new(temporary.path().join("edits"));
         let session = editor.open(photo.clone()).unwrap();
-        assert_eq!(session.as_shot_camera_profile, "FCBlue");
+        assert_eq!(session.as_shot_camera_profile.as_deref(), Some("FCBlue"));
         assert_eq!(session.recipe.camera_profile.as_deref(), Some("FCBlue"));
         assert_eq!(session.recipe.film, None);
         assert_eq!(session.revision, 0);

@@ -239,6 +239,22 @@ impl Edits {
         ))
     }
 
+    pub fn protect_backup(&self, output: &Path) -> Result<(), String> {
+        if let Ok(target) = output.canonicalize() {
+            if self
+                .backup(&target)
+                .try_exists()
+                .map_err(|e| e.to_string())?
+            {
+                return Err(format!(
+                    "Cannot overwrite a source photo with saved edits: {}",
+                    output.display()
+                ));
+            }
+        }
+        Ok(())
+    }
+
     fn read(path: &Path) -> Result<Option<Document>, String> {
         let Some(document) = read_json_bounded::<Document>(path, JSON_LIMIT).map_err(|e| {
             format!(
@@ -290,6 +306,7 @@ impl Edits {
         if document.source_revision != self.source_revision(&path)? {
             return Err("The saved edits belong to different source contents. Both files have been preserved.".into());
         }
+        crate::source::validate_recipe(&path, &document.recipe)?;
         Ok(Some(record(document, storage, storage_path)))
     }
 
@@ -300,7 +317,7 @@ impl Edits {
         revision: u64,
         expected_source: Option<&str>,
     ) -> Result<EditRecord, String> {
-        recipe.validate().map_err(|e| e.to_string())?;
+        crate::source::validate_recipe(path, &recipe)?;
         if revision == 0 || revision > 9_007_199_254_740_991 {
             return Err("Invalid edit revision".into());
         }
@@ -483,6 +500,21 @@ fn record(document: Document, storage: String, storage_path: PathBuf) -> EditRec
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn backup_edits_protect_an_unimported_source_after_restart() {
+        let temp = tempfile::tempdir().unwrap();
+        let input = temp.path().join("photo.dng");
+        fs::write(&input, b"source").unwrap();
+        let input = input.canonicalize().unwrap();
+        let directory = temp.path().join("edits");
+        fs::create_dir_all(&directory).unwrap();
+        let edits = Edits::new(directory.clone());
+        assert!(edits.protect_backup(&input).is_ok());
+        fs::write(edits.backup(&input), b"saved edits").unwrap();
+        let reopened = Edits::new(directory);
+        assert!(reopened.protect_backup(&input).is_err());
+    }
 
     #[test]
     fn saved_source_fingerprints_survive_restart_and_reject_changed_raws() {

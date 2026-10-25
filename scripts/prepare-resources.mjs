@@ -51,6 +51,13 @@ const renderer = resolve(root, 'src-tauri/crates/x3f-render')
 await rm(join(resources, 'licenses/x3f-render'), { recursive: true, force: true })
 await cp(join(renderer, 'licenses'), join(resources, 'licenses/x3f-render'), { recursive: true })
 await cp(join(renderer, 'NOTICE'), join(resources, 'licenses/x3f-render/NOTICE'))
+const dng = resolve(root, 'src-tauri/crates/x3f-dng')
+await rm(join(resources, 'licenses/x3f-dng'), { recursive: true, force: true })
+await cp(join(dng, 'licenses'), join(resources, 'licenses/x3f-dng'), { recursive: true })
+await cp(join(dng, 'NOTICE'), join(resources, 'licenses/x3f-dng/NOTICE'))
+for (const name of ['LICENSE.LGPL', 'LICENSE.CDDL', 'COPYRIGHT']) {
+  await cp(join(dng, 'libraw', name), join(resources, `licenses/x3f-dng/LIBRAW_${name}`))
+}
 
 if ((await readFile(join(destination, '.version'), 'utf8').catch(() => '')) !== marker) {
   const cache = join(root, '.cache')

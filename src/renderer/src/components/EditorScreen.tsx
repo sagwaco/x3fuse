@@ -16,7 +16,7 @@ import {
   X,
   TriangleAlert
 } from 'lucide-react'
-import { negativePrint, type EditRecipe, type PreviewRegion } from '@shared/editor'
+import { capabilitiesOf, negativePrint, type EditRecipe, type PreviewRegion } from '@shared/editor'
 import {
   useEditorStore,
   isTextEditing,
@@ -380,7 +380,12 @@ export function EditorScreen(): React.JSX.Element {
     if (unavailable || editor.before || !doc?.recipe.rawColor || cloudFile || !panelOpen)
       setMixPickingState(null)
   }, [unavailable, editor.before, doc?.recipe.rawColor, cloudFile, panelOpen])
-  canPick.current = !unavailable && !editor.before && !cloudFile
+  // A monochrome DNG has no white balance to pick.
+  canPick.current =
+    !unavailable &&
+    !editor.before &&
+    !cloudFile &&
+    (!editor.session || capabilitiesOf(editor.session).whiteBalance)
   // The curve Qualifier reads the edited preview, as the curve's histogram does.
   const curveImage = useScopeImage(curvePicking ? displayFile?.displayPreviewUrl : undefined)
   /** The mean color of 3 by 3 preview pixels at a point, 0 to 1. */

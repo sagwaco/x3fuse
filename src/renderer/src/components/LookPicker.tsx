@@ -2,6 +2,7 @@ import { Fragment, useContext, useEffect, useState } from 'react'
 import { ChevronRight } from 'lucide-react'
 import {
   CAMERA_EFFECTS,
+  capabilitiesOf,
   DEFAULT_FILM,
   IDENTITY_RAW_MATRIX,
   MONOCHROME_RAW_MATRIX,
@@ -139,6 +140,8 @@ export function LookPicker({
 }): React.JSX.Element {
   const change = useEditorStore((state) => state.change)
   const cameraProfiles = useEditorStore((state) => state.session?.cameraProfiles)
+  // A DNG has no Sigma profiles and no full spectrum: it has one neutral digital look.
+  const foveon = useEditorStore((state) => !state.session || capabilitiesOf(state.session).foveon)
   const cloud = useContext(DevelopingCloud)
   const asShotGains = useEditorStore((state) => (cloud ? undefined : state.preview?.asShotGains))
   const balance = useEditorStore((state) =>
@@ -159,13 +162,32 @@ export function LookPicker({
   const looks: Look[] =
     kind === 'film'
       ? [
-          ...[
-            { id: 'Standard', name: t('editor.standard') },
-            { id: 'Monochrome', name: t('editor.monochrome') },
-            ...(cameraProfiles ?? []).filter(
-              (profile) => !['Standard', 'Monochrome'].includes(profile.id)
-            )
-          ].map((profile) => ({
+          ...(foveon
+            ? []
+            : [
+                {
+                  id: 'digital',
+                  name: t('editor.neutral'),
+                  group: 'digital',
+                  recipe: {
+                    ...recipe,
+                    film: null,
+                    cameraProfile: null,
+                    rawColor: null,
+                    monochrome: null
+                  }
+                }
+              ]),
+          ...(foveon
+            ? [
+                { id: 'Standard', name: t('editor.standard') },
+                { id: 'Monochrome', name: t('editor.monochrome') },
+                ...(cameraProfiles ?? []).filter(
+                  (profile) => !['Standard', 'Monochrome'].includes(profile.id)
+                )
+              ]
+            : []
+          ).map((profile) => ({
             id: profile.id,
             name: profile.name,
             group: 'cameraMatching',
@@ -213,10 +235,13 @@ export function LookPicker({
                 : null
             }
           })),
-          ...[
-            { id: 'full-spectrum', name: t('editor.cir'), matrix: IDENTITY_RAW_MATRIX },
-            { id: 'mir', name: t('editor.mir'), matrix: MONOCHROME_RAW_MATRIX }
-          ].map(({ matrix, ...look }): Look => ({
+          ...(foveon
+            ? [
+                { id: 'full-spectrum', name: t('editor.cir'), matrix: IDENTITY_RAW_MATRIX },
+                { id: 'mir', name: t('editor.mir'), matrix: MONOCHROME_RAW_MATRIX }
+              ]
+            : []
+          ).map(({ matrix, ...look }): Look => ({
             ...look,
             group: 'fullSpectrum',
             disabled: !gains,
@@ -262,7 +287,9 @@ export function LookPicker({
             ? 'Monochrome'
             : looks.some((look) => look.id === cameraProfile)
               ? cameraProfile
-              : 'Standard'
+              : foveon
+                ? 'Standard'
+                : 'digital'
   // The gallery shows one group. It opens on the group of the selected look, else the first.
   const [chosenGroup, setChosenGroup] = useState('')
   const groups = [...new Set(looks.map((look) => look.group))].filter((g): g is string => !!g)

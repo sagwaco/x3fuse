@@ -106,6 +106,36 @@ impl Default for EditRecipe {
     }
 }
 
+impl EditRecipe {
+    /// Reject sensor settings that cannot operate on a LibRaw DNG source.
+    pub fn validate_dng(&self, monochrome_sensor: bool) -> Result<(), String> {
+        self.validate()?;
+        if self.camera_profile.is_some()
+            || self.raw_color.is_some()
+            || self.denoise != 0
+            || self.denoise_options != Default::default()
+            || self.fill_light != 0.
+            || self.x3i_source != x3f_core::X3iSource::MiddleExposure
+        {
+            return Err("DNG inputs cannot use Foveon profiles or sensor controls".into());
+        }
+        if self.monochrome.is_some()
+            && !self
+                .film
+                .as_ref()
+                .is_some_and(|film| crate::stocks::monochrome_film(film.film))
+        {
+            return Err("DNG inputs cannot use Foveon sensor-layer filters".into());
+        }
+        if monochrome_sensor
+            && (self.temperature.is_some() || self.tint != 0. || self.white_balance_gains.is_some())
+        {
+            return Err("White balance is unavailable for monochrome DNG inputs".into());
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct MonochromeSettings {

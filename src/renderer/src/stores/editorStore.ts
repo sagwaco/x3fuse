@@ -1,8 +1,11 @@
 import { create } from 'zustand'
 import {
-  defaultRecipe,
+  capabilitiesOf,
+  FOVEON_CAPABILITIES,
   pasteRecipe,
   pixelRecipe,
+  sourceDefaultRecipe,
+  supportedRecipe,
   usesSfd,
   usesExtendedWhiteBalance,
   type EditRecipe,
@@ -10,6 +13,7 @@ import {
   type EditorSession,
   type RenderedPreview,
   type PreviewRegion,
+  type SourceCapabilities,
   type X3iStatus
 } from '@shared/editor'
 import type { X3FFileDTO } from '@shared/types'
@@ -61,6 +65,8 @@ interface EditorState {
   holdPrefetch: () => void
   setCropping: (cropping: boolean) => void
   clipboard: EditRecipe | null
+  /** The capabilities of the photo that `clipboard` came from. Missing means a Foveon file. */
+  clipboardCapabilities?: SourceCapabilities
   open: (file: X3FFileDTO) => Promise<void>
   change: (patch: Partial<EditRecipe>, commit?: boolean) => void
   commit: () => void
@@ -162,16 +168,29 @@ function updateQueue(path: string, edit: EditRecord): void {
 const renderKey = (sessionId: string, recipe: EditRecipe): string =>
   `${sessionId}:${JSON.stringify(pixelRecipe(recipe))}`
 
+/** The capabilities of the photo at `path`: the open photo, else a queue file. */
+function capabilitiesFor(path: string): SourceCapabilities {
+  const session = useEditorStore.getState().session
+  if (session?.path === path) return capabilitiesOf(session)
+  return capabilitiesOf(
+    useQueueStore.getState().files.find((file) => file.path === path) ?? { path }
+  )
+}
+
 /** The recipe that Reset gives: the camera's look and framing, without adjustments. */
 export function asShotRecipe(session: EditorSession | null, seed: number): EditRecipe {
-  return {
-    ...defaultRecipe(),
-    film: null,
-    cameraProfile: session?.asShotCameraProfile ?? null,
-    monochrome: session?.asShotCameraProfile === 'Monochrome' ? { filter: 'neutral' } : null,
-    crop: session?.asShotCrop ?? null,
-    seed
-  }
+  const capabilities = session ? capabilitiesOf(session) : FOVEON_CAPABILITIES
+  return supportedRecipe(
+    {
+      ...sourceDefaultRecipe(capabilities),
+      film: null,
+      cameraProfile: session?.asShotCameraProfile ?? null,
+      monochrome: session?.asShotCameraProfile === 'Monochrome' ? { filter: 'neutral' } : null,
+      crop: session?.asShotCrop ?? null,
+      seed
+    },
+    capabilities
+  )
 }
 
 /** The recipe a render of the current view uses. */
@@ -212,7 +231,12 @@ export const useEditorStore = create<EditorState>((set, get) => {
   function document(file: X3FFileDTO): Document {
     return (
       get().documents[file.path] ?? {
-        recipe: structuredClone(file.edit?.recipe ?? defaultRecipe()),
+        recipe: structuredClone(
+          supportedRecipe(
+            file.edit?.recipe ?? sourceDefaultRecipe(capabilitiesOf(file)),
+            capabilitiesOf(file)
+          )
+        ),
         revision: file.edit?.revision ?? 0,
         storage: file.edit?.storage ?? 'none',
         sourceRevision: file.edit?.sourceRevision,
@@ -263,6 +287,8 @@ export const useEditorStore = create<EditorState>((set, get) => {
     saves.add(work)
   }
   function publish(path: string, doc: Document): void {
+    // Undo, redo, and paste apply only the settings that the photo supports.
+    doc = { ...doc, recipe: supportedRecipe(doc.recipe, capabilitiesFor(path)) }
     set((state) => {
       const geometryChanged =
         state.session?.path === path && !sameGeometry(state.documents[path].recipe, doc.recipe)
@@ -607,7 +633,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
             : undefined
         const doc = existing ?? {
           ...session,
-          recipe: structuredClone(session.recipe),
+          recipe: structuredClone(supportedRecipe(session.recipe, capabilitiesOf(session))),
           past: [],
           future: [],
           dirty: false
@@ -644,7 +670,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
       )
         return
       const doc = get().documents[path]
-      const recipe = { ...doc.recipe, ...patch }
+      const recipe = supportedRecipe({ ...doc.recipe, ...patch }, capabilitiesFor(path))
       // Without its SFD RAW, an X3I can still change to its unfused RAW.
       if (same(recipe, doc.recipe) || blocked(get(), recipe)) return
       // A hue that a wheel keeps at zero strength changes no pixels, so it needs no render.
@@ -745,7 +771,12 @@ export const useEditorStore = create<EditorState>((set, get) => {
       const queue = useQueueStore.getState()
       const file = queue.files.find((item) => item.id === (target?.id ?? queue.activeId))
       const recipe = path && !target ? get().documents[path]?.recipe : file?.edit?.recipe
-      if (recipe) set({ clipboard: structuredClone(recipe) })
+      const source = path && !target ? get().session : file
+      if (recipe)
+        set({
+          clipboard: structuredClone(recipe),
+          clipboardCapabilities: source ? capabilitiesOf(source) : undefined
+        })
     },
     async paste(files) {
       // Crop mode's Cancel restores geometry only, so it could not undo a paste.
@@ -774,7 +805,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
                   [file.path]: {
                     ...document(file),
                     ...record,
-                    recipe: record.recipe ?? defaultRecipe()
+                    recipe: record.recipe ?? sourceDefaultRecipe(capabilitiesOf(file))
                   }
                 }
               }))
@@ -789,7 +820,12 @@ export const useEditorStore = create<EditorState>((set, get) => {
         return
       for (const file of targets.filter((item) => !item.pending)) {
         const doc = document(file)
-        const recipe = pasteRecipe(source, doc.recipe)
+        const recipe = pasteRecipe(
+          source,
+          doc.recipe,
+          get().clipboardCapabilities,
+          capabilitiesOf(file)
+        )
         if (!same(doc.recipe, recipe))
           publish(file.path, {
             ...doc,
@@ -881,7 +917,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
     async pickWhiteBalance(x, y) {
       if (get().closing || get().loading || unmerged(get())) return
       const session = get().session
-      if (!session) return
+      if (!session || !capabilitiesOf(session).whiteBalance) return
       const request = ++colorPick
       try {
         const result = await ipc.invoke('editor:pickWhiteBalance', {

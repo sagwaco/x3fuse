@@ -1,6 +1,6 @@
 import { createElement } from 'react'
 import { createRoot } from 'react-dom/client'
-import type { PreviewRegion } from '@shared/editor'
+import { capabilitiesOf, type EditRecipe, type PreviewRegion } from '@shared/editor'
 import { displayPreviewUrl, previewUrl } from '@shared/preview'
 import { SCOPE_MODES, type X3FFileDTO } from '@shared/types'
 import { useQueueStore } from '../stores/queueStore'
@@ -668,6 +668,16 @@ async function runEditor(input: string): Promise<Record<string, unknown>> {
     )
     return pixels.join(',')
   }
+  /** Exposure is the film exposure of a film look, else the digital exposure. */
+  const recipe = (): EditRecipe => e().documents[e().session!.path].recipe
+  const exposureOf = (value: EditRecipe | undefined): number | undefined =>
+    value?.film ? value.film.evFilm : value?.exposure
+  const setExposure = (value: number): Partial<EditRecipe> => {
+    const film = recipe().film
+    return film ? { film: { ...film, evFilm: value } } : { exposure: value }
+  }
+  const slider = (label: string): HTMLElement | null =>
+    document.querySelector<HTMLElement>(`[role="slider"][aria-label="${CSS.escape(label)}"]`)
   const button = (label: string): HTMLButtonElement => {
     const element = [...document.querySelectorAll<HTMLButtonElement>('button')].find(
       (node) => node.textContent?.trim() === label || node.getAttribute('aria-label') === label
@@ -682,59 +692,13 @@ async function runEditor(input: string): Promise<Record<string, unknown>> {
     check(file && !file.pending, 'Editor import did not complete')
     q().setSelection(new Set([file.id]), file.id)
     await painted()
-    // The cloud compiles and draws in this webview, unless motion or WebGL 2 is off.
+    // The cloud compiles and draws in this webview, unless motion or WebGL 2 is off. Its
+    // probe runs after the first edit: the selection would rest during it, and the warm-up
+    // would prepare the RAW before Edit, so the first open would not be cold.
     const developingCloud =
       typeof WebGL2RenderingContext !== 'undefined' &&
       !window.matchMedia('(prefers-reduced-motion: reduce)').matches
     let cloudFrameRate: number | undefined
-    if (developingCloud) {
-      const host = document.body.appendChild(document.createElement('div'))
-      host.style.cssText = 'position:fixed;inset:0'
-      const root = createRoot(host)
-      root.render(
-        createElement(DevelopingPreview, {
-          file: { ...file, edit: undefined },
-          matching: false,
-          developing: true,
-          ready: false,
-          onDone: () => {}
-        })
-      )
-      try {
-        await until(
-          () =>
-            (host.querySelector<HTMLCanvasElement>('canvas[data-developing-preview]')?.width ?? 0) >
-            300,
-          'The developing cloud did not draw',
-          5000
-        )
-        // A window-sized cloud draws its particles at the display refresh rate.
-        const drawArrays = WebGL2RenderingContext.prototype.drawArrays
-        let draws = 0
-        WebGL2RenderingContext.prototype.drawArrays = function (mode, first, count) {
-          if (mode === this.POINTS) draws++
-          drawArrays.call(this, mode, first, count)
-        }
-        const start = performance.now()
-        try {
-          await wait(1000)
-        } finally {
-          WebGL2RenderingContext.prototype.drawArrays = drawArrays
-        }
-        cloudFrameRate = Math.round((draws * 1000) / (performance.now() - start))
-        // The reveal animates the registered --cover. An unregistered one jumps at half time.
-        const canvas = host.querySelector('canvas')!
-        const reveal = canvas.animate([{ '--cover': 1 }, { '--cover': 0 }], 1000)
-        reveal.pause()
-        reveal.currentTime = 250
-        const cover = Number(getComputedStyle(canvas).getPropertyValue('--cover'))
-        reveal.cancel()
-        check(cover > 0.5 && cover < 1, `The developing cloud cover did not interpolate: ${cover}`)
-      } finally {
-        root.unmount()
-        host.remove()
-      }
-    }
     const highResolution = !!cachedFitPreview(displayPreviewUrl(file, 'full'))
     const opened = performance.now()
     button(t('editor.edit')).click()
@@ -760,9 +724,27 @@ async function runEditor(input: string): Promise<Record<string, unknown>> {
     check(useNavStore.getState().screen === 'editor', 'Edit did not open in the main window')
     check(!e().error, e().error ?? 'Editor failed')
     const initial = e().preview!
-    check(e().session!.recipe.film !== null, 'Film rendering is not enabled by default')
+    const session = e().session!
+    const capabilities = capabilitiesOf(session)
+    // A DNG opens with the neutral digital look. An X3F opens with its as-shot profile.
+    const dng = session.sourceKind === 'dng'
     check(
-      JSON.stringify(e().session!.recipe.crop) === JSON.stringify(e().session!.asShotCrop),
+      dng === !capabilities.foveon && dng === capabilities.renderedOnly,
+      `Source capabilities do not match the source: ${JSON.stringify(session)}`
+    )
+    check(
+      session.recipe.film === null &&
+        (dng
+          ? session.recipe.cameraProfile == null &&
+            session.recipe.rawColor == null &&
+            session.recipe.monochrome === null &&
+            session.recipe.denoise === 0 &&
+            session.recipe.fillLight === 0
+          : session.recipe.cameraProfile === session.asShotCameraProfile),
+      `The photo did not open with its as-shot defaults: ${JSON.stringify(session.recipe)}`
+    )
+    check(
+      JSON.stringify(session.recipe.crop ?? null) === JSON.stringify(session.asShotCrop ?? null),
       'Initial crop does not use camera framing'
     )
     await until(previewPainted, 'Initial GPU frame did not paint', 15000)
@@ -781,7 +763,7 @@ async function runEditor(input: string): Promise<Record<string, unknown>> {
     )
     check(exposure, 'Accessible exposure control is missing')
     const changed = performance.now()
-    e().change({ film: { ...e().documents[e().session!.path].recipe.film!, evFilm: 1 } }, false)
+    e().change(setExposure(1), false)
     e().commit()
     check(await e().flush(), 'Autosave failed')
     await until(
@@ -793,43 +775,38 @@ async function runEditor(input: string): Promise<Record<string, unknown>> {
     const path = e().session!.path
     check(e().documents[path].past.length === 1, 'One gesture produced more than one undo step')
     button(t('editor.undo')).click()
-    check(e().documents[path].recipe.film?.evFilm === 0, 'Undo did not restore exposure')
+    check(exposureOf(recipe()) === 0, 'Undo did not restore exposure')
     await painted()
     button(t('editor.redo')).click()
-    check(e().documents[path].recipe.film?.evFilm === 1, 'Redo did not restore the adjustment')
+    check(exposureOf(recipe()) === 1, 'Redo did not restore the adjustment')
     check(await e().flush(), 'History autosave failed')
     const loaded = await ipc.invoke('editor:load', { paths: [input] })
-    check(loaded[0]?.recipe?.film?.evFilm === 1, 'Saved sidecar did not reload')
+    check(exposureOf(loaded[0]?.recipe) === 1, 'Saved sidecar did not reload')
     await until(previewReady, 'History render did not complete', 60000)
     const inputToPaint: number[] = []
     for (let index = 0; index < 12; index++) {
       window.__x3fSmokeProgress = `Painting slider input ${index}`
       await painted()
       const previous = e().preview!.url
-      const value = e().documents[path].recipe.film!.evFilm
-      const knob = document.querySelector<HTMLElement>(
-        `[role="slider"][aria-label="${CSS.escape(t('editor.exposure'))}"]`
-      )
-      check(knob, 'Film exposure slider knob is missing')
+      const value = exposureOf(recipe())!
+      const knob = slider(t('editor.exposure'))
+      check(knob, 'Exposure slider knob is missing')
       const began = performance.now()
       knob.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
-      check(e().documents[path].recipe.film!.evFilm > value, 'Film slider did not change exposure')
+      check(exposureOf(recipe())! > value, 'Exposure slider did not change exposure')
       await until(
         () => e().preview?.url !== previous && previewPainted(),
-        'Interactive film frame did not paint',
+        'Interactive frame did not paint',
         15000
       )
       await painted()
       inputToPaint.push(performance.now() - began)
     }
     // A look change can mount a new Exposure slider, so find it again each time.
-    const knob = (): HTMLElement =>
-      document.querySelector<HTMLElement>(
-        `[role="slider"][aria-label="${CSS.escape(t('editor.exposure'))}"]`
-      )!
+    const knob = (): HTMLElement => slider(t('editor.exposure'))!
     knob().dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
-    check(e().documents[path].recipe.film!.evFilm === 0, 'Double-click did not reset film exposure')
-    e().change({ film: { ...e().documents[path].recipe.film!, evFilm: 1 } })
+    check(exposureOf(recipe()) === 0, 'Double-click did not reset exposure')
+    e().change(setExposure(1))
     check(await e().flush(), 'Benchmark adjustment autosave failed')
     await until(() => previewReady() && previewPainted(), 'Latest adjustment did not paint', 15000)
     await until(
@@ -837,51 +814,84 @@ async function runEditor(input: string): Promise<Record<string, unknown>> {
       'Idle preview did not refine',
       15000
     )
-    button(t('editor.monochrome')).click()
-    check(
-      !e().documents[path].recipe.film &&
-        e().documents[path].recipe.monochrome?.filter === 'neutral',
-      'Monochrome look did not apply'
-    )
     let previous = e().preview!.url
-    e().change({ monochrome: { filter: 'red' } })
-    await until(
-      () => e().preview?.url !== previous && previewPainted(),
-      'Red monochrome filter did not paint'
-    )
-    const redPixels = monochromePixels()
-    previous = e().preview!.url
-    e().change({ monochrome: { filter: 'blue' } })
-    await until(
-      () => e().preview?.url !== previous && previewPainted(),
-      'Blue monochrome filter did not paint'
-    )
-    check(monochromePixels() !== redPixels, 'Red and blue sensor filters produced the same image')
-    previous = e().preview!.url
-    e().change({ monochrome: { filter: 'red' } })
-    check(await e().flush(), 'Monochrome did not save')
-    const monochromeSaved = await ipc.invoke('editor:load', { paths: [input] })
-    check(
-      monochromeSaved[0]?.recipe?.monochrome?.filter === 'red',
-      'Monochrome sidecar did not reload'
-    )
-    await until(
-      () => e().preview?.url !== previous && previewPainted(),
-      'Restored monochrome filter did not paint'
-    )
-    // A black-and-white film keeps the red filter and gives the rest of the flow a film again.
-    previous = e().preview!.url
-    button('Kodak Double-X 5222').click()
-    check(
-      e().documents[path].recipe.film?.film === 20 &&
-        e().documents[path].recipe.monochrome?.filter === 'red',
-      'Black-and-white film look did not apply'
-    )
-    await until(
-      () => e().preview?.url !== previous && previewReady() && previewPainted(),
-      'Black-and-white film did not paint'
-    )
-    monochromePixels()
+    if (capabilities.foveon) {
+      button(t('editor.monochrome')).click()
+      check(
+        !e().documents[path].recipe.film &&
+          e().documents[path].recipe.monochrome?.filter === 'neutral',
+        'Monochrome look did not apply'
+      )
+      e().change({ monochrome: { filter: 'red' } })
+      await until(
+        () => e().preview?.url !== previous && previewPainted(),
+        'Red monochrome filter did not paint'
+      )
+      const redPixels = monochromePixels()
+      previous = e().preview!.url
+      e().change({ monochrome: { filter: 'blue' } })
+      await until(
+        () => e().preview?.url !== previous && previewPainted(),
+        'Blue monochrome filter did not paint'
+      )
+      check(monochromePixels() !== redPixels, 'Red and blue sensor filters produced the same image')
+      previous = e().preview!.url
+      e().change({ monochrome: { filter: 'red' } })
+      check(await e().flush(), 'Monochrome did not save')
+      const monochromeSaved = await ipc.invoke('editor:load', { paths: [input] })
+      check(
+        monochromeSaved[0]?.recipe?.monochrome?.filter === 'red',
+        'Monochrome sidecar did not reload'
+      )
+      await until(
+        () => e().preview?.url !== previous && previewPainted(),
+        'Restored monochrome filter did not paint'
+      )
+      // A black-and-white film keeps the red filter and gives the rest of the flow a film again.
+      previous = e().preview!.url
+      button('Kodak Double-X 5222').click()
+      check(
+        e().documents[path].recipe.film?.film === 20 &&
+          e().documents[path].recipe.monochrome?.filter === 'red',
+        'Black-and-white film look did not apply'
+      )
+      await until(
+        () => e().preview?.url !== previous && previewReady() && previewPainted(),
+        'Black-and-white film did not paint'
+      )
+      monochromePixels()
+    } else {
+      // A DNG has no Sigma profiles, Foveon denoise, Fill Light, full spectrum, or layer filters.
+      check(
+        !slider(t('editor.fillLight')) &&
+          !slider(t('editor.denoise')) &&
+          !!slider(t('editor.sharpen')) &&
+          ![t('editor.standard'), t('editor.monochrome'), t('editor.cir')].some((label) =>
+            [...document.querySelectorAll('button')].some(
+              (node) => node.textContent?.trim() === label
+            )
+          ),
+        'DNG shows controls that need a Foveon sensor'
+      )
+      e().change({
+        cameraProfile: 'Vivid',
+        fillLight: 1,
+        denoise: 5,
+        monochrome: { filter: 'red' }
+      })
+      check(
+        recipe().cameraProfile === null &&
+          recipe().fillLight === 0 &&
+          recipe().denoise === 0 &&
+          recipe().monochrome === null,
+        'DNG kept settings that need a Foveon sensor'
+      )
+      if (!capabilities.whiteBalance)
+        check(
+          recipe().temperature === null && !recipe().whiteBalanceGains,
+          'Monochrome DNG has white balance'
+        )
+    }
 
     usePreviewStore.getState().controls!.zoomTo(1)
     await until(
@@ -987,7 +997,7 @@ async function runEditor(input: string): Promise<Record<string, unknown>> {
       'Fit preview did not refresh after zoomed edits'
     )
     previous = e().preview!.url
-    e().change({ film: { ...e().documents[path].recipe.film!, evFilm: 1 } })
+    e().change(setExposure(1.5))
     check(await e().flush(), 'Export adjustment did not save')
     await until(
       () => e().preview?.url !== previous && previewPainted(),
@@ -1000,9 +1010,9 @@ async function runEditor(input: string): Promise<Record<string, unknown>> {
       60000
     )
     check(q().draft?.returnScreen === 'editor', 'Export review lost its editor return route')
-    check(q().draft?.files[0].edit?.recipe.film?.evFilm === 1, 'Export recipe was not captured')
+    check(exposureOf(q().draft?.files[0].edit?.recipe) === 1.5, 'Export recipe was not captured')
     check(
-      q().draft?.files[0].edit?.recipe.monochrome?.filter === 'red',
+      !capabilities.foveon || q().draft?.files[0].edit?.recipe.monochrome?.filter === 'red',
       'Monochrome export recipe was not captured'
     )
     // The launcher copied the RAW to a disposable directory. Keep exports there
@@ -1016,7 +1026,55 @@ async function runEditor(input: string): Promise<Record<string, unknown>> {
     check(useNavStore.getState().screen === 'editor', 'Export did not return to the editor')
     check(await e().close(), 'Back to Main failed to save the editor')
     check(useNavStore.getState().screen === 'queue', 'Back to Main did not restore browsing')
-    check(q().files[0].edit?.recipe.film?.evFilm === 1, 'Main view lost saved edits')
+    check(exposureOf(q().files[0].edit?.recipe) === 1.5, 'Main view lost saved edits')
+    if (developingCloud) {
+      const host = document.body.appendChild(document.createElement('div'))
+      host.style.cssText = 'position:fixed;inset:0'
+      const root = createRoot(host)
+      root.render(
+        createElement(DevelopingPreview, {
+          file: { ...file, edit: undefined },
+          matching: false,
+          developing: true,
+          ready: false,
+          onDone: () => {}
+        })
+      )
+      try {
+        await until(
+          () =>
+            (host.querySelector<HTMLCanvasElement>('canvas[data-developing-preview]')?.width ?? 0) >
+            300,
+          'The developing cloud did not draw',
+          5000
+        )
+        // A window-sized cloud draws its particles at the display refresh rate.
+        const drawArrays = WebGL2RenderingContext.prototype.drawArrays
+        let draws = 0
+        WebGL2RenderingContext.prototype.drawArrays = function (mode, first, count) {
+          if (mode === this.POINTS) draws++
+          drawArrays.call(this, mode, first, count)
+        }
+        const start = performance.now()
+        try {
+          await wait(1000)
+        } finally {
+          WebGL2RenderingContext.prototype.drawArrays = drawArrays
+        }
+        cloudFrameRate = Math.round((draws * 1000) / (performance.now() - start))
+        // The reveal animates the registered --cover. An unregistered one jumps at half time.
+        const canvas = host.querySelector('canvas')!
+        const reveal = canvas.animate([{ '--cover': 1 }, { '--cover': 0 }], 1000)
+        reveal.pause()
+        reveal.currentTime = 250
+        const cover = Number(getComputedStyle(canvas).getPropertyValue('--cover'))
+        reveal.cancel()
+        check(cover > 0.5 && cover < 1, `The developing cloud cover did not interpolate: ${cover}`)
+      } finally {
+        root.unmount()
+        host.remove()
+      }
+    }
     // The selection rests in the browser, so the app prepares its RAW before Edit.
     await wait(2500)
     const reopened = performance.now()
@@ -1026,7 +1084,7 @@ async function runEditor(input: string): Promise<Record<string, unknown>> {
     check(!e().preview!.draft, 'The first frame after a warm-up was a draft')
     check(
       warmedPreviewMs < firstPreviewMs / 2,
-      `The warmed first frame took ${Math.round(warmedPreviewMs)} ms`
+      `The warmed first frame took ${Math.round(warmedPreviewMs)} ms (cold ${Math.round(firstPreviewMs)} ms)`
     )
     check(await e().close(), 'Back to Main failed after the warmed open')
     q().openExport(new Set([file.id]))
@@ -1036,8 +1094,13 @@ async function runEditor(input: string): Promise<Record<string, unknown>> {
       60000
     )
     check(
-      q().draft?.files[0].edit?.recipe.film?.evFilm === 1,
+      exposureOf(q().draft?.files[0].edit?.recipe) === 1.5,
       'Main export did not use the saved edit'
+    )
+    // A DNG exports only rendered images, also from the main view.
+    check(
+      !capabilities.renderedOnly || q().draft?.settings.rendering === 'rendered',
+      'Main export offered an original export of a DNG'
     )
     q().cancelExport()
     return {
@@ -1054,11 +1117,14 @@ async function runEditor(input: string): Promise<Record<string, unknown>> {
         viewportOnlyAdjustments: true,
         panningKeepsDetail: true,
         prefetchRenders,
-        monochromeFilters: true,
+        sourceKind: session.sourceKind ?? 'x3f',
+        capabilities,
+        monochromeFilters: capabilities.foveon,
+        foveonControlsHidden: !capabilities.foveon,
         interactiveMaxEdge: 512,
         idleRefinement: true,
         sliderReset: true,
-        filmDefault: true,
+        asShotDefault: true,
         asShotCrop: true,
         jpegExportMs,
         width: initial.fullWidth,

@@ -171,7 +171,10 @@ impl ExifTool {
 
     pub async fn preview(&self, path: &Path, full: bool) -> Result<Option<Vec<u8>>, String> {
         let path = &self.source(path).await?;
-        let tags: &[&str] = if full {
+        let dng = crate::source::Kind::of(path) == crate::source::Kind::Dng;
+        let tags: &[&str] = if full && dng {
+            &["PreviewImage", "JpgFromRaw", "ThumbnailImage"]
+        } else if full {
             &["JpgFromRaw"]
         } else {
             &["PreviewImage", "ThumbnailImage", "JpgFromRaw"]
@@ -190,7 +193,35 @@ impl ExifTool {
                 )
                 .await?;
             if is_jpeg(&bytes) {
-                return Ok(Some(bytes));
+                if dng {
+                    let orientation = match jpeg_orientation(&bytes).or_else(|| {
+                        crate::source::Info::read(path, &AtomicBool::new(false))
+                            .ok()
+                            .and_then(|info| info.orientation)
+                    }) {
+                        Some(orientation) => orientation,
+                        None => {
+                            // An unsupported RAW can still have a usable embedded preview.
+                            let value = self
+                                .run(
+                                    vec!["-Orientation#".into(), "-s3".into(), path.into()],
+                                    None,
+                                )
+                                .await?;
+                            String::from_utf8_lossy(&value)
+                                .trim()
+                                .parse::<u8>()
+                                .ok()
+                                .filter(|v| (1..=8).contains(v))
+                                .unwrap_or(1)
+                        }
+                    };
+                    if let Ok(bytes) = preview_orientation(bytes, orientation) {
+                        return Ok(Some(bytes));
+                    }
+                } else {
+                    return Ok(Some(bytes));
+                }
             }
         }
         Ok(None)
@@ -279,7 +310,7 @@ impl ExifTool {
                 let Some(path) = object["SourceFile"].as_str() else {
                     continue;
                 };
-                let orientation = object["Orientation"]
+                let mut orientation = object["Orientation"]
                     .as_u64()
                     .filter(|v| (1..=8).contains(v))
                     .map(|v| v as u8);
@@ -287,13 +318,22 @@ impl ExifTool {
                     .as_f64()
                     .zip(object["ImageHeight"].as_f64())
                     .and_then(|(w, h)| (w > 0.0 && h > 0.0).then_some(w / h));
-                let preview = ["PreviewImage", "ThumbnailImage"].iter().find_map(|key| {
+                let mut preview = ["PreviewImage", "ThumbnailImage"].iter().find_map(|key| {
                     let bytes = base64::engine::general_purpose::STANDARD
                         .decode(object[key].as_str()?.strip_prefix("base64:")?)
                         .ok()?;
                     is_jpeg(&bytes).then_some(bytes)
                 });
                 let path = PathBuf::from(path);
+                if crate::source::Kind::of(&path) == crate::source::Kind::Dng {
+                    orientation = preview
+                        .as_deref()
+                        .and_then(jpeg_orientation)
+                        .or(orientation);
+                    preview = preview.and_then(|bytes| {
+                        preview_orientation(bytes, orientation.unwrap_or(1)).ok()
+                    });
+                }
                 result.insert(
                     sources.get(&path).cloned().unwrap_or(path),
                     DisplayMeta {
@@ -397,8 +437,77 @@ pub fn is_jpeg(bytes: &[u8]) -> bool {
     bytes.len() > 2 && bytes.starts_with(&[0xff, 0xd8])
 }
 
+fn jpeg_orientation(bytes: &[u8]) -> Option<u8> {
+    x3f_sys::jpeg_exif::parse_jpeg_exif(bytes)?
+        .orientation
+        .filter(|orientation| (1..=8).contains(orientation))
+        .map(|v| v as u8)
+}
+
+/// An embedded preview can already be upright. Keep its own orientation when present.
+pub(crate) fn preview_orientation(bytes: Vec<u8>, orientation: u8) -> Result<Vec<u8>, String> {
+    if !is_jpeg(&bytes) || !(1..=8).contains(&orientation) {
+        return Err("Invalid DNG preview".into());
+    }
+    if jpeg_orientation(&bytes).is_some() {
+        return Ok(bytes);
+    }
+    let mut result = Vec::with_capacity(bytes.len() + 36);
+    result.extend_from_slice(&[0xff, 0xd8, 0xff, 0xe1, 0, 34]);
+    result.extend_from_slice(b"Exif\0\0II\x2a\0\x08\0\0\0\x01\0\x12\x01\x03\0\x01\0\0\0");
+    result.extend_from_slice(&[orientation, 0, 0, 0, 0, 0, 0, 0]);
+    let mut at = 2;
+    while at < bytes.len() {
+        let start = at;
+        if bytes[at] != 0xff {
+            return Err("Invalid DNG preview JPEG marker".into());
+        }
+        while bytes.get(at) == Some(&0xff) {
+            at += 1;
+        }
+        let marker = *bytes.get(at).ok_or("Truncated DNG preview JPEG marker")?;
+        at += 1;
+        if marker == 0xda || marker == 0xd9 {
+            result.extend_from_slice(&bytes[start..]);
+            return Ok(result);
+        }
+        if marker == 0x01 || (0xd0..=0xd7).contains(&marker) {
+            result.extend_from_slice(&bytes[start..at]);
+            continue;
+        }
+        let length = bytes
+            .get(at..at + 2)
+            .ok_or("Truncated DNG preview JPEG segment")?;
+        let length = u16::from_be_bytes([length[0], length[1]]) as usize;
+        let end = at + length;
+        if length < 2 || end > bytes.len() {
+            return Err("Invalid DNG preview JPEG segment length".into());
+        }
+        // Remove EXIF without an orientation so that decoders see one EXIF block.
+        if marker != 0xe1 || !bytes[at + 2..end].starts_with(b"Exif\0\0") {
+            result.extend_from_slice(&bytes[start..end]);
+        }
+        at = end;
+    }
+    Err("Truncated DNG preview JPEG".into())
+}
+
 pub fn basic_metadata(path: PathBuf) -> Result<FileDto, String> {
     source_path(&path)?;
+    let source_kind = crate::source::Kind::of(&path);
+    let source = crate::source::Info::read(&path, &AtomicBool::new(false));
+    let capabilities = source.as_ref().map_or_else(
+        |_| {
+            crate::source::Capabilities::for_kind(
+                source_kind,
+                source_kind == crate::source::Kind::Dng,
+            )
+        },
+        |info| info.capabilities,
+    );
+    let orientation = source.as_ref().ok().and_then(|info| info.orientation);
+    let edit_error = source.err();
+    crate::source::remember(&path)?;
     let frames = crate::x3i::frames(&path);
     let info = std::fs::metadata(&path).map_err(|e| e.to_string())?;
     let captured_date = capture_date(&path).or_else(|| {
@@ -408,16 +517,18 @@ pub fn basic_metadata(path: PathBuf) -> Result<FileDto, String> {
             .map(|t| DateTime::<Utc>::from(t).to_rfc3339())
     });
     Ok(FileDto {
+        source_kind,
+        capabilities,
         id: uuid::Uuid::new_v4().to_string(),
         file_name: path.file_name().unwrap().to_string_lossy().into_owned(),
         path,
         file_size: info.len(),
         captured_date,
-        orientation: None,
+        orientation,
         aspect_ratio: None,
         exif: None,
         edit: None,
-        edit_error: None,
+        edit_error,
         frames,
         cull: Default::default(),
     })
@@ -450,7 +561,49 @@ fn capture_date(path: &Path) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn dng_preview_orientation_preserves_pixels_and_existing_orientation() {
+        let jpeg = vec![
+            0xff, 0xd8, 0xff, 0xe2, 0, 5, 1, 2, 3, 0xff, 0xda, 0, 2, 4, 5, 0xff, 0xd9,
+        ];
+        for orientation in 1..=8 {
+            let tagged = super::preview_orientation(jpeg.clone(), orientation).unwrap();
+            assert_eq!(super::jpeg_orientation(&tagged), Some(orientation));
+            assert!(tagged.ends_with(&jpeg[2..]));
+            assert_eq!(
+                super::preview_orientation(tagged.clone(), 1).unwrap(),
+                tagged
+            );
+        }
+        for broken in [
+            vec![],
+            vec![0xff, 0xd8, 0xff],
+            vec![0xff, 0xd8, 0xff, 0xe1, 0, 1],
+            vec![0xff, 0xd8, 0xff, 0xe1, 0xff, 0xff],
+        ] {
+            assert!(super::preview_orientation(broken, 6).is_err());
+        }
+    }
+
     use super::*;
+    #[test]
+    fn invalid_dng_remains_visible_with_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let dng = dir.path().join("invalid.DNG");
+        let x3f = dir.path().join("photo.X3F");
+        std::fs::write(&dng, b"invalid DNG").unwrap();
+        std::fs::write(&x3f, b"X3F header").unwrap();
+        let dtos = [dng, x3f]
+            .into_iter()
+            .map(basic_metadata)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(dtos[0].edit_error.is_some());
+        assert!(!dtos[0].capabilities.foveon);
+        assert!(dtos[0].capabilities.rendered_only);
+        assert!(dtos[1].edit_error.is_none());
+    }
+
     #[test]
     fn import_and_inspector_share_display_formatting() {
         let pairs = inspector_pairs(&serde_json::json!({

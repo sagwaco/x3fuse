@@ -74,7 +74,8 @@ impl DiskCache {
     /// times: a replacement that keeps all three hits the old entry.
     fn key(path: &Path) -> Option<String> {
         let stamp = SourceStamp::new(&fs::metadata(path).ok()?).ok()?;
-        let bytes = serde_json::to_vec(&(path, stamp)).ok()?;
+        let mut bytes = serde_json::to_vec(&(path, stamp)).ok()?;
+        bytes.extend(crate::source::decoder_identity(path).as_bytes());
         Some(format!("{:x}", Sha256::digest(bytes)))
     }
 
@@ -362,10 +363,11 @@ impl Previews {
         source_path(path)?;
         let meta = std::fs::metadata(path).map_err(|e| e.to_string())?;
         Ok(format!(
-            "{full}:{}:{:?}:{}",
+            "{full}:{}:{:?}:{}:{}",
             meta.len(),
             meta.modified().map_err(|e| e.to_string())?,
-            path.display()
+            path.display(),
+            crate::source::decoder_identity(path)
         ))
     }
     fn cached(&self, key: &str) -> Option<Image> {
@@ -462,7 +464,18 @@ impl Previews {
                         let _raw_slot = self.raw_slot.acquire().await.map_err(|e| e.to_string())?;
                         let source = path.to_owned();
                         tauri::async_runtime::spawn_blocking(move || {
-                            x3f_render::raw_preview(&source).map(|bytes| Some(Arc::new(bytes)))
+                            let bytes =
+                                if crate::source::Kind::of(&source) == crate::source::Kind::Dng {
+                                    let cancel = std::sync::atomic::AtomicBool::new(false);
+                                    let info = crate::source::Info::read(&source, &cancel)?;
+                                    crate::metadata::preview_orientation(
+                                        x3f_dng::preview(&source, &cancel)?,
+                                        info.orientation.unwrap_or(1),
+                                    )?
+                                } else {
+                                    x3f_render::raw_preview(&source)?
+                                };
+                            Ok(Some(Arc::new(bytes)))
                         })
                         .await
                         .unwrap_or_else(|e| Err(e.to_string()))

@@ -41,6 +41,7 @@ export function ConversionSettingsForm({
   settings,
   update,
   renderedOnly = false,
+  hasDng = false,
   hasX3i = false,
   partialX3i = false,
   cameraModels = [],
@@ -48,6 +49,8 @@ export function ConversionSettingsForm({
 }: {
   settings: BatchConversionSettings
   renderedOnly?: boolean
+  /** The files include a DNG, which exports only rendered images. */
+  hasDng?: boolean
   hasX3i?: boolean
   partialX3i?: boolean
   cameraModels?: readonly (string | undefined)[]
@@ -131,7 +134,11 @@ export function ConversionSettingsForm({
               />
             </Row>
           )}
-          {rendered && <p className="text-xs text-tone-500">{t('editor.renderedExportHint')}</p>}
+          {rendered && (
+            <p className="text-xs text-tone-500">
+              {t(hasDng ? 'export.dng_rendered_only' : 'editor.renderedExportHint')}
+            </p>
+          )}
           <Row label={t('settings.conversion_format')}>
             <Select
               aria-label={t('settings.conversion_format')}

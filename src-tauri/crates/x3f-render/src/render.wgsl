@@ -370,7 +370,7 @@ fn finish(@builtin(global_invocation_id) id:vec3<u32>) {
     let pos=id.xy;if !in_bounds(pos) {return;}let i=index(pos);var rgb=source.v[i].rgb;
     if p.v[41].y>0.5 && p.v[1].z<0.5 {
         rgb=native_look(rgb,source.v[i].w);
-    } else if p.v[1].z<0.5 {
+    } else if p.v[1].z<0.5 && p.v[62].z<0.5 {
         // Other cameras. A Naka-Rushton S-curve per channel, fitted to
         // Sigma's in-camera JPEGs (sd Quattro, dp0 Quattro, SD1 Merrill). It
         // puts middle gray at 0.40, adds a toe and rolls highlights off toward

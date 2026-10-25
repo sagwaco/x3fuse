@@ -1,5 +1,5 @@
 /** Data models serialized by the Rust backend and used by the renderer. */
-import type { EditRecord, X3iSource } from './editor'
+import type { EditRecord, SourceCapabilities, SourceKind, X3iSource } from './editor'
 import { defaultDenoiseOptions, type DenoiseOptions } from './denoise'
 import type { Locale } from './i18n/detect'
 
@@ -48,6 +48,9 @@ export interface ExifPair {
   label: string
   value: string
 }
+
+/** The paths that the queue imports: X3F, X3I, and DNG files. */
+export const RAW_PATH = /\.(?:x3[fi]|dng)$/i
 
 /** Output extensions; outputName preserves .X3F for JPEG/TIFF and removes it for DNG. */
 export const OUTPUT_EXTENSION: Record<OutputFormat, string> = {
@@ -168,9 +171,11 @@ export interface X3FFileDTO {
   /** Immutable render override for editor and export-review snapshots. */
   displayPreviewUrl?: string
   id: string
-  /** Absolute path to the source .X3F file. */
+  /** Absolute path to the source X3F, X3I, or DNG file. */
   path: string
   fileName: string
+  sourceKind?: SourceKind
+  capabilities?: SourceCapabilities
   /**
    * True for an optimistic placeholder row shown the instant a file is dropped,
    * before main has finished reading its metadata (size, date, orientation,

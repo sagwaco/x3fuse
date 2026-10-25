@@ -114,8 +114,10 @@ pub async fn queue_add(
     let mut dtos = dtos.map_err(|e| e.to_string())??;
     for dto in &mut dtos {
         if let Some(meta) = meta.remove(&dto.path) {
-            dto.orientation = meta.orientation;
-            dto.aspect_ratio = meta.aspect_ratio;
+            dto.orientation = meta.orientation.or(dto.orientation);
+            if dto.source_kind != crate::source::Kind::Dng {
+                dto.aspect_ratio = meta.aspect_ratio;
+            }
             dto.exif = Some(meta.exif);
         }
     }
@@ -293,7 +295,7 @@ pub async fn dialog_pick_files(
                 .file()
                 .set_parent(&window)
                 .set_title(title)
-                .add_filter("X3F RAW", &["x3f", "X3F", "x3i", "X3I"]);
+                .add_filter("RAW photos", &["x3f", "X3F", "x3i", "X3I", "dng", "DNG"]);
             if let Some(last) = last {
                 dialog = dialog.set_directory(last);
             }
@@ -371,7 +373,7 @@ pub async fn dialog_pick_folder(
     .map_err(|e| e.to_string())?
 }
 
-/// The X3F and X3I files directly inside the folders, sorted by path. Hidden files,
+/// The RAW files directly inside the folders, sorted by path. Hidden files,
 /// such as the "._" files that macOS writes on memory cards, are not photos. A folder
 /// or a photo that cannot be read gives an error, not an incomplete list.
 fn folder_sources(folders: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
@@ -1026,12 +1028,12 @@ mod tests {
         let root = directory.path();
         std::fs::create_dir_all(root.join("sub")).unwrap();
         std::fs::create_dir_all(root.join("folder.X3F")).unwrap();
-        for name in ["b.x3i", "a.X3F", "c.jpg", "._a.X3F", "sub/d.x3f"] {
+        for name in ["b.x3i", "a.X3F", "c.jpg", "._a.X3F", "sub/d.x3f", "d.DNG"] {
             std::fs::write(root.join(name), b"x3f").unwrap();
         }
         assert_eq!(
             folder_sources(&[root.to_path_buf()]).unwrap(),
-            [root.join("a.X3F"), root.join("b.x3i")]
+            [root.join("a.X3F"), root.join("b.x3i"), root.join("d.DNG")]
         );
         // A photo or a folder that cannot be read stops the import with its path.
         let missing = root.join("missing");

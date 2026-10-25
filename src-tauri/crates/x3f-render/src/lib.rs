@@ -33,7 +33,8 @@ pub use stocks::STOCKS_JSON;
 /// Version 11 reduces the default grain blur.
 /// Version 12 adds monochrome warmth and source-color tone mixing.
 /// Version 13 renders a monochrome RAW mix as a monochrome image.
-pub const RENDER_VERSION: u32 = 13;
+/// Version 15 adds neutral DNG rendering without the Sigma tone curve.
+pub const RENDER_VERSION: u32 = 15;
 
 use image::ImageEncoder;
 use serde::{Deserialize, Serialize};
@@ -251,6 +252,7 @@ fn cancelled(cancel: &AtomicBool) -> Result<(), RenderError> {
 pub struct PreparedImage {
     image: SceneLinearImage,
     camera_profiles: CameraProfiles,
+    dng: Option<bool>,
     gpu: Mutex<Option<GpuSource>>,
     as_shot: OnceLock<(f32, f32)>,
 }
@@ -260,6 +262,7 @@ impl PreparedImage {
         Ok(Self {
             image,
             camera_profiles: CameraProfiles::default(),
+            dng: None,
             gpu: Mutex::new(None),
             as_shot: OnceLock::new(),
         })
@@ -276,6 +279,11 @@ impl PreparedImage {
     /// Attaches the source file's calibration for camera-profile rendering.
     pub fn with_camera_profiles(mut self, camera_profiles: CameraProfiles) -> Self {
         self.camera_profiles = camera_profiles;
+        self
+    }
+    /// Use scene-linear DNG tone and exposure, without Sigma calibration.
+    pub fn with_dng_source(mut self, monochrome: bool) -> Self {
+        self.dng = Some(monochrome);
         self
     }
 }
@@ -581,6 +589,7 @@ struct Look<'a> {
     metered_gray: f64,
     /// spektrafilm's scanner white and black correction on film looks.
     scanner: bool,
+    sigma_tone: bool,
 }
 impl Look<'_> {
     fn plain() -> Self {
@@ -589,6 +598,7 @@ impl Look<'_> {
             native: None,
             metered_gray: camera::fallback_metered_gray(),
             scanner: true,
+            sigma_tone: true,
         }
     }
     /// spektrafilm's own defaults, for parity checks against its reference.
@@ -1046,6 +1056,11 @@ impl Renderer {
     ) -> Result<RenderedImage, RenderError> {
         cancelled(cancel)?;
         recipe.validate().map_err(RenderError::Invalid)?;
+        if let Some(monochrome) = image.dng {
+            recipe
+                .validate_dng(monochrome)
+                .map_err(RenderError::Invalid)?;
+        }
         let recipe = camera::effective_recipe(recipe);
         // Sigma's native Color Mode needs the sensor calibration measured
         // while preparing the scene.
@@ -1057,6 +1072,15 @@ impl Renderer {
                 .camera_profiles
                 .metered_gray(sensor, image.image.white_balance.camera_to_rgb),
             scanner: true,
+            sigma_tone: image.dng.is_none(),
+        };
+        let look = if image.dng.is_some() {
+            Look {
+                metered_gray: 0.184,
+                ..look
+            }
+        } else {
+            look
         };
         let mut gpu = self.source(image, cancel)?;
         self.render_source(
@@ -1631,6 +1655,7 @@ impl Renderer {
         look: Look<'_>,
     ) -> Result<Parameters, RenderError> {
         let mut p: Parameters = [[0.; 4]; PARAMETER_SLOTS];
+        p[62][2] = f32::from(!look.sigma_tone);
         // A B&W film already makes a neutral image; the sensor-layer mix is
         // only for colour film or no film. Both neutralize the output.
         let silver = r.film.is_some() && pair.is_some_and(|pair| pair.monochrome);

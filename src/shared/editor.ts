@@ -181,6 +181,60 @@ export function boundedWhiteBalanceGains(gains: Rgb): Rgb | undefined {
 export const AEROCHROME_MATRIX: number[] = [
   1.6874, 0.7225, -1.4099, -0.7473, 2.965, -1.2177, -1.5352, 1.93, 0.6052
 ]
+/** The RAW format of a photo. x3f-core opens X3F and X3I files; LibRaw opens DNG files. */
+export type SourceKind = 'x3f' | 'x3i' | 'dng'
+/** The settings that a photo supports. A DNG has no Foveon settings and exports only
+    rendered images. A monochrome DNG also has no white balance. */
+export interface SourceCapabilities {
+  foveon: boolean
+  whiteBalance: boolean
+  renderedOnly: boolean
+}
+/** A photo, with the source fields that the backend sends. */
+export interface Source {
+  path: string
+  sourceKind?: SourceKind
+  capabilities?: SourceCapabilities
+}
+export const FOVEON_CAPABILITIES: SourceCapabilities = {
+  foveon: true,
+  whiteBalance: true,
+  renderedOnly: false
+}
+/** The source kind. Without it, a `.dng` path is a DNG and other paths are Foveon files. */
+export const sourceKindOf = (source: Source): SourceKind =>
+  source.sourceKind ??
+  (/\.dng$/i.test(source.path) ? 'dng' : /\.x3i$/i.test(source.path) ? 'x3i' : 'x3f')
+/** The capabilities. Without them, a DNG is a color DNG and other files are Foveon files. */
+export function capabilitiesOf(source: Source): SourceCapabilities {
+  if (source.capabilities) return source.capabilities
+  return sourceKindOf(source) === 'dng'
+    ? { foveon: false, whiteBalance: true, renderedOnly: true }
+    : FOVEON_CAPABILITIES
+}
+/** The settings that a source does not support, set to their neutral values. Foveon files
+    keep the recipe. A black-and-white film keeps its taking filter; without that film,
+    the monochrome filter mixes Foveon layers. */
+export function supportedRecipe(recipe: EditRecipe, capabilities: SourceCapabilities): EditRecipe {
+  if (capabilities.foveon && capabilities.whiteBalance) return recipe
+  return {
+    ...recipe,
+    ...(!capabilities.foveon && {
+      cameraProfile: null,
+      rawColor: null,
+      fillLight: 0,
+      denoise: 0,
+      denoiseOptions: defaultDenoiseOptions(),
+      monochrome: monochromeFilm(recipe.film) ? recipe.monochrome : null
+    }),
+    ...(!capabilities.whiteBalance && { temperature: null, tint: 0, whiteBalanceGains: null })
+  }
+}
+/** The default recipe of a source. A DNG starts with the neutral digital look, without film. */
+export const sourceDefaultRecipe = (capabilities: SourceCapabilities): EditRecipe =>
+  capabilities.foveon
+    ? defaultRecipe()
+    : supportedRecipe({ ...defaultRecipe(), film: null }, capabilities)
 /** The frames of an X3I (Super Fine Detail) photo: all merged, or the middle exposure only. */
 export type X3iSource = 'merge' | 'middle_exposure'
 /** True when an X3I uses its SFD RAW, the merge of all its frames. */
@@ -317,6 +371,8 @@ export interface EditRecord {
 export interface EditorSession extends EditRecord {
   sessionId: string
   path: string
+  sourceKind?: SourceKind
+  capabilities?: SourceCapabilities
   /** Camera framing inside the EXIF-oriented active image. */
   asShotCrop?: EditRecipe['crop']
   cameraProfiles?: Array<{ id: string; name: string }>
@@ -391,9 +447,21 @@ export function pixelRecipe(recipe: EditRecipe): EditRecipe {
   }
 }
 
-/** Geometry and the per-photo stochastic seed never travel with adjustments. */
-export function pasteRecipe(source: EditRecipe, target: EditRecipe): EditRecipe {
-  return {
+/** Settings that only Foveon files have. */
+const FOVEON_ONLY = ['fillLight', 'denoise', 'denoiseOptions'] as const
+
+/**
+ * Geometry and the per-photo stochastic seed never travel with adjustments. White balance
+ * gains and raw color belong to one sensor, so across sensors the target keeps its white
+ * balance. A DNG does not change the Foveon settings of an X3F.
+ */
+export function pasteRecipe(
+  source: EditRecipe,
+  target: EditRecipe,
+  from: SourceCapabilities = FOVEON_CAPABILITIES,
+  to: SourceCapabilities = FOVEON_CAPABILITIES
+): EditRecipe {
+  const recipe: EditRecipe = {
     ...structuredClone(source),
     crop: target.crop,
     rotation: target.rotation,
@@ -403,6 +471,24 @@ export function pasteRecipe(source: EditRecipe, target: EditRecipe): EditRecipe 
     seed: target.seed,
     x3iSource: target.x3iSource
   }
+  if (
+    !from.whiteBalance ||
+    (from.foveon !== to.foveon && (source.rawColor || source.whiteBalanceGains))
+  ) {
+    recipe.temperature = target.temperature
+    recipe.tint = target.tint
+    recipe.whiteBalanceGains = structuredClone(target.whiteBalanceGains ?? null)
+  }
+  if (!from.foveon && to.foveon) {
+    for (const key of FOVEON_ONLY) Object.assign(recipe, { [key]: structuredClone(target[key]) })
+    // A film look has no camera profile or raw color. Without film, the target keeps its look.
+    if (!source.film) {
+      recipe.cameraProfile = target.cameraProfile ?? null
+      recipe.rawColor = structuredClone(target.rawColor ?? null)
+      recipe.monochrome = structuredClone(target.monochrome)
+    }
+  }
+  return supportedRecipe(recipe, to)
 }
 
 export interface PreviewRegion {

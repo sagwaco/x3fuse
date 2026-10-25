@@ -392,6 +392,8 @@ pub struct BatchSummary {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FileDto {
+    pub source_kind: crate::source::Kind,
+    pub capabilities: crate::source::Capabilities,
     pub id: String,
     pub path: PathBuf,
     pub file_name: String,
@@ -423,14 +425,16 @@ pub struct ExifPair {
 
 pub fn validate_source_path(path: &Path) -> Result<(), String> {
     if !path.is_absolute() || !path.extension().is_some_and(is_source_extension) {
-        return Err("Expected an absolute X3F or X3I path".into());
+        return Err("Expected an absolute X3F, X3I, or DNG path".into());
     }
     Ok(())
 }
 
-/// X3F photos and Quattro SFD X3I containers.
+/// Supported source filename extensions. DNG contents are checked by LibRaw.
 pub fn is_source_extension(extension: &std::ffi::OsStr) -> bool {
-    extension.eq_ignore_ascii_case("x3f") || extension.eq_ignore_ascii_case("x3i")
+    extension.eq_ignore_ascii_case("x3f")
+        || extension.eq_ignore_ascii_case("x3i")
+        || extension.eq_ignore_ascii_case("dng")
 }
 
 pub fn source_path(path: &Path) -> Result<(), String> {
