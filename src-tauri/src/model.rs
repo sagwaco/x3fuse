@@ -61,6 +61,8 @@ pub struct BatchSettings {
     pub rendering: Rendering,
     #[serde(default = "default_jpeg_quality")]
     pub jpeg_quality: u8,
+    #[serde(default)]
+    pub resize: Option<x3f_render::ExportResize>,
     pub compress: bool,
     pub denoise_intensity: u8,
     #[serde(default)]
@@ -86,6 +88,7 @@ impl Default for BatchSettings {
             output_format: OutputFormat::Dng,
             rendering: Rendering::Original,
             jpeg_quality: default_jpeg_quality(),
+            resize: None,
             compress: false,
             denoise_intensity: 10,
             denoise_options: x3f_core::DenoiseOptions::default(),
@@ -107,6 +110,9 @@ impl BatchSettings {
 
     pub fn validate(&self) -> Result<(), String> {
         self.denoise_options.validate()?;
+        if let Some(resize) = self.resize {
+            resize.validate()?;
+        }
         if self.denoise_intensity > 10
             || self.concurrency > 8
             || !(1..=100).contains(&self.jpeg_quality)
@@ -474,6 +480,36 @@ pub fn concurrency(setting: u8) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn export_resize_migrates_validates_and_round_trips() {
+        let mut wire = serde_json::to_value(BatchSettings::default()).unwrap();
+        wire.as_object_mut().unwrap().remove("resize");
+        let original: BatchSettings = serde_json::from_value(wire.clone()).unwrap();
+        assert!(original.resize.is_none());
+        for method in ["nearest", "bilinear", "area", "bicubic", "lanczos3"] {
+            wire["resize"] = serde_json::json!({"maxWidth":1920,"maxHeight":1080,"method":method});
+            let settings: BatchSettings = serde_json::from_value(wire.clone()).unwrap();
+            // Original exports can retain the preference without applying it.
+            settings.validate().unwrap();
+            assert_eq!(
+                serde_json::to_value(settings).unwrap()["resize"],
+                wire["resize"]
+            );
+        }
+        for dimensions in [(0, 100), (100, 0), (65536, 100), (100, 65536)] {
+            wire["resize"]["maxWidth"] = dimensions.0.into();
+            wire["resize"]["maxHeight"] = dimensions.1.into();
+            assert!(serde_json::from_value::<BatchSettings>(wire.clone())
+                .unwrap()
+                .validate()
+                .is_err());
+        }
+        wire["resize"]["maxWidth"] = 1.5.into();
+        assert!(serde_json::from_value::<BatchSettings>(wire.clone()).is_err());
+        wire["resize"] = serde_json::json!({"maxWidth":100,"maxHeight":100,"method":"unknown"});
+        assert!(serde_json::from_value::<BatchSettings>(wire).is_err());
+    }
 
     #[test]
     fn per_file_settings_are_optional_and_use_camel_case() {

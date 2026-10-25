@@ -1794,7 +1794,14 @@ impl Editor {
                 cancel,
             )
             .map_err(|e| e.to_string())?;
+        drop(worker);
         check_cancel(cancel)?;
+        let result = match settings.resize {
+            Some(resize) => result
+                .resize_for_export(resize, cancel)
+                .map_err(|e| e.to_string())?,
+            None => result,
+        };
         match settings.output_format {
             OutputFormat::RenderedJpeg => {
                 use std::io::Write;

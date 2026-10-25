@@ -68,10 +68,32 @@ export type ThemeName = 'dark' | 'light' | 'gray'
 /** 'auto' follows the system language. */
 export type LanguageSetting = 'auto' | Locale
 
+export const RESIZE_METHODS = ['nearest', 'bilinear', 'area', 'bicubic', 'lanczos3'] as const
+export type ResizeMethod = (typeof RESIZE_METHODS)[number]
+
+/** Fits a rendered export inside a pixel box. The export keeps its aspect ratio and does not get larger. */
+export interface ExportResize {
+  maxWidth: number
+  maxHeight: number
+  method: ResizeMethod
+}
+
+/** The resize that "Resize to fit" turns on. */
+export const DEFAULT_EXPORT_RESIZE: ExportResize = {
+  maxWidth: 2048,
+  maxHeight: 2048,
+  method: 'lanczos3'
+}
+
+/** The bounds of a resize dimension, in pixels. */
+export const MAX_RESIZE_DIMENSION = 65535
+
 /** Application preferences persisted and validated by the Rust backend. */
 export interface ConversionSettings {
   rendering: 'original' | 'rendered'
   jpegQuality: number
+  /** Resize for rendered JPEG and TIFF exports; null keeps the full size. Original exports ignore it. */
+  resize: ExportResize | null
   editorPanelWidth: number
   /** Whether the editor's adjustments sidebar is open. */
   editorPanelOpen: boolean
@@ -126,6 +148,7 @@ export interface ConversionSettings {
 export const DEFAULT_SETTINGS: ConversionSettings = {
   rendering: 'original',
   jpegQuality: 92,
+  resize: null,
   editorPanelWidth: 320,
   editorPanelOpen: true,
   outputFormat: 'dng',
@@ -245,6 +268,7 @@ export type BatchConversionSettings = Pick<
   | 'outputFormat'
   | 'rendering'
   | 'jpegQuality'
+  | 'resize'
   | 'compress'
   | 'denoiseIntensity'
   | 'denoiseOptions'
@@ -261,6 +285,7 @@ export function batchSettings(settings: BatchConversionSettings): BatchConversio
   const {
     rendering,
     jpegQuality,
+    resize,
     outputFormat,
     compress,
     denoiseIntensity,
@@ -276,6 +301,7 @@ export function batchSettings(settings: BatchConversionSettings): BatchConversio
   return {
     rendering: rendering ?? 'original',
     jpegQuality: jpegQuality ?? 92,
+    resize: resize ? { ...resize } : null,
     outputFormat,
     compress,
     denoiseIntensity,

@@ -1,6 +1,7 @@
 //! GPU-only scene-linear RAW editing. The physical film implementation is GPL-3.0-only.
 mod camera;
 mod color;
+mod export;
 mod fill;
 mod film;
 mod geometry;
@@ -12,6 +13,7 @@ pub use color::{
     as_shot_channel_gains, as_shot_white_balance, pick_channel_gains, pick_white_balance,
     recipe_white_balance, WhiteBalance,
 };
+pub use export::{ExportResize, ResamplingMethod};
 pub use preview::raw_preview;
 pub use recipe::{
     ColorWheels, Crop, Curves, EditRecipe, EffectsSettings, FilmSettings, GrainParams,

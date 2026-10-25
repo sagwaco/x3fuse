@@ -1,5 +1,9 @@
+import { useState } from 'react'
 import {
   COLOR_MODES,
+  DEFAULT_EXPORT_RESIZE,
+  MAX_RESIZE_DIMENSION,
+  RESIZE_METHODS,
   shouldShowCineonOption,
   shouldShowColorModeOption,
   shouldShowColorProfileOption,
@@ -8,9 +12,11 @@ import {
   type BatchConversionSettings,
   type ColorMode,
   type ColorProfile,
-  type OutputFormat
+  type OutputFormat,
+  type ResizeMethod
 } from '@shared/types'
 import type { X3iSource } from '@shared/editor'
+import { blurOnEnter } from '../lib/commitFocus'
 import { ipc } from '../lib/ipc'
 import { basename } from '../lib/path'
 import { t } from '../lib/strings'
@@ -33,6 +39,39 @@ const COLOR_OPTIONS: { value: ColorProfile; label: string }[] = [
   { value: 'proPhotoRGB', label: 'ProPhotoRGB' },
   { value: 'none', label: 'None' }
 ]
+
+/** A pixel dimension. Only whole numbers from 1 to MAX_RESIZE_DIMENSION change the setting.
+    Other text shows until the field loses focus. */
+function PixelInput({
+  label,
+  value,
+  change
+}: {
+  label: string
+  value: number
+  change: (value: number) => void
+}): React.JSX.Element {
+  const [text, setText] = useState<string>()
+  return (
+    <input
+      aria-label={label}
+      type="number"
+      inputMode="numeric"
+      min={1}
+      max={MAX_RESIZE_DIMENSION}
+      step={1}
+      value={text ?? String(value)}
+      className="h-7 w-20 rounded-md border border-ink/15 bg-ink/[0.03] px-2 text-right font-sans text-[12px] tabular-nums text-tone-100 [appearance:textfield] focus:border-ink/40 focus:outline-none disabled:opacity-40 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+      onKeyDown={blurOnEnter}
+      onBlur={() => setText(undefined)}
+      onChange={(event) => {
+        setText(event.currentTarget.value)
+        const next = event.currentTarget.valueAsNumber
+        if (Number.isInteger(next) && next >= 1 && next <= MAX_RESIZE_DIMENSION) change(next)
+      }}
+    />
+  )
+}
 
 /**
  * Edits only the current export draft; persistence happens on commit.
@@ -233,6 +272,48 @@ export function ConversionSettingsForm({
                 onValueChange={(jpegQuality) => update({ jpegQuality })}
               />
             </div>
+          )}
+
+          {(rendered || format === 'jpeg') && (
+            <>
+              <ToggleRow
+                label={t('export.resize')}
+                help={t('export.resize.help')}
+                checked={settings.resize !== null}
+                onChange={(on) => update({ resize: on ? { ...DEFAULT_EXPORT_RESIZE } : null })}
+              />
+              {settings.resize && (
+                <>
+                  <Row label={t('export.resize.max_width')}>
+                    <PixelInput
+                      label={t('export.resize.max_width')}
+                      value={settings.resize.maxWidth}
+                      change={(maxWidth) => update({ resize: { ...settings.resize!, maxWidth } })}
+                    />
+                  </Row>
+                  <Row label={t('export.resize.max_height')}>
+                    <PixelInput
+                      label={t('export.resize.max_height')}
+                      value={settings.resize.maxHeight}
+                      change={(maxHeight) => update({ resize: { ...settings.resize!, maxHeight } })}
+                    />
+                  </Row>
+                  <Row label={t('export.resize.method')}>
+                    <Select<ResizeMethod>
+                      aria-label={t('export.resize.method')}
+                      value={settings.resize.method}
+                      options={RESIZE_METHODS.map((value) => ({
+                        value,
+                        label: t(`export.resize.method.${value}`)
+                      }))}
+                      onValueChange={(method) =>
+                        update({ resize: { ...settings.resize!, method } })
+                      }
+                    />
+                  </Row>
+                </>
+              )}
+            </>
           )}
         </div>
       </Section>

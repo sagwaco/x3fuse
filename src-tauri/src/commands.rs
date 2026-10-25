@@ -1009,6 +1009,11 @@ mod tests {
         let captured = BatchSettings {
             output_format: OutputFormat::Tiff,
             concurrency: 8,
+            resize: Some(x3f_render::ExportResize {
+                max_width: 1920,
+                max_height: 1080,
+                method: x3f_render::ResamplingMethod::Area,
+            }),
             ..Default::default()
         };
         let patch = batch_settings_patch(&captured).unwrap();
@@ -1018,8 +1023,16 @@ mod tests {
             let current = preferences.set(patch.clone()).unwrap();
             assert_eq!(current.batch.concurrency, concurrency);
             assert_eq!(current.batch.output_format, OutputFormat::Tiff);
+            assert_eq!(current.batch.resize, captured.resize);
             assert!(current.has_previous_conversion);
         }
+        assert_eq!(
+            crate::storage::Preferences::load(directory.path().join("settings.json"))
+                .get()
+                .batch
+                .resize,
+            captured.resize
+        );
     }
 
     #[test]

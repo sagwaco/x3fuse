@@ -1,7 +1,12 @@
 // @vitest-environment jsdom
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { batchSettings, DEFAULT_SETTINGS, type X3FFileDTO } from '@shared/types'
+import {
+  batchSettings,
+  DEFAULT_SETTINGS,
+  type BatchConversionSettings,
+  type X3FFileDTO
+} from '@shared/types'
 import * as strings from '../src/renderer/src/lib/strings'
 
 const invoke = vi.fn(async (_channel?: unknown, _payload?: unknown): Promise<unknown> => undefined)
@@ -128,6 +133,41 @@ describe('batch workflow', () => {
       settings: exportSettings(store.getState().draft!, 'b')
     })
     expect(invoke.mock.calls.filter(([channel]) => channel === 'editor:preview')).toHaveLength(1)
+  })
+
+  it('snapshots the resize for each file and keeps it as the previous settings', async () => {
+    const resize = { maxWidth: 1000, maxHeight: 800, method: 'bicubic' as const }
+    useSettingsStore.setState({
+      settings: { ...DEFAULT_SETTINGS, resize, hasPreviousConversion: true }
+    })
+    store.getState().openExport()
+    expect(store.getState().draft!.settings.resize).toEqual(resize)
+    expect(store.getState().draft!.settings.resize).not.toBe(resize)
+    store.getState().setSelection(new Set(['a']), 'a')
+    const narrow = { ...resize, maxWidth: 640 }
+    store.getState().updateDraft({ resize: narrow })
+    expect(exportSettings(store.getState().draft!, 'a').resize).toEqual(narrow)
+    expect(exportSettings(store.getState().draft!, 'b').resize).toEqual(resize)
+    const id = await start()
+    const request = invoke.mock.calls.find(([channel]) => channel === 'convert:start')![1] as {
+      files: { id: string; settings?: BatchConversionSettings }[]
+      settings: BatchConversionSettings
+    }
+    expect(request.settings.resize).toEqual(narrow)
+    expect(request.files.find((file) => file.id === 'b')!.settings!.resize).toEqual(resize)
+    expect(useSettingsStore.getState().settings.resize).toEqual(narrow)
+    store.getState().onBatchComplete({ batchId: id, cancelled: false } as never)
+
+    invoke.mockClear()
+    await store.getState().convertPrevious(new Set(['c']))
+    expect(invoke).toHaveBeenCalledWith(
+      'convert:start',
+      expect.objectContaining({ settings: expect.objectContaining({ resize: narrow }) })
+    )
+    // A payload from before resize existed exports at full size.
+    const old: Partial<BatchConversionSettings> = { ...settings }
+    delete old.resize
+    expect(batchSettings(old as BatchConversionSettings).resize).toBeNull()
   })
 
   it('keeps concurrency and saved defaults stable when the focused image changes', async () => {

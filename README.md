@@ -314,6 +314,17 @@ cargo test --manifest-path src-tauri/Cargo.toml --test dng_acceptance -- --ignor
 This checks import capabilities, editing, JPEG and TIFF export, sidecar reload,
 source protection, and rejection of incompatible recipes and original exports.
 
+Resize acceptance also uses a temporary source copy. Run it with an X3F or DNG:
+
+```sh
+X3FUSE_TEST_RESIZE=/absolute/path/photo.dng \
+cargo test --manifest-path src-tauri/Cargo.toml --test export_resize_acceptance -- --ignored --nocapture
+```
+
+This checks JPEG and TIFF dimensions after crop and rotation, no enlargement,
+16-bit TIFF output, orientation, and color profiles. It needs a supported GPU
+and prepared ExifTool resources.
+
 Build a macOS app bundle with `npm run dist`, or a native executable with
 `npm run pack`. Windows/Linux currently use the executable build. Package it with:
 
@@ -460,6 +471,15 @@ TIFF bake saved edits and carry sRGB, Adobe RGB, or ProPhoto RGB profiles with
 normalized orientation. TIFF batches with edited photos default to rendered
 mode; unedited photos in that batch use their default recipe. Original DNG
 and Embedded JPG remain separate options for X3F and X3I inputs and do not bake edits.
+
+For developed JPEG and TIFF exports, enable **Resize to fit** and set the maximum
+width and height in pixels. The image keeps its edited aspect ratio and fits
+inside both limits after crop and rotation. Smaller images are not enlarged.
+Choose nearest neighbor, bilinear, area average, bicubic, or Lanczos resampling.
+Lanczos is the default. Resampling keeps 16-bit precision and uses linear light
+in the selected output color profile. Resize settings are remembered for later exports.
+Bilinear and bicubic widen their filters for reductions to limit aliasing.
+Lanczos and bicubic can add edge ringing; choose area or bilinear for smoother edges.
 
 NLM and BM3D controls are available in Detail and original-export settings.
 Advanced controls separate luminance/chroma reduction, strength, and NLM window
