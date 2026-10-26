@@ -63,3 +63,33 @@ fn cancellation_stops_prepare() {
         assert_eq!(x3f_dng::prepare(&path, &cancel).unwrap_err(), "Cancelled");
     }
 }
+
+#[test]
+#[ignore = "needs X3FUSE_TEST_DNG_LEICA_M10_R pointing to L1003289.DNG"]
+fn leica_m10_r_clipped_walls_render_white() {
+    let path = PathBuf::from(std::env::var_os("X3FUSE_TEST_DNG_LEICA_M10_R").expect(
+        "Set X3FUSE_TEST_DNG_LEICA_M10_R to the Leica M10-R L1003289.DNG regression sample",
+    ));
+    let cancel = AtomicBool::new(false);
+    let scene = x3f_dng::prepare(&path, &cancel).unwrap();
+    assert_eq!((scene.width, scene.height), (7872, 5208));
+    let preview = image::load_from_memory(&x3f_dng::preview(&path, &cancel).unwrap())
+        .unwrap()
+        .into_rgb8();
+    for (x, y) in [(2000, 1200), (2500, 1200), (3000, 1300)] {
+        let i = ((y * scene.width + x) * 3) as usize;
+        let rgb = &scene.data[i..i + 3];
+        assert!(rgb.iter().all(|v| *v > 1.), "wall ({x}, {y}): {rgb:?}");
+        let low = rgb.iter().copied().fold(f32::INFINITY, f32::min);
+        let high = rgb.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        assert!(high / low < 1.25, "wall ({x}, {y}): {rgb:?}");
+        let pixel = preview.get_pixel(
+            x * preview.width() / scene.width,
+            y * preview.height() / scene.height,
+        );
+        assert!(
+            pixel.0.iter().all(|v| *v >= 250),
+            "preview wall ({x}, {y}): {pixel:?}"
+        );
+    }
+}

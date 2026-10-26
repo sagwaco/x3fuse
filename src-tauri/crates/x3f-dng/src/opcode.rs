@@ -159,7 +159,7 @@ fn warp(p: &mut Reader<'_>) -> Result<Warp, String> {
 
 impl Opcode {
     /// Apply to an interleaved image of `samples` planes and its per-pixel
-    /// clip mask. `step` is the size of one image pixel in opcode pixels.
+    /// highlight mask. `step` is the size of one image pixel in opcode pixels.
     pub(crate) fn apply(
         &self,
         data: &mut Vec<f32>,

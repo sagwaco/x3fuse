@@ -456,7 +456,123 @@ fn clipped_highlights_stay_neutral() {
         (px[0] - px[1]).abs() < 3e-3 && (px[1] - px[2]).abs() < 3e-3,
         "{px:?}"
     );
-    assert!(px[1] > 1.2, "{px:?}");
+    // Blending keeps the mean balanced camera level above display white.
+    assert!((px[1] - (1.22 + 1. + 1.22) / 3.).abs() < 3e-3, "{px:?}");
+}
+
+#[test]
+fn warm_clipped_highlights_render_white_in_full_and_half_size() {
+    let cancel = AtomicBool::new(false);
+    let neutral = [0.26975764, 1., 0.7032967];
+    let level = |c: usize| {
+        let balanced = [2.04, 1.09, 0.87];
+        BLACK + (f64::from(WHITE - BLACK) * balanced[c] * neutral[c]).round() as u16
+    };
+    for mut fixture in [bayer(), linear(None)] {
+        fixture.extra.retain(|(tag, _)| *tag != 50730);
+        fixture
+            .extra
+            .push((50728, Value::Rational(neutral.to_vec())));
+        // The Leica M10-R daylight matrix includes negative channel terms.
+        fixture.extra.push((
+            50721,
+            Value::SRational(vec![
+                0.48779297,
+                -0.12866211,
+                -0.04858398,
+                -0.58398438,
+                1.37011719,
+                0.22070313,
+                -0.18041992,
+                0.33691406,
+                0.52514648,
+            ]),
+        ));
+        for (i, v) in fixture.pixels.iter_mut().enumerate() {
+            let c = if fixture.samples == 3 {
+                i % 3
+            } else {
+                [[0, 1], [1, 2]][i / fixture.width as usize % 2][i % fixture.width as usize % 2]
+            };
+            *v = level(c);
+        }
+        let file = fixture.write();
+        for half in [false, true] {
+            let (image, cal, _) = decode(&file.0, &cancel, half).unwrap();
+            let scene = to_scene(image, &cal).unwrap();
+            for px in scene.as_chunks::<3>().0 {
+                assert!(px.iter().all(|v| *v > 1.), "half={half}: {px:?}");
+                let low = px.iter().copied().fold(f32::INFINITY, f32::min);
+                let high = px.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+                assert!(high / low < 1.25, "half={half}: {px:?}");
+            }
+        }
+        let jpeg = image::load_from_memory(&preview(&file.0, &cancel).unwrap())
+            .unwrap()
+            .into_rgb8();
+        assert!(jpeg.as_raw().iter().all(|v| *v >= 250));
+    }
+}
+
+#[test]
+fn highlight_blend_keeps_reliable_color_and_scene_headroom() {
+    // Unclipped color and floating-point HDR have no highlight weight.
+    let pixels = [
+        [1.5, 0.3, 0.25],
+        [6., 3., -0.1],
+        [3., 1., 2.],
+        [2.; 3],
+        [0.5; 3],
+    ];
+    let mut image = Balanced {
+        data: pixels.into_iter().flatten().collect(),
+        width: pixels.len(),
+        height: 1,
+        highlights: vec![0, 0, 255, 255, 255],
+        step: 1,
+    };
+    blend_highlights(&mut image);
+    let result = image.data.as_chunks::<3>().0;
+    assert_eq!(&result[..2], &pixels[..2]);
+    assert_eq!(result[2], [2.; 3]);
+    assert_eq!(&result[3..], &pixels[3..]);
+}
+
+#[test]
+fn highlight_blend_has_no_step_at_sensor_clipping() {
+    let mut image = Balanced {
+        data: Vec::new(),
+        width: 201,
+        height: 1,
+        highlights: Vec::new(),
+        step: 1,
+    };
+    // The sky has a blue balanced channel above one before green clips.
+    for i in 0..image.width {
+        let level = 0.85 + i as f32 * 0.001;
+        image
+            .data
+            .extend([0.8 * level, level.min(1.), 1.12 * level]);
+        image.highlights.push(highlight_weight(level));
+    }
+    blend_highlights(&mut image);
+    for pair in image.data.as_chunks::<3>().0.windows(2) {
+        for c in 0..3 {
+            assert!((pair[1][c] - pair[0][c]).abs() < 0.004, "{pair:?}");
+        }
+    }
+    assert_eq!(highlight_weight(0.85), 0);
+    assert_eq!(highlight_weight(1.), 255);
+    assert_eq!(dilate(&[128, 64, 0], 3, 1, 1), [128, 128, 64]);
+}
+
+#[test]
+fn integer_samples_stop_at_white_level() {
+    let mut fixture = linear(None);
+    fixture.samples = 1;
+    fixture.pixels = vec![WHITE + 500; (fixture.width * fixture.height) as usize];
+    let scene = prepare(&fixture.write().0, &AtomicBool::new(false)).unwrap();
+    assert_gray(&scene, 1.);
 }
 
 #[test]

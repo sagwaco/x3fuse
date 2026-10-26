@@ -37,7 +37,7 @@ use mozjpeg_sys as _;
 
 /// The bundled decoder and the adapter revision. Change the revision when a
 /// change can alter decoded pixels or metadata.
-pub const DECODER_VERSION: &str = "LibRaw 0.22.2, x3f-dng 1";
+pub const DECODER_VERSION: &str = "LibRaw 0.22.2, x3f-dng 2";
 /// The largest active area, in pixels. A color image of this size needs
 /// about 23 bytes per pixel while it is prepared.
 pub const MAX_PIXELS: u64 = 160_000_000;
@@ -492,8 +492,8 @@ struct Balanced {
     data: Vec<f32>,
     width: usize,
     height: usize,
-    /// Per pixel, a bit for each channel with a clipped camera sample.
-    clipped: Vec<u8>,
+    /// Per pixel, the highlight blend weight from 0 to 255, before gain maps.
+    highlights: Vec<u8>,
     /// Image pixel size in opcode pixels.
     step: usize,
 }
@@ -547,7 +547,7 @@ fn decode(
 
     // Linear, black-free samples in [0, 1] of the white level.
     let mut data = vec![0f32; width * height * planes];
-    let mut clipped = vec![0u8; width * height];
+    let mut highlights = vec![0u8; width * height];
     for row in 0..height {
         if row % 256 == 0 {
             check(cancel)?;
@@ -562,15 +562,15 @@ fn decode(
                 }
                 let v = (samples.get(row, col, s) - b) / (w - b);
                 let i = row * width + col;
-                data[i * planes + s] = v;
-                if integer && v >= SATURATION {
-                    clipped[i] |= 1 << (if c == 3 { 1 } else { c });
+                data[i * planes + s] = if integer { v.min(1.) } else { v };
+                if integer {
+                    highlights[i] = highlights[i].max(highlight_weight(v));
                 }
             }
         }
     }
     for op in &lists[1] {
-        op.apply(&mut data, &mut clipped, width, height, planes, 1);
+        op.apply(&mut data, &mut highlights, width, height, planes, 1);
     }
     let n = cal.neutral.map(|v| v as f32);
     let mut out = match opened.layout {
@@ -578,7 +578,7 @@ fn decode(
             data,
             width,
             height,
-            clipped,
+            highlights,
             step: 1,
         },
         Layout::Linear => {
@@ -591,7 +591,7 @@ fn decode(
                 data,
                 width,
                 height,
-                clipped,
+                highlights,
                 step: 1,
             }
         }
@@ -610,7 +610,7 @@ fn decode(
                 validate(&raw, info, Layout::Cfa)?;
             }
             demosaic(
-                &opened, &raw, data, clipped, width, height, half_size, cancel,
+                &opened, &raw, data, highlights, width, height, half_size, cancel,
             )?
         }
     };
@@ -619,7 +619,7 @@ fn decode(
     for op in &lists[2] {
         op.apply(
             &mut out.data,
-            &mut out.clipped,
+            &mut out.highlights,
             out.width,
             out.height,
             planes,
@@ -636,7 +636,7 @@ fn demosaic(
     opened: &Opened,
     raw: &ffi::Raw,
     data: Vec<f32>,
-    clipped: Vec<u8>,
+    highlights: Vec<u8>,
     width: usize,
     height: usize,
     half_size: bool,
@@ -680,10 +680,10 @@ fn demosaic(
         .flat_map(|p| [p[0], p[1], p[2]])
         .map(|v| (f32::from(v) - DEMOSAIC_OFFSET) / scale)
         .collect();
-    // A channel is clipped where a nearby site of its color is clipped.
+    // Use the strongest weight among the nearby CFA sites.
     let radius = if half_size { 1 } else { 2 };
-    let near = dilate(&clipped, width, height, radius);
-    let clipped = (0..h)
+    let near = dilate(&highlights, width, height, radius);
+    let highlights = (0..h)
         .flat_map(|y| (0..w).map(move |x| (y, x)))
         .map(|(y, x)| near[(y * step).min(height - 1) * width + (x * step).min(width - 1)])
         .collect();
@@ -691,7 +691,7 @@ fn demosaic(
         data,
         width: w,
         height: h,
-        clipped,
+        highlights,
         step,
     })
 }
@@ -718,7 +718,7 @@ fn stretch(image: Balanced, aspect: f32) -> Balanced {
         })
         .collect();
     let mut data = vec![0f32; nw * nh * planes];
-    let mut clipped = vec![0u8; nw * nh];
+    let mut highlights = vec![0u8; nw * nh];
     for y in 0..nh {
         for x in 0..nw {
             let (a, b, t) = source[if horizontal { x } else { y }];
@@ -731,56 +731,76 @@ fn stretch(image: Balanced, aspect: f32) -> Balanced {
                 );
                 data[o * planes + p] = va + (vb - va) * t;
             }
-            clipped[o] = image.clipped[at(a)] | image.clipped[at(b)];
+            let (va, vb) = (
+                image.highlights[at(a)] as f32,
+                image.highlights[at(b)] as f32,
+            );
+            highlights[o] = (va + (vb - va) * t).round() as u8;
         }
     }
     Balanced {
         data,
         width: nw,
         height: nh,
-        clipped,
+        highlights,
         step: image.step,
     }
 }
 
-/// Bitwise OR over a square window, separably.
+/// Maximum over a square window, in two passes.
 fn dilate(mask: &[u8], width: usize, height: usize, radius: usize) -> Vec<u8> {
     let mut rows = vec![0u8; mask.len()];
     for y in 0..height {
         let line = &mask[y * width..][..width];
         for x in 0..width {
             let span = &line[x.saturating_sub(radius)..(x + radius + 1).min(width)];
-            rows[y * width + x] = span.iter().fold(0, |a, b| a | b);
+            rows[y * width + x] = span.iter().copied().max().unwrap_or(0);
         }
     }
     let mut out = vec![0u8; mask.len()];
     for y in 0..height {
         for x in 0..width {
             out[y * width + x] = (y.saturating_sub(radius)..(y + radius + 1).min(height))
-                .fold(0, |a, r| a | rows[r * width + x]);
+                .map(|r| rows[r * width + x])
+                .max()
+                .unwrap_or(0);
         }
     }
     out
 }
 
-/// Clipped channels rise to the brightest channel of their pixel, so clipped
-/// highlights stay neutral instead of taking the color of the unclipped ones.
-fn neutral_highlights(image: &mut Balanced) {
-    for (px, &bits) in image
+/// Fade in near sensor clipping to avoid a hard boundary in bright gradients.
+fn highlight_weight(value: f32) -> u8 {
+    let t = ((value - 0.9) / (SATURATION - 0.9)).clamp(0., 1.);
+    (255. * t * t * (3. - 2. * t)).round() as u8
+}
+
+/// Reduce highlight chroma as in LibRaw's blend_highlights, while keeping the
+/// mean balanced camera value and its scene-linear headroom.
+fn blend_highlights(image: &mut Balanced) {
+    for (px, &weight) in image
         .data
         .as_chunks_mut::<3>()
         .0
         .iter_mut()
-        .zip(&image.clipped)
+        .zip(&image.highlights)
     {
-        if bits == 0 {
+        if weight == 0 {
             continue;
         }
-        let top = px[0].max(px[1]).max(px[2]);
-        for (c, v) in px.iter_mut().enumerate() {
-            if bits & (1 << c) != 0 {
-                *v = v.max(top);
-            }
+        let chroma =
+            |p: [f32; 3]| (p[0] - p[1]).powi(2) + (p[1] - p[2]).powi(2) + (p[2] - p[0]).powi(2);
+        let original = chroma(*px);
+        if original == 0. {
+            continue;
+        }
+        // The largest camera neutral is one, so the first balanced clip level is one.
+        // shortcut: GainMaps can change this level; carry local ceilings for mapped highlights.
+        let ratio = (chroma(px.map(|v| v.min(1.))) / original).sqrt();
+        let scale = 1. + f32::from(weight) / 255. * (ratio - 1.);
+        let mean = (px[0] + px[1] + px[2]) / 3.;
+        for v in px {
+            *v = mean + (*v - mean) * scale;
         }
     }
 }
@@ -792,7 +812,7 @@ fn to_scene(image: Balanced, cal: &color::Calibration) -> Result<Vec<f32>, Strin
         // One sample per pixel: gray in each channel.
         image.data.iter().flat_map(|v| [*v; 3]).collect()
     } else {
-        neutral_highlights(&mut image);
+        blend_highlights(&mut image);
         image.data
     };
     let m = color::mul(

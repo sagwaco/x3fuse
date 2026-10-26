@@ -36,7 +36,8 @@ pub use stocks::STOCKS_JSON;
 /// Version 12 adds monochrome warmth and source-color tone mixing.
 /// Version 13 renders a monochrome RAW mix as a monochrome image.
 /// Version 15 adds neutral DNG rendering without the Sigma tone curve.
-pub const RENDER_VERSION: u32 = 15;
+/// Version 16 corrects DNG highlight clipping.
+pub const RENDER_VERSION: u32 = 16;
 
 use image::ImageEncoder;
 use serde::{Deserialize, Serialize};
