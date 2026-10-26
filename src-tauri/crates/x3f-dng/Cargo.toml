@@ -8,7 +8,7 @@ description = "DNG decoding for X3Fuse through bundled LibRaw 0.22.2"
 build = "build.rs"
 
 [dependencies]
-x3f-core = "0.3.0"
+x3f-core = "0.4.0"
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
 # Deflate DNG.
 libz-sys = { version = "1.1", default-features = false, features = ["static"] }

@@ -6191,12 +6191,13 @@ dependencies = [
 
 [[package]]
 name = "x3f-core"
-version = "0.3.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0a428eba61aaf8923da4e346702b2d277521b6f95a2a94ca1bb0ab1cdbb5f62f"
+checksum = "f818636ca69b0cf350caa812da7b425dfe57e649175376e10281adbd6094adba"
 dependencies = [
  "libc",
  "rayon",
+ "serde",
  "thiserror 2.0.20",
  "tiff",
  "x3f-sys",
@@ -6234,9 +6235,9 @@ dependencies = [
 
 [[package]]
 name = "x3f-sys"
-version = "0.3.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "367ff6c726a9ce8dd8af7e01c9742630f9eb3de44261c02036d4cc0c63d93131"
+checksum = "dfc7e2d5fb13cf0828bdbbd07a7dcbcfaa5999466df0fbca9ac2e1b765f0dfde"
 dependencies = [
  "bindgen",
  "bytemuck",

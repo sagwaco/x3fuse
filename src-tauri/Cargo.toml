@@ -32,8 +32,8 @@ percent-encoding = "2"
 url = "2"
 tempfile = "3"
 sys-locale = "0.3"
-x3f-core = { version = "0.3.0", features = ["gpu", "serde"] }
-x3f-sys = "0.3.0"
+x3f-core = { version = "0.4.0", features = ["gpu", "serde"] }
+x3f-sys = "0.4.0"
 x3f-render = { path = "crates/x3f-render" }
 x3f-dng = { path = "crates/x3f-dng" }
 sha2 = "0.10"
