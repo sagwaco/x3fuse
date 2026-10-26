@@ -4,18 +4,21 @@ import { ChevronDown, Aperture, Film, Blend, Pipette, RotateCcw } from 'lucide-r
 import {
   capabilitiesOf,
   DEFAULT_FILM,
+  DNG_DEMOSAICS,
   FOVEON_CAPABILITIES,
   FILM_MONOCHROME_FILTERS,
   IDENTITY_RAW_MATRIX,
   MONOCHROME_FILTERS,
   RAW_GAIN_RANGE,
   defaultRecipe,
+  hasWhiteBalance,
   monochromeFilm,
   monochromeRawMatrix,
   negativePrint,
   type EditRecipe,
   type FilmSettings,
   type CurvePoint,
+  type DngDemosaic,
   type MonochromeFilter,
   type SourceCapabilities
 } from '@shared/editor'
@@ -366,7 +369,7 @@ export function Section({
     const recipe = editable()
     const { session, preview, change } = useEditorStore.getState()
     if (section && recipe) {
-      const defaults = asShotRecipe(session, recipe.seed)
+      const defaults = asShotRecipe(session, recipe)
       if (id === 'whiteBalance' && recipe.rawColor && preview?.asShotGains) {
         const [red, green, blue] = preview.asShotGains
         const middle = recipe.rawColor.gains[1]
@@ -510,6 +513,54 @@ export function Swatches<T extends string>({
   )
 }
 
+/** Names of the DNG demosaic methods. Mono and Fast are words, so they have translations. */
+const DEMOSAIC_NAMES: Partial<Record<DngDemosaic, string>> = {
+  amaze: 'AMaZE',
+  dcb: 'DCB',
+  ahd: 'AHD',
+  eahd: 'EAHD',
+  hphd: 'HPHD',
+  igv: 'IGV',
+  lmmse: 'LMMSE',
+  vng4: 'VNG4'
+}
+
+/** The demosaic of a Bayer DNG. Legacy shows only for an older recipe without one. */
+function DemosaicSelect({ recipe }: { recipe: EditRecipe }): React.JSX.Element {
+  const change = useEditorStore((state) => state.change)
+  const inactive = useEditorStore(
+    (state) => state.before || state.loading || state.closing || !state.preview
+  )
+  const busy = useQueueStore((state) => state.isProcessing || state.isPreparing)
+  const cloud = useContext(DevelopingCloud)
+  return (
+    <>
+      <Select<DngDemosaic | 'legacy'>
+        aria-label={t('editor.demosaicMethod')}
+        className="w-full"
+        value={recipe.dngDemosaic ?? 'legacy'}
+        disabled={inactive || busy || cloud}
+        options={[
+          ...DNG_DEMOSAICS.map((value) => ({
+            value,
+            label:
+              DEMOSAIC_NAMES[value] ??
+              t(value === 'mono' ? 'editor.demosaicMono' : 'editor.demosaicFast')
+          })),
+          ...(recipe.dngDemosaic
+            ? []
+            : [{ value: 'legacy' as const, label: t('editor.demosaicLegacy'), disabled: true }])
+        ]}
+        // The store removes the white balance of a Mono demosaic in the same change.
+        onValueChange={(value) => value !== 'legacy' && change({ dngDemosaic: value })}
+      />
+      {recipe.dngDemosaic === 'mono' && (
+        <p className="text-[12px] text-tone-500">{t('editor.demosaicMonoHelp')}</p>
+      )}
+    </>
+  )
+}
+
 // The editor screen renders again for each preview. The controls do not
 // change then, and rendering them again would delay animation frames.
 export const EditorControls = memo(function EditorControls({
@@ -540,10 +591,12 @@ export const EditorControls = memo(function EditorControls({
   }
   const change = useEditorStore((state) => state.change)
   const commit = useEditorStore((state) => state.commit)
-  // A DNG has no Foveon settings, and a monochrome DNG has no white balance.
+  // A DNG has no Foveon settings. A monochrome DNG, or a DNG with the Mono demosaic,
+  // has no white balance. The Mono demosaic also shows the gray controls.
   const foveon = useEditorStore((state) => !state.session || capabilitiesOf(state.session).foveon)
+  const bayer = useEditorStore((state) => !!state.session && !!capabilitiesOf(state.session).bayer)
   const whiteBalance = useEditorStore(
-    (state) => !state.session || capabilitiesOf(state.session).whiteBalance
+    (state) => !state.session || hasWhiteBalance(capabilitiesOf(state.session), recipe)
   )
   // The RAW channel mix sets the gray mix of monochrome infrared, so it has no filter.
   const monochromeRaw = !!recipe.rawColor && monochromeRawMatrix(recipe.rawColor.matrix)
@@ -551,7 +604,8 @@ export const EditorControls = memo(function EditorControls({
     !!recipe.monochrome ||
     recipe.cameraProfile === 'Monochrome' ||
     monochromeFilm(recipe.film) ||
-    monochromeRaw
+    monochromeRaw ||
+    recipe.dngDemosaic === 'mono'
   const x3i = useEditorStore((state) => state.x3i)
   // While an X3I merges an SFD RAW that it uses, only the SFD RAW section works.
   const pending = useEditorStore(needsX3iMerge)
@@ -613,6 +667,17 @@ export const EditorControls = memo(function EditorControls({
         <div {...inert}>
           {tab === 'raw' && (
             <>
+              {bayer && (
+                <Section
+                  id="demosaic"
+                  name={t('editor.demosaic')}
+                  info={
+                    <HelpTooltip label={t('editor.demosaic')} text={t('editor.demosaicHelp')} />
+                  }
+                >
+                  <DemosaicSelect recipe={recipe} />
+                </Section>
+              )}
               <Section id="light" name={t('editor.light')}>
                 {recipe.film ? (
                   <Adjustment
@@ -711,7 +776,8 @@ export const EditorControls = memo(function EditorControls({
                   )}
                 </>
               )}
-              {monochrome && !monochromeRaw && (
+              {/* Filters mix Foveon layers or set the taking filter of black-and-white film. */}
+              {monochrome && !monochromeRaw && (foveon || monochromeFilm(recipe.film)) && (
                 <Section
                   id="filter"
                   name={t('editor.filter')}

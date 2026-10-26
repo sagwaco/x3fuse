@@ -17,7 +17,7 @@ use std::{
     },
 };
 use x3f_core::{SceneLinearImage, SceneLinearOptions};
-use x3f_render::{Crop, EditRecipe, PreparedImage, RenderOptions, Renderer};
+use x3f_render::{Crop, DngDemosaic, EditRecipe, PreparedImage, RenderOptions, Renderer};
 
 /// Runs RAW preparation. On macOS it runs in a pool at utility QoS. At the
 /// default QoS it takes the cores that WebKit needs to draw frames, and the
@@ -58,15 +58,18 @@ struct Prepared {
     source_revision: String,
     denoise: u8,
     denoise_options: x3f_core::DenoiseOptions,
+    dng_demosaic: Option<DngDemosaic>,
     /// Denoise settings do not change this source, as for a merged X3I.
     denoise_free: bool,
     x3i_source: x3f_core::X3iSource,
     image: PreparedImage,
 }
 impl Prepared {
-    fn matches_denoise(&self, recipe: &EditRecipe) -> bool {
-        self.denoise_free
-            || (self.denoise == recipe.denoise && self.denoise_options == recipe.denoise_options)
+    fn matches_preparation(&self, recipe: &EditRecipe) -> bool {
+        self.dng_demosaic == recipe.dng_demosaic
+            && (self.denoise_free
+                || (self.denoise == recipe.denoise
+                    && self.denoise_options == recipe.denoise_options))
     }
     fn matches_source(&self, path: &Path, source_revision: &str, recipe: &EditRecipe) -> bool {
         self.path == path
@@ -1009,7 +1012,7 @@ impl Editor {
             && worker
                 .prepared
                 .as_ref()
-                .is_some_and(|p| p.matches_denoise(&asset.recipe));
+                .is_some_and(|p| p.matches_preparation(&asset.recipe));
         if !reuse {
             // Keep the responsive source if refinement is interrupted. A different
             // photo releases it first to bound memory while browsing.
@@ -1019,7 +1022,13 @@ impl Editor {
             let options = scene_options(&asset.recipe);
             let (image, denoise_free) = if source.kind == crate::source::Kind::Dng {
                 (
-                    prepare_in_background(|| x3f_dng::prepare(&asset.path, cancel))?,
+                    prepare_in_background(|| {
+                        x3f_dng::prepare_with_method(
+                            &asset.path,
+                            asset.recipe.dng_demosaic.map(dng_method),
+                            cancel,
+                        )
+                    })?,
                     true,
                 )
             } else {
@@ -1040,7 +1049,7 @@ impl Editor {
             };
             let mut image = PreparedImage::new(image, cancel).map_err(|e| e.to_string())?;
             if source.kind == crate::source::Kind::Dng {
-                image = image.with_dng_source(!source.capabilities.white_balance);
+                image = image.with_dng_source(!source.white_balance_available(&asset.recipe));
             } else {
                 image = image.with_camera_profiles(
                     x3f_render::read_camera_profiles(&asset.path, cancel)
@@ -1056,6 +1065,7 @@ impl Editor {
                 source_revision: asset.source_revision.clone(),
                 denoise: asset.recipe.denoise,
                 denoise_options: asset.recipe.denoise_options,
+                dng_demosaic: asset.recipe.dng_demosaic,
                 denoise_free,
                 x3i_source: asset.recipe.x3i_source,
                 image,
@@ -1125,12 +1135,19 @@ impl Editor {
                     recipe.denoise = prepared.denoise;
                     recipe.denoise_options = prepared.denoise_options;
                 }
+                // A Mono transition changes calibration. Render its requested source.
+                if prepared.dng_demosaic != Some(DngDemosaic::Mono)
+                    && recipe.dng_demosaic != Some(DngDemosaic::Mono)
+                {
+                    recipe.dng_demosaic = prepared.dng_demosaic;
+                }
             } else if recipe.denoise_options.algorithm == x3f_core::DenoiseAlgorithm::Bm3d {
                 recipe.denoise = 0;
             }
         }
         let draft = recipe.denoise != request.recipe.denoise
-            || recipe.denoise_options != request.recipe.denoise_options;
+            || recipe.denoise_options != request.recipe.denoise_options
+            || recipe.dng_demosaic != request.recipe.dng_demosaic;
         (recipe, draft)
     }
 
@@ -1165,9 +1182,8 @@ impl Editor {
         };
         let (rendered, (source_width, source_height)) =
             self.render_with_worker(&mut worker, &asset, &cancel)?;
-        let white_balance_available = crate::source::Info::read(&asset.path, &cancel)?
-            .capabilities
-            .white_balance;
+        let white_balance_available =
+            crate::source::Info::read(&asset.path, &cancel)?.white_balance_available(&asset.recipe);
         let as_shot = worker
             .prepared
             .as_ref()
@@ -1619,7 +1635,7 @@ impl Editor {
                         &asset.path,
                         &asset.source_revision,
                         &asset.recipe,
-                    ) || !prepared.matches_denoise(&asset.recipe))
+                    ) || !prepared.matches_preparation(&asset.recipe))
             });
             let previous = if preserve {
                 worker.prepared.take()
@@ -1678,14 +1694,18 @@ impl Editor {
         let session = self.session(id)?;
         let source = crate::source::Info::read(&session.path, &AtomicBool::new(false))?;
         source.validate_recipe(&recipe)?;
-        if !source.capabilities.white_balance {
+        if !source.white_balance_available(&recipe) {
             return Err("White balance is unavailable for monochrome DNG inputs".into());
         }
         let worker = self.worker.lock().map_err(|_| "Renderer unavailable")?;
         let prepared = worker
             .prepared
             .as_ref()
-            .filter(|p| p.matches_source(&session.path, &session.source_revision, &recipe))
+            .filter(|p| {
+                p.matches_source(&session.path, &session.source_revision, &recipe)
+                    && (p.dng_demosaic == Some(DngDemosaic::Mono))
+                        == (recipe.dng_demosaic == Some(DngDemosaic::Mono))
+            })
             .ok_or("White balance calibration is not ready")?;
         x3f_render::recipe_white_balance(&prepared.image.image().white_balance, &recipe)
     }
@@ -1706,7 +1726,7 @@ impl Editor {
         let session = self.session(id)?;
         let source = crate::source::Info::read(&session.path, &AtomicBool::new(false))?;
         source.validate_recipe(&recipe)?;
-        if !source.capabilities.white_balance {
+        if !source.white_balance_available(&recipe) {
             return Err("White balance is unavailable for monochrome DNG inputs".into());
         }
         let _priority = self.foreground_request()?;
@@ -1857,6 +1877,22 @@ fn camera_defaults(
     ))
 }
 
+fn dng_method(method: DngDemosaic) -> x3f_dng::DemosaicMethod {
+    use x3f_dng::DemosaicMethod as Native;
+    match method {
+        DngDemosaic::Amaze => Native::Amaze,
+        DngDemosaic::Dcb => Native::Dcb,
+        DngDemosaic::Ahd => Native::Ahd,
+        DngDemosaic::Eahd => Native::Eahd,
+        DngDemosaic::Hphd => Native::Hphd,
+        DngDemosaic::Igv => Native::Igv,
+        DngDemosaic::Lmmse => Native::Lmmse,
+        DngDemosaic::Vng4 => Native::Vng4,
+        DngDemosaic::Mono => Native::Mono,
+        DngDemosaic::Fast => Native::Fast,
+    }
+}
+
 fn source_recipe(
     source: crate::source::Info,
     crop: Option<Crop>,
@@ -1867,6 +1903,7 @@ fn source_recipe(
     if source.kind == crate::source::Kind::Dng {
         recipe.camera_profile = None;
         recipe.denoise = 0;
+        recipe.dng_demosaic = source.capabilities.bayer.then_some(DngDemosaic::Amaze);
     }
     recipe
 }
@@ -1893,6 +1930,7 @@ fn near_default(recipe: &EditRecipe) -> bool {
         film: base.film.clone(),
         monochrome: base.monochrome,
         denoise: base.denoise,
+        dng_demosaic: base.dng_demosaic,
         crop: base.crop,
         seed: base.seed,
         ..recipe.pixels()
@@ -2041,6 +2079,7 @@ mod tests {
             denoise: recipe.denoise,
             denoise_options: recipe.denoise_options,
             denoise_free: false,
+            dng_demosaic: None,
             x3i_source: recipe.x3i_source,
             image: PreparedImage::new(
                 SceneLinearImage {
@@ -2239,6 +2278,97 @@ mod tests {
     }
     use super::*;
 
+    #[test]
+    fn bayer_defaults_do_not_migrate_legacy_demosaicing() {
+        let source = crate::source::Info {
+            kind: crate::source::Kind::Dng,
+            capabilities: crate::source::Capabilities {
+                bayer: true,
+                ..crate::source::Capabilities::for_kind(crate::source::Kind::Dng, false)
+            },
+            crop: None,
+            orientation: Some(1),
+        };
+        let defaults = source_recipe(source, None, "Standard", "12345678abcdef");
+        assert_eq!(defaults.dng_demosaic, Some(DngDemosaic::Amaze));
+        assert!(near_default(&defaults));
+        assert!(matches_defaults(&defaults, &defaults, false));
+        for method in [None, Some(DngDemosaic::Fast), Some(DngDemosaic::Mono)] {
+            let recipe = EditRecipe {
+                dng_demosaic: method,
+                ..defaults.clone()
+            };
+            assert!(!matches_defaults(&recipe, &defaults, false));
+            assert!(!matches_defaults(&recipe, &defaults, true));
+        }
+        let linear = crate::source::Info {
+            capabilities: crate::source::Capabilities::for_kind(crate::source::Kind::Dng, false),
+            ..source
+        };
+        assert_eq!(
+            source_recipe(linear, None, "Standard", "12345678abcdef").dng_demosaic,
+            None
+        );
+    }
+
+    #[test]
+    fn interactive_demosaic_reuses_color_preparation_but_not_mono_calibration() {
+        let directory = tempfile::tempdir().unwrap();
+        let editor = Editor::new(directory.path().join("edits"));
+        let path = directory.path().join("photo.dng");
+        set_prepared(&editor, &path);
+        let mut worker = editor.worker.lock().unwrap();
+        let prepared = worker.prepared.as_mut().unwrap();
+        prepared.denoise_free = true;
+        prepared.dng_demosaic = Some(DngDemosaic::Amaze);
+        let session = Session {
+            id: "photo".into(),
+            path,
+            source_revision: "a".repeat(64),
+            cancelled_revision: None,
+        };
+        let mut request = RenderRequest {
+            session_id: session.id.clone(),
+            recipe: EditRecipe {
+                denoise: 0,
+                dng_demosaic: Some(DngDemosaic::Igv),
+                ..Default::default()
+            },
+            revision: 1,
+            max_edge: 512,
+            region: None,
+            interactive: true,
+        };
+        assert!(prepared.matches_source(&session.path, &session.source_revision, &request.recipe));
+        assert!(!prepared.matches_preparation(&request.recipe));
+        let (draft, is_draft) = Editor::effective_recipe(&worker, &request, &session);
+        assert!(is_draft);
+        assert_eq!(draft.dng_demosaic, Some(DngDemosaic::Amaze));
+        assert!(worker
+            .prepared
+            .as_ref()
+            .unwrap()
+            .matches_preparation(&draft));
+        request.interactive = false;
+        assert_eq!(
+            Editor::effective_recipe(&worker, &request, &session),
+            (request.recipe.clone(), false)
+        );
+        request.interactive = true;
+        request.recipe.dng_demosaic = Some(DngDemosaic::Mono);
+        assert_eq!(
+            Editor::effective_recipe(&worker, &request, &session),
+            (request.recipe.clone(), false)
+        );
+        worker.prepared.as_mut().unwrap().dng_demosaic = Some(DngDemosaic::Mono);
+        request.recipe.dng_demosaic = Some(DngDemosaic::Amaze);
+        request.recipe.temperature = Some(5000.);
+        assert_eq!(
+            Editor::effective_recipe(&worker, &request, &session),
+            (request.recipe.clone(), false)
+        );
+    }
+
     #[cfg(target_os = "macos")]
     #[test]
     fn raw_preparation_runs_at_utility_qos() {
@@ -2264,6 +2394,7 @@ mod tests {
             denoise: 0,
             denoise_options: Default::default(),
             denoise_free: false,
+            dng_demosaic: None,
             x3i_source: EditRecipe::default().x3i_source,
             image: PreparedImage::new(
                 SceneLinearImage {
@@ -2299,6 +2430,7 @@ mod tests {
                 denoise: 0,
                 denoise_options: Default::default(),
                 denoise_free: false,
+                dng_demosaic: None,
                 x3i_source: EditRecipe::default().x3i_source,
                 image: PreparedImage::new(
                     SceneLinearImage {
@@ -2597,6 +2729,7 @@ mod tests {
             denoise: recipe.denoise,
             denoise_options: recipe.denoise_options,
             denoise_free: false,
+            dng_demosaic: None,
             x3i_source: EditRecipe::default().x3i_source,
             image: PreparedImage::new(
                 SceneLinearImage {

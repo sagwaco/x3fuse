@@ -828,6 +828,29 @@ it('toggles the neutral picker with W', () => {
   expect(picking()).toBe('true')
 })
 
+it('disarms the neutral picker when a Bayer DNG changes to the Mono demosaic', () => {
+  const bayer = { foveon: false, whiteBalance: true, renderedOnly: true, bayer: true }
+  const amaze = { ...doc, recipe: { ...doc.recipe, film: null, dngDemosaic: 'amaze' as const } }
+  editor.setState({
+    session: { ...session, capabilities: bayer },
+    documents: { [file.path]: amaze },
+    loading: false,
+    preview: frame
+  })
+  const view = render(<EditorScreen />)
+  const picking = (): string | null | undefined =>
+    view.container.querySelector('[data-editor-frame]')?.getAttribute('data-picking')
+  fireEvent.keyDown(document, { key: 'w' })
+  expect(picking()).toBe('true')
+  // The source capabilities stay the same; the recipe removes the white balance.
+  const mono = { ...amaze, recipe: { ...amaze.recipe, dngDemosaic: 'mono' as const } }
+  act(() => editor.setState({ documents: { [file.path]: mono } }))
+  expect(picking()).not.toBe('true')
+  fireEvent.keyDown(document, { key: 'w' })
+  expect(picking()).not.toBe('true')
+  expect(runCommand('whiteBalancePicker')).toBe(false)
+})
+
 function scopeAttribute(name: string): string | null | undefined {
   return document.querySelector('[data-scope]')?.getAttribute(name)
 }

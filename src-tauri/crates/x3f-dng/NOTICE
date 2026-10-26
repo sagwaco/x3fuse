@@ -32,3 +32,43 @@ mozjpeg
 Lossy JPEG DNG decoding uses mozjpeg, built from source by the mozjpeg-sys
 crate. License: MOZJPEG_LICENSE.txt (IJG, BSD-3-Clause, and zlib terms).
 This software is based in part on the work of the Independent JPEG Group.
+
+librtprocess Bayer demosaicing
+------------------------------
+
+Source: https://github.com/CarVac/librtprocess
+Commit: 9a858270acb2096e2e403d932760ee688fcac425
+Archive SHA-256:
+a85bac0d67fc08ceaf61a7deeedff5ffaf8edabcebeb9a59924df378efc800f6
+
+The app statically links the AMaZE, DCB, AHD, HPHD, IGV, LMMSE, VNG4,
+Fast, and border kernels. The code comes from RawTherapee and its
+contributors. License: GPL version 3 or later (LIBRTPROCESS_LICENSE.txt).
+DCB demosaicing is by Jacek Gozdz (cuniek@kft.umcs.lublin.pl).
+Its BSD notice is in DCB_LICENSE.txt.
+
+scripts/prepare-rtprocess.mjs verifies the archive and applies counted
+patches. The patches make the kernels stop on cancellation, split serial
+HPHD passes into strips, and prevent an AMaZE tail write past a row.
+Each changed source has a dated modification notice. The kernels run
+without OpenMP. The adapter uses float input and output, and replaces the
+outer bands of DCB, IGV, and LMMSE with the library's border interpolation
+to correct edge artifacts. No integer quantization is used.
+
+RawTherapee EAHD
+----------------
+
+Source: https://github.com/RawTherapee/RawTherapee
+Version: 5.13, commit 1924179107995b01b73cdc7f4fe91e44fc8227a7
+rtengine/eahd_demosaic.cc SHA-256:
+d8bbe5fbdbab0932057f99de81eae14f09eb4be09141a930aef866e9e4aae4cc
+
+Copyright (c) 2004-2018 Gabor Horvath and RawTherapee contributors.
+Compilation unit and speed improvements: Ingo Weyrich, 2018.
+License: GPL version 3 or later (LIBRTPROCESS_LICENSE.txt).
+
+src/eahd.cpp ports EAHD and interpolate_row_rb_mul_pp from
+rtengine/rawimagesource_i.h to the library interface. It keeps float green
+values, computes CIELab directly, corrects the camera-matrix orientation,
+fills the first and last rows, and stops on cancellation. The source header
+lists these changes and retains the upstream copyright and license notice.

@@ -200,7 +200,7 @@ describe('DNG sources', () => {
       capabilities: COLOR,
       sourceKind: 'dng'
     }
-    expect(asShotRecipe(session, 3)).toEqual({ ...sourceDefaultRecipe(COLOR), seed: 3 })
+    expect(asShotRecipe(session, { seed: 3 })).toEqual({ ...sourceDefaultRecipe(COLOR), seed: 3 })
     invoke
       .mockReset()
       .mockImplementation(async (channel, payload) =>

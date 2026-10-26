@@ -16,7 +16,13 @@ import {
   X,
   TriangleAlert
 } from 'lucide-react'
-import { capabilitiesOf, negativePrint, type EditRecipe, type PreviewRegion } from '@shared/editor'
+import {
+  capabilitiesOf,
+  hasWhiteBalance,
+  negativePrint,
+  type EditRecipe,
+  type PreviewRegion
+} from '@shared/editor'
 import {
   useEditorStore,
   isTextEditing,
@@ -182,7 +188,7 @@ export function EditorScreen(): React.JSX.Element {
     () =>
       !geometry
         ? []
-        : geometry === geometryKey(asShotRecipe(editor.session, 0))
+        : geometry === geometryKey(asShotRecipe(editor.session, { seed: 0 }))
           ? [geometry, AS_SHOT]
           : [geometry],
     [geometry, editor.session]
@@ -380,12 +386,11 @@ export function EditorScreen(): React.JSX.Element {
     if (unavailable || editor.before || !doc?.recipe.rawColor || cloudFile || !panelOpen)
       setMixPickingState(null)
   }, [unavailable, editor.before, doc?.recipe.rawColor, cloudFile, panelOpen])
-  // A monochrome DNG has no white balance to pick.
-  canPick.current =
-    !unavailable &&
-    !editor.before &&
-    !cloudFile &&
-    (!editor.session || capabilitiesOf(editor.session).whiteBalance)
+  // A monochrome DNG, or a DNG with the Mono demosaic, has no white balance to pick.
+  const whiteBalance =
+    !editor.session || !doc || hasWhiteBalance(capabilitiesOf(editor.session), doc.recipe)
+  if (picking && !whiteBalance) setPicking(false)
+  canPick.current = !unavailable && !editor.before && !cloudFile && whiteBalance
   // The curve Qualifier reads the edited preview, as the curve's histogram does.
   const curveImage = useScopeImage(curvePicking ? displayFile?.displayPreviewUrl : undefined)
   /** The mean color of 3 by 3 preview pixels at a point, 0 to 1. */

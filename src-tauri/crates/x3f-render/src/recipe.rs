@@ -34,6 +34,9 @@ pub struct EditRecipe {
     /// Strength passed to the RAW preparation stage (0..10), not applied twice.
     pub denoise: u8,
     pub denoise_options: x3f_core::DenoiseOptions,
+    /// Bayer DNG preparation. None keeps the saved LibRaw rendering.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dng_demosaic: Option<DngDemosaic>,
     pub sharpen: f32,
     /// Rectangle in the EXIF-oriented full image, before user rotation/straighten.
     pub crop: Option<Crop>,
@@ -89,6 +92,7 @@ impl Default for EditRecipe {
             wheels: ColorWheels::default(),
             denoise: 10,
             denoise_options: x3f_core::DenoiseOptions::default(),
+            dng_demosaic: None,
             sharpen: 0.,
             crop: None,
             rotation: 0,
@@ -127,13 +131,28 @@ impl EditRecipe {
         {
             return Err("DNG inputs cannot use Foveon sensor-layer filters".into());
         }
-        if monochrome_sensor
+        if (monochrome_sensor || self.dng_demosaic == Some(DngDemosaic::Mono))
             && (self.temperature.is_some() || self.tint != 0. || self.white_balance_gains.is_some())
         {
             return Err("White balance is unavailable for monochrome DNG inputs".into());
         }
         Ok(())
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DngDemosaic {
+    Amaze,
+    Dcb,
+    Ahd,
+    Eahd,
+    Hphd,
+    Igv,
+    Lmmse,
+    Vng4,
+    Mono,
+    Fast,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

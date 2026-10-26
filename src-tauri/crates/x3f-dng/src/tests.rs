@@ -498,7 +498,7 @@ fn warm_clipped_highlights_render_white_in_full_and_half_size() {
         }
         let file = fixture.write();
         for half in [false, true] {
-            let (image, cal, _) = decode(&file.0, &cancel, half).unwrap();
+            let (image, cal, _) = decode(&file.0, &cancel, half, None).unwrap();
             let scene = to_scene(image, &cal).unwrap();
             for px in scene.as_chunks::<3>().0 {
                 assert!(px.iter().all(|v| *v > 1.), "half={half}: {px:?}");
@@ -564,6 +564,36 @@ fn highlight_blend_has_no_step_at_sensor_clipping() {
     assert_eq!(highlight_weight(0.85), 0);
     assert_eq!(highlight_weight(1.), 255);
     assert_eq!(dilate(&[128, 64, 0], 3, 1, 1), [128, 128, 64]);
+}
+
+#[test]
+fn dilation_matches_a_direct_window_maximum() {
+    let (w, h): (usize, usize) = (37, 23);
+    let mut seed = 17;
+    let mask: Vec<u8> = (0..w * h)
+        .map(|_| {
+            if noise(&mut seed) > 0.8 {
+                (noise(&mut seed) * 127. + 128.) as u8
+            } else {
+                0
+            }
+        })
+        .collect();
+    for radius in [0, 1, 2, 3, 6, 13, 17, 40] {
+        let direct: Vec<u8> = (0..w * h)
+            .map(|i| {
+                let (y, x) = (i / w, i % w);
+                let rows = y.saturating_sub(radius)..(y + radius + 1).min(h);
+                rows.flat_map(|r| {
+                    (x.saturating_sub(radius)..(x + radius + 1).min(w)).map(move |c| (r, c))
+                })
+                .map(|(r, c)| mask[r * w + c])
+                .max()
+                .unwrap()
+            })
+            .collect();
+        assert_eq!(dilate(&mask, w, h, radius), direct, "radius {radius}");
+    }
 }
 
 #[test]
@@ -675,5 +705,639 @@ fn opcode_gain_maps_and_warps_apply_per_plane() {
                 "{px:?} != {expected:?}"
             );
         }
+    }
+}
+
+// Native demosaic methods.
+
+const METHODS: [DemosaicMethod; 10] = [
+    DemosaicMethod::Amaze,
+    DemosaicMethod::Dcb,
+    DemosaicMethod::Ahd,
+    DemosaicMethod::Eahd,
+    DemosaicMethod::Hphd,
+    DemosaicMethod::Igv,
+    DemosaicMethod::Lmmse,
+    DemosaicMethod::Vng4,
+    DemosaicMethod::Mono,
+    DemosaicMethod::Fast,
+];
+
+/// The CFA tag value and the LibRaw 2x2 pattern, 3 is the second green.
+const PHASES: [[u8; 4]; 4] = [[0, 1, 1, 2], [1, 0, 2, 1], [1, 2, 0, 1], [2, 1, 1, 0]];
+
+/// A Bayer DNG with an odd ActiveArea origin. The CFA pattern starts at the
+/// active area, as DNG requires. `camera` gives camera values in [0, 1].
+fn odd_bayer(phase: [u8; 4], camera: &dyn Fn(usize, usize) -> [f64; 3]) -> Fixture {
+    let (width, height, top, left) = (72u32, 70u32, 3usize, 5usize);
+    let pixels = (0..height as usize)
+        .flat_map(|y| (0..width as usize).map(move |x| (y, x)))
+        .map(|(y, x)| {
+            if y < top || x < left {
+                return BLACK;
+            }
+            let (ay, ax) = (y - top, x - left);
+            let c = phase[(ay % 2) * 2 + ax % 2] as usize;
+            BLACK + (camera(ay, ax)[c] * f64::from(WHITE - BLACK)).round() as u16
+        })
+        .collect();
+    Fixture {
+        width,
+        height,
+        samples: 1,
+        photometric: 32803,
+        pixels,
+        deflate: None,
+        stream: Stream::Exact,
+        tile: None,
+        extra: vec![
+            (33421, Value::Short(vec![2, 2])),
+            (33422, Value::Byte(phase.to_vec())),
+            (50710, Value::Byte(vec![0, 1, 2])),
+            (50711, Value::Short(vec![1])),
+            (50829, Value::Long(vec![3, 5, 69, 71])),
+        ],
+    }
+}
+
+fn close3(px: &[f32], expected: [f64; 3], tol: f64, what: &str) {
+    for c in 0..3 {
+        assert!(
+            (f64::from(px[c]) - expected[c]).abs() <= tol * expected[c].abs().max(0.05),
+            "{what}: {px:?} != {expected:?}"
+        );
+    }
+}
+
+#[test]
+fn native_methods_keep_color_in_every_cfa_phase_and_odd_origin() {
+    let cancel = AtomicBool::new(false);
+    // A flat color: red and blue sites differ, so a wrong phase shows.
+    let camera = [0.3 * NEUTRAL[0], 0.2 * NEUTRAL[1], 0.1 * NEUTRAL[2]];
+    for phase in PHASES {
+        let file = odd_bayer(phase, &|_, _| camera).write();
+        let info = inspect(&file.0, &cancel).unwrap();
+        // LibRaw moves odd margins to even ones: the image starts one row
+        // and one column into the active area, and the CFA phase follows.
+        assert_eq!((info.width, info.height), (65, 65));
+        assert!(info.bayer, "{phase:?}");
+        let legacy = prepare(&file.0, &cancel).unwrap();
+        let expected = color::apply(&legacy.white_balance.camera_to_rgb, camera);
+        for method in METHODS {
+            let scene = prepare_with_method(&file.0, Some(method), &cancel).unwrap();
+            assert_eq!((scene.width, scene.height), (65, 65));
+            if method == DemosaicMethod::Mono {
+                // Each site keeps its own normalized sample as gray.
+                let mono = color::monochrome(0.);
+                assert_eq!(scene.white_balance.as_shot_neutral, mono.neutral);
+                for (i, px) in scene.data.as_chunks::<3>().0.iter().enumerate() {
+                    let c = phase[((i / 65 % 2) ^ 1) * 2 + ((i % 65 % 2) ^ 1)] as usize;
+                    assert!(px[0] == px[1] && px[1] == px[2], "{px:?}");
+                    assert!(
+                        (f64::from(px[0]) - camera[c]).abs() < 2e-4,
+                        "{phase:?} {px:?}"
+                    );
+                }
+                continue;
+            }
+            assert_eq!(
+                scene.white_balance.camera_to_rgb,
+                legacy.white_balance.camera_to_rgb
+            );
+            for px in scene.data.as_chunks::<3>().0 {
+                close3(px, expected, 2e-3, &format!("{method:?} {phase:?}"));
+            }
+        }
+    }
+}
+
+#[test]
+fn native_api_keeps_the_legacy_route_and_rejects_other_layouts() {
+    let cancel = AtomicBool::new(false);
+    let file = odd_bayer(PHASES[0], &|y, x| {
+        [0.1 + 0.01 * (x % 7) as f64, 0.2, 0.05 * (y % 3) as f64]
+    })
+    .write();
+    let a = prepare(&file.0, &cancel).unwrap();
+    let b = prepare_with_method(&file.0, None, &cancel).unwrap();
+    assert_eq!(a.data, b.data);
+    assert_eq!(a.white_balance.camera_to_rgb, b.white_balance.camera_to_rgb);
+
+    let small = bayer().write();
+    let rgb = linear(None).write();
+    let mut mono = linear(None);
+    mono.samples = 1;
+    mono.pixels = gray(1, &|_, _| 1, mono.width, mono.height);
+    mono.extra = vec![];
+    let mono = mono.write();
+    for (file, why) in [(&small, "64 pixels"), (&rgb, "Bayer"), (&mono, "Bayer")] {
+        assert!(!inspect(&file.0, &cancel).unwrap().bayer);
+        // The LibRaw route still prepares them.
+        prepare(&file.0, &cancel).unwrap();
+        for method in METHODS {
+            let err = prepare_with_method(&file.0, Some(method), &cancel).unwrap_err();
+            assert!(err.contains(why), "{method:?}: {err}");
+        }
+    }
+    let cancelled = AtomicBool::new(true);
+    for method in METHODS {
+        let err = prepare_with_method(&file.0, Some(method), &cancelled).unwrap_err();
+        assert_eq!(err, CANCELLED);
+    }
+}
+
+fn info_with_cfa(cell: &dyn Fn(usize, usize) -> u8) -> Box<ffi::Info> {
+    // SAFETY: Info is plain data.
+    let mut info: Box<ffi::Info> = Box::new(unsafe { std::mem::zeroed() });
+    for r in 0..24 {
+        for c in 0..24 {
+            info.cfa[r][c] = cell(r, c);
+        }
+    }
+    info
+}
+
+#[test]
+fn bayer_pattern_needs_period_two_over_the_whole_table() {
+    let rggb = |r: usize, c: usize| [[0, 1], [3, 2]][r % 2][c % 2];
+    assert_eq!(bayer_pattern(&info_with_cfa(&rggb)), Some([[0, 1], [3, 2]]));
+    // A change at the last site breaks the period.
+    let late = |r: usize, c: usize| if (r, c) == (23, 23) { 0 } else { rggb(r, c) };
+    assert_eq!(bayer_pattern(&info_with_cfa(&late)), None);
+    // Period four in rows.
+    let rows = |r: usize, c: usize| {
+        if r % 4 < 2 {
+            rggb(r, c)
+        } else {
+            rggb(r + 1, c)
+        }
+    };
+    assert_eq!(bayer_pattern(&info_with_cfa(&rows)), None);
+    // X-Trans.
+    let xtrans = [
+        [1, 1, 0, 1, 1, 2],
+        [1, 1, 2, 1, 1, 0],
+        [2, 0, 1, 0, 2, 1],
+        [1, 1, 2, 1, 1, 0],
+        [1, 1, 0, 1, 1, 2],
+        [0, 2, 1, 2, 0, 1],
+    ];
+    assert_eq!(
+        bayer_pattern(&info_with_cfa(&|r, c| xtrans[r % 6][c % 6])),
+        None
+    );
+    // Greens side by side, and two reds.
+    for p in [[[1, 1], [0, 2]], [[0, 1], [1, 0]]] {
+        assert_eq!(bayer_pattern(&info_with_cfa(&|r, c| p[r % 2][c % 2])), None);
+    }
+}
+
+/// One direct kernel call on kernel-domain input; returns three planes.
+fn kernel(
+    method: DemosaicMethod,
+    (w, h): (usize, usize),
+    mosaic: &[f32],
+    cfa: [[u8; 2]; 2],
+    init_gain: f64,
+    cancel: &AtomicBool,
+) -> (c_int, Vec<f32>) {
+    let mut out = vec![0f32; w * h * 3];
+    let rgb_cam = [[1f32, 0., 0.], [0., 1., 0.], [0., 0., 1.]];
+    // SAFETY: the buffers have the sizes that the shim reads and writes.
+    let code = unsafe {
+        ffi::x3fdng_rt_demosaic(
+            method.index(),
+            w as c_int,
+            h as c_int,
+            mosaic.as_ptr(),
+            out.as_mut_ptr(),
+            cfa.as_ptr(),
+            rgb_cam.as_ptr(),
+            init_gain,
+            cancelled,
+            cancel as *const AtomicBool as *mut c_void,
+        )
+    };
+    (code, out)
+}
+
+const RGGB: [[u8; 2]; 2] = [[0, 1], [3, 2]];
+
+fn unit() -> color::Calibration {
+    color::Calibration {
+        camera_to_rgb: color::IDENTITY,
+        xyz_to_camera: color::IDENTITY,
+        neutral: [1.; 3],
+    }
+}
+
+/// A mosaic of balanced values from a scene of three channels.
+fn mosaic(w: usize, h: usize, scene: &dyn Fn(usize, usize) -> [f32; 3]) -> Vec<f32> {
+    (0..h)
+        .flat_map(|y| (0..w).map(move |x| (y, x)))
+        .map(|(y, x)| {
+            let c = RGGB[y % 2][x % 2] as usize;
+            scene(y, x)[if c == 3 { 1 } else { c }]
+        })
+        .collect()
+}
+
+fn run(method: DemosaicMethod, (w, h): (usize, usize), data: Vec<f32>, integer: bool) -> Vec<f32> {
+    let highlights = vec![0u8; w * h];
+    native(
+        method,
+        data,
+        &highlights,
+        (w, h),
+        RGGB,
+        &unit(),
+        0.,
+        integer,
+        &AtomicBool::new(false),
+    )
+    .unwrap()
+    .data
+}
+
+/// Deterministic noise in [-1, 1).
+fn noise(seed: &mut u64) -> f32 {
+    *seed = seed
+        .wrapping_mul(6364136223846793005)
+        .wrapping_add(1442695040888963407);
+    (*seed >> 40) as f32 / (1u64 << 23) as f32 - 1.
+}
+
+const COLOR_METHODS: [DemosaicMethod; 9] = [
+    DemosaicMethod::Amaze,
+    DemosaicMethod::Dcb,
+    DemosaicMethod::Ahd,
+    DemosaicMethod::Eahd,
+    DemosaicMethod::Hphd,
+    DemosaicMethod::Igv,
+    DemosaicMethod::Lmmse,
+    DemosaicMethod::Vng4,
+    DemosaicMethod::Fast,
+];
+
+#[test]
+fn valid_domain_input_matches_the_direct_kernel() {
+    // No negative sample and a peak below the clip level: no pedestal, and
+    // the scale is 65535.
+    let (w, h) = (96, 80);
+    let mut seed = 7;
+    let data: Vec<f32> = (0..w * h).map(|_| 0.45 + 0.4 * noise(&mut seed)).collect();
+    let direct: Vec<f32> = data
+        .iter()
+        .map(|v| (f64::from(*v) * 65535.) as f32)
+        .collect();
+    for method in COLOR_METHODS {
+        let ours = run(method, (w, h), data.clone(), true);
+        let (code, planes) = kernel(method, (w, h), &direct, RGGB, 1., &AtomicBool::new(false));
+        assert_eq!(code, 0);
+        for i in 0..w * h {
+            for c in 0..3 {
+                let expected = f64::from(planes[c * w * h + i]) / 65535.;
+                assert!(
+                    (f64::from(ours[i * 3 + c]) - expected).abs() < 1e-6,
+                    "{method:?} at {i}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn dark_frame_noise_keeps_its_mean_with_the_pedestal() {
+    // Black-subtracted read noise around a small mean: many sites are
+    // negative. The pedestal keeps them; clamping them to zero, as the
+    // kernels do without a pedestal, biases the mean upward.
+    let (w, h) = (128, 128);
+    let (mean, sigma) = (0.002f32, 0.01f32);
+    let mut seed = 11;
+    let data: Vec<f32> = (0..w * h)
+        .map(|_| mean + sigma * noise(&mut seed))
+        .collect();
+    let interior = |out: &[f32]| {
+        let mut sum = [0f64; 3];
+        let mut n = 0.;
+        for y in 8..h - 8 {
+            for x in 8..w - 8 {
+                for c in 0..3 {
+                    sum[c] += f64::from(out[(y * w + x) * 3 + c]);
+                }
+                n += 1.;
+            }
+        }
+        sum.map(|s| s / n)
+    };
+    let clamped: Vec<f32> = data.iter().map(|v| v.max(0.)).collect();
+    for method in COLOR_METHODS {
+        let ours = interior(&run(method, (w, h), data.clone(), true));
+        let upstream = interior(&run(method, (w, h), clamped.clone(), true));
+        // Without negative samples there is no pedestal: the difference is
+        // how much the result depends on the pedestal.
+        let lifted: Vec<f32> = data.iter().map(|v| v + 0.02).collect();
+        let lifted = interior(&run(method, (w, h), lifted, true)).map(|m| m - 0.02);
+        let bias = ours.map(|m| m - f64::from(mean));
+        let clamp_bias = upstream.map(|m| m - f64::from(mean));
+        let shift: Vec<f64> = (0..3).map(|c| lifted[c] - ours[c]).collect();
+        println!("{method:?}: bias {bias:?} clamp bias {clamp_bias:?} pedestal shift {shift:?}");
+        for c in 0..3 {
+            assert!(
+                bias[c].abs() < 0.1 * f64::from(sigma),
+                "{method:?} {bias:?}"
+            );
+            assert!(bias[c].abs() < clamp_bias[c].abs(), "{method:?}");
+            assert!(
+                shift[c].abs() < 0.1 * f64::from(sigma),
+                "{method:?} {shift:?}"
+            );
+        }
+    }
+}
+
+type Scene = fn(usize, usize) -> [f32; 3];
+
+/// The largest relative error per distance from the image edge, up to 11.
+fn edge_rings(out: &[f32], (w, h): (usize, usize), scene: Scene) -> [f64; 12] {
+    let mut rings = [0f64; 12];
+    for y in 0..h {
+        for x in 0..w {
+            let d = y.min(x).min(h - 1 - y).min(w - 1 - x).min(11);
+            for (c, t) in scene(y, x).into_iter().enumerate() {
+                let err = f64::from((out[(y * w + x) * 3 + c] - t).abs()) / f64::from(t.abs());
+                rings[d] = rings[d].max(err);
+            }
+        }
+    }
+    rings
+}
+
+#[test]
+fn flat_fields_are_exact_to_the_edge_including_hdr_and_negative() {
+    // A flat field has no detail, so every method must return it, in each
+    // channel and up to the edge. This covers the border bands of LMMSE,
+    // IGV, and DCB, float values far above one, and signed values.
+    let scenes: [Scene; 3] = [
+        |_, _| [0.3, 0.2, 0.1],
+        |_, _| [6., 3., 1.5],
+        |_, _| [-0.04, -0.02, -0.01],
+    ];
+    for scene in scenes {
+        for method in COLOR_METHODS {
+            let (w, h) = (96, 80);
+            let out = run(method, (w, h), mosaic(w, h, &scene), false);
+            let rings = edge_rings(&out, (w, h), scene);
+            let worst = rings.iter().copied().fold(0., f64::max);
+            println!(
+                "{:?} {method:?}: worst relative error {worst:.1e}",
+                scene(0, 0)
+            );
+            // A signed field puts its red sites at the domain floor. AMaZE
+            // divides by sample values there, and DCB has thresholds, so
+            // neither is exact; the bounds record the measured error.
+            let limit = match (method, scene(0, 0)[0] < 0.) {
+                (DemosaicMethod::Amaze, true) => 1e-3,
+                (DemosaicMethod::Dcb, true) => 1e-4,
+                _ => 1e-5,
+            };
+            assert!(worst < limit, "{:?} {method:?}: {rings:?}", scene(0, 0));
+        }
+    }
+}
+
+#[test]
+fn ramps_follow_each_method_model() {
+    let (w, h) = (96, 96);
+    let neutral: Scene = |y, x| [0.05 + 0.006 * x as f32 + 0.003 * y as f32; 3];
+    let hue: Scene = |y, x| {
+        let l = 0.1 + 0.006 * x as f32 + 0.002 * y as f32;
+        [0.9 * l, 0.6 * l, 0.3 * l]
+    };
+    for method in COLOR_METHODS {
+        // Within 4 pixels of the edge, the kernels interpolate one-sided or
+        // from mirrored data; compare from there.
+        let interior = |scene: Scene| {
+            let rings = edge_rings(
+                &run(method, (w, h), mosaic(w, h, &scene), false),
+                (w, h),
+                scene,
+            );
+            rings[4..].iter().copied().fold(0., f64::max)
+        };
+        let (n, c) = (interior(neutral), interior(hue));
+        println!("{method:?}: neutral ramp {n:.1e}, constant-hue ramp {c:.1e}");
+        // Without chroma, every method interpolates a plane exactly. LMMSE
+        // filters in a gamma domain, where the ramp is not a plane.
+        let limit = if method == DemosaicMethod::Lmmse {
+            1e-3
+        } else {
+            1e-4
+        };
+        assert!(n < limit, "{method:?} neutral {n}");
+        // Linear color-difference methods are exact on a plane of color.
+        // The adaptive methods (AMaZE, DCB, IGV, LMMSE, VNG4) choose among
+        // directions by gradient thresholds, and AMaZE also near the edge
+        // mirrors the ramp; they are not exact, and these bounds record them.
+        let limit = match method {
+            DemosaicMethod::Fast
+            | DemosaicMethod::Ahd
+            | DemosaicMethod::Eahd
+            | DemosaicMethod::Hphd => 1e-4,
+            DemosaicMethod::Amaze => 0.02,
+            _ => 0.015,
+        };
+        assert!(c < limit, "{method:?} hue {c}");
+    }
+}
+
+#[test]
+fn dead_sites_and_the_pedestal() {
+    // A dead site is black: -black / (white - black) after normalization,
+    // here -0.06 in a dim noisy scene. Up to `floor_rank` such sites clamp
+    // to the floor and do not set the pedestal. More of them set a pedestal
+    // of 0.06. Adaptive kernels reorder noise far from any change, so this
+    // compares, away from the sites, the mean change (bias) and the RMS
+    // change in units of the input noise.
+    let (w, h) = (96, 96);
+    let sigma = 0.02 / 3f64.sqrt();
+    let mut seed = 13;
+    let data: Vec<f32> = (0..w * h).map(|_| 0.05 + 0.02 * noise(&mut seed)).collect();
+    let rank = floor_rank(w * h);
+    let mut failed = Vec::new();
+    for method in COLOR_METHODS {
+        let base = run(method, (w, h), data.clone(), true);
+        let mut stats = Vec::new();
+        for count in [rank, rank + 1] {
+            let mut dead = data.clone();
+            let sites: Vec<(usize, usize)> = (0..count)
+                .map(|i| (8 + i / 16 * 2, 8 + i % 16 * 5))
+                .collect();
+            for &(y, x) in &sites {
+                dead[y * w + x] = -0.06;
+            }
+            let out = run(method, (w, h), dead, true);
+            let near = method.highlight_radius() + 2;
+            let (mut sum, mut squares, mut n) = (0f64, 0f64, 0f64);
+            for y in 0..h {
+                for x in 0..w {
+                    if sites
+                        .iter()
+                        .any(|&(sy, sx)| y.abs_diff(sy).max(x.abs_diff(sx)) <= near)
+                    {
+                        continue;
+                    }
+                    for c in 0..3 {
+                        let i = (y * w + x) * 3 + c;
+                        let d = f64::from(out[i] - base[i]);
+                        sum += d;
+                        squares += d * d;
+                        n += 1.;
+                    }
+                }
+            }
+            stats.push((sum / n / sigma, (squares / n).sqrt() / sigma));
+        }
+        println!(
+            "{method:?}: away from dead sites, bias and RMS change in noise units: {rank} sites {:.1e} {:.1e}, {} sites (pedestal 0.06) {:.1e} {:.1e}",
+            stats[0].0, stats[0].1, rank + 1, stats[1].0, stats[1].1
+        );
+        if stats[0].0.abs() > 0.01 || stats[1].0.abs() > 0.05 {
+            failed.push(method);
+        }
+    }
+    assert!(failed.is_empty(), "{failed:?}");
+}
+
+#[test]
+fn non_finite_samples_are_errors() {
+    for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+        let mut data = vec![0.5f32; 64 * 64];
+        data[100] = bad;
+        let err = native(
+            DemosaicMethod::Amaze,
+            data,
+            &[0; 64 * 64],
+            (64, 64),
+            RGGB,
+            &unit(),
+            0.,
+            false,
+            &AtomicBool::new(false),
+        )
+        .err();
+        assert_eq!(err.as_deref(), Some("The DNG has non-finite samples"));
+    }
+}
+
+#[test]
+fn highlight_radius_covers_kernels() {
+    // A clipped site changes output pixels around it. The highlight mask
+    // must reach all changes above 0.5 % of the step at the clipped site.
+    let (w, h) = (96, 96);
+    let mut seed = 3;
+    let base: Vec<f32> = (0..w * h).map(|_| 0.3 + 0.05 * noise(&mut seed)).collect();
+    let mut failed = Vec::new();
+    for method in COLOR_METHODS {
+        let before = run(method, (w, h), base.clone(), true);
+        let mut reach = [0; 3];
+        // Red, green, and blue sites.
+        for (sy, sx) in [(48, 48), (48, 49), (49, 49)] {
+            let mut data = base.clone();
+            let step = 1. - data[sy * w + sx];
+            data[sy * w + sx] = 1.;
+            let after = run(method, (w, h), data, true);
+            for y in 0..h {
+                for x in 0..w {
+                    let i = (y * w + x) * 3;
+                    let change = (0..3)
+                        .map(|c| (after[i + c] - before[i + c]).abs() / step)
+                        .fold(0., f32::max);
+                    for (k, limit) in [1e-3, 5e-3, 2e-2].into_iter().enumerate() {
+                        if change > limit {
+                            reach[k] = reach[k].max(y.abs_diff(sy).max(x.abs_diff(sx)));
+                        }
+                    }
+                }
+            }
+        }
+        println!("{method:?}: clipped site reach at 0.1, 0.5, 2 % of the step {reach:?}");
+        if reach[1] > method.highlight_radius() {
+            failed.push((method, reach));
+        }
+    }
+    assert!(failed.is_empty(), "{failed:?}");
+}
+
+/// Counts its calls and asks the kernel to stop.
+extern "C" fn stop_counting(context: *mut c_void) -> c_int {
+    // SAFETY: the test passes an AtomicUsize.
+    let calls = unsafe { &*(context as *const std::sync::atomic::AtomicUsize) };
+    calls.fetch_add(1, Ordering::Relaxed);
+    1
+}
+
+#[test]
+fn native_kernels_stop_at_their_first_progress_point() {
+    // A stopped kernel leaves most of its output unwritten, and asks a few
+    // times only. The patches free all buffers on this path.
+    let (w, h) = (2048, 2048);
+    let data = vec![30000f32; w * h];
+    let rgb_cam = [[1f32, 0., 0.], [0., 1., 0.], [0., 0., 1.]];
+    for method in COLOR_METHODS {
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        let mut out = vec![0f32; w * h * 3];
+        // SAFETY: the buffers have the sizes that the shim reads and writes.
+        let code = unsafe {
+            ffi::x3fdng_rt_demosaic(
+                method.index(),
+                w as c_int,
+                h as c_int,
+                data.as_ptr(),
+                out.as_mut_ptr(),
+                RGGB.as_ptr(),
+                rgb_cam.as_ptr(),
+                1.,
+                stop_counting,
+                &calls as *const _ as *mut c_void,
+            )
+        };
+        assert_eq!(code, 0);
+        let written = out[w * h..2 * w * h].iter().filter(|v| **v != 0.).count();
+        let calls = calls.into_inner();
+        println!(
+            "{method:?}: {calls} calls, green written {:.1} %",
+            100. * written as f64 / (w * h) as f64
+        );
+        // At the start, at the stop, at the end, and before a border band.
+        assert!(calls <= 4, "{method:?}: {calls} calls");
+        assert!(written * 2 < w * h, "{method:?}: {written} written");
+    }
+}
+
+#[test]
+#[ignore = "timing: run with --ignored --nocapture"]
+fn native_kernel_timing() {
+    let (w, h) = (4000, 3000);
+    let mut seed = 5;
+    let data: Vec<f32> = (0..w * h)
+        .map(|_| 30000. + 20000. * noise(&mut seed))
+        .collect();
+    for method in COLOR_METHODS {
+        let start = std::time::Instant::now();
+        let (code, _) = kernel(method, (w, h), &data, RGGB, 1., &AtomicBool::new(false));
+        let full = start.elapsed();
+        let cancel = AtomicBool::new(false);
+        let start = std::time::Instant::now();
+        let (stopped, _) = std::thread::scope(|scope| {
+            scope.spawn(|| {
+                std::thread::sleep(full / 4);
+                cancel.store(true, Ordering::Relaxed);
+            });
+            kernel(method, (w, h), &data, RGGB, 1., &cancel)
+        });
+        let latency = start.elapsed().saturating_sub(full / 4);
+        assert_eq!((code, stopped), (0, 0));
+        println!("{method:?} 12 MP: full {full:.2?}, stop latency after cancel {latency:.2?}");
     }
 }

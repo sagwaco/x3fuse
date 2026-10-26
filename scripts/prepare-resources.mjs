@@ -5,6 +5,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { downloadVerified } from './download-verified.mjs'
 import { prepareLibraw } from './prepare-libraw.mjs'
+import { prepareRtprocess } from './prepare-rtprocess.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const resources = join(root, 'src-tauri/resources')
@@ -21,6 +22,7 @@ const sha256 = windows
 const marker = `${process.platform}:${version}:${sha256}`
 
 await prepareLibraw(root)
+await prepareRtprocess(root)
 const destination = join(resources, 'exiftool')
 await mkdir(resources, { recursive: true })
 const coreNotices = join(resources, 'licenses/x3fuse-core')
@@ -45,6 +47,7 @@ await cp(join(dng, 'NOTICE'), join(resources, 'licenses/x3f-dng/NOTICE'))
 for (const name of ['LICENSE.LGPL', 'LICENSE.CDDL', 'COPYRIGHT']) {
   await cp(join(dng, 'libraw', name), join(resources, `licenses/x3f-dng/LIBRAW_${name}`))
 }
+await cp(join(dng, 'rtprocess/LICENSE.txt'), join(resources, 'licenses/x3f-dng/LIBRTPROCESS_LICENSE.txt'))
 
 if ((await readFile(join(destination, '.version'), 'utf8').catch(() => '')) !== marker) {
   const cache = join(root, '.cache')
@@ -89,4 +92,4 @@ const executable = windows ? join(destination, 'exiftool.exe') : 'perl'
 const args = windows ? ['-ver'] : [join(destination, 'exiftool'), '-ver']
 const actual = execFileSync(executable, args, { encoding: 'utf8' }).trim()
 if (actual !== version) throw new Error(`Expected ExifTool ${version}, found ${actual}`)
-console.log(`Resources ready: LibRaw, ExifTool ${actual}, opcodes`)
+console.log(`Resources ready: LibRaw, librtprocess, ExifTool ${actual}, opcodes`)

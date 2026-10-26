@@ -6,6 +6,10 @@
 //! and BaselineExposure. LibRaw also demosaics color filter arrays, in the
 //! camera color space and without scaling.
 //!
+//! `prepare_with_method` can demosaic a 2x2 Bayer array with a native float
+//! method instead: the librtprocess kernels, or a port of RawTherapee EAHD.
+//! See `Domain` for the float range of these kernels.
+//!
 //! Opcodes: OpcodeList2 GainMap, and OpcodeList3 GainMap and WarpRectilinear.
 //! Optional opcodes of other kinds are skipped.
 //!
@@ -37,7 +41,7 @@ use mozjpeg_sys as _;
 
 /// The bundled decoder and the adapter revision. Change the revision when a
 /// change can alter decoded pixels or metadata.
-pub const DECODER_VERSION: &str = "LibRaw 0.22.2, x3f-dng 2";
+pub const DECODER_VERSION: &str = "LibRaw 0.22.2, librtprocess 9a85827, x3f-dng 3";
 /// The largest active area, in pixels. A color image of this size needs
 /// about 23 bytes per pixel while it is prepared.
 pub const MAX_PIXELS: u64 = 160_000_000;
@@ -49,6 +53,67 @@ const MAX_RAW_MEMORY_MB: u32 = 4096;
 const SATURATION: f32 = 0.999;
 /// The 16-bit demosaic input keeps negative noise above this offset.
 const DEMOSAIC_OFFSET: f32 = 1024.;
+/// The shortest edge for a native method. AMaZE mirrors 32 rows and columns
+/// at each image edge, and IGV and LMMSE need borders of 8 or more pixels.
+pub const MIN_NATIVE_EDGE: u32 = 64;
+/// The largest active area for a native method, in pixels: 61 MP sensors
+/// with a margin. A native method needs up to about 48 bytes per pixel
+/// while it runs (IGV), or 3 GB at this limit; see `native`.
+pub const MAX_NATIVE_PIXELS: u64 = 64_000_000;
+
+/// A native float demosaic method for 2x2 Bayer arrays. The tuning is fixed
+/// at the RawTherapee 5.13 defaults: DCB 2 iterations with enhancement,
+/// LMMSE 2 iterations.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DemosaicMethod {
+    Amaze,
+    Dcb,
+    Ahd,
+    Eahd,
+    Hphd,
+    Igv,
+    Lmmse,
+    Vng4,
+    /// No demosaic: each site keeps its own sample as gray, without white
+    /// balance or a color matrix.
+    Mono,
+    Fast,
+}
+
+impl DemosaicMethod {
+    /// The method number in demosaic.cpp. Mono has none.
+    fn index(self) -> c_int {
+        match self {
+            Self::Amaze => 0,
+            Self::Dcb => 1,
+            Self::Ahd => 2,
+            Self::Eahd => 3,
+            Self::Hphd => 4,
+            Self::Igv => 5,
+            Self::Lmmse => 6,
+            Self::Vng4 => 7,
+            Self::Fast => 8,
+            Self::Mono => -1,
+        }
+    }
+
+    /// How far a clipped CFA site changes output pixels by more than 0.5 %
+    /// of its step, in pixels. The highlight mask grows by this radius.
+    /// `highlight_radius_covers_kernels` measures it.
+    fn highlight_radius(self) -> usize {
+        match self {
+            Self::Mono => 0,
+            Self::Vng4 => 3,
+            Self::Fast => 4,
+            Self::Ahd => 5,
+            Self::Eahd => 6,
+            Self::Amaze | Self::Lmmse => 8,
+            Self::Hphd => 9,
+            Self::Igv => 13,
+            Self::Dcb => 17,
+        }
+    }
+}
 
 /// Metadata of a DNG that this crate can prepare.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -64,6 +129,10 @@ pub struct DngInfo {
     pub as_shot_crop: Option<[f32; 4]>,
     /// One sample per pixel. White balance does not apply.
     pub monochrome: bool,
+    /// A 2x2 Bayer array of a size that the native methods accept, from
+    /// `MIN_NATIVE_EDGE` to `MAX_NATIVE_PIXELS`. Only then can
+    /// `prepare_with_method` use a `DemosaicMethod`.
+    pub bayer: bool,
 }
 
 mod ffi {
@@ -142,6 +211,19 @@ mod ffi {
         pub fn x3fdng_unpack(handle: *mut c_void, out: *mut Raw) -> c_int;
         pub fn x3fdng_float_to_int(handle: *mut c_void, out: *mut Raw) -> c_int;
         pub fn x3fdng_demosaic(handle: *mut c_void, half_size: c_int, out: *mut Image) -> c_int;
+        #[allow(clippy::too_many_arguments)]
+        pub fn x3fdng_rt_demosaic(
+            method: c_int,
+            width: c_int,
+            height: c_int,
+            mosaic: *const f32,
+            out: *mut f32,
+            cfa: *const [u8; 2],
+            rgb_cam: *const [f32; 3],
+            init_gain: f64,
+            cancelled: extern "C" fn(*mut c_void) -> c_int,
+            context: *mut c_void,
+        ) -> c_int;
         #[cfg(test)]
         pub fn x3fdng_sizes(which: c_int) -> usize;
     }
@@ -372,7 +454,62 @@ pub fn inspect(path: &Path, cancel: &AtomicBool) -> Result<DngInfo, String> {
         orientation: orientation(info.flip),
         as_shot_crop: as_shot_crop(info),
         monochrome: opened.layout == Layout::Mono,
+        bayer: native_cfa(&opened).is_ok(),
     })
+}
+
+/// The 2x2 pattern of a Bayer array in LibRaw colors, where 3 is the second
+/// green. The whole 24x24 CFA table must repeat it.
+fn bayer_pattern(info: &ffi::Info) -> Option<[[u8; 2]; 2]> {
+    let p = [
+        [info.cfa[0][0], info.cfa[0][1]],
+        [info.cfa[1][0], info.cfa[1][1]],
+    ];
+    let periodic = (0..24).all(|r| (0..24).all(|c| info.cfa[r][c] == p[r % 2][c % 2]));
+    let green = |v: u8| v == 1 || v == 3;
+    let sites = p.concat();
+    let count = |c: u8| sites.iter().filter(|v| **v == c).count();
+    // One red, one blue, and two greens on a diagonal.
+    let bayer = count(0) == 1
+        && count(2) == 1
+        && green(p[0][0]) == green(p[1][1])
+        && green(p[0][1]) == green(p[1][0])
+        && green(p[0][0]) != green(p[0][1]);
+    (periodic && bayer).then_some(p)
+}
+
+/// The CFA for a native method, with two distinct greens for VNG4. The
+/// green on the blue row becomes 3 when LibRaw gives both greens one color.
+fn native_cfa(opened: &Opened) -> Result<[[u8; 2]; 2], String> {
+    let info = &opened.info;
+    let mut p = match (opened.layout, bayer_pattern(info)) {
+        (Layout::Cfa, Some(p)) => p,
+        _ => {
+            return Err(
+                "A native demosaic method needs a DNG with a 2x2 Bayer color filter array".into(),
+            )
+        }
+    };
+    let (w, h) = (info.width, info.height);
+    if w < MIN_NATIVE_EDGE || h < MIN_NATIVE_EDGE || u64::from(w) * u64::from(h) > MAX_NATIVE_PIXELS
+    {
+        return Err(format!(
+            "A native demosaic method needs an image from {MIN_NATIVE_EDGE} pixels per edge to \
+             {MAX_NATIVE_PIXELS} pixels; this DNG is {w}x{h}"
+        ));
+    }
+    let greens: Vec<(usize, usize)> = (0..4)
+        .map(|i| (i / 2, i % 2))
+        .filter(|&(r, c)| p[r][c] == 1 || p[r][c] == 3)
+        .collect();
+    let (a, b) = (greens[0], greens[1]);
+    if p[a.0][a.1] == p[b.0][b.1] {
+        let blue_row = (0..2).find(|&r| p[r].contains(&2)).unwrap_or(1);
+        for (r, c) in [a, b] {
+            p[r][c] = if r == blue_row { 3 } else { 1 };
+        }
+    }
+    Ok(p)
 }
 
 fn baseline_exposure(info: &ffi::Info) -> f64 {
@@ -502,10 +639,15 @@ fn decode(
     path: &Path,
     cancel: &AtomicBool,
     half_size: bool,
+    method: Option<DemosaicMethod>,
 ) -> Result<(Balanced, color::Calibration, u16), String> {
     let opened = open(path, cancel)?;
     let info = &opened.info;
-    let cal = calibration(&opened)?;
+    let cfa_pattern = method.map(|_| native_cfa(&opened)).transpose()?;
+    let cal = match method {
+        Some(DemosaicMethod::Mono) => color::monochrome(baseline_exposure(info)),
+        _ => calibration(&opened)?,
+    };
     let lists = opcode_lists(info)?;
     // SAFETY: Raw is plain data that the shim fills on success.
     let mut raw: Box<ffi::Raw> = Box::new(unsafe { std::mem::zeroed() });
@@ -595,6 +737,14 @@ fn decode(
                 step: 1,
             }
         }
+        // Gray sites without white balance; the calibration is monochrome.
+        Layout::Cfa if method == Some(DemosaicMethod::Mono) => Balanced {
+            data,
+            width,
+            height,
+            highlights,
+            step: 1,
+        },
         Layout::Cfa => {
             for row in 0..height {
                 for col in 0..width {
@@ -602,16 +752,30 @@ fn decode(
                     data[row * width + col] /= n[if c == 3 { 1 } else { c }];
                 }
             }
-            if raw.is_float != 0 {
-                // LibRaw demosaics 16-bit samples only; this allocates them.
-                opened.handle.call(cancel, |h| unsafe {
-                    ffi::x3fdng_float_to_int(h, &mut *raw)
-                })?;
-                validate(&raw, info, Layout::Cfa)?;
+            if let (Some(method), Some(pattern)) = (method, cfa_pattern) {
+                native(
+                    method,
+                    data,
+                    &highlights,
+                    (width, height),
+                    pattern,
+                    &cal,
+                    baseline_exposure(info),
+                    integer,
+                    cancel,
+                )?
+            } else {
+                if raw.is_float != 0 {
+                    // LibRaw demosaics 16-bit samples only; this allocates them.
+                    opened.handle.call(cancel, |h| unsafe {
+                        ffi::x3fdng_float_to_int(h, &mut *raw)
+                    })?;
+                    validate(&raw, info, Layout::Cfa)?;
+                }
+                demosaic(
+                    &opened, &raw, data, highlights, width, height, half_size, cancel,
+                )?
             }
-            demosaic(
-                &opened, &raw, data, highlights, width, height, half_size, cancel,
-            )?
         }
     };
     check(cancel)?;
@@ -696,6 +860,185 @@ fn demosaic(
     })
 }
 
+/// The affine map of the balanced mosaic into the kernel domain [0, 65535]:
+/// `y = (x - lo) * scale`. The largest sample, or `clip` when it is larger,
+/// maps to 65535. `lo` is zero, or the sample at rank `floor_rank` from the
+/// bottom when it is negative: the pedestal `-lo * scale` keeps negative
+/// noise, and is zero when fewer samples are negative. The few samples below
+/// `lo`, such as dead sites, clamp to it, so one of them cannot move the
+/// pedestal of the whole image. The kernels clamp their output to the
+/// domain, so the output stays from `lo` to the top. With integer samples
+/// and no pedestal, this is the RawTherapee scale, where the channel with
+/// the largest gain clips at 65535.
+///
+/// A pedestal is not neutral for every kernel. AMaZE divides by sample
+/// values, so it is not exact on a flat field at the domain floor, and its
+/// result in dark noise moves with the pedestal; see the tests.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Domain {
+    lo: f64,
+    scale: f64,
+}
+
+impl Domain {
+    fn new(data: &[f32], clip: f32) -> Result<Self, String> {
+        #[derive(PartialEq)]
+        struct Key(f32);
+        impl Eq for Key {}
+        impl PartialOrd for Key {
+            fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+                Some(self.cmp(other))
+            }
+        }
+        impl Ord for Key {
+            fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+                self.0.total_cmp(&other.0)
+            }
+        }
+        // The `floor_rank + 1` smallest negative samples.
+        let rank = floor_rank(data.len());
+        let mut lowest = std::collections::BinaryHeap::with_capacity(rank + 1);
+        let mut hi = clip;
+        for &v in data {
+            if !v.is_finite() {
+                return Err("The DNG has non-finite samples".into());
+            }
+            hi = hi.max(v);
+            if v < 0. && (lowest.len() <= rank || lowest.peek().is_some_and(|k: &Key| v < k.0)) {
+                lowest.push(Key(v));
+                if lowest.len() > rank + 1 {
+                    lowest.pop();
+                }
+            }
+        }
+        let lo = match lowest.peek() {
+            Some(k) if lowest.len() > rank => k.0,
+            _ => 0.,
+        };
+        let scale = 65535. / (f64::from(hi) - f64::from(lo));
+        if !(scale.is_finite() && scale > 0.) {
+            return Err("The DNG sample range is too large to demosaic".into());
+        }
+        Ok(Self {
+            lo: f64::from(lo),
+            scale,
+        })
+    }
+
+    /// The clamp floors the samples below `lo` (see `floor_rank`), and
+    /// removes rounding at the top.
+    fn map(self, x: f32) -> f32 {
+        ((f64::from(x) - self.lo) * self.scale).clamp(0., 65535.) as f32
+    }
+
+    fn unmap(self, y: f32) -> f32 {
+        (f64::from(y) / self.scale + self.lo) as f32
+    }
+}
+
+/// How many of the lowest samples cannot set the pedestal: 64, or one in
+/// 10000 samples of a large image (2400 at 24 MP, 6400 at 64 MP). A dead
+/// row or column longer than this sets the pedestal again.
+fn floor_rank(samples: usize) -> usize {
+    (samples / 10_000).max(64)
+}
+
+fn zeroed(len: usize) -> Result<Vec<f32>, String> {
+    let mut v = Vec::new();
+    v.try_reserve_exact(len)
+        .map_err(|_| "Not enough memory to demosaic the DNG")?;
+    v.resize(len, 0.);
+    Ok(v)
+}
+
+extern "C" fn cancelled(context: *mut c_void) -> c_int {
+    // SAFETY: `native` passes its live AtomicBool.
+    let cancel = unsafe { &*(context as *const AtomicBool) };
+    c_int::from(cancel.load(Ordering::Relaxed))
+}
+
+/// Demosaic the balanced mosaic with a native method, in float.
+/// Peak memory per pixel: the mosaic (4 bytes), the highlight mask (1), the
+/// three output planes (12), and the kernel buffers: IGV 24 (12 with SSE2),
+/// LMMSE 20, VNG4 16, HPHD 4, the others tiles or rows only. After the
+/// kernel, the interleaved result (12) replaces the mosaic. With the LibRaw
+/// raw buffer (2 or 4), the peak is about 48 bytes per pixel.
+#[allow(clippy::too_many_arguments)]
+fn native(
+    method: DemosaicMethod,
+    mut data: Vec<f32>,
+    highlights: &[u8],
+    (width, height): (usize, usize),
+    cfa: [[u8; 2]; 2],
+    cal: &color::Calibration,
+    baseline_exposure: f64,
+    integer: bool,
+    cancel: &AtomicBool,
+) -> Result<Balanced, String> {
+    // Integer channels clip at 1 / neutral, and green at one. Float samples
+    // have no clip level, so AMaZE gets a level above the domain.
+    let clip = cal.neutral.iter().copied().fold(1., f64::min).recip() as f32;
+    let domain = Domain::new(&data, if integer { clip } else { 1. })?;
+    check(cancel)?;
+    let init_gain = if integer {
+        65535. / ((1. - domain.lo) * domain.scale)
+    } else {
+        0.5
+    };
+    for v in &mut data {
+        *v = domain.map(*v);
+    }
+    // Balanced camera values to linear sRGB, with white at one.
+    let n = cal.neutral;
+    let m = color::mul(
+        &cal.camera_to_rgb,
+        &[n[0], 0., 0., 0., n[1], 0., 0., 0., n[2]],
+    )
+    .map(|v| (v / 2f64.powf(baseline_exposure)) as f32);
+    let rgb_cam: [[f32; 3]; 3] = std::array::from_fn(|r| std::array::from_fn(|c| m[r * 3 + c]));
+    let plane = width * height;
+    let mut planes = zeroed(plane * 3)?;
+    check(cancel)?;
+    // SAFETY: the buffers hold `plane` and `3 * plane` floats, and `native_cfa`
+    // checked the size; the kernel reads `cancel` only during the call.
+    let code = unsafe {
+        ffi::x3fdng_rt_demosaic(
+            method.index(),
+            width as c_int,
+            height as c_int,
+            data.as_ptr(),
+            planes.as_mut_ptr(),
+            cfa.as_ptr(),
+            rgb_cam.as_ptr(),
+            init_gain,
+            cancelled,
+            cancel as *const AtomicBool as *mut c_void,
+        )
+    };
+    check(cancel)?;
+    match code {
+        0 => {}
+        -10001 => return Err("Not enough memory to demosaic the DNG".into()),
+        _ => return Err(format!("Native {method:?} demosaic failed ({code})")),
+    }
+    drop(data);
+    let mut out = zeroed(plane * 3)?;
+    for (i, px) in out.as_chunks_mut::<3>().0.iter_mut().enumerate() {
+        for (c, v) in px.iter_mut().enumerate() {
+            *v = domain.unmap(planes[c * plane + i]);
+        }
+    }
+    drop(planes);
+    check(cancel)?;
+    Ok(Balanced {
+        data: out,
+        width,
+        height,
+        highlights: dilate(highlights, width, height, method.highlight_radius()),
+        step: 1,
+    })
+}
+
 /// Resample to square pixels with linear interpolation along one axis.
 fn stretch(image: Balanced, aspect: f32) -> Balanced {
     let (w, h) = (image.width, image.height);
@@ -750,23 +1093,51 @@ fn stretch(image: Balanced, aspect: f32) -> Balanced {
 /// Maximum over a square window, in two passes.
 fn dilate(mask: &[u8], width: usize, height: usize, radius: usize) -> Vec<u8> {
     let mut rows = vec![0u8; mask.len()];
+    let mut line = Vec::new();
     for y in 0..height {
-        let line = &mask[y * width..][..width];
-        for x in 0..width {
-            let span = &line[x.saturating_sub(radius)..(x + radius + 1).min(width)];
-            rows[y * width + x] = span.iter().copied().max().unwrap_or(0);
-        }
+        line.clear();
+        line.extend_from_slice(&mask[y * width..][..width]);
+        running_max(&mut line, radius);
+        rows[y * width..][..width].copy_from_slice(&line);
     }
     let mut out = vec![0u8; mask.len()];
-    for y in 0..height {
-        for x in 0..width {
-            out[y * width + x] = (y.saturating_sub(radius)..(y + radius + 1).min(height))
-                .map(|r| rows[r * width + x])
-                .max()
-                .unwrap_or(0);
+    for x in 0..width {
+        line.clear();
+        line.extend((0..height).map(|y| rows[y * width + x]));
+        running_max(&mut line, radius);
+        for (y, v) in line.iter().enumerate() {
+            out[y * width + x] = *v;
         }
     }
     out
+}
+
+/// The maximum over `[i - radius, i + radius]` at each `i`, in linear time
+/// (van Herk and Gil-Werman: block prefix and suffix maxima).
+fn running_max(line: &mut [u8], radius: usize) {
+    if radius == 0 || line.is_empty() {
+        return;
+    }
+    // Zeros outside the line make every window full, and change no maximum.
+    let block = 2 * radius + 1;
+    let mut prefix = vec![0u8; line.len() + 2 * radius];
+    prefix[radius..][..line.len()].copy_from_slice(line);
+    let mut suffix = prefix.clone();
+    for i in 1..prefix.len() {
+        if i % block != 0 {
+            prefix[i] = prefix[i].max(prefix[i - 1]);
+        }
+    }
+    for i in (0..suffix.len() - 1).rev() {
+        if (i + 1) % block != 0 {
+            suffix[i] = suffix[i].max(suffix[i + 1]);
+        }
+    }
+    // The window of `i` is `[i, i + 2 * radius]` in padded indices: the end
+    // of one block and the start of the next.
+    for (i, v) in line.iter_mut().enumerate() {
+        *v = suffix[i].max(prefix[i + 2 * radius]);
+    }
 }
 
 /// Fade in near sensor clipping to avoid a hard boundary in bright gradients.
@@ -843,8 +1214,21 @@ fn to_scene(image: Balanced, cal: &color::Calibration) -> Result<Vec<f32>, Strin
 }
 
 /// Decode the full image as an unrotated, active-area scene for the editor.
+/// LibRaw demosaics a color filter array.
 pub fn prepare(path: &Path, cancel: &AtomicBool) -> Result<x3f_core::SceneLinearImage, String> {
-    let (image, cal, orientation) = decode(path, cancel, false)?;
+    prepare_with_method(path, None, cancel)
+}
+
+/// `prepare` with a native demosaic method. None is the LibRaw route of
+/// `prepare`. A method needs a DNG whose `DngInfo::bayer` is true, else it
+/// is an error; no other method replaces it. `DemosaicMethod::Mono` returns
+/// a monochrome calibration.
+pub fn prepare_with_method(
+    path: &Path,
+    method: Option<DemosaicMethod>,
+    cancel: &AtomicBool,
+) -> Result<x3f_core::SceneLinearImage, String> {
+    let (image, cal, orientation) = decode(path, cancel, false, method)?;
     let (width, height) = (image.width as u32, image.height as u32);
     let data = to_scene(image, &cal)?;
     check(cancel)?;
@@ -876,7 +1260,7 @@ fn srgb(v: f32) -> u16 {
 /// `PREVIEW_MAX_EDGE` pixels on its long edge. Always three channels.
 pub fn preview(path: &Path, cancel: &AtomicBool) -> Result<Vec<u8>, String> {
     use image::ImageEncoder;
-    let (image, cal, _) = decode(path, cancel, true)?;
+    let (image, cal, _) = decode(path, cancel, true, None)?;
     let (width, height) = (image.width as u32, image.height as u32);
     let data = to_scene(image, &cal)?;
     check(cancel)?;

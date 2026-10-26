@@ -33,6 +33,62 @@ fn image(width: u32, height: u32) -> SceneLinearImage {
 }
 
 #[test]
+fn dng_method_serialization_preserves_legacy_and_rejects_unknown_methods() {
+    let legacy: EditRecipe = serde_json::from_str(r#"{"version":1}"#).unwrap();
+    assert_eq!(legacy.dng_demosaic, None);
+    assert!(serde_json::to_value(&legacy)
+        .unwrap()
+        .get("dngDemosaic")
+        .is_none());
+    for name in [
+        "amaze", "dcb", "ahd", "eahd", "hphd", "igv", "lmmse", "vng4", "mono", "fast",
+    ] {
+        let input = serde_json::json!({"dngDemosaic": name});
+        let recipe: EditRecipe = serde_json::from_value(input).unwrap();
+        assert_eq!(serde_json::to_value(recipe).unwrap()["dngDemosaic"], name);
+    }
+    assert!(serde_json::from_str::<EditRecipe>(r#"{"dngDemosaic":"future"}"#).is_err());
+}
+
+#[test]
+#[ignore = "requires a supported GPU"]
+fn mono_demosaic_render_keeps_gray_and_applies_warmth() {
+    let cancel = AtomicBool::new(false);
+    let renderer = Renderer::new().unwrap();
+    let mut scene = image(8, 8);
+    scene.data.fill(0.18);
+    let source = PreparedImage::new(scene, &cancel)
+        .unwrap()
+        .with_dng_source(true);
+    let recipe = EditRecipe {
+        denoise: 0,
+        film: None,
+        dng_demosaic: Some(DngDemosaic::Mono),
+        ..Default::default()
+    };
+    let gray = renderer
+        .render_prepared(&source, &recipe, RenderOptions::default(), &cancel)
+        .unwrap();
+    for rgb in gray.data.as_chunks::<3>().0 {
+        assert!(rgb[0] > 1000);
+        assert_eq!(rgb[0], rgb[1]);
+        assert_eq!(rgb[1], rgb[2]);
+    }
+    let warm = renderer
+        .render_prepared(
+            &source,
+            &EditRecipe {
+                warmth: 50.,
+                ..recipe
+            },
+            RenderOptions::default(),
+            &cancel,
+        )
+        .unwrap();
+    assert!(warm.data.as_chunks::<3>().0.iter().all(|rgb| rgb[0] > rgb[2]));
+}
+
+#[test]
 fn dng_recipes_reject_sensor_controls_and_allow_spectral_film_filters() {
     let base = EditRecipe {
         film: None,
@@ -74,6 +130,27 @@ fn dng_recipes_reject_sensor_controls_and_allow_spectral_film_filters() {
     };
     balanced.validate_dng(false).unwrap();
     assert!(balanced.validate_dng(true).is_err());
+    let mono = EditRecipe {
+        dng_demosaic: Some(DngDemosaic::Mono),
+        ..base.clone()
+    };
+    mono.validate_dng(false).unwrap();
+    for invalid in [
+        EditRecipe {
+            temperature: Some(5000.),
+            ..mono.clone()
+        },
+        EditRecipe {
+            tint: 5.,
+            ..mono.clone()
+        },
+        EditRecipe {
+            white_balance_gains: Some([1.; 3]),
+            ..mono.clone()
+        },
+    ] {
+        assert!(invalid.validate_dng(false).is_err());
+    }
     for film in 0..film::profile::FILM_COUNT as u32 {
         let profile = film::profile::load(film as usize).unwrap();
         let recipe = EditRecipe {

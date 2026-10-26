@@ -16,7 +16,7 @@ pub use color::{
 pub use export::{ExportResize, ResamplingMethod};
 pub use preview::raw_preview;
 pub use recipe::{
-    ColorWheels, Crop, Curves, EditRecipe, EffectsSettings, FilmSettings, GrainParams,
+    ColorWheels, Crop, Curves, DngDemosaic, EditRecipe, EffectsSettings, FilmSettings, GrainParams,
     HalationParams, HslBand, MonochromeFilter, MonochromeSettings, Point, RawColor, Wheel,
 };
 pub use stocks::STOCKS_JSON;
@@ -37,7 +37,8 @@ pub use stocks::STOCKS_JSON;
 /// Version 13 renders a monochrome RAW mix as a monochrome image.
 /// Version 15 adds neutral DNG rendering without the Sigma tone curve.
 /// Version 16 corrects DNG highlight clipping.
-pub const RENDER_VERSION: u32 = 16;
+/// Version 17 adds selectable Bayer DNG demosaicing.
+pub const RENDER_VERSION: u32 = 17;
 
 use image::ImageEncoder;
 use serde::{Deserialize, Serialize};
@@ -1666,7 +1667,10 @@ impl Renderer {
         // A monochrome RAW mix takes its hue from the color infrared image, then
         // mixes it to gray with the shared row, as the sensor-layer mix does.
         let raw_row = r.raw_color.as_ref().and_then(RawColor::monochrome_row);
-        let neutral = r.monochrome.is_some() || silver || raw_row.is_some();
+        let neutral = r.monochrome.is_some()
+            || silver
+            || raw_row.is_some()
+            || r.dng_demosaic == Some(DngDemosaic::Mono);
         p[1] = [
             g.scale,
             o.color_profile.index(),
@@ -1686,6 +1690,9 @@ impl Renderer {
             if neutral { 0. } else { r.vibrance / 100. },
         ];
         p[4][0] = r.sharpen / 100.;
+        if r.dng_demosaic == Some(DngDemosaic::Mono) {
+            p[4][1..].copy_from_slice(&[0., 1., 0.]);
+        }
         if let Some(monochrome) = sensor_mix {
             p[4][1..].copy_from_slice(&color::monochrome_mix(
                 &image.white_balance,

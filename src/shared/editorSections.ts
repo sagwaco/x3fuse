@@ -1,4 +1,5 @@
 import {
+  DEFAULT_DNG_DEMOSAIC,
   DEFAULT_EFFECTS,
   DEFAULT_FILM,
   DEFAULT_WHEELS,
@@ -8,6 +9,7 @@ import {
   monochromeRawMatrix,
   filmGrainDefaults,
   filmHalationDefaults,
+  hasWhiteBalance,
   monochromeFilm,
   type EditRecipe,
   type EffectsSettings,
@@ -138,6 +140,11 @@ export const EDITOR_SECTIONS = {
     })
   },
   curves: { take: (from) => pick(from, ['curves']) },
+  // A legacy recipe has no demosaic to give. A reset selects the default demosaic.
+  demosaic: {
+    take: (from) => (from.dngDemosaic ? { dngDemosaic: from.dngDemosaic } : {}),
+    reset: () => ({ dngDemosaic: DEFAULT_DNG_DEMOSAIC })
+  },
   whiteBalance: {
     take: (from, to) =>
       from.rawColor && to.rawColor
@@ -230,7 +237,7 @@ export function pasteSection(
 ): Patch {
   if (
     id === 'whiteBalance' &&
-    (!from.whiteBalance ||
+    (!hasWhiteBalance(from, source) ||
       (from.foveon !== to.foveon && (source.rawColor || source.whiteBalanceGains)))
   )
     return {}

@@ -211,7 +211,9 @@ identifier is `com.sagwa.X3Fuse`.
   converts X3F files and prepares RAW data directly in Rust.
 - **x3f-render**: in-repo GPU renderer for RAW edits and the spektrafilm film model.
 - **x3f-dng**: in-repo adapter for bundled [LibRaw 0.22.2](https://www.libraw.org/),
-  with static JPEG and Deflate codecs. It needs no installed LibRaw library.
+  with static JPEG and Deflate codecs. Bayer demosaicing uses
+  [librtprocess](https://github.com/CarVac/librtprocess) and RawTherapee's EAHD.
+  It needs no installed RAW processing library.
 - [**ExifTool 13.59**](https://github.com/exiftool/exiftool): bundled metadata handling.
 - **tauri-plugin-updater**: macOS updates from `docs/Support/latest.json`.
   Windows and Linux portable alphas have no updater.
@@ -265,9 +267,11 @@ Windows bundles the complete ExifTool standalone runtime. macOS and Linux use it
 Perl script and modules. `npm run sync:resources` includes renderer license and
 spectral-data notices in the app.
 
-The same step downloads checksum-verified LibRaw 0.22.2 source for `x3f-dng`.
+The same step downloads checksum-verified LibRaw 0.22.2 and pinned librtprocess
+source for `x3f-dng`.
 Archives are cached in `.cache/`. The prepared source in
-`src-tauri/crates/x3f-dng/libraw/` is not tracked by Git. The first preparation
+`src-tauri/crates/x3f-dng/libraw/` and `src-tauri/crates/x3f-dng/rtprocess/`
+is not tracked by Git. The first preparation
 needs network access; later runs can use the cached archives. Run
 `npm run sync:resources` before direct Cargo commands in a fresh checkout.
 LibRaw is compiled into the app, so users need no separate download.
@@ -464,6 +468,16 @@ Double-click a slider thumb to restore its default. Grain and halation have
 strength controls and advanced settings. New edits use the camera's as-shot crop.
 Monochrome filters mix calibrated Foveon sensor-layer responses and remain gray
 through color film and channel-curve processing.
+
+Bayer DNGs have a **Demosaicing** selector in RAW: AMaZE, DCB, AHD, EAHD, HPHD,
+IGV, LMMSE, VNG4, Mono, and Fast. It supports active images from 64 pixels per
+edge to 64 megapixels. New supported Bayer photos use AMaZE. Earlier saved DNG
+recipes show Legacy and keep their LibRaw rendering until you choose a method.
+The method is saved per photo and is used by edited previews and JPEG/TIFF exports.
+Before and pasted looks keep the selected method. Mono reads each sensor site as
+gray and is for sensors with no color filter array; it disables white balance.
+X-Trans DNGs and Bayer images outside these size limits use their existing
+processing. Linear and native monochrome DNGs do not need demosaicing.
 
 Edits autosave beside the source, for example `<photo>.X3F.x3fuse.json` or
 `<photo>.dng.x3fuse.json`; the RAW stays unchanged. Move the

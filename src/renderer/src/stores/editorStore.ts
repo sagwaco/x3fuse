@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import {
   capabilitiesOf,
   FOVEON_CAPABILITIES,
+  hasWhiteBalance,
   pasteRecipe,
   pixelRecipe,
   sourceDefaultRecipe,
@@ -177,8 +178,12 @@ function capabilitiesFor(path: string): SourceCapabilities {
   )
 }
 
-/** The recipe that Reset gives: the camera's look and framing, without adjustments. */
-export function asShotRecipe(session: EditorSession | null, seed: number): EditRecipe {
+/** The recipe that Reset gives: the camera's look and framing, without adjustments.
+    The photo keeps its seed and its demosaic, which is a source setting. */
+export function asShotRecipe(
+  session: EditorSession | null,
+  { seed, dngDemosaic }: Pick<EditRecipe, 'seed' | 'dngDemosaic'>
+): EditRecipe {
   const capabilities = session ? capabilitiesOf(session) : FOVEON_CAPABILITIES
   return supportedRecipe(
     {
@@ -187,7 +192,8 @@ export function asShotRecipe(session: EditorSession | null, seed: number): EditR
       cameraProfile: session?.asShotCameraProfile ?? null,
       monochrome: session?.asShotCameraProfile === 'Monochrome' ? { filter: 'neutral' } : null,
       crop: session?.asShotCrop ?? null,
-      seed
+      seed,
+      dngDemosaic
     },
     capabilities
   )
@@ -197,7 +203,7 @@ export function asShotRecipe(session: EditorSession | null, seed: number): EditR
 function renderRecipe(state: EditorState, doc: Document): EditRecipe {
   let recipe = state.before
     ? {
-        ...asShotRecipe(state.session, doc.recipe.seed),
+        ...asShotRecipe(state.session, doc.recipe),
         crop: doc.recipe.crop,
         rotation: doc.recipe.rotation,
         straighten: doc.recipe.straighten,
@@ -754,7 +760,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
       const recipe = path && get().documents[path].recipe
       if (recipe)
         get().change({
-          ...asShotRecipe(get().session, recipe.seed),
+          ...asShotRecipe(get().session, recipe),
           x3iSource: recipe.x3iSource
         })
     },
@@ -917,7 +923,11 @@ export const useEditorStore = create<EditorState>((set, get) => {
     async pickWhiteBalance(x, y) {
       if (get().closing || get().loading || unmerged(get())) return
       const session = get().session
-      if (!session || !capabilitiesOf(session).whiteBalance) return
+      if (
+        !session ||
+        !hasWhiteBalance(capabilitiesOf(session), get().documents[session.path].recipe)
+      )
+        return
       const request = ++colorPick
       try {
         const result = await ipc.invoke('editor:pickWhiteBalance', {

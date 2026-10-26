@@ -93,3 +93,79 @@ fn leica_m10_r_clipped_walls_render_white() {
         );
     }
 }
+
+const METHODS: [x3f_dng::DemosaicMethod; 10] = {
+    use x3f_dng::DemosaicMethod::*;
+    [Amaze, Dcb, Ahd, Eahd, Hphd, Igv, Lmmse, Vng4, Mono, Fast]
+};
+
+#[test]
+#[ignore = "needs X3FUSE_TEST_DNG"]
+fn real_bayer_dngs_prepare_with_every_method() {
+    let cancel = AtomicBool::new(false);
+    for path in inputs() {
+        let info = x3f_dng::inspect(&path, &cancel).unwrap();
+        if !info.bayer {
+            for method in METHODS {
+                assert!(x3f_dng::prepare_with_method(&path, Some(method), &cancel).is_err());
+            }
+            println!("{}: not Bayer, every method refused", path.display());
+            continue;
+        }
+        let start = std::time::Instant::now();
+        let legacy = x3f_dng::prepare(&path, &cancel).unwrap();
+        let full = start.elapsed();
+        println!(
+            "{}: {}x{} LibRaw {full:.2?}",
+            path.display(),
+            info.width,
+            info.height
+        );
+        for at in [0.25, 0.5] {
+            let stop = AtomicBool::new(false);
+            let start = std::time::Instant::now();
+            let result = std::thread::scope(|scope| {
+                scope.spawn(|| {
+                    std::thread::sleep(full.mul_f64(at));
+                    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+                });
+                x3f_dng::prepare(&path, &stop)
+            });
+            assert_eq!(result.unwrap_err(), "Cancelled");
+            let latency = start.elapsed().saturating_sub(full.mul_f64(at));
+            println!("  LibRaw cancel at {at}: latency {latency:.2?}");
+        }
+        for method in METHODS {
+            let start = std::time::Instant::now();
+            let scene = x3f_dng::prepare_with_method(&path, Some(method), &cancel).unwrap();
+            let full = start.elapsed();
+            assert_eq!((scene.width, scene.height), (legacy.width, legacy.height));
+            assert!(scene.data.iter().all(|v| v.is_finite()));
+            // Mean difference from the LibRaw route, per channel.
+            let mean = |data: &[f32], c: usize| {
+                data.iter()
+                    .skip(c)
+                    .step_by(3)
+                    .map(|v| f64::from(*v))
+                    .sum::<f64>()
+                    / (data.len() / 3) as f64
+            };
+            let means: Vec<String> = (0..3)
+                .map(|c| format!("{:.4}/{:.4}", mean(&scene.data, c), mean(&legacy.data, c)))
+                .collect();
+            // Cancel after half of the full time; report how long the rest took.
+            let stop = AtomicBool::new(false);
+            let start = std::time::Instant::now();
+            let result = std::thread::scope(|scope| {
+                scope.spawn(|| {
+                    std::thread::sleep(full / 2);
+                    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+                });
+                x3f_dng::prepare_with_method(&path, Some(method), &stop)
+            });
+            let latency = start.elapsed().saturating_sub(full / 2);
+            assert_eq!(result.unwrap_err(), "Cancelled");
+            println!("  {method:?}: {full:.2?}, cancel latency {latency:.2?}, mean native/LibRaw {means:?}");
+        }
+    }
+}

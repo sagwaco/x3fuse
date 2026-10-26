@@ -43,6 +43,7 @@ pub struct Capabilities {
     pub foveon: bool,
     pub white_balance: bool,
     pub rendered_only: bool,
+    pub bayer: bool,
 }
 
 impl Capabilities {
@@ -51,6 +52,7 @@ impl Capabilities {
             foveon: kind != Kind::Dng,
             white_balance: !monochrome,
             rendered_only: kind == Kind::Dng,
+            bayer: false,
         }
     }
 }
@@ -101,7 +103,10 @@ impl Info {
         }
         let info = Self {
             kind,
-            capabilities: Capabilities::for_kind(kind, dng.monochrome),
+            capabilities: Capabilities {
+                bayer: dng.bayer,
+                ..Capabilities::for_kind(kind, dng.monochrome)
+            },
             crop: dng.as_shot_crop,
             orientation: Some(dng.orientation as u8),
         };
@@ -115,11 +120,19 @@ impl Info {
     }
 
     pub fn validate_recipe(self, recipe: &x3f_render::EditRecipe) -> Result<(), String> {
+        if recipe.dng_demosaic.is_some() && !self.capabilities.bayer {
+            return Err("Demosaicing methods require a Bayer DNG input".into());
+        }
         if self.kind == Kind::Dng {
             recipe.validate_dng(!self.capabilities.white_balance)
         } else {
             recipe.validate()
         }
+    }
+
+    pub fn white_balance_available(self, recipe: &x3f_render::EditRecipe) -> bool {
+        self.capabilities.white_balance
+            && recipe.dng_demosaic != Some(x3f_render::DngDemosaic::Mono)
     }
 }
 
@@ -200,6 +213,35 @@ pub fn protect_output(
 mod tests {
     use super::*;
     use crate::model::{OutputFormat, Rendering};
+
+    #[test]
+    fn demosaic_requires_bayer_and_mono_disables_white_balance() {
+        let mut source = Info {
+            kind: Kind::Dng,
+            capabilities: Capabilities::for_kind(Kind::Dng, false),
+            crop: None,
+            orientation: Some(1),
+        };
+        let mut recipe = x3f_render::EditRecipe {
+            film: None,
+            denoise: 0,
+            ..Default::default()
+        };
+        source.validate_recipe(&recipe).unwrap();
+        recipe.dng_demosaic = Some(x3f_render::DngDemosaic::Amaze);
+        assert!(source.validate_recipe(&recipe).is_err());
+        source.capabilities.bayer = true;
+        source.validate_recipe(&recipe).unwrap();
+        assert!(source.white_balance_available(&recipe));
+        recipe.dng_demosaic = Some(x3f_render::DngDemosaic::Mono);
+        source.validate_recipe(&recipe).unwrap();
+        assert!(!source.white_balance_available(&recipe));
+        recipe.temperature = Some(5000.);
+        assert!(source.validate_recipe(&recipe).is_err());
+        source.kind = Kind::X3f;
+        source.capabilities = Capabilities::for_kind(Kind::X3f, false);
+        assert!(source.validate_recipe(&recipe).is_err());
+    }
 
     #[test]
     fn dng_export_requires_rendered_pixels() {

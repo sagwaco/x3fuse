@@ -641,6 +641,21 @@ async function runEditor(input: string): Promise<Record<string, unknown>> {
   const original = { ...useSettingsStore.getState().settings }
   const e = useEditorStore.getState
   const q = useQueueStore.getState
+  const invoke = ipc.invoke
+  let warmReady = false
+  ipc.invoke = (...args) => {
+    const result = invoke(...args)
+    if (args[0] === 'editor:warm') {
+      warmReady = false
+      void result.then(
+        () => {
+          warmReady = true
+        },
+        () => {}
+      )
+    }
+    return result
+  }
   const previewReady = (): boolean => !!e().preview && !e().rendering && !e().loading
   const previewPainted = (): boolean => {
     const canvas = document.querySelector<HTMLCanvasElement>('canvas[data-rendered-preview]')
@@ -891,6 +906,50 @@ async function runEditor(input: string): Promise<Record<string, unknown>> {
           recipe().temperature === null && !recipe().whiteBalanceGains,
           'Monochrome DNG has white balance'
         )
+      // A Bayer DNG opens with AMaZE. Mono gives a gray image without white balance,
+      // in one undo step. Native menu clicks are not automated, so the store selects it.
+      if (capabilities.bayer) {
+        check(
+          session.recipe.dngDemosaic === 'amaze',
+          `Bayer DNG did not open with AMaZE: ${session.recipe.dngDemosaic}`
+        )
+        check(
+          document.querySelector(`[aria-label="${CSS.escape(t('editor.demosaicMethod'))}"]`),
+          'Demosaic control is missing'
+        )
+        await until(() => previewReady() && previewPainted(), 'DNG preview did not paint', 60000)
+        const original = recipe()
+        const steps = e().documents[path].past.length
+        const shown = e().preview!.url
+        e().change({ dngDemosaic: 'mono' })
+        check(
+          recipe().dngDemosaic === 'mono' &&
+            recipe().temperature === null &&
+            recipe().tint === 0 &&
+            !recipe().whiteBalanceGains,
+          'Mono demosaic kept white balance'
+        )
+        check(e().documents[path].past.length === steps + 1, 'Mono took more than one undo step')
+        await until(
+          () => previewReady() && e().preview!.url !== shown && previewPainted(),
+          'Mono demosaic did not paint',
+          60000
+        )
+        button(t('editor.undo')).click()
+        check(
+          recipe().dngDemosaic === original.dngDemosaic &&
+            recipe().temperature === original.temperature &&
+            recipe().tint === original.tint,
+          'Undo did not restore the demosaic and white balance'
+        )
+        await until(
+          () => previewReady() && previewPainted(),
+          'Undone demosaic did not paint',
+          60000
+        )
+        check(await e().flush(), 'Demosaic autosave failed')
+        previous = e().preview!.url
+      }
     }
 
     usePreviewStore.getState().controls!.zoomTo(1)
@@ -1024,6 +1083,7 @@ async function runEditor(input: string): Promise<Record<string, unknown>> {
     check(q().batch!.summary!.completed === 1, `Edited export failed: ${JSON.stringify(q().batch)}`)
     const jpegExportMs = performance.now() - beganExport
     check(useNavStore.getState().screen === 'editor', 'Export did not return to the editor')
+    warmReady = false
     check(await e().close(), 'Back to Main failed to save the editor')
     check(useNavStore.getState().screen === 'queue', 'Back to Main did not restore browsing')
     check(exposureOf(q().files[0].edit?.recipe) === 1.5, 'Main view lost saved edits')
@@ -1075,8 +1135,8 @@ async function runEditor(input: string): Promise<Record<string, unknown>> {
         host.remove()
       }
     }
-    // The selection rests in the browser, so the app prepares its RAW before Edit.
-    await wait(2500)
+    // Wait for the browser's actual warm-up; native demosaicing can exceed 2.5 seconds.
+    await until(() => warmReady, 'Browser RAW warm-up did not complete', 60000)
     const reopened = performance.now()
     button(t('editor.edit')).click()
     await until(previewReady, 'Warmed RAW preview did not complete', 60000)
@@ -1138,6 +1198,7 @@ async function runEditor(input: string): Promise<Record<string, unknown>> {
       app: await ipc.invoke('app:info')
     }
   } finally {
+    ipc.invoke = invoke
     window.__x3fSmokeProgress = 'Closing editor and restoring smoke settings'
     await e().close()
     q().clearQueue()

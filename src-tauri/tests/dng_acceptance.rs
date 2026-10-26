@@ -137,6 +137,12 @@ fn dng_edit_export_reopen_and_source_protection() {
     assert!(session.as_shot_camera_profile.is_none());
     assert!(session.recipe.camera_profile.is_none() && session.recipe.film.is_none());
     assert_eq!(session.recipe.denoise, 0);
+    assert_eq!(
+        session.recipe.dng_demosaic,
+        dto.capabilities
+            .bayer
+            .then_some(x3f_render::DngDemosaic::Amaze)
+    );
     let mut recipe = session.recipe.clone();
     recipe.exposure = 0.5;
     let frame = editor
@@ -235,4 +241,85 @@ fn dng_edit_export_reopen_and_source_protection() {
         .unwrap();
     assert!(editor.load(&path).unwrap_err().contains("preserved"));
     assert_eq!(fs::read(&sidecar).unwrap(), saved_bytes);
+}
+
+#[test]
+#[ignore = "requires a Bayer X3FUSE_TEST_DNG and a supported GPU"]
+fn dng_demosaic_switches_prepare_and_survives_save_export_reopen() {
+    use x3f_render::DngDemosaic;
+    let input = PathBuf::from(std::env::var_os("X3FUSE_TEST_DNG").expect("Set X3FUSE_TEST_DNG"));
+    assert!(input.is_absolute() && input.is_file());
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("methods.dng");
+    fs::copy(&input, &path).unwrap();
+    let fingerprint = Sha256::digest(fs::read(&path).unwrap());
+    let editor = Editor::new(directory.path().join("edits"));
+    let mut session = editor.open(path.clone()).unwrap();
+    assert!(session.capabilities.bayer);
+    assert_eq!(session.recipe.dng_demosaic, Some(DngDemosaic::Amaze));
+    let defaults = session.recipe.clone();
+    let mut urls = std::collections::HashSet::new();
+    for (index, method) in [None, Some(DngDemosaic::Fast), Some(DngDemosaic::Mono)]
+        .into_iter()
+        .enumerate()
+    {
+        let recipe = x3f_render::EditRecipe {
+            dng_demosaic: method,
+            ..defaults.clone()
+        };
+        let revision = index as u64 + 1;
+        let preview = serde_json::to_value(
+            editor
+                .render(RenderRequest {
+                    session_id: session.session_id.clone(),
+                    recipe: recipe.clone(),
+                    revision,
+                    max_edge: 512,
+                    region: None,
+                    interactive: false,
+                })
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(preview["draft"], false);
+        assert!(urls.insert(preview["url"].as_str().unwrap().to_owned()));
+        if method == Some(DngDemosaic::Mono) {
+            assert!(preview["whiteBalance"].is_null());
+            assert!(editor
+                .white_balance(&session.session_id, recipe.clone())
+                .is_err());
+        }
+        let saved = editor
+            .save(
+                &path,
+                recipe.clone(),
+                revision,
+                Some(&session.source_revision),
+            )
+            .unwrap();
+        assert!(saved.edited);
+        assert_eq!(
+            editor.load(&path).unwrap().unwrap().recipe.dng_demosaic,
+            method
+        );
+        let settings = BatchSettings {
+            output_format: OutputFormat::RenderedJpeg,
+            rendering: Rendering::Rendered,
+            ..Default::default()
+        };
+        editor
+            .export(
+                &path,
+                Some(&session.source_revision),
+                &recipe,
+                &settings,
+                &directory.path().join(format!("method-{index}.jpg")),
+                &AtomicBool::new(false),
+            )
+            .unwrap();
+        editor.close(&session.session_id).unwrap();
+        session = editor.open(path.clone()).unwrap();
+        assert_eq!(session.recipe, recipe);
+    }
+    assert_eq!(Sha256::digest(fs::read(&path).unwrap()), fingerprint);
 }
