@@ -57,12 +57,16 @@ impl Capabilities {
     }
 }
 
+/// The lowest ISO at which `DngDemosaic::Default` uses LMMSE.
+pub const HIGH_ISO: f32 = 1600.;
+
 #[derive(Clone, Copy)]
 pub struct Info {
     pub kind: Kind,
     pub capabilities: Capabilities,
     pub crop: Option<[f32; 4]>,
     pub orientation: Option<u8>,
+    pub iso: Option<f32>,
 }
 
 type MetadataCache = VecDeque<(PathBuf, SourceStamp, Info)>;
@@ -79,6 +83,7 @@ impl Info {
                 capabilities: Capabilities::for_kind(kind, false),
                 crop: None,
                 orientation: None,
+                iso: None,
             });
         }
         static CACHE: OnceLock<Mutex<MetadataCache>> = OnceLock::new();
@@ -109,6 +114,7 @@ impl Info {
             },
             crop: dng.as_shot_crop,
             orientation: Some(dng.orientation as u8),
+            iso: dng.iso,
         };
         let mut entries = cache.lock().map_err(|_| "DNG metadata cache unavailable")?;
         entries.retain(|(p, _, _)| p != &path);
@@ -119,9 +125,36 @@ impl Info {
         Ok(info)
     }
 
+    /// A Bayer DNG takes every method; a monochrome DNG takes Default and Mono.
+    pub fn supports_demosaic(self) -> bool {
+        self.capabilities.bayer || (self.kind == Kind::Dng && !self.capabilities.white_balance)
+    }
+
+    /// The method to prepare with. Default becomes Mono for a monochrome DNG,
+    /// LMMSE from `HIGH_ISO`, or AMaZE.
+    pub fn resolve_demosaic(
+        self,
+        method: Option<x3f_render::DngDemosaic>,
+    ) -> Option<x3f_render::DngDemosaic> {
+        use x3f_render::DngDemosaic as D;
+        match method {
+            Some(D::Default) if !self.capabilities.white_balance => Some(D::Mono),
+            Some(D::Default) if self.iso.is_some_and(|iso| iso >= HIGH_ISO) => Some(D::Lmmse),
+            Some(D::Default) => Some(D::Amaze),
+            method => method,
+        }
+    }
+
     pub fn validate_recipe(self, recipe: &x3f_render::EditRecipe) -> Result<(), String> {
-        if recipe.dng_demosaic.is_some() && !self.capabilities.bayer {
-            return Err("Demosaicing methods require a Bayer DNG input".into());
+        use x3f_render::DngDemosaic as D;
+        match recipe.dng_demosaic {
+            Some(_) if !self.supports_demosaic() => {
+                return Err("Demosaicing methods require a Bayer or monochrome DNG input".into())
+            }
+            Some(method) if !self.capabilities.bayer && !matches!(method, D::Default | D::Mono) => {
+                return Err("Monochrome DNG inputs support Default and Mono only".into())
+            }
+            _ => {}
         }
         if self.kind == Kind::Dng {
             recipe.validate_dng(!self.capabilities.white_balance)
@@ -132,7 +165,7 @@ impl Info {
 
     pub fn white_balance_available(self, recipe: &x3f_render::EditRecipe) -> bool {
         self.capabilities.white_balance
-            && recipe.dng_demosaic != Some(x3f_render::DngDemosaic::Mono)
+            && self.resolve_demosaic(recipe.dng_demosaic) != Some(x3f_render::DngDemosaic::Mono)
     }
 }
 
@@ -221,6 +254,7 @@ mod tests {
             capabilities: Capabilities::for_kind(Kind::Dng, false),
             crop: None,
             orientation: Some(1),
+            iso: None,
         };
         let mut recipe = x3f_render::EditRecipe {
             film: None,
@@ -241,6 +275,57 @@ mod tests {
         source.kind = Kind::X3f;
         source.capabilities = Capabilities::for_kind(Kind::X3f, false);
         assert!(source.validate_recipe(&recipe).is_err());
+    }
+
+    #[test]
+    fn default_demosaic_follows_sensor_and_iso() {
+        use x3f_render::DngDemosaic as D;
+        let mut source = Info {
+            kind: Kind::Dng,
+            capabilities: Capabilities {
+                bayer: true,
+                ..Capabilities::for_kind(Kind::Dng, false)
+            },
+            crop: None,
+            orientation: Some(1),
+            iso: None,
+        };
+        let resolve = |source: Info| source.resolve_demosaic(Some(D::Default));
+        // Missing ISO, from LibRaw zero or a non-finite value, is normal ISO.
+        assert_eq!(resolve(source), Some(D::Amaze));
+        source.iso = Some(HIGH_ISO.next_down());
+        assert_eq!(resolve(source), Some(D::Amaze));
+        source.iso = Some(HIGH_ISO);
+        assert_eq!(resolve(source), Some(D::Lmmse));
+        assert_eq!(source.resolve_demosaic(None), None);
+        assert_eq!(source.resolve_demosaic(Some(D::Fast)), Some(D::Fast));
+        let mut recipe = x3f_render::EditRecipe {
+            film: None,
+            denoise: 0,
+            dng_demosaic: Some(D::Default),
+            ..Default::default()
+        };
+        assert!(source.white_balance_available(&recipe));
+
+        source.capabilities = Capabilities::for_kind(Kind::Dng, true);
+        assert!(source.supports_demosaic());
+        assert_eq!(resolve(source), Some(D::Mono));
+        assert!(!source.white_balance_available(&recipe));
+        for method in [None, Some(D::Default), Some(D::Mono)] {
+            recipe.dng_demosaic = method;
+            source.validate_recipe(&recipe).unwrap();
+        }
+        recipe.dng_demosaic = Some(D::Amaze);
+        assert!(source.validate_recipe(&recipe).is_err());
+
+        source.capabilities = Capabilities::for_kind(Kind::Dng, false);
+        assert!(!source.supports_demosaic());
+        source.kind = Kind::X3f;
+        assert!(!source.supports_demosaic());
+        for method in [Some(D::Default), Some(D::Mono)] {
+            recipe.dng_demosaic = method;
+            assert!(source.validate_recipe(&recipe).is_err());
+        }
     }
 
     #[test]

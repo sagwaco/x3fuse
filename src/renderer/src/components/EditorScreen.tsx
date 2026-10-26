@@ -18,6 +18,7 @@ import {
 } from 'lucide-react'
 import {
   capabilitiesOf,
+  demosaicsOf,
   hasWhiteBalance,
   negativePrint,
   type EditRecipe,
@@ -369,7 +370,7 @@ export function EditorScreen(): React.JSX.Element {
     !editor.loading &&
     !editor.renderFailed &&
     !!editor.session &&
-    capabilitiesOf(editor.session).bayer &&
+    demosaicsOf(capabilitiesOf(editor.session)).length > 0 &&
     (doc?.recipe.dngDemosaic ?? null) !== editor.renderedDemosaic
   // A change between the SFD RAW and the unfused RAW of an X3I turns the preview
   // into particles until the photo renders again.

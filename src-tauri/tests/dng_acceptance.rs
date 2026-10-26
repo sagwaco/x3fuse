@@ -139,9 +139,8 @@ fn dng_edit_export_reopen_and_source_protection() {
     assert_eq!(session.recipe.denoise, 0);
     assert_eq!(
         session.recipe.dng_demosaic,
-        dto.capabilities
-            .bayer
-            .then_some(x3f_render::DngDemosaic::Amaze)
+        (dto.capabilities.bayer || !dto.capabilities.white_balance)
+            .then_some(x3f_render::DngDemosaic::Default)
     );
     let mut recipe = session.recipe.clone();
     recipe.exposure = 0.5;
@@ -256,7 +255,7 @@ fn dng_demosaic_switches_prepare_and_survives_save_export_reopen() {
     let editor = Editor::new(directory.path().join("edits"));
     let mut session = editor.open(path.clone()).unwrap();
     assert!(session.capabilities.bayer);
-    assert_eq!(session.recipe.dng_demosaic, Some(DngDemosaic::Amaze));
+    assert_eq!(session.recipe.dng_demosaic, Some(DngDemosaic::Default));
     let defaults = session.recipe.clone();
     let mut urls = std::collections::HashSet::new();
     for (index, method) in [None, Some(DngDemosaic::Fast), Some(DngDemosaic::Mono)]
@@ -322,4 +321,115 @@ fn dng_demosaic_switches_prepare_and_survives_save_export_reopen() {
         assert_eq!(session.recipe, recipe);
     }
     assert_eq!(Sha256::digest(fs::read(&path).unwrap()), fingerprint);
+}
+
+#[test]
+#[ignore = "requires X3FUSE_TEST_DNG (Bayer or monochrome) and a supported GPU"]
+fn dng_default_preview_and_export_use_the_resolved_method() {
+    use x3f_render::DngDemosaic;
+    let input = PathBuf::from(std::env::var_os("X3FUSE_TEST_DNG").expect("Set X3FUSE_TEST_DNG"));
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("default.dng");
+    fs::copy(&input, &path).unwrap();
+    let cancel = AtomicBool::new(false);
+    let source = x3fuse_app::source::Info::read(&path, &cancel).unwrap();
+    assert!(source.supports_demosaic());
+    let target = source.resolve_demosaic(Some(DngDemosaic::Default));
+    let editor = Editor::new(directory.path().join("edits"));
+    let session = editor.open(path.clone()).unwrap();
+    assert_eq!(session.recipe.dng_demosaic, Some(DngDemosaic::Default));
+    let mut recipe = session.recipe.clone();
+    recipe.exposure = 0.25;
+    recipe.warmth = 12.;
+    let started = std::time::Instant::now();
+    let render = |interactive, revision| {
+        serde_json::to_value(
+            editor
+                .render(RenderRequest {
+                    session_id: session.session_id.clone(),
+                    recipe: recipe.clone(),
+                    revision,
+                    max_edge: if interactive { 1024 } else { 2048 },
+                    region: None,
+                    interactive,
+                })
+                .unwrap(),
+        )
+        .unwrap()
+    };
+    let first = render(true, 1);
+    let first_time = started.elapsed();
+    assert_eq!(first["draft"], source.capabilities.bayer);
+    let refined = render(false, 2);
+    assert_eq!(refined["draft"], false);
+    eprintln!(
+        "Default {target:?}, ISO {:?}: first {first_time:?}, refined total {:?}",
+        source.iso,
+        started.elapsed()
+    );
+    let explicit = x3f_render::EditRecipe {
+        dng_demosaic: target,
+        ..recipe.clone()
+    };
+    let default_url = editor
+        .preview(&path, &recipe, Some(&session.source_revision))
+        .unwrap();
+    assert_eq!(
+        default_url,
+        editor
+            .preview(&path, &explicit, Some(&session.source_revision))
+            .unwrap()
+    );
+    assert_eq!(refined["url"], default_url);
+    if source.capabilities.bayer {
+        assert_ne!(first["url"], refined["url"]);
+    } else {
+        assert!(refined["whiteBalance"].is_null());
+    }
+    let settings = BatchSettings {
+        output_format: OutputFormat::RenderedJpeg,
+        rendering: Rendering::Rendered,
+        ..Default::default()
+    };
+    for (name, edit) in [("default", &recipe), ("explicit", &explicit)] {
+        editor
+            .export(
+                &path,
+                Some(&session.source_revision),
+                edit,
+                &settings,
+                &directory.path().join(format!("{name}.jpg")),
+                &cancel,
+            )
+            .unwrap();
+    }
+    assert_eq!(
+        fs::read(directory.path().join("default.jpg")).unwrap(),
+        fs::read(directory.path().join("explicit.jpg")).unwrap()
+    );
+    editor
+        .save(&path, recipe.clone(), 3, Some(&session.source_revision))
+        .unwrap();
+    assert_eq!(
+        editor.load(&path).unwrap().unwrap().recipe.dng_demosaic,
+        Some(DngDemosaic::Default)
+    );
+    editor.close(&session.session_id).unwrap();
+    editor.warm(path.clone()).unwrap();
+    let reopened = editor.open(path).unwrap();
+    assert_eq!(reopened.recipe, recipe);
+    let warmed = serde_json::to_value(
+        editor
+            .render(RenderRequest {
+                session_id: reopened.session_id,
+                recipe,
+                revision: 4,
+                max_edge: 1024,
+                region: None,
+                interactive: true,
+            })
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(warmed["draft"], false);
 }

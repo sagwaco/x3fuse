@@ -36,6 +36,8 @@ struct x3fdng_info {
   float analog_balance[4];
   float baseline_exposure;
   float cam_mul[4];
+  // EXIF ISO speed, or 0 when the file has none.
+  float iso;
   struct x3fdng_color color[2];
   const unsigned char *opcodes[3];
   unsigned opcode_len[3];
@@ -346,6 +348,7 @@ int x3fdng_read_info(void *handle, x3fdng_info *out) {
                sizeof info->analog_balance);
         info->baseline_exposure = l.baseline_exposure;
         memcpy(info->cam_mul, d.color.cam_mul, sizeof info->cam_mul);
+        info->iso = d.other.iso_speed;
         for (int i = 0; i < 2; i++) {
           const libraw_dng_color_t &c = d.color.dng_color[i];
           info->color[i].illuminant = c.illuminant;

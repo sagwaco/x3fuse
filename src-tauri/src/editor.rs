@@ -935,7 +935,10 @@ impl Editor {
         max_edge: u32,
         region: Option<Crop>,
     ) -> Result<String, String> {
-        crate::source::validate_recipe(path, recipe)?;
+        let source = crate::source::Info::read(path, &AtomicBool::new(false))?;
+        source.validate_recipe(recipe)?;
+        let mut recipe = recipe.clone();
+        recipe.dng_demosaic = source.resolve_demosaic(recipe.dng_demosaic);
         if !(1..=4096).contains(&max_edge) {
             return Err("Invalid preview dimensions".into());
         }
@@ -1004,6 +1007,8 @@ impl Editor {
         }
         let source = crate::source::Info::read(&asset.path, cancel)?;
         source.validate_recipe(&asset.recipe)?;
+        let mut recipe = asset.recipe.clone();
+        recipe.dng_demosaic = source.resolve_demosaic(recipe.dng_demosaic);
         let same_source = worker
             .prepared
             .as_ref()
@@ -1012,22 +1017,19 @@ impl Editor {
             && worker
                 .prepared
                 .as_ref()
-                .is_some_and(|p| p.matches_preparation(&asset.recipe));
+                .is_some_and(|p| p.matches_preparation(&recipe));
         if !reuse {
             // Keep the responsive source if refinement is interrupted. A different
             // photo releases it first to bound memory while browsing.
             if !same_source {
                 worker.prepared = None;
             }
-            let options = scene_options(&asset.recipe);
+            let options = scene_options(&recipe);
             let (image, denoise_free) = if source.kind == crate::source::Kind::Dng {
+                let method = recipe.dng_demosaic.map(dng_method).transpose()?;
                 (
                     prepare_in_background(|| {
-                        x3f_dng::prepare_with_method(
-                            &asset.path,
-                            asset.recipe.dng_demosaic.map(dng_method),
-                            cancel,
-                        )
+                        x3f_dng::prepare_with_method(&asset.path, method, cancel)
                     })?,
                     true,
                 )
@@ -1065,7 +1067,7 @@ impl Editor {
                 source_revision: asset.source_revision.clone(),
                 denoise: asset.recipe.denoise,
                 denoise_options: asset.recipe.denoise_options,
-                dng_demosaic: asset.recipe.dng_demosaic,
+                dng_demosaic: recipe.dng_demosaic,
                 denoise_free,
                 x3i_source: asset.recipe.x3i_source,
                 image,
@@ -1116,15 +1118,17 @@ impl Editor {
     }
 
     /// The recipe a request renders: an interactive frame reuses the prepared
-    /// denoise. Before any RAW is prepared, it skips only BM3D, which can take
-    /// seconds; the first preparation applies NLM at once. Returns the recipe
-    /// and whether the frame is a draft.
+    /// source. A cold Bayer DNG starts with Fast; a Foveon source skips BM3D.
+    /// The saved recipe stays unchanged. Returns the recipe and whether it is a draft.
     fn effective_recipe(
         worker: &Worker,
         request: &RenderRequest,
         session: &Session,
+        source: crate::source::Info,
     ) -> (EditRecipe, bool) {
         let mut recipe = request.recipe.clone();
+        let requested_demosaic = source.resolve_demosaic(recipe.dng_demosaic);
+        recipe.dng_demosaic = requested_demosaic;
         if request.interactive {
             if let Some(prepared) = worker
                 .prepared
@@ -1141,13 +1145,18 @@ impl Editor {
                 {
                     recipe.dng_demosaic = prepared.dng_demosaic;
                 }
-            } else if recipe.denoise_options.algorithm == x3f_core::DenoiseAlgorithm::Bm3d {
-                recipe.denoise = 0;
+            } else {
+                if source.capabilities.bayer && requested_demosaic != Some(DngDemosaic::Mono) {
+                    recipe.dng_demosaic = Some(DngDemosaic::Fast);
+                }
+                if recipe.denoise_options.algorithm == x3f_core::DenoiseAlgorithm::Bm3d {
+                    recipe.denoise = 0;
+                }
             }
         }
         let draft = recipe.denoise != request.recipe.denoise
             || recipe.denoise_options != request.recipe.denoise_options
-            || recipe.dng_demosaic != request.recipe.dng_demosaic;
+            || recipe.dng_demosaic != requested_demosaic;
         (recipe, draft)
     }
 
@@ -1159,12 +1168,13 @@ impl Editor {
             priority: _priority,
         } = job;
         check_cancel(&cancel)?;
-        request.recipe.validate()?;
+        let source = crate::source::Info::read(&session.path, &cancel)?;
+        source.validate_recipe(&request.recipe)?;
         let mut worker = self
             .worker
             .lock()
             .map_err(|_| "Renderer unavailable; restart the app")?;
-        let (recipe, draft) = Self::effective_recipe(&worker, &request, &session);
+        let (recipe, draft) = Self::effective_recipe(&worker, &request, &session, source);
         let url = self.register(
             &session.path,
             &session.source_revision,
@@ -1300,15 +1310,12 @@ impl Editor {
         self.ready(worker, asset, cancel)?;
         let Worker { renderer, prepared } = worker;
         let prepared = prepared.as_ref().ok_or("RAW preparation unavailable")?;
+        let mut recipe = asset.recipe.clone();
+        recipe.dng_demosaic = prepared.dng_demosaic;
         let rendered = renderer
             .as_mut()
             .ok_or("GPU renderer unavailable")?
-            .render_prepared(
-                &prepared.image,
-                &asset.recipe,
-                preview_options(asset),
-                cancel,
-            )
+            .render_prepared(&prepared.image, &recipe, preview_options(asset), cancel)
             .map_err(|e| e.to_string())?;
         check_cancel(cancel)?;
         Ok((rendered, oriented_size(prepared.image.image())))
@@ -1704,7 +1711,7 @@ impl Editor {
             .filter(|p| {
                 p.matches_source(&session.path, &session.source_revision, &recipe)
                     && (p.dng_demosaic == Some(DngDemosaic::Mono))
-                        == (recipe.dng_demosaic == Some(DngDemosaic::Mono))
+                        == (source.resolve_demosaic(recipe.dng_demosaic) == Some(DngDemosaic::Mono))
             })
             .ok_or("White balance calibration is not ready")?;
         x3f_render::recipe_white_balance(&prepared.image.image().white_balance, &recipe)
@@ -1796,15 +1803,15 @@ impl Editor {
             ColorProfile::None => return Err("Edited export requires a color profile".into()),
         };
         let Worker { renderer, prepared } = &mut *worker;
+        let prepared = prepared.as_ref().ok_or("RAW preparation unavailable")?;
+        let mut recipe = recipe.clone();
+        recipe.dng_demosaic = prepared.dng_demosaic;
         let result = renderer
             .as_mut()
             .ok_or("GPU renderer unavailable")?
             .render_prepared(
-                &prepared
-                    .as_ref()
-                    .ok_or("RAW preparation unavailable")?
-                    .image,
-                recipe,
+                &prepared.image,
+                &recipe,
                 RenderOptions {
                     max_dimension: None,
                     region: None,
@@ -1877,9 +1884,12 @@ fn camera_defaults(
     ))
 }
 
-fn dng_method(method: DngDemosaic) -> x3f_dng::DemosaicMethod {
+fn dng_method(method: DngDemosaic) -> Result<x3f_dng::DemosaicMethod, String> {
     use x3f_dng::DemosaicMethod as Native;
-    match method {
+    Ok(match method {
+        DngDemosaic::Default => {
+            return Err("Default demosaic must resolve before preparation".into())
+        }
         DngDemosaic::Amaze => Native::Amaze,
         DngDemosaic::Dcb => Native::Dcb,
         DngDemosaic::Ahd => Native::Ahd,
@@ -1890,7 +1900,7 @@ fn dng_method(method: DngDemosaic) -> x3f_dng::DemosaicMethod {
         DngDemosaic::Vng4 => Native::Vng4,
         DngDemosaic::Mono => Native::Mono,
         DngDemosaic::Fast => Native::Fast,
-    }
+    })
 }
 
 fn source_recipe(
@@ -1903,7 +1913,7 @@ fn source_recipe(
     if source.kind == crate::source::Kind::Dng {
         recipe.camera_profile = None;
         recipe.denoise = 0;
-        recipe.dng_demosaic = source.capabilities.bayer.then_some(DngDemosaic::Amaze);
+        recipe.dng_demosaic = source.supports_demosaic().then_some(DngDemosaic::Default);
     }
     recipe
 }
@@ -2041,6 +2051,19 @@ pub fn protocol_id(uri: &str) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
+    fn bayer_source() -> crate::source::Info {
+        crate::source::Info {
+            kind: crate::source::Kind::Dng,
+            capabilities: crate::source::Capabilities {
+                bayer: true,
+                ..crate::source::Capabilities::for_kind(crate::source::Kind::Dng, false)
+            },
+            crop: None,
+            orientation: Some(1),
+            iso: None,
+        }
+    }
+
     #[test]
     fn sfd_cache_clear_waits_for_registered_jobs_to_finish() {
         let temporary = tempfile::tempdir().unwrap();
@@ -2280,17 +2303,9 @@ mod tests {
 
     #[test]
     fn bayer_defaults_do_not_migrate_legacy_demosaicing() {
-        let source = crate::source::Info {
-            kind: crate::source::Kind::Dng,
-            capabilities: crate::source::Capabilities {
-                bayer: true,
-                ..crate::source::Capabilities::for_kind(crate::source::Kind::Dng, false)
-            },
-            crop: None,
-            orientation: Some(1),
-        };
+        let source = bayer_source();
         let defaults = source_recipe(source, None, "Standard", "12345678abcdef");
-        assert_eq!(defaults.dng_demosaic, Some(DngDemosaic::Amaze));
+        assert_eq!(defaults.dng_demosaic, Some(DngDemosaic::Default));
         assert!(near_default(&defaults));
         assert!(matches_defaults(&defaults, &defaults, false));
         for method in [None, Some(DngDemosaic::Fast), Some(DngDemosaic::Mono)] {
@@ -2312,7 +2327,82 @@ mod tests {
     }
 
     #[test]
+    fn a_cold_bayer_preview_uses_fast_then_resolves_the_selected_method() {
+        let session = Session {
+            id: "photo".into(),
+            path: "/photo.dng".into(),
+            source_revision: "a".repeat(64),
+            cancelled_revision: None,
+        };
+        for iso in [None, Some(1600.)] {
+            let source = crate::source::Info {
+                iso,
+                ..bayer_source()
+            };
+            for method in [
+                None,
+                Some(DngDemosaic::Default),
+                Some(DngDemosaic::Amaze),
+                Some(DngDemosaic::Fast),
+                Some(DngDemosaic::Mono),
+            ] {
+                let mut request = RenderRequest {
+                    session_id: session.id.clone(),
+                    recipe: EditRecipe {
+                        dng_demosaic: method,
+                        denoise: 0,
+                        ..Default::default()
+                    },
+                    revision: 1,
+                    max_edge: 1024,
+                    region: None,
+                    interactive: true,
+                };
+                let target = source.resolve_demosaic(method);
+                let (first, draft) =
+                    Editor::effective_recipe(&Worker::default(), &request, &session, source);
+                assert_eq!(
+                    first.dng_demosaic,
+                    if target == Some(DngDemosaic::Mono) {
+                        target
+                    } else {
+                        Some(DngDemosaic::Fast)
+                    }
+                );
+                assert_eq!(draft, first.dng_demosaic != target);
+                request.interactive = false;
+                let (final_recipe, draft) =
+                    Editor::effective_recipe(&Worker::default(), &request, &session, source);
+                assert!(!draft);
+                assert_eq!(final_recipe.dng_demosaic, target);
+                assert_eq!(request.recipe.dng_demosaic, method);
+            }
+        }
+        let mono = crate::source::Info {
+            capabilities: crate::source::Capabilities::for_kind(crate::source::Kind::Dng, true),
+            ..bayer_source()
+        };
+        let request = RenderRequest {
+            session_id: session.id.clone(),
+            recipe: EditRecipe {
+                dng_demosaic: Some(DngDemosaic::Default),
+                denoise: 0,
+                ..Default::default()
+            },
+            revision: 1,
+            max_edge: 1024,
+            region: None,
+            interactive: true,
+        };
+        let (recipe, draft) =
+            Editor::effective_recipe(&Worker::default(), &request, &session, mono);
+        assert_eq!(recipe.dng_demosaic, Some(DngDemosaic::Mono));
+        assert!(!draft);
+    }
+
+    #[test]
     fn interactive_demosaic_reuses_color_preparation_but_not_mono_calibration() {
+        let source = bayer_source();
         let directory = tempfile::tempdir().unwrap();
         let editor = Editor::new(directory.path().join("edits"));
         let path = directory.path().join("photo.dng");
@@ -2341,7 +2431,7 @@ mod tests {
         };
         assert!(prepared.matches_source(&session.path, &session.source_revision, &request.recipe));
         assert!(!prepared.matches_preparation(&request.recipe));
-        let (draft, is_draft) = Editor::effective_recipe(&worker, &request, &session);
+        let (draft, is_draft) = Editor::effective_recipe(&worker, &request, &session, source);
         assert!(is_draft);
         assert_eq!(draft.dng_demosaic, Some(DngDemosaic::Amaze));
         assert!(worker
@@ -2349,22 +2439,27 @@ mod tests {
             .as_ref()
             .unwrap()
             .matches_preparation(&draft));
+        request.recipe.dng_demosaic = Some(DngDemosaic::Default);
+        let (warmed, draft) = Editor::effective_recipe(&worker, &request, &session, source);
+        assert_eq!(warmed.dng_demosaic, Some(DngDemosaic::Amaze));
+        assert!(!draft);
+        request.recipe.dng_demosaic = Some(DngDemosaic::Igv);
         request.interactive = false;
         assert_eq!(
-            Editor::effective_recipe(&worker, &request, &session),
+            Editor::effective_recipe(&worker, &request, &session, source),
             (request.recipe.clone(), false)
         );
         request.interactive = true;
         request.recipe.dng_demosaic = Some(DngDemosaic::Mono);
         assert_eq!(
-            Editor::effective_recipe(&worker, &request, &session),
+            Editor::effective_recipe(&worker, &request, &session, source),
             (request.recipe.clone(), false)
         );
         worker.prepared.as_mut().unwrap().dng_demosaic = Some(DngDemosaic::Mono);
         request.recipe.dng_demosaic = Some(DngDemosaic::Amaze);
         request.recipe.temperature = Some(5000.);
         assert_eq!(
-            Editor::effective_recipe(&worker, &request, &session),
+            Editor::effective_recipe(&worker, &request, &session, source),
             (request.recipe.clone(), false)
         );
     }
@@ -2516,14 +2611,19 @@ mod tests {
             region: None,
             interactive: true,
         };
+        let source = crate::source::Info {
+            kind: crate::source::Kind::X3f,
+            capabilities: crate::source::Capabilities::for_kind(crate::source::Kind::X3f, false),
+            ..bayer_source()
+        };
         let worker = Worker::default();
         let nlm = request(x3f_core::DenoiseAlgorithm::Nlm);
         assert_eq!(
-            Editor::effective_recipe(&worker, &nlm, &session),
+            Editor::effective_recipe(&worker, &nlm, &session, source),
             (nlm.recipe.clone(), false)
         );
         let bm3d = request(x3f_core::DenoiseAlgorithm::Bm3d);
-        let (recipe, draft) = Editor::effective_recipe(&worker, &bm3d, &session);
+        let (recipe, draft) = Editor::effective_recipe(&worker, &bm3d, &session, source);
         assert_eq!((recipe.denoise, draft), (0, true));
     }
 

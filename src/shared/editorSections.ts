@@ -3,6 +3,7 @@ import {
   DEFAULT_EFFECTS,
   DEFAULT_FILM,
   DEFAULT_WHEELS,
+  demosaicsOf,
   FILM_MONOCHROME_FILTERS,
   IDENTITY_RAW_MATRIX,
   MONOCHROME_RAW_MATRIX,
@@ -242,6 +243,8 @@ export function pasteSection(
   )
     return {}
   const patch = section.take(source, target)
+  // A monochrome DNG keeps its demosaic when the source method is for a Bayer DNG only.
+  if (patch.dngDemosaic && !demosaicsOf(to).includes(patch.dngDemosaic)) delete patch.dngDemosaic
   if (!from.foveon && to.foveon) {
     delete patch.fillLight
     delete patch.denoise

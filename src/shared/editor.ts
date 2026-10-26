@@ -149,13 +149,15 @@ export interface EditRecipe {
   /** The frames of an X3I. Absent means the middle exposure, the unfused RAW.
       X3F files ignore it. */
   x3iSource?: X3iSource
-  /** The RawTherapee demosaic of a Bayer DNG. Missing or null keeps the legacy LibRaw
-      rendering. Other sources do not have it. */
+  /** The RawTherapee demosaic of a Bayer or monochrome DNG. Missing or null keeps the
+      legacy LibRaw rendering. Other sources do not have it. */
   dngDemosaic?: DngDemosaic | null
 }
-/** RawTherapee demosaic methods for a Bayer DNG. Mono reads the CFA values as gray, for a
-    sensor without a color filter array. */
+/** RawTherapee demosaic methods for a Bayer DNG. Default lets the backend select AMaZE,
+    LMMSE at high ISO, or Mono on a monochrome sensor. Mono reads the CFA values as gray,
+    for a sensor without a color filter array. */
 export const DNG_DEMOSAICS = [
+  'default',
   'amaze',
   'dcb',
   'ahd',
@@ -168,8 +170,8 @@ export const DNG_DEMOSAICS = [
   'fast'
 ] as const
 export type DngDemosaic = (typeof DNG_DEMOSAICS)[number]
-/** The demosaic that a new Bayer DNG recipe starts with. */
-export const DEFAULT_DNG_DEMOSAIC: DngDemosaic = 'amaze'
+/** The demosaic that a new Bayer or monochrome DNG recipe starts with. */
+export const DEFAULT_DNG_DEMOSAIC: DngDemosaic = 'default'
 /** Gains on the bottom, middle, and top sensor layers, then a row-major 3x3 mix to RGB.
     Rows are output red, green, and blue. The renderer divides the gains by the middle gain. */
 export interface RawColor {
@@ -204,8 +206,8 @@ export const AEROCHROME_MATRIX: number[] = [
 /** The RAW format of a photo. x3f-core opens X3F and X3I files; LibRaw opens DNG files. */
 export type SourceKind = 'x3f' | 'x3i' | 'dng'
 /** The settings that a photo supports. A DNG has no Foveon settings and exports only
-    rendered images. A monochrome DNG also has no white balance. A Bayer DNG has a
-    demosaic setting. */
+    rendered images. A monochrome DNG also has no white balance. A Bayer or monochrome
+    DNG has a demosaic setting. */
 export interface SourceCapabilities {
   foveon: boolean
   whiteBalance: boolean
@@ -235,21 +237,41 @@ export function capabilitiesOf(source: Source): SourceCapabilities {
     ? { foveon: false, whiteBalance: true, renderedOnly: true }
     : FOVEON_CAPABILITIES
 }
+const MONO_DEMOSAICS: readonly DngDemosaic[] = ['default', 'mono']
+const NO_DEMOSAICS: readonly DngDemosaic[] = []
+/** The demosaic methods of a source. A Bayer DNG has all methods. A monochrome DNG has
+    Default and Mono. Other sources have none. The arrays are constants, for selectors. */
+export const demosaicsOf = (capabilities: SourceCapabilities): readonly DngDemosaic[] =>
+  capabilities.bayer
+    ? DNG_DEMOSAICS
+    : !capabilities.foveon && !capabilities.whiteBalance
+      ? MONO_DEMOSAICS
+      : NO_DEMOSAICS
+/** True when the demosaic of the recipe gives a gray image: Mono, or Default on a
+    monochrome DNG. A legacy recipe or an unsupported method is not Mono. */
+export const monoDemosaic = (
+  capabilities: SourceCapabilities,
+  recipe: Pick<EditRecipe, 'dngDemosaic'>
+): boolean =>
+  !!recipe.dngDemosaic &&
+  demosaicsOf(capabilities).includes(recipe.dngDemosaic) &&
+  (recipe.dngDemosaic === 'mono' || (recipe.dngDemosaic === 'default' && !capabilities.bayer))
 /** True when the photo has white balance with this recipe. The capabilities do not
     change with the recipe, but a Mono demosaic gives a gray image without white balance. */
 export const hasWhiteBalance = (
   capabilities: SourceCapabilities,
   recipe: Pick<EditRecipe, 'dngDemosaic'>
-): boolean => capabilities.whiteBalance && !(capabilities.bayer && recipe.dngDemosaic === 'mono')
+): boolean => capabilities.whiteBalance && !monoDemosaic(capabilities, recipe)
 /** The settings that a source does not support, set to their neutral values. Foveon files
     keep the recipe. A black-and-white film keeps its taking filter; without that film,
-    the monochrome filter mixes Foveon layers. Only a Bayer DNG keeps a demosaic. */
+    the monochrome filter mixes Foveon layers. Only a Bayer or monochrome DNG keeps a
+    demosaic that it supports. */
 export function supportedRecipe(recipe: EditRecipe, capabilities: SourceCapabilities): EditRecipe {
   if (capabilities.foveon && capabilities.whiteBalance && !('dngDemosaic' in recipe)) return recipe
   const { dngDemosaic, ...rest } = recipe
   return {
     ...rest,
-    ...(capabilities.bayer && dngDemosaic && { dngDemosaic }),
+    ...(dngDemosaic && demosaicsOf(capabilities).includes(dngDemosaic) && { dngDemosaic }),
     ...(!capabilities.foveon && {
       cameraProfile: null,
       rawColor: null,
@@ -266,7 +288,8 @@ export function supportedRecipe(recipe: EditRecipe, capabilities: SourceCapabili
   }
 }
 /** The default recipe of a source. A DNG starts with the neutral digital look, without film.
-    A Bayer DNG starts with AMaZE; an older recipe without a demosaic stays legacy. */
+    A Bayer or monochrome DNG starts with Default; an older recipe without a demosaic
+    stays legacy. */
 export const sourceDefaultRecipe = (capabilities: SourceCapabilities): EditRecipe =>
   capabilities.foveon
     ? defaultRecipe()

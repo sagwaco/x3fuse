@@ -143,6 +143,8 @@ impl EditRecipe {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DngDemosaic {
+    /// The app chooses a method from the source sensor and ISO.
+    Default,
     Amaze,
     Dcb,
     Ahd,

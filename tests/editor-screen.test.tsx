@@ -391,6 +391,25 @@ it('shows a canvas status for a changed demosaic through the draft refinement ga
   expect(screen.queryByText(t('editor.demosaicLoading'))).toBeNull()
 })
 
+it('shows the demosaic status for Default on a monochrome DNG until it renders', () => {
+  const monoSession = {
+    ...session,
+    capabilities: { foveon: false, whiteBalance: false, renderedOnly: true }
+  }
+  editor.setState({
+    session: monoSession,
+    documents: { [file.path]: { ...doc, recipe: { ...doc.recipe, dngDemosaic: 'default' } } },
+    preview: { ...frame, draft: true },
+    renderedDemosaic: undefined,
+    loading: false,
+    rendering: true
+  })
+  render(<EditorScreen />)
+  expect(screen.queryByText(t('editor.demosaicLoading'))).not.toBeNull()
+  act(() => editor.setState({ renderedDemosaic: 'default', preview: frame, rendering: false }))
+  expect(screen.queryByText(t('editor.demosaicLoading'))).toBeNull()
+})
+
 it('leaves no focus on Crop after the toolbar exit animation ends', async () => {
   const finishers: Array<() => void> = []
   Element.prototype.animate = function () {

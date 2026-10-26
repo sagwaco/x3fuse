@@ -13,11 +13,11 @@ function stored(): Record<string, boolean> {
 }
 
 /**
- * The open state of a section. It is read at mount and is open when nothing is stored.
+ * The open state of a section. It is read at mount and is `initial` when nothing is stored.
  * Without an id, the section starts closed and nothing is stored.
  */
-export function useStoredOpen(id?: string): [boolean, (open: boolean) => void] {
-  const [open, setOpen] = useState(() => (id ? (stored()[id] ?? true) : false))
+export function useStoredOpen(id?: string, initial = true): [boolean, (open: boolean) => void] {
+  const [open, setOpen] = useState(() => (id ? (stored()[id] ?? initial) : false))
   const save = (next: boolean): void => {
     // A section that mounts open also fires a toggle event. It changes nothing.
     if (next === open) return

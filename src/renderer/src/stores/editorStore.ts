@@ -43,7 +43,7 @@ interface EditorState {
   error: string | null
   mixNotice: string | null
   preview: RenderedPreview | null
-  /** The demosaic of the last accepted non-draft render, including viewport tiles. */
+  /** The demosaic of the last accepted non-draft render; undefined until the first one. */
   renderedDemosaic: EditRecipe['dngDemosaic']
   /** The pitch and yaw `preview` was rendered with; analysis must not use it with other angles. */
   previewPose: { pitch: number; yaw: number } | null
@@ -326,9 +326,12 @@ export const useEditorStore = create<EditorState>((set, get) => {
       return
     const doc = state.documents[state.session.path]
     if (!doc) return
-    // Without a preview on screen, as on open or a crop mode change, a fast
-    // frame shows only until its refinement replaces it. Refine at once.
-    const detail = !renderPending || (!state.preview && !doc.gesture)
+    // A cold Bayer DNG uses Fast for its first interactive frame, then refines.
+    const fastDng =
+      state.renderedDemosaic === undefined &&
+      capabilitiesOf(state.session).bayer &&
+      doc.recipe.dngDemosaic !== 'mono'
+    const detail = !renderPending || (!state.preview && !doc.gesture && !fastDng)
     const navigation = navigationPending
     renderPending = false
     navigationPending = false
@@ -553,7 +556,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
     error: null,
     mixNotice: null,
     preview: null,
-    renderedDemosaic: null,
+    renderedDemosaic: undefined,
     previewPose: null,
     previewGeometry: null,
     before: false,
@@ -660,7 +663,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
           documents: { ...state.documents, [file.path]: doc },
           loading: false,
           preview: null,
-          renderedDemosaic: null,
+          renderedDemosaic: undefined,
           renderFailed: false,
           previewKey: null,
           before: false,
@@ -887,7 +890,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
           x3i: null,
           switching: false,
           preview: null,
-          renderedDemosaic: null,
+          renderedDemosaic: undefined,
           renderFailed: false,
           loading: false,
           rendering: false,

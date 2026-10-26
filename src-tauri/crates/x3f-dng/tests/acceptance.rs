@@ -105,11 +105,22 @@ fn real_bayer_dngs_prepare_with_every_method() {
     let cancel = AtomicBool::new(false);
     for path in inputs() {
         let info = x3f_dng::inspect(&path, &cancel).unwrap();
+        println!("{}: ISO {:?}", path.display(), info.iso);
         if !info.bayer {
             for method in METHODS {
-                assert!(x3f_dng::prepare_with_method(&path, Some(method), &cancel).is_err());
+                let result = x3f_dng::prepare_with_method(&path, Some(method), &cancel);
+                if info.monochrome && method == x3f_dng::DemosaicMethod::Mono {
+                    // Mono of a monochrome DNG is its legacy one-plane route.
+                    let legacy = x3f_dng::prepare(&path, &cancel).unwrap();
+                    assert!(result.unwrap().data == legacy.data);
+                } else {
+                    assert!(result.is_err());
+                }
             }
-            println!("{}: not Bayer, every method refused", path.display());
+            println!(
+                "{}: not Bayer, only monochrome Mono accepted",
+                path.display()
+            );
             continue;
         }
         let start = std::time::Instant::now();

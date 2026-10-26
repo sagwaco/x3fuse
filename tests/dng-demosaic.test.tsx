@@ -4,6 +4,9 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import {
   capabilitiesOf,
   defaultRecipe,
+  demosaicsOf,
+  hasWhiteBalance,
+  monoDemosaic,
   pasteRecipe,
   sourceDefaultRecipe,
   supportedRecipe,
@@ -27,6 +30,7 @@ const BAYER: SourceCapabilities = {
   bayer: true
 }
 const COLOR: SourceCapabilities = { foveon: false, whiteBalance: true, renderedOnly: true }
+const MONO: SourceCapabilities = { foveon: false, whiteBalance: false, renderedOnly: true }
 const FOVEON: SourceCapabilities = { foveon: true, whiteBalance: true, renderedOnly: false }
 const PATH = '/photos/b.DNG'
 
@@ -56,8 +60,9 @@ function open(recipe: EditRecipe, capabilities = BAYER): void {
 const current = (): EditRecipe => editor.getState().documents[PATH].recipe
 
 describe('DNG demosaic recipes', () => {
-  it('starts only a new Bayer DNG with AMaZE', () => {
-    expect(sourceDefaultRecipe(BAYER).dngDemosaic).toBe('amaze')
+  it('starts only a new Bayer or monochrome DNG with Default', () => {
+    expect(sourceDefaultRecipe(BAYER).dngDemosaic).toBe('default')
+    expect(sourceDefaultRecipe(MONO).dngDemosaic).toBe('default')
     expect(sourceDefaultRecipe(COLOR)).not.toHaveProperty('dngDemosaic')
     expect(sourceDefaultRecipe(FOVEON)).not.toHaveProperty('dngDemosaic')
     expect(defaultRecipe()).not.toHaveProperty('dngDemosaic')
@@ -75,6 +80,23 @@ describe('DNG demosaic recipes', () => {
       // Mono means nothing to these sources, so their white balance stays.
       expect(recipe).toMatchObject({ temperature: 5000, tint: 8 })
     }
+  })
+
+  it('keeps Default and Mono on a monochrome DNG and strips other methods', () => {
+    for (const method of ['default', 'mono'] as const) {
+      const recipe = supportedRecipe(bayerRecipe(method), MONO)
+      expect(recipe).toMatchObject({ dngDemosaic: method, temperature: null, tint: 0 })
+      expect(monoDemosaic(MONO, recipe)).toBe(true)
+      expect(hasWhiteBalance(MONO, recipe)).toBe(false)
+    }
+    expect(supportedRecipe(bayerRecipe('amaze'), MONO)).not.toHaveProperty('dngDemosaic')
+    // A legacy monochrome recipe is not a Mono demosaic, and Default on Bayer keeps color.
+    expect(monoDemosaic(MONO, bayerRecipe())).toBe(false)
+    expect(monoDemosaic(BAYER, bayerRecipe('default'))).toBe(false)
+    expect(hasWhiteBalance(BAYER, bayerRecipe('default'))).toBe(true)
+    expect(monoDemosaic(COLOR, bayerRecipe('mono'))).toBe(false)
+    expect(demosaicsOf(COLOR)).toEqual([])
+    expect(demosaicsOf(FOVEON)).toEqual([])
   })
 
   it('removes the white balance of a Mono demosaic', () => {
@@ -106,6 +128,10 @@ describe('DNG demosaic recipes', () => {
     )
     const x3f = { ...defaultRecipe(), dngDemosaic: 'dcb' as const }
     expect(pasteRecipe(look, x3f, BAYER, FOVEON)).not.toHaveProperty('dngDemosaic')
+    // A monochrome target keeps its method, and a Bayer source does not give one.
+    const mono = sourceDefaultRecipe(MONO)
+    expect(pasteRecipe(bayerRecipe('dcb'), mono, BAYER, MONO).dngDemosaic).toBe('default')
+    expect(pasteRecipe(mono, bayerRecipe('igv'), MONO, BAYER).dngDemosaic).toBe('igv')
   })
 
   it('copies, pastes, and resets the Demosaic section', () => {
@@ -116,7 +142,16 @@ describe('DNG demosaic recipes', () => {
     })
     // A legacy recipe has no method to give.
     expect(pasteSection(section, 'demosaic', bayerRecipe(), target, BAYER, BAYER)).toEqual({})
-    expect(resetSection(section, bayerRecipe('mono'), target)).toEqual({ dngDemosaic: 'amaze' })
+    expect(resetSection(section, bayerRecipe('mono'), target)).toEqual({ dngDemosaic: 'default' })
+    // A monochrome DNG takes Default and Mono only.
+    const mono = sourceDefaultRecipe(MONO)
+    expect(pasteSection(section, 'demosaic', bayerRecipe('dcb'), mono, BAYER, MONO)).toEqual({})
+    expect(pasteSection(section, 'demosaic', bayerRecipe('mono'), mono, BAYER, MONO)).toEqual({
+      dngDemosaic: 'mono'
+    })
+    expect(pasteSection(section, 'demosaic', mono, target, MONO, BAYER)).toEqual({
+      dngDemosaic: 'default'
+    })
     // A Mono source has no white balance for the White balance section.
     expect(
       pasteSection(
@@ -230,11 +265,12 @@ describe('DNG demosaic controls', () => {
     vi.unstubAllGlobals()
   })
 
-  it('offers the ten methods and selects one in one change', async () => {
+  it('offers Default and the ten methods and selects one in one change', async () => {
     show(bayerRecipe('amaze'))
     expect(select().textContent).toBe('AMaZE')
     const items = await choose('mono')
     expect(items.map((item) => item.label)).toEqual([
+      t('editor.demosaicDefault'),
       'AMaZE',
       'DCB',
       'AHD',
@@ -249,6 +285,43 @@ describe('DNG demosaic controls', () => {
     expect(change.mock.calls).toEqual([[{ dngDemosaic: 'mono' }]])
   })
 
+  it('shows a collapsed section after Detail with a visible Algorithm label', () => {
+    show(bayerRecipe('default'))
+    expect(select().textContent).toBe(t('editor.demosaicDefault'))
+    expect(select().querySelector('[data-caption]')?.getAttribute('data-caption')).toBe(
+      t('editor.demosaicMethod')
+    )
+    const details = select().closest('details')!
+    expect(details.open).toBe(false)
+    expect(details.previousElementSibling?.querySelector('summary')?.textContent).toBe(
+      t('editor.detail')
+    )
+    // A toggle is stored, as in the other sections.
+    act(() => {
+      details.open = true
+      fireEvent(details, new Event('toggle'))
+    })
+    cleanup()
+    show(bayerRecipe('default'))
+    expect(select().closest('details')!.open).toBe(true)
+  })
+
+  it('offers Default and Mono on a monochrome DNG with gray controls for both', async () => {
+    show(sourceDefaultRecipe(MONO), MONO)
+    expect(select().textContent).toBe(t('editor.demosaicDefault'))
+    const items = await choose('mono')
+    expect(items.map((item) => item.label)).toEqual([
+      t('editor.demosaicDefault'),
+      t('editor.demosaicMono')
+    ])
+    expect(change.mock.calls).toEqual([[{ dngDemosaic: 'mono' }]])
+    fireEvent.click(screen.getByRole('tab', { name: t('editor.tabGrading') }))
+    expect(screen.queryByText(t('editor.whiteBalance'))).toBeNull()
+    expect(screen.getByRole('slider', { name: t('editor.warmth') })).toBeTruthy()
+    expect(screen.getByText(t('editor.toneMixer'))).toBeTruthy()
+    expect(screen.queryByRole('slider', { name: t('editor.saturation') })).toBeNull()
+  })
+
   it('shows Legacy only for a recipe without a method', async () => {
     show(bayerRecipe())
     expect(select().textContent).toBe(t('editor.demosaicLegacy'))
@@ -257,10 +330,10 @@ describe('DNG demosaic controls', () => {
     expect(change).not.toHaveBeenCalled()
   })
 
-  it('resets the section to AMaZE with Option-click', () => {
+  it('resets the section to Default with Option-click', () => {
     show(bayerRecipe('dcb'))
     fireEvent.click(screen.getByText(t('editor.demosaic')), { altKey: true })
-    expect(change).toHaveBeenCalledWith({ dngDemosaic: 'amaze' })
+    expect(change).toHaveBeenCalledWith({ dngDemosaic: 'default' })
   })
 
   it('has no demosaic for a DNG without a Bayer pattern', () => {
@@ -281,9 +354,16 @@ describe('DNG demosaic controls', () => {
     expect(screen.queryByText(t('editor.filter'))).toBeNull()
   })
 
-  it('keeps the color controls of a monochrome DNG without the Mono demosaic', () => {
-    const mono = { ...COLOR, whiteBalance: false }
-    show(sourceDefaultRecipe(mono), mono)
+  it('keeps the color controls of a legacy monochrome DNG recipe', async () => {
+    const legacy = sourceDefaultRecipe(MONO)
+    delete legacy.dngDemosaic
+    show(legacy, MONO)
+    expect(select().textContent).toBe(t('editor.demosaicLegacy'))
+    expect((await choose(null)).map((item) => item.label)).toEqual([
+      t('editor.demosaicDefault'),
+      t('editor.demosaicMono'),
+      t('editor.demosaicLegacy')
+    ])
     fireEvent.click(screen.getByRole('tab', { name: t('editor.tabGrading') }))
     expect(screen.queryByText(t('editor.whiteBalance'))).toBeNull()
     expect(screen.getByRole('slider', { name: t('editor.saturation') })).toBeTruthy()

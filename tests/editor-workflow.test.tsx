@@ -219,6 +219,42 @@ it('renders input at interactive resolution and refines only after input settles
   expect(renders().at(-1)).toMatchObject({ maxEdge: 2048, interactive: false })
 })
 
+it.each(['default', undefined] as const)(
+  'shows a first Bayer draft then refines without saving the temporary method (%s)',
+  async (method) => {
+    const real = invoke.getMockImplementation()!
+    invoke.mockImplementation(async (command, payload) => {
+      const result = await real(command, payload)
+      if (command === 'editor:open')
+        return {
+          ...result,
+          capabilities: { foveon: false, whiteBalance: true, renderedOnly: true, bayer: true },
+          recipe: { ...result.recipe, dngDemosaic: method }
+        }
+      return command === 'editor:render' ? { ...result, draft: payload.interactive } : result
+    })
+    await editor.getState().open(file)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(editor.getState().preview?.draft).toBe(true)
+    expect(editor.getState().renderedDemosaic).toBeUndefined()
+    expect(editor.getState().documents[file.path].recipe.dngDemosaic).toBe(method)
+    const requests = () =>
+      invoke.mock.calls
+        .filter(([command]) => command === 'editor:render')
+        .map(([, payload]) => payload)
+    expect(requests()).toEqual([expect.objectContaining({ maxEdge: 1024, interactive: true })])
+    await vi.advanceTimersByTimeAsync(100)
+    expect(editor.getState().preview?.draft).toBe(false)
+    expect(editor.getState().renderedDemosaic).toBe(method ?? null)
+    expect(requests().at(-1)).toMatchObject({ maxEdge: 2048, interactive: false })
+    expect(invoke.mock.calls.some(([command]) => command === 'editor:save')).toBe(false)
+    editor.getState().setCropping(true)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(requests()).toHaveLength(3)
+    expect(requests().at(-1)?.interactive).toBe(false)
+  }
+)
+
 it('refines a draft native viewport without changing the saved denoise setting', async () => {
   const real = invoke.getMockImplementation()!
   invoke.mockImplementation(async (command, payload) => {
@@ -259,7 +295,7 @@ it.each([false, true])(
       return command === 'editor:render' ? { ...result, draft: payload.interactive } : result
     })
     await editor.getState().open(file)
-    await vi.advanceTimersByTimeAsync(0)
+    await vi.advanceTimersByTimeAsync(100)
     expect(editor.getState().renderedDemosaic).toBe('amaze')
     if (zoomed) {
       editor.getState().setViewport({ x: 0.2, y: 0.3, width: 0.3, height: 0.25 })
@@ -282,7 +318,7 @@ it.each([false, true])(
     await vi.advanceTimersByTimeAsync(100)
     expect(editor.getState().renderedDemosaic).toBe('amaze')
     await editor.getState().close()
-    expect(editor.getState().renderedDemosaic).toBeNull()
+    expect(editor.getState().renderedDemosaic).toBeUndefined()
   }
 )
 
@@ -308,7 +344,7 @@ it('ignores a superseded demosaic and retains the last completed method on failu
     return { ...result, draft: payload.interactive }
   })
   await editor.getState().open(file)
-  await vi.advanceTimersByTimeAsync(0)
+  await vi.advanceTimersByTimeAsync(100)
   editor.getState().change({ dngDemosaic: 'dcb' })
   await vi.advanceTimersByTimeAsync(0)
   editor.getState().undo()

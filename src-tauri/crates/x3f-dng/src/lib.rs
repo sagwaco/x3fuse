@@ -131,8 +131,10 @@ pub struct DngInfo {
     pub monochrome: bool,
     /// A 2x2 Bayer array of a size that the native methods accept, from
     /// `MIN_NATIVE_EDGE` to `MAX_NATIVE_PIXELS`. Only then can
-    /// `prepare_with_method` use a `DemosaicMethod`.
+    /// `prepare_with_method` use a `DemosaicMethod` other than Mono.
     pub bayer: bool,
+    /// EXIF ISO speed. None when it is absent, zero, or not finite.
+    pub iso: Option<f32>,
 }
 
 mod ffi {
@@ -170,6 +172,7 @@ mod ffi {
         pub analog_balance: [f32; 4],
         pub baseline_exposure: f32,
         pub cam_mul: [f32; 4],
+        pub iso: f32,
         pub color: [Color; 2],
         pub opcodes: [*const u8; 3],
         pub opcode_len: [u32; 3],
@@ -455,7 +458,13 @@ pub fn inspect(path: &Path, cancel: &AtomicBool) -> Result<DngInfo, String> {
         as_shot_crop: as_shot_crop(info),
         monochrome: opened.layout == Layout::Mono,
         bayer: native_cfa(&opened).is_ok(),
+        iso: iso(info.iso),
     })
+}
+
+/// LibRaw ISO speed, if it is finite and positive.
+fn iso(v: f32) -> Option<f32> {
+    (v.is_finite() && v > 0.).then_some(v)
 }
 
 /// The 2x2 pattern of a Bayer array in LibRaw colors, where 3 is the second
@@ -643,7 +652,11 @@ fn decode(
 ) -> Result<(Balanced, color::Calibration, u16), String> {
     let opened = open(path, cancel)?;
     let info = &opened.info;
-    let cfa_pattern = method.map(|_| native_cfa(&opened)).transpose()?;
+    // Mono of a monochrome DNG is its usual one-sample route.
+    let cfa_pattern = match (method, opened.layout) {
+        (None, _) | (Some(DemosaicMethod::Mono), Layout::Mono) => None,
+        _ => Some(native_cfa(&opened)?),
+    };
     let cal = match method {
         Some(DemosaicMethod::Mono) => color::monochrome(baseline_exposure(info)),
         _ => calibration(&opened)?,
@@ -1222,7 +1235,8 @@ pub fn prepare(path: &Path, cancel: &AtomicBool) -> Result<x3f_core::SceneLinear
 /// `prepare` with a native demosaic method. None is the LibRaw route of
 /// `prepare`. A method needs a DNG whose `DngInfo::bayer` is true, else it
 /// is an error; no other method replaces it. `DemosaicMethod::Mono` returns
-/// a monochrome calibration.
+/// a monochrome calibration. It also accepts a monochrome DNG, with the same
+/// pixels as None.
 pub fn prepare_with_method(
     path: &Path,
     method: Option<DemosaicMethod>,

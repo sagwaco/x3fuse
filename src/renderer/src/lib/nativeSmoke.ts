@@ -731,6 +731,7 @@ async function runEditor(input: string): Promise<Record<string, unknown>> {
       60000
     )
     const firstPreviewMs = performance.now() - opened
+    const firstDemosaicDraft = !!e().preview?.draft
     await until(() => !cloud(), 'The developing cloud did not leave', 5000)
     check(
       sawCloud === (developingCloud && !highResolution),
@@ -738,9 +739,23 @@ async function runEditor(input: string): Promise<Record<string, unknown>> {
     )
     check(useNavStore.getState().screen === 'editor', 'Edit did not open in the main window')
     check(!e().error, e().error ?? 'Editor failed')
-    const initial = e().preview!
     const session = e().session!
     const capabilities = capabilitiesOf(session)
+    if (capabilities.bayer) {
+      check(firstDemosaicDraft, 'A cold Bayer DNG did not start with a Fast draft')
+      await until(
+        () => !e().preview?.draft && e().renderedDemosaic === 'default' && previewPainted(),
+        'The Fast draft did not refine to Default',
+        60000
+      )
+      check(
+        ![...document.querySelectorAll('[role="status"]')].some((node) =>
+          node.textContent?.includes(t('editor.demosaicLoading'))
+        ),
+        'The demosaic loading indicator did not clear'
+      )
+    }
+    const initial = e().preview!
     // A DNG opens with the neutral digital look. An X3F opens with its as-shot profile.
     const dng = session.sourceKind === 'dng'
     check(
@@ -906,12 +921,12 @@ async function runEditor(input: string): Promise<Record<string, unknown>> {
           recipe().temperature === null && !recipe().whiteBalanceGains,
           'Monochrome DNG has white balance'
         )
-      // A Bayer DNG opens with AMaZE. Mono gives a gray image without white balance,
+      // A Bayer DNG opens with Default. Mono gives a gray image without white balance,
       // in one undo step. Native menu clicks are not automated, so the store selects it.
       if (capabilities.bayer) {
         check(
-          session.recipe.dngDemosaic === 'amaze',
-          `Bayer DNG did not open with AMaZE: ${session.recipe.dngDemosaic}`
+          session.recipe.dngDemosaic === 'default',
+          `Bayer DNG did not open with Default: ${session.recipe.dngDemosaic}`
         )
         check(
           document.querySelector(`[aria-label="${CSS.escape(t('editor.demosaicMethod'))}"]`),
@@ -1167,6 +1182,7 @@ async function runEditor(input: string): Promise<Record<string, unknown>> {
       ok: true,
       editor: {
         firstPreviewMs,
+        firstDemosaicDraft,
         warmedPreviewMs,
         developingCloud,
         cloudFrameRate,

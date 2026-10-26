@@ -442,6 +442,41 @@ fn monochrome_dng_is_gray_in_three_channels() {
     assert_eq!(image.color(), image::ColorType::Rgb8);
 }
 
+/// The fixture with an EXIF IFD that holds ISOSpeedRatings.
+fn with_iso(mut fixture: Fixture, iso: u16) -> TempFile {
+    fixture.extra.push((34665, Value::Long(vec![0])));
+    let file = fixture.write();
+    let mut bytes = std::fs::read(&file.0).unwrap();
+    let at = bytes.len().next_multiple_of(2);
+    bytes.resize(at, 0);
+    bytes.extend(1u16.to_le_bytes());
+    bytes.extend(34855u16.to_le_bytes());
+    bytes.extend(3u16.to_le_bytes());
+    bytes.extend(1u32.to_le_bytes());
+    bytes.extend(u32::from(iso).to_le_bytes());
+    bytes.extend(0u32.to_le_bytes());
+    let count = usize::from(u16::from_le_bytes([bytes[8], bytes[9]]));
+    let entry = (0..count)
+        .map(|i| 10 + 12 * i)
+        .find(|&e| bytes[e..e + 2] == 34665u16.to_le_bytes())
+        .unwrap();
+    bytes[entry + 8..entry + 12].copy_from_slice(&(at as u32).to_le_bytes());
+    std::fs::write(&file.0, bytes).unwrap();
+    file
+}
+
+#[test]
+fn inspect_reads_a_finite_positive_iso() {
+    let cancel = AtomicBool::new(false);
+    assert_eq!(inspect(&bayer().write().0, &cancel).unwrap().iso, None);
+    let file = with_iso(bayer(), 3200);
+    assert_eq!(inspect(&file.0, &cancel).unwrap().iso, Some(3200.));
+    for v in [0., -100., f32::NAN, f32::INFINITY] {
+        assert_eq!(iso(v), None, "{v}");
+    }
+    assert_eq!(iso(1600.), Some(1600.));
+}
+
 #[test]
 fn clipped_highlights_stay_neutral() {
     // Green clips first: the as-shot neutral has its largest value there.
@@ -835,10 +870,23 @@ fn native_api_keeps_the_legacy_route_and_rejects_other_layouts() {
         // The LibRaw route still prepares them.
         prepare(&file.0, &cancel).unwrap();
         for method in METHODS {
+            if std::ptr::eq(file, &mono) && method == DemosaicMethod::Mono {
+                continue;
+            }
             let err = prepare_with_method(&file.0, Some(method), &cancel).unwrap_err();
             assert!(err.contains(why), "{method:?}: {err}");
         }
     }
+    // Mono of a monochrome DNG is its one-plane route.
+    let a = prepare(&mono.0, &cancel).unwrap();
+    let b = prepare_with_method(&mono.0, Some(DemosaicMethod::Mono), &cancel).unwrap();
+    assert_eq!(a.data, b.data);
+    assert_eq!(a.white_balance.camera_to_rgb, b.white_balance.camera_to_rgb);
+    assert_eq!(a.white_balance.xyz_to_camera, b.white_balance.xyz_to_camera);
+    assert_eq!(
+        a.white_balance.as_shot_neutral,
+        b.white_balance.as_shot_neutral
+    );
     let cancelled = AtomicBool::new(true);
     for method in METHODS {
         let err = prepare_with_method(&file.0, Some(method), &cancelled).unwrap_err();

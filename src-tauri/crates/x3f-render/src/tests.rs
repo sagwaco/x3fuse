@@ -41,7 +41,7 @@ fn dng_method_serialization_preserves_legacy_and_rejects_unknown_methods() {
         .get("dngDemosaic")
         .is_none());
     for name in [
-        "amaze", "dcb", "ahd", "eahd", "hphd", "igv", "lmmse", "vng4", "mono", "fast",
+        "default", "amaze", "dcb", "ahd", "eahd", "hphd", "igv", "lmmse", "vng4", "mono", "fast",
     ] {
         let input = serde_json::json!({"dngDemosaic": name});
         let recipe: EditRecipe = serde_json::from_value(input).unwrap();

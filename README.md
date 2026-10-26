@@ -469,15 +469,20 @@ strength controls and advanced settings. New edits use the camera's as-shot crop
 Monochrome filters mix calibrated Foveon sensor-layer responses and remain gray
 through color film and channel-curve processing.
 
-Bayer DNGs have a **Demosaicing** selector in RAW: AMaZE, DCB, AHD, EAHD, HPHD,
-IGV, LMMSE, VNG4, Mono, and Fast. It supports active images from 64 pixels per
-edge to 64 megapixels. New supported Bayer photos use AMaZE. Earlier saved DNG
-recipes show Legacy and keep their LibRaw rendering until you choose a method.
+Bayer DNGs have a **Demosaic** section below **Detail** in Develop. It starts
+collapsed. **Algorithm** offers Default, AMaZE, DCB, AHD, EAHD, HPHD, IGV, LMMSE,
+VNG4, Mono, and Fast. It supports active images from 64 pixels per edge to
+64 megapixels. New supported photos use Default: AMaZE below ISO 1600 or when
+ISO is unknown, LMMSE at ISO 1600 and above, and Mono for monochrome cameras.
+Monochrome DNGs offer Default and Mono only. Earlier saved DNG recipes show
+Legacy and keep their LibRaw rendering until you choose a method.
 The method is saved per photo and is used by edited previews and JPEG/TIFF exports.
+The first Bayer edit preview uses Fast while the selected algorithm loads. The
+canvas shows a loading indicator until that algorithm finishes rendering.
 Before and pasted looks keep the selected method. Mono reads each sensor site as
 gray and is for sensors with no color filter array; it disables white balance.
 X-Trans DNGs and Bayer images outside these size limits use their existing
-processing. Linear and native monochrome DNGs do not need demosaicing.
+processing. Linear DNGs do not need demosaicing.
 
 Edits autosave beside the source, for example `<photo>.X3F.x3fuse.json` or
 `<photo>.dng.x3fuse.json`; the RAW stays unchanged. Move the
