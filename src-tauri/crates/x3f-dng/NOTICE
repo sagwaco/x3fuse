@@ -9,10 +9,12 @@ LibRaw 0.22.2
     Copyright (C) 2008-2025 LibRaw LLC (info@libraw.org)
     https://www.libraw.org/
 
-The DNG decoder bundles the unmodified LibRaw 0.22.2 source from
+The build downloads the unmodified LibRaw 0.22.2 source from
 https://www.libraw.org/data/LibRaw-0.22.2.tar.gz (SHA-256
-de86b035655accff8d4010f1a221fdf50d353cb7b1422ba26f14a0db92612cfa), without
-the samples, documentation, build files, and three unused placeholder sources.
+de86b035655accff8d4010f1a221fdf50d353cb7b1422ba26f14a0db92612cfa).
+Resource preparation verifies this checksum and keeps the source without the
+samples, documentation, build files, and three unused placeholder sources.
+The app statically links this library.
 LibRaw is available under either the GNU Lesser General Public License 2.1
 (LIBRAW_LICENSE.LGPL) or the Common Development and Distribution License 1.0
 (LIBRAW_LICENSE.CDDL); X3Fuse uses it under LGPL 2.1. LIBRAW_COPYRIGHT lists

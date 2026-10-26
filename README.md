@@ -265,6 +265,13 @@ Windows bundles the complete ExifTool standalone runtime. macOS and Linux use it
 Perl script and modules. `npm run sync:resources` includes renderer license and
 spectral-data notices in the app.
 
+The same step downloads checksum-verified LibRaw 0.22.2 source for `x3f-dng`.
+Archives are cached in `.cache/`. The prepared source in
+`src-tauri/crates/x3f-dng/libraw/` is not tracked by Git. The first preparation
+needs network access; later runs can use the cached archives. Run
+`npm run sync:resources` before direct Cargo commands in a fresh checkout.
+LibRaw is compiled into the app, so users need no separate download.
+
 The backend, `x3f-render`, and `x3f-dng` use published `x3f-core` 0.4.0,
 which includes X3I (SFD) support.
 `src-tauri/Cargo.lock` pins dependency versions. To test an unpublished core, use a

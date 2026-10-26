@@ -19,9 +19,11 @@ Intel and Apple Silicon support. Windows and Linux x64 builds are portable alpha
 - `src-tauri/`: Rust backend, Tauri configuration, and backend acceptance tests.
 - `src-tauri/crates/x3f-render/`: GPU renderer, edit recipes, camera profiles, and film data.
 - `src-tauri/resources/opcodes/`: tracked camera/lens flat-field corrections.
-- `scripts/prepare-resources.mjs`: downloads checksum-verified ExifTool 13.59 for the
-  host OS and prepares bundled license notices. Generated ExifTool and license resources
-  are not tracked. Windows uses the standalone runtime; macOS and Linux use Perl.
+- `scripts/prepare-resources.mjs`: downloads checksum-verified LibRaw 0.22.2 source
+  and ExifTool 13.59 for the host OS, and prepares bundled license notices.
+  Generated LibRaw, ExifTool, and license resources are not tracked. Run
+  `npm run sync:resources` before direct Cargo builds in a fresh checkout.
+  Windows uses the standalone ExifTool runtime; macOS and Linux use Perl.
 - `tests/`: frontend, artifact, and native-window tests.
 - `scripts/`: resource preparation, artifact packaging, and native smoke checks.
 - `Configuration/`: release version parsing and legacy appcast note injection.

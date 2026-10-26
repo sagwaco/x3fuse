@@ -1,4 +1,4 @@
-//! Build the vendored LibRaw 0.22.2 and the C ABI shim as one static library.
+//! Build the prepared LibRaw 0.22.2 and the C ABI shim as one static library.
 
 use std::{env, path::Path};
 
@@ -15,6 +15,10 @@ fn sources(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
 
 fn main() {
     let root = Path::new("libraw");
+    assert!(
+        root.join(".version").is_file() && root.join("libraw/libraw.h").is_file(),
+        "LibRaw source is missing. Run `npm run sync:resources` from the repository root."
+    );
     let mut files = vec![Path::new("src/shim.cpp").to_path_buf()];
     sources(&root.join("src"), &mut files);
     files.sort();

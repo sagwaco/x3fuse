@@ -148,6 +148,11 @@ jobs:
           targets: x86_64-apple-darwin, aarch64-apple-darwin
 
       - run: npm ci
+      - name: Cache native source and resource downloads
+        uses: actions/cache@v4
+        with:
+          path: .cache
+          key: native-downloads-libraw-0.22.2-exiftool-13.59-${{ runner.os }}
       - run: npm run sync:resources
 
       - name: Set release version
