@@ -525,6 +525,7 @@
   "editor.sfdRaw": "SFD RAW",
   "editor.demosaic": "Demosaic",
   "editor.demosaicMethod": "Demosaic method",
+  "editor.demosaicLoading": "Updating demosaic…",
   "editor.demosaicHelp": "Select how the Bayer pattern becomes a full-color image. AMaZE keeps the most detail. Mono is only for a sensor without a color filter array.",
   "editor.demosaicMonoHelp": "Mono reads each pixel as gray, without demosaicing. Use it only for a camera with a monochrome sensor or with its color filter array removed. For a black-and-white photo from a color camera, choose a black-and-white film on the Film tab.",
   "editor.demosaicMono": "Mono",

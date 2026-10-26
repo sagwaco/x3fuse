@@ -38,9 +38,13 @@ interface EditorState {
   loading: boolean
   closing: boolean
   rendering: boolean
+  /** True when the current photo's foreground render failed. The next render clears it. */
+  renderFailed: boolean
   error: string | null
   mixNotice: string | null
   preview: RenderedPreview | null
+  /** The demosaic of the last accepted non-draft render, including viewport tiles. */
+  renderedDemosaic: EditRecipe['dngDemosaic']
   /** The pitch and yaw `preview` was rendered with; analysis must not use it with other angles. */
   previewPose: { pitch: number; yaw: number } | null
   /** The `geometryKey` of the recipe that `preview` was rendered with. */
@@ -339,7 +343,11 @@ export const useEditorStore = create<EditorState>((set, get) => {
     const recipe = renderRecipe(state, doc)
     const key = renderKey(sessionId, recipe)
     const region = !state.cropping ? state.viewport : null
-    set({ rendering: true, ...(state.cache && state.cache.key !== key ? { cache: null } : {}) })
+    set({
+      rendering: true,
+      renderFailed: false,
+      ...(state.cache && state.cache.key !== key ? { cache: null } : {})
+    })
     try {
       const preview = await ipc.invoke('editor:render', {
         sessionId,
@@ -372,21 +380,19 @@ export const useEditorStore = create<EditorState>((set, get) => {
         matchingView &&
         (renderRevision === revision || progressing)
       ) {
-        if (region)
-          set({
-            tile: { ...preview, region: preview.region ?? region, viewport: region },
-            switching: false
-          })
-        else {
-          set({
-            preview,
-            previewKey: preview.draft ? null : key,
-            previewPose: { pitch: recipe.pitch, yaw: recipe.yaw },
-            previewGeometry: geometryKey(recipe),
-            switching: false
-          })
-        }
-        set({ error: Object.values(get().documents).find((doc) => doc.error)?.error ?? null })
+        set({
+          ...(region
+            ? { tile: { ...preview, region: preview.region ?? region, viewport: region } }
+            : {
+                preview,
+                previewKey: preview.draft ? null : key,
+                previewPose: { pitch: recipe.pitch, yaw: recipe.yaw },
+                previewGeometry: geometryKey(recipe)
+              }),
+          ...(!preview.draft && { renderedDemosaic: recipe.dngDemosaic ?? null }),
+          switching: false,
+          error: Object.values(get().documents).find((doc) => doc.error)?.error ?? null
+        })
       }
       if (region && !preview.draft && preview.sessionId === sessionId) {
         // Keep sharp pixels even when the view moved on during the render.
@@ -418,7 +424,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
         !get().loading &&
         !unmerged(get())
       )
-        set({ error: String(error) })
+        set({ error: String(error), renderFailed: true })
     } finally {
       renderRunning = false
       refining = false
@@ -543,9 +549,11 @@ export const useEditorStore = create<EditorState>((set, get) => {
     loading: false,
     closing: false,
     rendering: false,
+    renderFailed: false,
     error: null,
     mixNotice: null,
     preview: null,
+    renderedDemosaic: null,
     previewPose: null,
     previewGeometry: null,
     before: false,
@@ -652,6 +660,8 @@ export const useEditorStore = create<EditorState>((set, get) => {
           documents: { ...state.documents, [file.path]: doc },
           loading: false,
           preview: null,
+          renderedDemosaic: null,
+          renderFailed: false,
           previewKey: null,
           before: false,
           cropping: false,
@@ -877,6 +887,8 @@ export const useEditorStore = create<EditorState>((set, get) => {
           x3i: null,
           switching: false,
           preview: null,
+          renderedDemosaic: null,
+          renderFailed: false,
           loading: false,
           rendering: false,
           before: false,

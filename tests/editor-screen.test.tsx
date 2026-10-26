@@ -331,6 +331,66 @@ it('draws the Before pill as a glass overlay', () => {
   expect(screen.getByText(t('editor.before')).classList.contains('glass-overlay')).toBe(true)
 })
 
+it('shows a canvas status for a changed demosaic through the draft refinement gap', () => {
+  const bayerSession = {
+    ...session,
+    capabilities: { foveon: false, whiteBalance: true, renderedOnly: true, bayer: true }
+  }
+  const pendingDoc = { ...doc, recipe: { ...doc.recipe, dngDemosaic: 'dcb' as const } }
+  editor.setState({
+    session: bayerSession,
+    documents: { [file.path]: pendingDoc },
+    preview: { ...frame, draft: true },
+    renderedDemosaic: 'amaze',
+    loading: false,
+    rendering: false
+  })
+  const view = render(<EditorScreen />)
+  const status = screen.getByText(t('editor.demosaicLoading'))
+  expect(status.closest('[role=status]')).not.toBeNull()
+  expect(status.classList.contains('glass-overlay')).toBe(true)
+  expect(
+    status.querySelector('[aria-hidden=true]')?.classList.contains('motion-safe:animate-spin')
+  ).toBe(true)
+  expect(
+    view.container.querySelector('[data-editor-frame]')?.getAttribute('data-editor-frame')
+  ).toBe(frame.url)
+  // Undo before refinement already has the selected method on screen.
+  act(() =>
+    editor.setState({
+      documents: { [file.path]: { ...doc, recipe: { ...doc.recipe, dngDemosaic: 'amaze' } } }
+    })
+  )
+  expect(screen.queryByText(t('editor.demosaicLoading'))).toBeNull()
+  act(() => editor.setState({ documents: { [file.path]: pendingDoc } }))
+  // An autosave error does not stop the pending render or its status.
+  act(() => editor.setState({ error: 'Save failed' }))
+  expect(screen.queryByText(t('editor.demosaicLoading'))).not.toBeNull()
+  act(() => editor.setState({ rendering: true }))
+  expect(screen.queryByText(t('editor.demosaicLoading'))).not.toBeNull()
+  act(() => editor.setState({ renderedDemosaic: 'dcb', preview: frame, rendering: false }))
+  expect(screen.queryByText(t('editor.demosaicLoading'))).toBeNull()
+  // Other adjustments can render drafts without a demosaic status.
+  act(() => editor.setState({ preview: { ...frame, draft: true }, rendering: true }))
+  expect(screen.queryByText(t('editor.demosaicLoading'))).toBeNull()
+  act(() =>
+    editor.setState({
+      renderedDemosaic: 'amaze',
+      rendering: false,
+      renderFailed: true,
+      error: 'Demosaic failed'
+    })
+  )
+  expect(screen.queryByText(t('editor.demosaicLoading'))).toBeNull()
+  // A retry shows progress even while the previous error remains on screen.
+  act(() => editor.setState({ rendering: true, renderFailed: false }))
+  expect(screen.queryByText(t('editor.demosaicLoading'))).not.toBeNull()
+  act(() => editor.setState({ loading: true }))
+  expect(screen.queryByText(t('editor.demosaicLoading'))).toBeNull()
+  act(() => editor.setState({ session, loading: false }))
+  expect(screen.queryByText(t('editor.demosaicLoading'))).toBeNull()
+})
+
 it('leaves no focus on Crop after the toolbar exit animation ends', async () => {
   const finishers: Array<() => void> = []
   Element.prototype.animate = function () {

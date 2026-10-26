@@ -525,6 +525,7 @@
   "editor.sfdRaw": "SFD RAW",
   "editor.demosaic": "Interpolación",
   "editor.demosaicMethod": "Método de interpolación",
+  "editor.demosaicLoading": "Actualizando la interpolación…",
   "editor.demosaicHelp": "Elige cómo el patrón Bayer se convierte en una imagen a todo color. AMaZE conserva el mayor detalle. Mono es solo para un sensor sin matriz de filtros de color.",
   "editor.demosaicMonoHelp": "Mono lee cada píxel como gris, sin interpolación. Úsalo solo con una cámara de sensor monocromo o sin matriz de filtros de color. Para una foto en blanco y negro de una cámara en color, elige una película en blanco y negro en la pestaña Película.",
   "editor.demosaicMono": "Mono",
