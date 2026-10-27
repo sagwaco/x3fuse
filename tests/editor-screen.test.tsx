@@ -260,6 +260,7 @@ beforeEach(() => {
 })
 afterEach(() => {
   cleanup()
+  vi.useRealTimers()
   editor.setState(initialEditor, true)
   queue.setState(initialQueue, true)
   useSettingsStore.setState(initialSettings, true)
@@ -331,83 +332,122 @@ it('draws the Before pill as a glass overlay', () => {
   expect(screen.getByText(t('editor.before')).classList.contains('glass-overlay')).toBe(true)
 })
 
-it('shows a canvas status for a changed demosaic through the draft refinement gap', () => {
-  const bayerSession = {
-    ...session,
-    capabilities: { foveon: false, whiteBalance: true, renderedOnly: true, bayer: true }
-  }
-  const pendingDoc = { ...doc, recipe: { ...doc.recipe, dngDemosaic: 'dcb' as const } }
+it('delays the general edit status and keeps it through draft refinement', () => {
+  vi.useFakeTimers()
   editor.setState({
-    session: bayerSession,
-    documents: { [file.path]: pendingDoc },
-    preview: { ...frame, draft: true },
-    renderedDemosaic: 'amaze',
-    loading: false,
-    rendering: false
-  })
-  const view = render(<EditorScreen />)
-  const status = screen.getByText(t('editor.demosaicLoading'))
-  expect(status.closest('[role=status]')).not.toBeNull()
-  expect(status.classList.contains('glass-overlay')).toBe(true)
-  expect(
-    status.querySelector('[aria-hidden=true]')?.classList.contains('motion-safe:animate-spin')
-  ).toBe(true)
-  expect(
-    view.container.querySelector('[data-editor-frame]')?.getAttribute('data-editor-frame')
-  ).toBe(frame.url)
-  // Undo before refinement already has the selected method on screen.
-  act(() =>
-    editor.setState({
-      documents: { [file.path]: { ...doc, recipe: { ...doc.recipe, dngDemosaic: 'amaze' } } }
-    })
-  )
-  expect(screen.queryByText(t('editor.demosaicLoading'))).toBeNull()
-  act(() => editor.setState({ documents: { [file.path]: pendingDoc } }))
-  // An autosave error does not stop the pending render or its status.
-  act(() => editor.setState({ error: 'Save failed' }))
-  expect(screen.queryByText(t('editor.demosaicLoading'))).not.toBeNull()
-  act(() => editor.setState({ rendering: true }))
-  expect(screen.queryByText(t('editor.demosaicLoading'))).not.toBeNull()
-  act(() => editor.setState({ renderedDemosaic: 'dcb', preview: frame, rendering: false }))
-  expect(screen.queryByText(t('editor.demosaicLoading'))).toBeNull()
-  // Other adjustments can render drafts without a demosaic status.
-  act(() => editor.setState({ preview: { ...frame, draft: true }, rendering: true }))
-  expect(screen.queryByText(t('editor.demosaicLoading'))).toBeNull()
-  act(() =>
-    editor.setState({
-      renderedDemosaic: 'amaze',
-      rendering: false,
-      renderFailed: true,
-      error: 'Demosaic failed'
-    })
-  )
-  expect(screen.queryByText(t('editor.demosaicLoading'))).toBeNull()
-  // A retry shows progress even while the previous error remains on screen.
-  act(() => editor.setState({ rendering: true, renderFailed: false }))
-  expect(screen.queryByText(t('editor.demosaicLoading'))).not.toBeNull()
-  act(() => editor.setState({ loading: true }))
-  expect(screen.queryByText(t('editor.demosaicLoading'))).toBeNull()
-  act(() => editor.setState({ session, loading: false }))
-  expect(screen.queryByText(t('editor.demosaicLoading'))).toBeNull()
-})
-
-it('shows the demosaic status for Default on a monochrome DNG until it renders', () => {
-  const monoSession = {
-    ...session,
-    capabilities: { foveon: false, whiteBalance: false, renderedOnly: true }
-  }
-  editor.setState({
-    session: monoSession,
-    documents: { [file.path]: { ...doc, recipe: { ...doc.recipe, dngDemosaic: 'default' } } },
-    preview: { ...frame, draft: true },
-    renderedDemosaic: undefined,
+    session,
+    documents: { [file.path]: doc },
+    preview: frame,
     loading: false,
     rendering: true
   })
   render(<EditorScreen />)
-  expect(screen.queryByText(t('editor.demosaicLoading'))).not.toBeNull()
-  act(() => editor.setState({ renderedDemosaic: 'default', preview: frame, rendering: false }))
-  expect(screen.queryByText(t('editor.demosaicLoading'))).toBeNull()
+  const status = screen.getByText(t('editor.loading'))
+  expect(status.closest('[role=status]')).not.toBeNull()
+  expect(status.classList.contains('glass-overlay')).toBe(true)
+  expect(status.getAttribute('aria-hidden')).toBe('true')
+  act(() => vi.advanceTimersByTime(1999))
+  expect(status.getAttribute('aria-hidden')).toBe('true')
+  // A draft can wait for refinement with no render in flight.
+  act(() => editor.setState({ preview: { ...frame, draft: true }, rendering: false }))
+  act(() => vi.advanceTimersByTime(1))
+  expect(status.getAttribute('aria-hidden')).toBe('false')
+  expect(status.classList.contains('scale-100')).toBe(true)
+  // An autosave failure must not hide pending render progress.
+  act(() => editor.setState({ error: 'Save failed', rendering: true }))
+  expect(status.getAttribute('aria-hidden')).toBe('false')
+  act(() => editor.setState({ preview: frame, rendering: false }))
+  expect(status.getAttribute('aria-hidden')).toBe('true')
+  expect(status.classList.contains('scale-105')).toBe(true)
+  expect(status.classList.contains('opacity-0')).toBe(true)
+  expect(status.isConnected).toBe(true)
+})
+
+it('does not show the status for fast edits and gives each edit a new delay', () => {
+  vi.useFakeTimers()
+  editor.setState({ session, documents: { [file.path]: doc }, preview: frame, loading: false })
+  render(<EditorScreen />)
+  const status = screen.getByText(t('editor.loading'))
+  act(() => editor.setState({ rendering: true }))
+  act(() => vi.advanceTimersByTime(1000))
+  act(() => editor.setState({ rendering: false }))
+  act(() => vi.advanceTimersByTime(2000))
+  expect(status.getAttribute('aria-hidden')).toBe('true')
+  act(() => editor.setState({ rendering: true }))
+  act(() => vi.advanceTimersByTime(1999))
+  expect(status.getAttribute('aria-hidden')).toBe('true')
+  act(() => vi.advanceTimersByTime(1))
+  expect(status.getAttribute('aria-hidden')).toBe('false')
+})
+
+it('starts the delay after a slider gesture ends', () => {
+  vi.useFakeTimers()
+  editor.setState({
+    session,
+    documents: { [file.path]: { ...doc, gesture: doc.recipe } },
+    preview: { ...frame, draft: true },
+    loading: false,
+    rendering: true
+  })
+  render(<EditorScreen />)
+  const status = screen.getByText(t('editor.loading'))
+  act(() => vi.advanceTimersByTime(3000))
+  expect(status.getAttribute('aria-hidden')).toBe('true')
+  act(() => editor.setState({ documents: { [file.path]: doc } }))
+  act(() => vi.advanceTimersByTime(1999))
+  expect(status.getAttribute('aria-hidden')).toBe('true')
+  act(() => vi.advanceTimersByTime(1))
+  expect(status.getAttribute('aria-hidden')).toBe('false')
+})
+
+it('clears the status on render failure, retry, and photo changes', () => {
+  vi.useFakeTimers()
+  editor.setState({
+    session,
+    documents: { [file.path]: doc },
+    preview: { ...frame, draft: true },
+    loading: false,
+    rendering: true
+  })
+  render(<EditorScreen />)
+  const status = screen.getByText(t('editor.loading'))
+  act(() => vi.advanceTimersByTime(2000))
+  expect(status.getAttribute('aria-hidden')).toBe('false')
+  act(() => editor.setState({ renderFailed: true, rendering: false }))
+  expect(status.getAttribute('aria-hidden')).toBe('true')
+  act(() => editor.setState({ renderFailed: false, rendering: true }))
+  act(() => vi.advanceTimersByTime(2000))
+  expect(status.getAttribute('aria-hidden')).toBe('false')
+  act(() => editor.setState({ loading: true }))
+  expect(status.getAttribute('aria-hidden')).toBe('true')
+  act(() => editor.setState({ session: { ...session, sessionId: 'session-b' }, loading: false }))
+  act(() => vi.advanceTimersByTime(2000))
+  expect(status.getAttribute('aria-hidden')).toBe('true')
+})
+
+it('clears the status when a zoomed tile finishes over an old draft preview', () => {
+  vi.useFakeTimers()
+  const viewport = { x: 0.25, y: 0.25, width: 0.5, height: 0.5 }
+  editor.setState({
+    session,
+    documents: { [file.path]: doc },
+    preview: { ...frame, draft: true },
+    viewport,
+    tile: { ...frame, draft: true, region: viewport, viewport },
+    loading: false,
+    rendering: true
+  })
+  render(<EditorScreen />)
+  const status = screen.getByText(t('editor.loading'))
+  act(() => vi.advanceTimersByTime(2000))
+  expect(status.getAttribute('aria-hidden')).toBe('false')
+  act(() =>
+    editor.setState({
+      tile: { ...frame, draft: false, region: viewport, viewport },
+      rendering: false
+    })
+  )
+  expect(status.getAttribute('aria-hidden')).toBe('true')
 })
 
 it('leaves no focus on Crop after the toolbar exit animation ends', async () => {

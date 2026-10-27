@@ -529,7 +529,7 @@
   "editor.sfdRaw": "SFD RAW",
   "editor.demosaic": "去马赛克",
   "editor.demosaicMethod": "算法",
-  "editor.demosaicLoading": "正在更新去马赛克…",
+  "editor.loading": "加载中…",
   "editor.demosaicHelp": "选择拜耳阵列生成全彩色图像的方式。默认使用 AMaZE，ISO 1600 及以上使用 LMMSE，黑白传感器使用 Mono。AMaZE 保留最多细节。Mono 仅适用于没有彩色滤镜阵列的传感器。",
   "editor.demosaicDefault": "默认",
   "editor.demosaicMonoHelp": "Mono 不做去马赛克，将每个像素读取为灰色。仅用于黑白传感器相机，或已移除彩色滤镜阵列的相机。要将彩色相机拍摄的照片转为黑白，请在胶片标签页中选择黑白胶片。",

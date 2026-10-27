@@ -529,7 +529,7 @@
   "editor.sfdRaw": "SFD RAW",
   "editor.demosaic": "デモザイク",
   "editor.demosaicMethod": "アルゴリズム",
-  "editor.demosaicLoading": "デモザイクを更新中…",
+  "editor.loading": "読み込み中…",
   "editor.demosaicHelp": "ベイヤー配列をフルカラー画像にする方法を選択します。デフォルトはAMaZEを使い、ISO 1600以上ではLMMSE、モノクロセンサーではMonoを使います。AMaZEは最も多くのディテールを保持します。Monoはカラーフィルターアレイのないセンサー専用です。",
   "editor.demosaicDefault": "デフォルト",
   "editor.demosaicMonoHelp": "Monoはデモザイクせずに各画素をグレーとして読み込みます。モノクロセンサーのカメラ、またはカラーフィルターアレイを除去したカメラにのみ使用してください。カラーカメラで撮った写真をモノクロにするには、フィルムタブでモノクロフィルムを選択してください。",

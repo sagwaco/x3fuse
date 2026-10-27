@@ -529,7 +529,7 @@
   "editor.sfdRaw": "SFD RAW",
   "editor.demosaic": "디모자이크",
   "editor.demosaicMethod": "알고리즘",
-  "editor.demosaicLoading": "디모자이크 업데이트 중…",
+  "editor.loading": "로딩 중…",
   "editor.demosaicHelp": "베이어 패턴을 풀 컬러 이미지로 만드는 방식을 선택합니다. 기본값은 AMaZE를 사용하고, ISO 1600 이상에서는 LMMSE, 흑백 센서에서는 Mono를 사용합니다. AMaZE가 가장 많은 디테일을 유지합니다. Mono는 컬러 필터 어레이가 없는 센서 전용입니다.",
   "editor.demosaicDefault": "기본값",
   "editor.demosaicMonoHelp": "Mono는 디모자이크 없이 각 픽셀을 회색으로 읽습니다. 흑백 센서 카메라 또는 컬러 필터 어레이를 제거한 카메라에만 사용하세요. 컬러 카메라로 찍은 사진을 흑백으로 만들려면 필름 탭에서 흑백 필름을 선택하세요.",

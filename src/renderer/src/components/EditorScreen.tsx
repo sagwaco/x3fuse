@@ -18,7 +18,6 @@ import {
 } from 'lucide-react'
 import {
   capabilitiesOf,
-  demosaicsOf,
   hasWhiteBalance,
   negativePrint,
   type EditRecipe,
@@ -40,6 +39,7 @@ import { ScopeSourceControls, type ScopeSource } from './ScopeSourceControls'
 import { AS_SHOT, areaFor, useScopeSourceStore } from '../stores/scopeSourceStore'
 import { ResizablePanel } from './ui/resizablePanel'
 import { useToolbarSwap } from '../hooks/useToolbarSwap'
+import { useDelayedLoading } from '../hooks/useDelayedLoading'
 import { ZoomControls } from './ZoomControls'
 import { ZoomablePreview } from './ZoomablePreview'
 import { useCurveQualifier } from '../stores/curveQualifierStore'
@@ -365,13 +365,6 @@ export function EditorScreen(): React.JSX.Element {
   // Each cleared preview, such as a crop mode change, waits for a new paint.
   const [painted, setPainted] = useState(false)
   const previewShown = !!displayFile
-  const demosaicing =
-    previewShown &&
-    !editor.loading &&
-    !editor.renderFailed &&
-    !!editor.session &&
-    demosaicsOf(capabilitiesOf(editor.session)).length > 0 &&
-    (doc?.recipe.dngDemosaic ?? null) !== editor.renderedDemosaic
   // A change between the SFD RAW and the unfused RAW of an X3I turns the preview
   // into particles until the photo renders again.
   const [morph, setMorph] = useState<string>()
@@ -380,6 +373,15 @@ export function EditorScreen(): React.JSX.Element {
     editor.viewport &&
     editor.tile &&
     JSON.stringify(editor.tile.viewport) === JSON.stringify(editor.viewport)
+  const showLoading = useDelayedLoading(
+    previewShown &&
+      !doc?.gesture &&
+      !editor.loading &&
+      !editor.renderFailed &&
+      (editor.rendering || !!(viewTile ? editor.tile : editor.preview)?.draft),
+    editor.session?.sessionId,
+    2000
+  )
   if (editor.switching && !morph && displayFile)
     setMorph(viewTile ? editor.tile!.url : displayFile.displayPreviewUrl)
   if (morph && !displayFile) setMorph(undefined)
@@ -941,14 +943,23 @@ export function EditorScreen(): React.JSX.Element {
                 role="status"
                 className="pointer-events-none absolute inset-x-0 top-3 z-30 flex flex-col items-center gap-2 px-3"
               >
-                {demosaicing && (
-                  <p className="glass-overlay flex items-center gap-2 rounded-full px-3.5 py-1.5 text-xs text-white">
-                    <Loader2 className="h-3.5 w-3.5 motion-safe:animate-spin" aria-hidden="true" />
-                    {t('editor.demosaicLoading')}
-                  </p>
-                )}
+                <p
+                  aria-hidden={!showLoading}
+                  className={cn(
+                    'glass-overlay absolute top-0 flex items-center gap-2 rounded-full px-3.5 py-1.5 text-xs text-white transition-[opacity,transform,visibility] duration-200 ease-out motion-reduce:transition-none motion-reduce:transform-none',
+                    showLoading ? 'visible scale-100 opacity-100' : 'invisible scale-105 opacity-0'
+                  )}
+                >
+                  <Loader2 className="h-3.5 w-3.5 motion-safe:animate-spin" aria-hidden="true" />
+                  {t('editor.loading')}
+                </p>
                 {editor.cropping && cropNotice && (
-                  <p className="glass-overlay rounded-full px-3.5 py-1.5 text-xs text-white">
+                  <p
+                    className={cn(
+                      'glass-overlay rounded-full px-3.5 py-1.5 text-xs text-white transition-[margin] duration-200 ease-out motion-reduce:transition-none',
+                      showLoading && 'mt-9'
+                    )}
+                  >
                     {cropNotice.text}
                   </p>
                 )}

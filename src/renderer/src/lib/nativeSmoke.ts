@@ -756,9 +756,9 @@ async function runEditor(input: string): Promise<Record<string, unknown>> {
       )
       check(
         ![...document.querySelectorAll('[role="status"]')].some((node) =>
-          node.textContent?.includes(t('editor.demosaicLoading'))
+          node.querySelector('[aria-hidden="false"]')?.textContent?.includes(t('editor.loading'))
         ),
-        'The demosaic loading indicator did not clear'
+        'The loading indicator did not clear'
       )
     }
     const initial = e().preview!

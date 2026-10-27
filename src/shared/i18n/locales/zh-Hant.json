@@ -529,7 +529,7 @@
   "editor.sfdRaw": "SFD RAW",
   "editor.demosaic": "去馬賽克",
   "editor.demosaicMethod": "演算法",
-  "editor.demosaicLoading": "正在更新去馬賽克…",
+  "editor.loading": "載入中…",
   "editor.demosaicHelp": "選擇拜耳陣列生成全彩色影像的方式。預設使用 AMaZE，ISO 1600 以上使用 LMMSE，黑白感光元件使用 Mono。AMaZE 保留最多細節。Mono 僅適用於沒有彩色濾鏡陣列的感光元件。",
   "editor.demosaicDefault": "預設",
   "editor.demosaicMonoHelp": "Mono 不做去馬賽克，將每個像素讀取為灰色。僅用於黑白感光元件相機，或已移除彩色濾鏡陣列的相機。要將彩色相機拍攝的照片轉為黑白，請在底片標籤頁中選擇黑白底片。",
