@@ -125,7 +125,7 @@ fn x3i_reads_metadata_and_opens_quickly_after_the_first_merge() {
     assert!(preview["sourceWidth"].as_u64().unwrap() > 512);
     let second = started.elapsed();
     eprintln!(
-        "Cached open: {second:?}, profile {}",
+        "Cached open: {second:?}, profile {:?}",
         session.as_shot_camera_profile
     );
     assert!(second * 4 < first, "merge {first:?}, cached {second:?}");

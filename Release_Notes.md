@@ -3,6 +3,8 @@
 - Replace the SwiftUI app with the new cross-platform X3Fuse app. macOS 14 or newer remains supported on Intel and Apple Silicon.
 - Reset settings once when moving from the previous macOS app. Select your output directory, format, and denoise preferences again.
 - Add a RAW editor with light, white balance, curves, HSL, crop, denoise, and sharpening controls, plus rendered JPEG and 16-bit TIFF export.
+- Add Resize to fit for developed JPEG and TIFF exports, with maximum pixel dimensions and a choice of resampling methods.
+- Choose from ten demosaicing methods for Bayer DNG photos. Default selects AMaZE, LMMSE at ISO 1600 and above, or Mono for monochrome cameras. A Fast first preview appears while the selected algorithm loads. The choice is saved with the photo and used for edited exports.
 - Add Full spectrum editing with raw channel gains, a channel mixer, and swaps, plus an experimental Aerochrome-style look tuned on DP2 Merrill captures through a 550/660/850 nm filter. Use the neutral picker on a sunlit cloud.
 - The RAW editor's film simulation uses the spektrafilm model by Andrea Volpato (https://github.com/andreavolpato/spektrafilm, profiles and data CC BY-SA 4.0), ported from spektrafilm-rs (GPL-3.0). It replaces the previous film model.
 - Existing saved film edits load unchanged, but render differently with the new model. The recipe format is unchanged; no re-save is required.

@@ -1,41 +1,79 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-const invoke = vi.hoisted(() => vi.fn())
-vi.mock('../src/renderer/src/lib/ipc', () => ({ ipc: { invoke } }))
+const { invoke, listeners } = vi.hoisted(() => ({
+  invoke: vi.fn(),
+  listeners: new Map<string, (payload: null) => void>()
+}))
+vi.mock('../src/renderer/src/lib/ipc', () => ({
+  ipc: {
+    invoke,
+    on: (channel: string, listener: (payload: null) => void) => {
+      listeners.set(channel, listener)
+      return () => {}
+    }
+  }
+}))
 import {
   cachedFullPreview,
   cachedSmallPreview,
   loadSmallPreview,
   subscribeFullPreview,
-  subscribeFullPreviewBlob
+  subscribeFullPreviewBlob,
+  thumbnailsIdle
 } from '../src/renderer/src/lib/previewImages'
 
+const MiB = 1024 * 1024
 let serial = 0
-const response = (size = 10) => ({ ok: true, blob: async () => ({ size }) })
+const response = (size = 10) => ({ ok: true, status: 200, blob: async () => ({ size }) })
+type Generate = (url: string, options?: RequestInit) => Promise<unknown>
+/** Sources that the backend has stored, by body size. Other lookups miss with 204. */
+const stored = new Map<string, number>()
+let generate: Generate
+const generateOnce: Generate[] = []
+const isLookup = (url: unknown): boolean => String(url).includes('cacheOnly=1')
+const generated = () => vi.mocked(fetch).mock.calls.filter(([url]) => !isLookup(url))
+const generatedUrls = () => generated().map(([url]) => url)
+const lookedUp = () =>
+  vi
+    .mocked(fetch)
+    .mock.calls.filter(([url]) => isLookup(url))
+    .map(([url]) => String(url).replace(/[?&]cacheOnly=1.*$/, ''))
+const once = (next: Generate): void => {
+  generateOnce.push(next)
+}
+async function settle(): Promise<void> {
+  for (let i = 0; i < 12; i++) await Promise.resolve()
+}
+
 function holdPreviews(): Map<string, () => void> {
   const finish = new Map<string, () => void>()
-  vi.mocked(fetch).mockImplementation(
-    (url, options) =>
-      new Promise((resolve, reject) => {
-        finish.set(String(url), () => resolve(response() as Response))
-        options?.signal?.addEventListener('abort', () =>
-          reject(new DOMException('Cancelled', 'AbortError'))
-        )
-      })
-  )
+  generate = (url, options) =>
+    new Promise((resolve, reject) => {
+      finish.set(url, () => resolve(response()))
+      options?.signal?.addEventListener('abort', () =>
+        reject(new DOMException('Cancelled', 'AbortError'))
+      )
+    })
   return finish
 }
 beforeEach(() => {
-  invoke
-    .mockReset()
-    .mockImplementation(async (channel) =>
-      channel === 'editor:beginImageRequest'
-        ? { requestId: `small-request-${serial++}` }
-        : undefined
-    )
+  stored.clear()
+  generateOnce.length = 0
+  generate = async () => response()
+  invoke.mockReset().mockImplementation(async (channel) => {
+    if (channel === 'editor:beginImageRequest') return { requestId: `small-request-${serial++}` }
+    // Each window keeps half: the 64 MiB budget of these tests.
+    if (channel === 'cache:memoryBudget') return 128 * MiB
+    return undefined
+  })
   vi.stubGlobal(
     'fetch',
-    vi.fn(async () => response())
+    vi.fn(async (input: unknown, options?: RequestInit) => {
+      const url = String(input)
+      if (!isLookup(url)) return (generateOnce.shift() ?? generate)(url, options)
+      const size = stored.get(url.replace(/[?&]cacheOnly=1.*$/, ''))
+      return size === undefined ? { ok: true, status: 204 } : response(size)
+    })
   )
   vi.stubGlobal(
     'createImageBitmap',
@@ -56,7 +94,7 @@ afterEach(() => {
 it('runs only the first and latest full requests during twenty rapid selections', async () => {
   const source = (i: number): string => `x3f-preview://localhost/rapid-${i}`
   let finish!: (result: ReturnType<typeof response>) => void
-  vi.mocked(fetch).mockImplementationOnce(
+  once(
     () =>
       new Promise((resolve) => {
         finish = resolve as typeof finish
@@ -64,20 +102,20 @@ it('runs only the first and latest full requests during twenty rapid selections'
   )
   const selected = vi.fn()
   let release = subscribeFullPreview(source(0), selected, vi.fn())
-  await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(1))
+  await vi.waitFor(() => expect(generated()).toHaveLength(1))
   for (let i = 1; i <= 20; i++) {
     release()
     release = subscribeFullPreview(source(i), selected, vi.fn())
   }
-  expect(fetch).toHaveBeenCalledTimes(1)
+  expect(generated()).toHaveLength(1)
   finish(response())
   await vi.waitFor(() => expect(selected).toHaveBeenCalledTimes(1))
-  expect(vi.mocked(fetch).mock.calls.map(([url]) => url)).toEqual([source(0), source(20)])
+  expect(generatedUrls()).toEqual([source(0), source(20)])
   release()
   const revisit = vi.fn()
   const off = subscribeFullPreview(source(0), revisit, vi.fn())
   expect(revisit).toHaveBeenCalledTimes(1)
-  expect(fetch).toHaveBeenCalledTimes(2)
+  expect(generated()).toHaveLength(2)
   off()
 })
 
@@ -95,20 +133,24 @@ it('preempts edited background processing and drops responses racing native canc
     errorBackground = vi.fn(),
     ready = vi.fn()
   const stop = subscribeFullPreview(source, readyBackground, errorBackground, 'background')
-  await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce())
-  const request = new URL(String(vi.mocked(fetch).mock.calls[0][0]))
+  await vi.waitFor(() => expect(generated()).toHaveLength(1))
+  const request = new URL(String(generated()[0][0]))
+  expect(request.searchParams.get('priority')).toBe('low')
+  // The foreground preempts only after its stored-image lookup misses.
   const release = subscribeFullPreview('foreground-preempts-medium', ready, vi.fn())
-  expect(invoke).toHaveBeenCalledWith('editor:endImageRequest', {
-    requestId: request.searchParams.get('requestId')
-  })
+  await vi.waitFor(() =>
+    expect(invoke).toHaveBeenCalledWith('editor:endImageRequest', {
+      requestId: request.searchParams.get('requestId')
+    })
+  )
   // The response wins before native acknowledges cancellation: it must not publish stale pixels.
   finish.get(request.toString())!()
   await vi.waitFor(() => expect(errorBackground).toHaveBeenCalledOnce())
   expect(readyBackground).not.toHaveBeenCalled()
   expect(cachedFullPreview(source)).toBeUndefined()
-  expect(fetch).toHaveBeenCalledOnce()
+  expect(generated()).toHaveLength(1)
   acknowledge()
-  await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2))
+  await vi.waitFor(() => expect(generated()).toHaveLength(2))
   finish.get('foreground-preempts-medium')!()
   await vi.waitFor(() => expect(ready).toHaveBeenCalledOnce())
   stop()
@@ -118,20 +160,20 @@ it('preempts edited background processing and drops responses racing native canc
 it('prioritizes foreground after cancelled background preparation and releases evicted object URLs', async () => {
   const neighbor = 'x3f-preview://localhost/neighbor-a'
   let finish!: (result: ReturnType<typeof response>) => void
-  vi.mocked(fetch).mockImplementationOnce(
+  once(
     () =>
       new Promise((resolve) => {
         finish = resolve as typeof finish
       })
   )
   const cancel = subscribeFullPreview(neighbor, vi.fn(), vi.fn(), 'background')
-  await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce())
+  await vi.waitFor(() => expect(generated()).toHaveLength(1))
   cancel()
   const selected = vi.fn()
   const release = subscribeFullPreview('foreground', selected, vi.fn())
   finish(response(65 * 1024 * 1024))
   await vi.waitFor(() => expect(selected).toHaveBeenCalledTimes(1))
-  expect(vi.mocked(fetch).mock.calls.map(([url]) => url)).toEqual([neighbor, 'foreground'])
+  expect(generatedUrls()).toEqual([neighbor, 'foreground'])
   expect(URL.revokeObjectURL).toHaveBeenCalled()
   expect(cachedFullPreview(neighbor)).toBeUndefined()
   expect(cachedFullPreview('foreground')).toBeDefined()
@@ -140,7 +182,7 @@ it('prioritizes foreground after cancelled background preparation and releases e
 })
 
 it('releases a full preview subscription only once so repeated cancellation cannot pin an evicted URL', async () => {
-  vi.mocked(fetch).mockResolvedValue(response(40 * 1024 * 1024) as Response)
+  generate = async () => response(40 * MiB)
   const first = vi.fn()
   const release = subscribeFullPreview('release-once', first, vi.fn())
   await vi.waitFor(() => expect(first).toHaveBeenCalledOnce())
@@ -164,10 +206,10 @@ it('deduplicates small decoding and does not cancel another consumer when one le
   expect(await a).toBe('AbortError')
   const canvas = await b
   expect([canvas.width, canvas.height]).toEqual([320, 640])
-  expect(fetch).toHaveBeenCalledTimes(1)
+  expect(generated()).toHaveLength(1)
   expect(createImageBitmap).toHaveBeenCalledTimes(1)
   expect(await loadSmallPreview('small-shared', 6, 2, second.signal)).toBe(canvas)
-  expect(fetch).toHaveBeenCalledTimes(1)
+  expect(generated()).toHaveLength(1)
 })
 
 it('keeps edited thumbnails small enough to survive scrolling through neighboring previews', async () => {
@@ -187,7 +229,7 @@ it('keeps edited thumbnails small enough to survive scrolling through neighborin
   expect(canvases.every((canvas) => canvas.width === 640 && canvas.height === 427)).toBe(true)
   expect(cachedSmallPreview('edited-neighbor-0')).toBe(canvases[0])
   expect(await loadSmallPreview('edited-neighbor-0', 1, undefined, signal)).toBe(canvases[0])
-  expect(fetch).toHaveBeenCalledTimes(8)
+  expect(generated()).toHaveLength(8)
 })
 
 it('drops small requests whose consumers disappear before extraction starts', async () => {
@@ -197,7 +239,7 @@ it('drops small requests whose consumers disappear before extraction starts', as
   )
   abort.abort()
   expect(await result).toBe('AbortError')
-  expect(fetch).not.toHaveBeenCalled()
+  expect(generated()).toHaveLength(0)
 })
 
 it('starts newly visible thumbnails before older queued work while keeping three fetch slots', async () => {
@@ -206,16 +248,16 @@ it('starts newly visible thumbnails before older queued work while keeping three
   const first = Array.from({ length: 3 }, (_, i) =>
     loadSmallPreview(`small-priority-${i}`, 1, undefined, signal)
   )
-  await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(3))
+  await vi.waitFor(() => expect(generated()).toHaveLength(3))
   const old = loadSmallPreview('small-priority-old', 1, undefined, signal)
   const latest = loadSmallPreview('small-priority-latest', 1, undefined, signal)
   await Promise.resolve()
-  expect(fetch).toHaveBeenCalledTimes(3)
+  expect(generated()).toHaveLength(3)
   finish.get('small-priority-0')!()
-  await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(4))
-  expect(vi.mocked(fetch).mock.calls[3][0]).toBe('small-priority-latest')
+  await vi.waitFor(() => expect(generated()).toHaveLength(4))
+  expect(generated()[3][0]).toBe('small-priority-latest')
   finish.forEach((done) => done())
-  await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(5))
+  await vi.waitFor(() => expect(generated()).toHaveLength(5))
   finish.get('small-priority-old')!()
   await Promise.all([...first, old, latest])
 })
@@ -228,12 +270,12 @@ it('aborts an abandoned browser fetch to start the next visible thumbnail', asyn
       (error) => error.name
     )
   )
-  await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(3))
+  await vi.waitFor(() => expect(generated()).toHaveLength(3))
   const latest = loadSmallPreview('small-abort-next', 1, undefined, new AbortController().signal)
-  const running = vi.mocked(fetch).mock.calls.find(([url]) => url === 'small-abort-0')!
+  const running = generated().find(([url]) => url === 'small-abort-0')!
   controllers[0].abort()
   expect(await first[0]).toBe('AbortError')
-  await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(4))
+  await vi.waitFor(() => expect(generated()).toHaveLength(4))
   expect(running[1]?.signal?.aborted).toBe(true)
   finish.forEach((done) => done())
   await Promise.all([...first, latest])
@@ -250,14 +292,14 @@ it('keeps abandoned embedded extraction bounded and skips unused thumbnail decod
   const first = urls.map((url, i) =>
     loadSmallPreview(url, 1, undefined, controllers[i].signal).catch((error) => error.name)
   )
-  await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(3))
+  await vi.waitFor(() => expect(generated()).toHaveLength(3))
   const latest = loadSmallPreview('small-native-next', 1, undefined, new AbortController().signal)
   controllers.forEach((controller) => controller.abort())
   await Promise.all(first)
-  expect(fetch).toHaveBeenCalledTimes(3)
-  expect(vi.mocked(fetch).mock.calls.every(([, options]) => !options?.signal?.aborted)).toBe(true)
+  expect(generated()).toHaveLength(3)
+  expect(generated().every(([, options]) => !options?.signal?.aborted)).toBe(true)
   finish.forEach((done) => done())
-  await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(4))
+  await vi.waitFor(() => expect(generated()).toHaveLength(4))
   expect(createImageBitmap).not.toHaveBeenCalled()
   finish.get('small-native-next')!()
   await latest
@@ -270,15 +312,15 @@ it('shares a running thumbnail through a synchronous view handoff', async () => 
   const old = loadSmallPreview('small-handoff', 1, undefined, first.signal).catch(
     (error) => error.name
   )
-  await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce())
+  await vi.waitFor(() => expect(generated()).toHaveLength(1))
   first.abort()
   const next = loadSmallPreview('small-handoff', 1, undefined, new AbortController().signal)
   await Promise.resolve()
-  expect(vi.mocked(fetch).mock.calls[0][1]?.signal?.aborted).toBe(false)
+  expect(generated()[0][1]?.signal?.aborted).toBe(false)
   finish.get('small-handoff')!()
   expect(await old).toBe('AbortError')
   await next
-  expect(fetch).toHaveBeenCalledOnce()
+  expect(generated()).toHaveLength(1)
 })
 
 it('cancels edited native work before aborting its shared thumbnail fetch', async () => {
@@ -296,8 +338,8 @@ it('cancels edited native work before aborting its shared thumbnail fetch', asyn
     second = new AbortController()
   const a = loadSmallPreview(url, 1, undefined, first.signal).catch((error) => error.name)
   const b = loadSmallPreview(url, 1, undefined, second.signal).catch((error) => error.name)
-  await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce())
-  const [request, options] = vi.mocked(fetch).mock.calls[0]
+  await vi.waitFor(() => expect(generated()).toHaveLength(1))
+  const [request, options] = generated()[0]
   expect(new URL(String(request)).searchParams.get('requestId')).toBe('edited-cancel')
   expect(new URL(String(request)).searchParams.get('v')).toBe('thumbnail')
   first.abort()
@@ -337,7 +379,7 @@ it('ends edited requests cancelled during registration without starting their fe
   expect(invoke).toHaveBeenLastCalledWith('editor:endImageRequest', {
     requestId: 'registration-cancel'
   })
-  expect(fetch).not.toHaveBeenCalled()
+  expect(generated()).toHaveLength(0)
 })
 
 it('allows retry while a failed edited request is still ending and closes successful requests', async () => {
@@ -351,13 +393,13 @@ it('allows retry while a failed edited request is still ending and closes succes
       })
     return Promise.resolve()
   })
-  vi.mocked(fetch).mockResolvedValueOnce({ ok: false, status: 503 } as Response)
+  once(async () => ({ ok: false, status: 503 }))
   const url = 'http://x3f-edit.localhost/retry?v=thumbnail'
   const signal = new AbortController().signal
   await expect(loadSmallPreview(url, 1, undefined, signal)).rejects.toThrow('preview 503')
   const retry = await loadSmallPreview(url, 1, undefined, signal)
   expect(retry.width).toBe(640)
-  expect(fetch).toHaveBeenCalledTimes(2)
+  expect(generated()).toHaveLength(2)
   expect(
     invoke.mock.calls.filter(([channel]) => channel === 'editor:endImageRequest')
   ).toHaveLength(2)
@@ -367,7 +409,7 @@ it('allows retry while a failed edited request is still ending and closes succes
 })
 
 it('keeps cached full URLs alive across viewer handoff while pinned images exceed the budget', async () => {
-  vi.mocked(fetch).mockResolvedValue(response(40 * 1024 * 1024) as Response)
+  generate = async () => response(40 * MiB)
   const first = vi.fn()
   const second = vi.fn()
   const releaseA = subscribeFullPreview('handoff-a', first, vi.fn())
@@ -381,7 +423,7 @@ it('keeps cached full URLs alive across viewer handoff while pinned images excee
   await Promise.resolve()
   expect(next).toHaveBeenCalledWith(source)
   expect(URL.revokeObjectURL).not.toHaveBeenCalledWith(source)
-  expect(fetch).toHaveBeenCalledTimes(2)
+  expect(generated()).toHaveLength(2)
   releaseNext()
   releaseB()
   await Promise.resolve()
@@ -389,7 +431,7 @@ it('keeps cached full URLs alive across viewer handoff while pinned images excee
 
 it('never lets fit background preparation replace a pending foreground full request', async () => {
   let finish!: (result: ReturnType<typeof response>) => void
-  vi.mocked(fetch).mockImplementationOnce(
+  once(
     () =>
       new Promise((resolve) => {
         finish = resolve as typeof finish
@@ -399,7 +441,7 @@ it('never lets fit background preparation replace a pending foreground full requ
     foreground = vi.fn(),
     background = vi.fn()
   const releaseFirst = subscribeFullPreview('priority-running', first, vi.fn())
-  await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce())
+  await vi.waitFor(() => expect(generated()).toHaveLength(1))
   const releaseForeground = subscribeFullPreview('priority-foreground', foreground, vi.fn())
   const releaseBackground = subscribeFullPreviewBlob(
     'priority-background',
@@ -409,7 +451,7 @@ it('never lets fit background preparation replace a pending foreground full requ
   )
   finish(response())
   await vi.waitFor(() => expect(background).toHaveBeenCalledOnce())
-  expect(vi.mocked(fetch).mock.calls.map(([source]) => source)).toEqual([
+  expect(generatedUrls()).toEqual([
     'priority-running',
     'priority-foreground',
     'priority-background'
@@ -423,14 +465,14 @@ it('never lets fit background preparation replace a pending foreground full requ
 
 it('drops cancelled background preparation without releasing the running extraction slot', async () => {
   let finish!: (result: ReturnType<typeof response>) => void
-  vi.mocked(fetch).mockImplementationOnce(
+  once(
     () =>
       new Promise((resolve) => {
         finish = resolve as typeof finish
       })
   )
   const release = subscribeFullPreview('background-slot-running', vi.fn(), vi.fn(), 'background')
-  await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce())
+  await vi.waitFor(() => expect(generated()).toHaveLength(1))
   release()
   const cancelQueued = subscribeFullPreview(
     'background-slot-cancelled',
@@ -442,13 +484,10 @@ it('drops cancelled background preparation without releasing the running extract
   const ready = vi.fn()
   const off = subscribeFullPreview('background-slot-latest', ready, vi.fn())
   await Promise.resolve()
-  expect(fetch).toHaveBeenCalledOnce()
+  expect(generated()).toHaveLength(1)
   finish(response())
   await vi.waitFor(() => expect(ready).toHaveBeenCalledOnce())
-  expect(vi.mocked(fetch).mock.calls.map(([source]) => source)).toEqual([
-    'background-slot-running',
-    'background-slot-latest'
-  ])
+  expect(generatedUrls()).toEqual(['background-slot-running', 'background-slot-latest'])
   off()
 })
 
@@ -467,7 +506,7 @@ it('draws edited frames from raw RGBA8 without a PNG decode', async () => {
   new Uint8Array(body).set([...'X3F8'].map((c) => c.charCodeAt(0)))
   new DataView(body).setUint32(4, 2, true)
   new DataView(body).setUint32(8, 1, true)
-  vi.mocked(fetch).mockResolvedValueOnce({ ok: true, arrayBuffer: async () => body } as Response)
+  once(async () => ({ ok: true, arrayBuffer: async () => body }))
   const draw = vi.fn()
   vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue({
     setTransform: vi.fn(),
@@ -475,8 +514,8 @@ it('draws edited frames from raw RGBA8 without a PNG decode', async () => {
   } as unknown as CanvasRenderingContext2D)
   const url = 'x3f-edit://localhost/raw-frame'
   await loadSmallPreview(url, 1, undefined, new AbortController().signal)
-  expect(fetch).toHaveBeenCalledOnce()
-  const request = new URL(String(vi.mocked(fetch).mock.calls[0][0]))
+  expect(generated()).toHaveLength(1)
+  const request = new URL(String(generated()[0][0]))
   expect(request.searchParams.get('format')).toBe('rgba8')
   expect(createImageBitmap).toHaveBeenCalledWith(expect.objectContaining({ width: 2, height: 1 }))
   const bitmap = await vi.mocked(createImageBitmap).mock.results[0].value
@@ -485,4 +524,133 @@ it('draws edited frames from raw RGBA8 without a PNG decode', async () => {
   expect(invoke).toHaveBeenLastCalledWith('editor:endImageRequest', {
     requestId: request.searchParams.get('requestId')
   })
+})
+
+it('serves stored original and edited thumbnails while three edited misses hold every generation slot', async () => {
+  const finish = holdPreviews()
+  const signal = new AbortController().signal
+  const misses = [0, 1, 2].map((i) =>
+    loadSmallPreview(`x3f-edit://localhost/miss-${i}?v=thumbnail`, 1, undefined, signal)
+  )
+  await vi.waitFor(() => expect(generated()).toHaveLength(3))
+  stored.set('x3f-preview://localhost/stored-original?v=preview', 10)
+  stored.set('x3f-edit://localhost/stored-edited?v=thumbnail', 10)
+  const original = await loadSmallPreview(
+    'x3f-preview://localhost/stored-original?v=preview',
+    6,
+    2,
+    signal
+  )
+  const edited = await loadSmallPreview(
+    'x3f-edit://localhost/stored-edited?v=thumbnail',
+    1,
+    undefined,
+    signal
+  )
+  expect([original.width, original.height]).toEqual([320, 640])
+  expect(edited.width).toBe(640)
+  expect(generated()).toHaveLength(3)
+  // Lookups register no native request; only the three renders did.
+  expect(
+    invoke.mock.calls.filter(([channel]) => channel === 'editor:beginImageRequest')
+  ).toHaveLength(3)
+  expect(thumbnailsIdle()).toBe(false)
+  finish.forEach((done) => done())
+  await Promise.all(misses)
+  await vi.waitFor(() => expect(thumbnailsIdle()).toBe(true))
+})
+
+it('generates the selected photo before visible thumbnails and asks native for high priority', async () => {
+  const finish = holdPreviews()
+  const signal = new AbortController().signal
+  const first = [0, 1, 2].map((i) => loadSmallPreview(`small-busy-${i}`, 1, undefined, signal))
+  await vi.waitFor(() => expect(generated()).toHaveLength(3))
+  const visible = loadSmallPreview('x3f-edit://localhost/visible?v=thumbnail', 1, undefined, signal)
+  const selected = loadSmallPreview(
+    'x3f-edit://localhost/selected?v=thumbnail',
+    1,
+    undefined,
+    signal,
+    'selected'
+  )
+  await settle()
+  const newer = loadSmallPreview('small-newer', 1, undefined, signal)
+  await settle()
+  finish.get('small-busy-0')!()
+  await vi.waitFor(() => expect(generated()).toHaveLength(4))
+  const request = new URL(String(generatedUrls()[3]))
+  expect(request.pathname).toBe('/selected')
+  expect(request.searchParams.get('priority')).toBe('high')
+  finish.get('small-busy-1')!()
+  await vi.waitFor(() => expect(generated()).toHaveLength(5))
+  expect(generatedUrls()[4]).toBe('small-newer')
+  finish.forEach((done) => done())
+  await vi.waitFor(() => expect(generated()).toHaveLength(6))
+  expect(new URL(String(generatedUrls()[5])).searchParams.get('priority')).toBe('normal')
+  finish.forEach((done) => done())
+  await Promise.all([...first, visible, selected, newer])
+})
+
+it('shows a stored full JPEG at once while an extraction that cannot cancel holds the slot', async () => {
+  const finish = holdPreviews()
+  const slow = 'x3f-preview://localhost/slow?v=full'
+  const leave = subscribeFullPreview(slow, vi.fn(), vi.fn())
+  await vi.waitFor(() => expect(generated()).toHaveLength(1))
+  leave()
+  const source = 'x3f-preview://localhost/stored?v=full'
+  stored.set(source, 10)
+  const ready = vi.fn()
+  const off = subscribeFullPreview(source, ready, vi.fn())
+  await vi.waitFor(() => expect(ready).toHaveBeenCalledOnce())
+  expect(cachedFullPreview(source)).toBe(ready.mock.calls[0][0])
+  expect(generatedUrls()).toEqual([slow])
+  expect(lookedUp()).toEqual([slow, source])
+  off()
+  finish.get(slow)!()
+  await vi.waitFor(() => expect(cachedFullPreview(slow)).toBeDefined())
+})
+
+it('drops idle images on cache:cleared, keeps displayed ones, and keeps no result of earlier work', async () => {
+  const shown = vi.fn()
+  const offShown = subscribeFullPreview('clear-shown', shown, vi.fn())
+  await vi.waitFor(() => expect(shown).toHaveBeenCalledOnce())
+  const idle = vi.fn()
+  const offIdle = subscribeFullPreview('clear-idle', idle, vi.fn())
+  await vi.waitFor(() => expect(idle).toHaveBeenCalledOnce())
+  offIdle()
+  await loadSmallPreview('clear-small', 1, undefined, new AbortController().signal)
+  expect(cachedSmallPreview('clear-small')).toBeDefined()
+  const finish = holdPreviews()
+  const late = vi.fn()
+  const offLate = subscribeFullPreview('clear-late', late, vi.fn())
+  await vi.waitFor(() => expect(generatedUrls()).toContain('clear-late'))
+
+  listeners.get('cache:cleared')!(null)
+  expect(cachedFullPreview('clear-idle')).toBeUndefined()
+  expect(URL.revokeObjectURL).toHaveBeenCalledWith(idle.mock.calls[0][0])
+  expect(cachedSmallPreview('clear-small')).toBeUndefined()
+  expect(cachedFullPreview('clear-shown')).toBe(shown.mock.calls[0][0])
+  expect(URL.revokeObjectURL).not.toHaveBeenCalledWith(shown.mock.calls[0][0])
+
+  // Work from before the Clear still shows, but stays only while it is displayed.
+  finish.get('clear-late')!()
+  await vi.waitFor(() => expect(late).toHaveBeenCalledOnce())
+  await settle()
+  expect(URL.revokeObjectURL).not.toHaveBeenCalledWith(late.mock.calls[0][0])
+  offLate()
+  await settle()
+  expect(cachedFullPreview('clear-late')).toBeUndefined()
+  expect(URL.revokeObjectURL).toHaveBeenCalledWith(late.mock.calls[0][0])
+  offShown()
+  await settle()
+  expect(cachedFullPreview('clear-shown')).toBeUndefined()
+
+  // New work after the Clear stays in memory again.
+  generate = async () => response()
+  const again = vi.fn()
+  const offAgain = subscribeFullPreview('clear-shown', again, vi.fn())
+  await vi.waitFor(() => expect(again).toHaveBeenCalledOnce())
+  offAgain()
+  await settle()
+  expect(cachedFullPreview('clear-shown')).toBe(again.mock.calls[0][0])
 })

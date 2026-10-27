@@ -1,7 +1,11 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { DEFAULT_SETTINGS, shouldShowDngHighlightRecoveryOption } from '@shared/types'
+import {
+  DEFAULT_EXPORT_RESIZE,
+  DEFAULT_SETTINGS,
+  shouldShowDngHighlightRecoveryOption
+} from '@shared/types'
 import { defaultRecipe } from '@shared/editor'
 import { ExportScreen } from '../src/renderer/src/components/ExportScreen'
 import { exportSettings, useQueueStore } from '../src/renderer/src/stores/queueStore'
@@ -180,6 +184,64 @@ it('updates export settings through native menus and leaves them unchanged on di
   fireEvent.click(format)
   await waitFor(() => expect(format.getAttribute('aria-expanded')).toBe('false'))
   expect(useQueueStore.getState().draft!.settings.outputFormat).toBe('tiff')
+})
+
+it('resizes rendered exports only and accepts whole pixel sizes in range', async () => {
+  invoke.mockImplementation(async (channel) =>
+    channel === 'editor:preview'
+      ? { url: 'x3f-edit://r', sourceRevision: 'a'.repeat(64) }
+      : undefined
+  )
+  render(<ExportScreen />)
+  const resize = (id = 'a') => exportSettings(useQueueStore.getState().draft!, id).resize
+  const toggle = () => screen.queryByRole('switch', { name: t('export.resize') })
+  const width = () =>
+    screen.queryByRole('spinbutton', { name: t('export.resize.max_width') }) as HTMLInputElement
+  const height = () =>
+    screen.getByRole('spinbutton', { name: t('export.resize.max_height') }) as HTMLInputElement
+  // Original exports do not resize.
+  expect(toggle()).toBeNull()
+  act(() => useQueueStore.getState().updateDraft({ rendering: 'rendered', outputFormat: 'tiff' }))
+  await waitFor(() => expect(useQueueStore.getState().isPreparing).toBe(false))
+  expect(toggle()!.getAttribute('aria-checked')).toBe('false')
+  expect(width()).toBeNull()
+  fireEvent.click(toggle()!)
+  expect(resize('a')).toEqual(DEFAULT_EXPORT_RESIZE)
+  expect(resize('b')).toEqual(DEFAULT_EXPORT_RESIZE)
+  expect(width().value).toBe('2048')
+  for (const value of ['0', '65536', '12.5', '']) {
+    fireEvent.change(width(), { target: { value } })
+    expect(resize()!.maxWidth).toBe(2048)
+  }
+  fireEvent.blur(width())
+  expect(width().value).toBe('2048')
+  fireEvent.change(width(), { target: { value: '65535' } })
+  fireEvent.change(height(), { target: { value: '1' } })
+  expect(resize()).toEqual({ maxWidth: 65535, maxHeight: 1, method: 'lanczos3' })
+
+  invoke.mockResolvedValueOnce('area')
+  fireEvent.click(screen.getByRole('button', { name: t('export.resize.method') }))
+  expect(invoke.mock.lastCall?.[1].items.map((item: { value: string }) => item.value)).toEqual([
+    'nearest',
+    'bilinear',
+    'area',
+    'bicubic',
+    'lanczos3'
+  ])
+  await waitFor(() => expect(resize()!.method).toBe('area'))
+
+  // JPEG is always rendered.
+  act(() => useQueueStore.getState().updateDraft({ outputFormat: 'jpeg' }))
+  expect(width().value).toBe('65535')
+  // An original export hides the resize and keeps it for a later rendered export.
+  act(() => useQueueStore.getState().updateDraft({ rendering: 'original', outputFormat: 'dng' }))
+  expect(toggle()).toBeNull()
+  expect(resize()).toEqual({ maxWidth: 65535, maxHeight: 1, method: 'area' })
+  act(() => useQueueStore.getState().updateDraft({ rendering: 'rendered', outputFormat: 'tiff' }))
+  expect(height().value).toBe('1')
+  fireEvent.click(toggle()!)
+  expect(resize()).toBeNull()
+  expect(width()).toBeNull()
 })
 
 it('offers Sigma color modes for color TIFF exports only', async () => {

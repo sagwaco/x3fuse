@@ -16,7 +16,14 @@ import {
   X,
   TriangleAlert
 } from 'lucide-react'
-import { negativePrint, type EditRecipe, type PreviewRegion } from '@shared/editor'
+import {
+  capabilitiesOf,
+  demosaicsOf,
+  hasWhiteBalance,
+  negativePrint,
+  type EditRecipe,
+  type PreviewRegion
+} from '@shared/editor'
 import {
   useEditorStore,
   isTextEditing,
@@ -182,7 +189,7 @@ export function EditorScreen(): React.JSX.Element {
     () =>
       !geometry
         ? []
-        : geometry === geometryKey(asShotRecipe(editor.session, 0))
+        : geometry === geometryKey(asShotRecipe(editor.session, { seed: 0 }))
           ? [geometry, AS_SHOT]
           : [geometry],
     [geometry, editor.session]
@@ -358,6 +365,13 @@ export function EditorScreen(): React.JSX.Element {
   // Each cleared preview, such as a crop mode change, waits for a new paint.
   const [painted, setPainted] = useState(false)
   const previewShown = !!displayFile
+  const demosaicing =
+    previewShown &&
+    !editor.loading &&
+    !editor.renderFailed &&
+    !!editor.session &&
+    demosaicsOf(capabilitiesOf(editor.session)).length > 0 &&
+    (doc?.recipe.dngDemosaic ?? null) !== editor.renderedDemosaic
   // A change between the SFD RAW and the unfused RAW of an X3I turns the preview
   // into particles until the photo renders again.
   const [morph, setMorph] = useState<string>()
@@ -380,7 +394,11 @@ export function EditorScreen(): React.JSX.Element {
     if (unavailable || editor.before || !doc?.recipe.rawColor || cloudFile || !panelOpen)
       setMixPickingState(null)
   }, [unavailable, editor.before, doc?.recipe.rawColor, cloudFile, panelOpen])
-  canPick.current = !unavailable && !editor.before && !cloudFile
+  // A monochrome DNG, or a DNG with the Mono demosaic, has no white balance to pick.
+  const whiteBalance =
+    !editor.session || !doc || hasWhiteBalance(capabilitiesOf(editor.session), doc.recipe)
+  if (picking && !whiteBalance) setPicking(false)
+  canPick.current = !unavailable && !editor.before && !cloudFile && whiteBalance
   // The curve Qualifier reads the edited preview, as the curve's histogram does.
   const curveImage = useScopeImage(curvePicking ? displayFile?.displayPreviewUrl : undefined)
   /** The mean color of 3 by 3 preview pixels at a point, 0 to 1. */
@@ -921,8 +939,14 @@ export function EditorScreen(): React.JSX.Element {
             <div className="relative h-full w-full">
               <div
                 role="status"
-                className="pointer-events-none absolute inset-x-0 top-3 z-30 flex justify-center px-3"
+                className="pointer-events-none absolute inset-x-0 top-3 z-30 flex flex-col items-center gap-2 px-3"
               >
+                {demosaicing && (
+                  <p className="glass-overlay flex items-center gap-2 rounded-full px-3.5 py-1.5 text-xs text-white">
+                    <Loader2 className="h-3.5 w-3.5 motion-safe:animate-spin" aria-hidden="true" />
+                    {t('editor.demosaicLoading')}
+                  </p>
+                )}
                 {editor.cropping && cropNotice && (
                   <p className="glass-overlay rounded-full px-3.5 py-1.5 text-xs text-white">
                     {cropNotice.text}

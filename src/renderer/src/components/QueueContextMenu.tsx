@@ -5,7 +5,7 @@ import { ipc } from '../lib/ipc'
 import { invalidateNativeMenu } from '../lib/nativeMenu'
 import { cullActions, keyOf, labelOf, showActions, type MenuAction } from '../lib/menuActions'
 import { t } from '../lib/strings'
-import { shownFiles, useQueueStore } from '../stores/queueStore'
+import { renderedOnly, shownFiles, useQueueStore } from '../stores/queueStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useEditorStore } from '../stores/editorStore'
 import { cullTargets } from '../hooks/useCulling'
@@ -106,6 +106,9 @@ export function QueueContextMenu({
             label: item.label,
             accelerator: keyOf(PRESETS[item.value]),
             separatorBefore: index === 0,
+            // A DNG has no original export.
+            disabled:
+              (item.value === 'dng' || item.value === 'embeddedJpg') && targets.some(renderedOnly),
             run: () => void store().exportPreset(item.value as OutputFormat, ids)
           }))
       ]

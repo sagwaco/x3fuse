@@ -2,25 +2,32 @@ import { memo, useContext, useEffect, useId, useMemo, useRef, useState } from 'r
 import { DenoiseControls } from './DenoiseControls'
 import { ChevronDown, Aperture, Film, Blend, Pipette, RotateCcw } from 'lucide-react'
 import {
+  capabilitiesOf,
   DEFAULT_FILM,
+  demosaicsOf,
+  FOVEON_CAPABILITIES,
   FILM_MONOCHROME_FILTERS,
   IDENTITY_RAW_MATRIX,
   MONOCHROME_FILTERS,
   RAW_GAIN_RANGE,
   defaultRecipe,
+  hasWhiteBalance,
+  monoDemosaic,
   monochromeFilm,
   monochromeRawMatrix,
   negativePrint,
   type EditRecipe,
   type FilmSettings,
   type CurvePoint,
-  type MonochromeFilter
+  type DngDemosaic,
+  type MonochromeFilter,
+  type SourceCapabilities
 } from '@shared/editor'
 import stocks from '@shared/film-stocks.json'
 import { curveInput, curvePath, evaluateCurve } from '@shared/curves'
 import { useCurveQualifier } from '../stores/curveQualifierStore'
 import { asShotRecipe, needsX3iMerge, useEditorStore } from '../stores/editorStore'
-import { editorSection, resetSection } from '@shared/editorSections'
+import { editorSection, pasteSection, resetSection } from '@shared/editorSections'
 import { invalidateNativeMenu, showNativeMenu } from '../lib/nativeMenu'
 import { DevelopingCloud } from '../lib/developingCloud'
 import { useQueueStore } from '../stores/queueStore'
@@ -323,12 +330,19 @@ export function Adjustment({
 }
 
 /** A section's settings that its context menu copied, for this session. */
-let copiedSection: { id: string; recipe: EditRecipe } | null = null
+let copiedSection: { id: string; recipe: EditRecipe; capabilities: SourceCapabilities } | null =
+  null
+/** The capabilities of the open photo. */
+const openCapabilities = (): SourceCapabilities => {
+  const session = useEditorStore.getState().session
+  return session ? capabilitiesOf(session) : FOVEON_CAPABILITIES
+}
 
 export function Section({
   id,
   name,
   info,
+  initiallyOpen,
   children
 }: {
   /** Keeps the open state of the section between sessions. Each section has its own. */
@@ -336,9 +350,11 @@ export function Section({
   name: string
   /** An icon button after the name, such as an info popover. */
   info?: React.ReactNode
+  /** The open state before the user toggles the section. Missing means open. */
+  initiallyOpen?: boolean
   children: React.ReactNode
 }): React.JSX.Element {
-  const [open, setOpen] = useStoredOpen(id)
+  const [open, setOpen] = useStoredOpen(id, initiallyOpen)
   // An editor section with settings has a context menu, and Option-click resets it.
   const section = editorSection(id)
   const cloud = useContext(DevelopingCloud)
@@ -357,7 +373,7 @@ export function Section({
     const recipe = editable()
     const { session, preview, change } = useEditorStore.getState()
     if (section && recipe) {
-      const defaults = asShotRecipe(session, recipe.seed)
+      const defaults = asShotRecipe(session, recipe)
       if (id === 'whiteBalance' && recipe.rawColor && preview?.asShotGains) {
         const [red, green, blue] = preview.asShotGains
         const middle = recipe.rawColor.gains[1]
@@ -399,9 +415,21 @@ export function Section({
       const recipe = editable()
       if (!recipe || useEditorStore.getState().session?.sessionId !== session) return
       if (value === 'reset') reset()
-      else if (value === 'copy') copiedSection = { id, recipe: structuredClone(recipe) }
+      else if (value === 'copy')
+        copiedSection = { id, recipe: structuredClone(recipe), capabilities: openCapabilities() }
       else if (value === 'paste' && copiedSection?.id === id)
-        useEditorStore.getState().change(section.take(copiedSection.recipe, recipe))
+        useEditorStore
+          .getState()
+          .change(
+            pasteSection(
+              section,
+              id,
+              copiedSection.recipe,
+              recipe,
+              copiedSection.capabilities,
+              openCapabilities()
+            )
+          )
     }).catch((error: unknown) => console.error('Could not open native context menu', error))
   }
   // Sections reach the panel edges, divided by rules; a nested one does too.
@@ -489,6 +517,68 @@ export function Swatches<T extends string>({
   )
 }
 
+/** Names of the DNG demosaic methods. Default, Mono, and Fast are words, so they have
+    translations. */
+const DEMOSAIC_NAMES: Partial<Record<DngDemosaic, string>> = {
+  amaze: 'AMaZE',
+  dcb: 'DCB',
+  ahd: 'AHD',
+  eahd: 'EAHD',
+  hphd: 'HPHD',
+  igv: 'IGV',
+  lmmse: 'LMMSE',
+  vng4: 'VNG4'
+}
+
+/** The demosaic of a Bayer or monochrome DNG. Legacy shows only for an older recipe
+    without one. The card shows the Algorithm label above the method. */
+function DemosaicSelect({
+  recipe,
+  methods
+}: {
+  recipe: EditRecipe
+  methods: readonly DngDemosaic[]
+}): React.JSX.Element {
+  const change = useEditorStore((state) => state.change)
+  const inactive = useEditorStore(
+    (state) => state.before || state.loading || state.closing || !state.preview
+  )
+  const busy = useQueueStore((state) => state.isProcessing || state.isPreparing)
+  const cloud = useContext(DevelopingCloud)
+  return (
+    <>
+      <Select<DngDemosaic | 'legacy'>
+        aria-label={t('editor.demosaicMethod')}
+        card
+        value={recipe.dngDemosaic ?? 'legacy'}
+        disabled={inactive || busy || cloud}
+        options={[
+          ...methods.map((value) => ({
+            value,
+            label:
+              DEMOSAIC_NAMES[value] ??
+              t(
+                value === 'default'
+                  ? 'editor.demosaicDefault'
+                  : value === 'mono'
+                    ? 'editor.demosaicMono'
+                    : 'editor.demosaicFast'
+              )
+          })),
+          ...(recipe.dngDemosaic
+            ? []
+            : [{ value: 'legacy' as const, label: t('editor.demosaicLegacy'), disabled: true }])
+        ]}
+        // The store removes the white balance of a Mono demosaic in the same change.
+        onValueChange={(value) => value !== 'legacy' && change({ dngDemosaic: value })}
+      />
+      {recipe.dngDemosaic === 'mono' && (
+        <p className="text-[12px] text-tone-500">{t('editor.demosaicMonoHelp')}</p>
+      )}
+    </>
+  )
+}
+
 // The editor screen renders again for each preview. The controls do not
 // change then, and rendering them again would delay animation frames.
 export const EditorControls = memo(function EditorControls({
@@ -519,13 +609,26 @@ export const EditorControls = memo(function EditorControls({
   }
   const change = useEditorStore((state) => state.change)
   const commit = useEditorStore((state) => state.commit)
+  // A DNG has no Foveon settings. A monochrome DNG, or a DNG with the Mono demosaic,
+  // has no white balance. A demosaic that gives gray also shows the gray controls.
+  const foveon = useEditorStore((state) => !state.session || capabilitiesOf(state.session).foveon)
+  const demosaics = useEditorStore((state) =>
+    demosaicsOf(state.session ? capabilitiesOf(state.session) : FOVEON_CAPABILITIES)
+  )
+  const grayDemosaic = useEditorStore(
+    (state) => !!state.session && monoDemosaic(capabilitiesOf(state.session), recipe)
+  )
+  const whiteBalance = useEditorStore(
+    (state) => !state.session || hasWhiteBalance(capabilitiesOf(state.session), recipe)
+  )
   // The RAW channel mix sets the gray mix of monochrome infrared, so it has no filter.
   const monochromeRaw = !!recipe.rawColor && monochromeRawMatrix(recipe.rawColor.matrix)
   const monochrome =
     !!recipe.monochrome ||
     recipe.cameraProfile === 'Monochrome' ||
     monochromeFilm(recipe.film) ||
-    monochromeRaw
+    monochromeRaw ||
+    grayDemosaic
   const x3i = useEditorStore((state) => state.x3i)
   // While an X3I merges an SFD RAW that it uses, only the SFD RAW section works.
   const pending = useEditorStore(needsX3iMerge)
@@ -606,12 +709,13 @@ export const EditorControls = memo(function EditorControls({
                 {(['contrast', 'highlights', 'shadows', 'whites', 'blacks'] as const).map((key) =>
                   control(key)
                 )}
-                {control('fillLight', {
-                  min: -2,
-                  max: 2,
-                  step: 0.1,
-                  help: t('editor.fillLightHelp')
-                })}
+                {foveon &&
+                  control('fillLight', {
+                    min: -2,
+                    max: 2,
+                    step: 0.1,
+                    help: t('editor.fillLightHelp')
+                  })}
               </Section>
               <Section
                 id="curves"
@@ -622,8 +726,8 @@ export const EditorControls = memo(function EditorControls({
               </Section>
               <Section id="detail" name={t('editor.detail')}>
                 {control('sharpen', { min: 0, max: 100 })}
-                {control('denoise', { min: 0, max: 10, help: t('editor.denoiseHelp') })}
-                {recipe.denoise > 0 && (
+                {foveon && control('denoise', { min: 0, max: 10, help: t('editor.denoiseHelp') })}
+                {foveon && recipe.denoise > 0 && (
                   <DenoiseControls
                     storageId="denoiseAdvanced"
                     value={recipe.denoiseOptions}
@@ -632,6 +736,18 @@ export const EditorControls = memo(function EditorControls({
                   />
                 )}
               </Section>
+              {demosaics.length > 0 && (
+                <Section
+                  id="demosaic"
+                  name={t('editor.demosaic')}
+                  initiallyOpen={false}
+                  info={
+                    <HelpTooltip label={t('editor.demosaic')} text={t('editor.demosaicHelp')} />
+                  }
+                >
+                  <DemosaicSelect recipe={recipe} methods={demosaics} />
+                </Section>
+              )}
             </>
           )}
           {tab === 'film' && (
@@ -652,14 +768,16 @@ export const EditorControls = memo(function EditorControls({
           )}
           {tab === 'grading' && (
             <>
-              <Section id="whiteBalance" name={t('editor.whiteBalance')}>
-                <WhiteBalanceControls
-                  key={`${useEditorStore.getState().session?.sessionId}:${!!recipe.rawColor}`}
-                  recipe={recipe}
-                  picking={picking}
-                  setPicking={setPicking}
-                />
-              </Section>
+              {whiteBalance && (
+                <Section id="whiteBalance" name={t('editor.whiteBalance')}>
+                  <WhiteBalanceControls
+                    key={`${useEditorStore.getState().session?.sessionId}:${!!recipe.rawColor}`}
+                    recipe={recipe}
+                    picking={picking}
+                    setPicking={setPicking}
+                  />
+                </Section>
+              )}
               {recipe.rawColor && (
                 <>
                   <Section
@@ -682,7 +800,8 @@ export const EditorControls = memo(function EditorControls({
                   )}
                 </>
               )}
-              {monochrome && !monochromeRaw && (
+              {/* Filters mix Foveon layers or set the taking filter of black-and-white film. */}
+              {monochrome && !monochromeRaw && (foveon || monochromeFilm(recipe.film)) && (
                 <Section
                   id="filter"
                   name={t('editor.filter')}

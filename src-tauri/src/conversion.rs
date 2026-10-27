@@ -53,13 +53,19 @@ pub fn validate_batch(
     if files.is_empty() || files.len() > 100_000 {
         return Err("Invalid export batch size".into());
     }
+    for file in files {
+        if file.path.is_file() {
+            crate::source::remember(&file.path)?;
+        }
+    }
     let mut ids = HashSet::new();
     let mut directories = HashSet::new();
     let mut targets: HashMap<String, Vec<OutputConflict>> = HashMap::new();
     let mut conflicts: HashMap<String, OutputConflict> = HashMap::new();
+    let mut protected = Vec::new();
     for file in files {
         let settings = file.effective_settings(settings);
-        settings.validate()?;
+        crate::source::Kind::of(&file.path).validate_export(settings)?;
         if file.id.is_empty() || file.id.len() > 128 || !ids.insert(&file.id) {
             return Err("Invalid or duplicate file ID".into());
         }
@@ -73,9 +79,13 @@ pub fn validate_batch(
         // A source removed after import is a per-file conversion error, not a batch rejection.
         validate_source_path(&file.path)?;
         if let Some(recipe) = &file.recipe {
-            recipe.validate()?;
+            crate::source::validate_recipe(&file.path, recipe)?;
         }
         let output_path = canonical_output(file, settings)?;
+        if let Err(error) = crate::source::protect_output(&output_path, [file.path.clone()]) {
+            protected.push(error);
+            continue;
+        }
         let parent = output_path.parent().ok_or("Missing output directory")?;
         if directories.insert(parent.to_owned()) {
             tempfile::NamedTempFile::new_in(parent)
@@ -103,6 +113,9 @@ pub fn validate_batch(
             .entry(output_path.to_string_lossy().to_lowercase())
             .or_default()
             .push(conflict);
+    }
+    if !protected.is_empty() {
+        return Err(protected.join("\n"));
     }
     for group in targets.into_values().filter(|g| g.len() > 1) {
         for conflict in group {
@@ -333,6 +346,9 @@ async fn process_file(
     // Resolve the parent again so approval for a symlink's old destination
     // cannot authorize replacement in a different directory.
     let target = canonical_output(file, settings)?;
+    crate::source::Kind::of(&file.path).validate_export(settings)?;
+    crate::source::protect_output(&target, [file.path.clone()])?;
+    state.editor.edits.protect_backup(&target)?;
     let directory = target.parent().ok_or("Missing output directory")?;
     // TempDir owns all ExifTool auxiliaries too. Its location keeps publication on the same filesystem.
     let temporary = tempfile::Builder::new()
@@ -446,6 +462,8 @@ async fn process_file(
         }
     }
     check()?;
+    crate::source::protect_output(&target, [file.path.clone()])?;
+    state.editor.edits.protect_backup(&target)?;
     publish_approved(&temp_path, &target, &file.id, approved)?;
     // After publication the validated file is complete, even if Stop arrives concurrently.
     let warning = !warnings.is_empty();
@@ -668,6 +686,26 @@ mod tests {
         assert!(!x3i_diagnostic(
             "Unknown or empty as-shot Color Mode resolved to Standard"
         ));
+    }
+
+    #[test]
+    fn validation_reports_all_protected_sources() {
+        let directory = tempfile::tempdir().unwrap();
+        let files: Vec<_> = ["one", "two"]
+            .into_iter()
+            .map(|name| {
+                let dng = directory.path().join(format!("{name}.dng"));
+                std::fs::write(&dng, b"source").unwrap();
+                std::fs::write(crate::edits::sidecar(&dng), b"edits").unwrap();
+                ConvertFile {
+                    id: name.into(),
+                    path: directory.path().join(format!("{name}.X3F")),
+                    ..Default::default()
+                }
+            })
+            .collect();
+        let error = validate_batch(&files, &BatchSettings::default()).unwrap_err();
+        assert!(error.contains("one.dng") && error.contains("two.dng"));
     }
 
     #[test]

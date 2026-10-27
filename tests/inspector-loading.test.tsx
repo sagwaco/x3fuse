@@ -98,6 +98,28 @@ describe('inspector metadata loading', () => {
     expect(screen.getByText('Select a file to see its details')).toBeTruthy()
   })
 
+  it('shows why the selected photo cannot open, and only for that photo', () => {
+    const message = 'Unsupported DNG: LibRaw cannot decode this file'
+    files = [
+      {
+        ...files[0],
+        path: '/photos/broken.DNG',
+        fileName: 'broken.DNG',
+        editError: message,
+        exif: []
+      },
+      { ...files[1], exif: [] }
+    ]
+    useQueueStore.setState({ files, activeId: files[0].id, selectedIds: new Set([files[0].id]) })
+    const view = render(<Inspector />)
+    expect(screen.getByRole('alert').textContent).toBe(message)
+    act(() =>
+      useQueueStore.setState({ activeId: files[1].id, selectedIds: new Set([files[1].id]) })
+    )
+    expect(screen.queryByRole('alert')).toBeNull()
+    view.unmount()
+  })
+
   it('copies a value on click and confirms it briefly', async () => {
     vi.useFakeTimers()
     const writeText = vi.fn().mockResolvedValue(undefined)

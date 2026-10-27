@@ -9,6 +9,23 @@ const tar = process.platform === 'win32'
   ? join(process.env.SystemRoot || process.env.WINDIR || 'C:\\Windows', 'System32', 'tar.exe')
   : 'tar'
 
+/** Notices of the bundled LibRaw, mozjpeg, and zlib code. They must ship with each binary. */
+const DNG_NOTICES = [
+  'NOTICE',
+  'LIBRAW_COPYRIGHT',
+  'LIBRAW_LICENSE.LGPL',
+  'MOZJPEG_LICENSE.txt',
+  'ZLIB_LICENSE.txt'
+]
+
+/** Fail when a resource directory does not have a non-empty x3f-dng notice. */
+async function requireDngNotices(resourceDir) {
+  for (const notice of DNG_NOTICES) {
+    const info = await stat(join(resourceDir, 'licenses/x3f-dng', notice)).catch(() => null)
+    if (!info?.isFile() || !info.size) throw new Error(`x3f-dng notice is missing: ${notice}`)
+  }
+}
+
 /** Stage the complete native application, then ZIP it with the host's archive tool. */
 export async function packageArtifact(
   root = appRoot,
@@ -30,6 +47,12 @@ export async function packageArtifact(
   const opcodes = await readdir(join(resources, 'opcodes'), { withFileTypes: true })
   if (!opcodes.some((entry) => entry.isFile() && entry.name.includes('_FF_DNG_Opcodelist3_')))
     throw new Error('Opcode data is missing')
+  // A macOS archive copies the resources of the app bundle, not the source directory.
+  await requireDngNotices(
+    platform === 'darwin'
+      ? join(release, 'bundle/macos', `${config.productName}.app`, 'Contents/Resources/resources')
+      : resources
+  )
 
   const os = { darwin: 'macos', win32: 'windows', linux: 'linux' }[platform]
   const name = `x3fuse-alpha-${os}-${arch}`
@@ -65,7 +88,7 @@ export async function packageArtifact(
       platform === 'darwin'
         ? `Open ${config.productName}.app. macOS 14 or newer and system Perl are required.\nApple Silicon (M-series): x3fuse-alpha-macos-arm64.zip\nIntel Mac: x3fuse-alpha-macos-x64.zip\nCheck Apple menu > About This Mac: Chip identifies Apple Silicon; Processor identifies Intel.`
         : windows
-          ? 'Run x3fuse.exe. Microsoft WebView2 Runtime must be installed.'
+          ? 'Run x3fuse.exe. Microsoft WebView2 Runtime and the Microsoft Visual C++ x64 runtime must be installed.'
           : 'Run ./bin/x3fuse. WebKitGTK 4.1, GTK 3, and Perl must be installed.'
     await writeFile(
       join(stage, 'README.txt'),

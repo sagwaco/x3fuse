@@ -245,3 +245,38 @@ it('ends the native request before it aborts the fetch and never falls back', as
     'Cancelled'
   )
 })
+
+it('keeps at most four stored-image lookups in flight when a new caller arrives during a handoff', async () => {
+  const finish: Array<() => void> = []
+  let active = 0,
+    peak = 0
+  vi.mocked(fetch).mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        peak = Math.max(peak, ++active)
+        finish.push(() => {
+          active--
+          resolve({ status: 204 } as Response)
+        })
+      })
+  )
+  const signal = new AbortController().signal
+  const lookups = Array.from({ length: 5 }, (_, i) => frames.fetchCached(`s-${i}`, signal))
+  await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(4))
+  finish.shift()!()
+  // The released slot belongs to the waiting lookup, not to a caller that arrives meanwhile.
+  for (let i = 0; i < 12; i++) {
+    await Promise.resolve()
+    lookups.push(frames.fetchCached(`s-new-${i}`, signal))
+  }
+  expect(peak).toBe(4)
+  expect(vi.mocked(fetch).mock.calls.map(([url]) => url)).toEqual(
+    [0, 1, 2, 3, 4].map((i) => `s-${i}?cacheOnly=1`)
+  )
+  while (finish.length) {
+    finish.shift()!()
+    for (let i = 0; i < 12; i++) await Promise.resolve()
+  }
+  expect(await Promise.all(lookups)).toEqual(Array(17).fill(undefined))
+  expect(peak).toBe(4)
+})

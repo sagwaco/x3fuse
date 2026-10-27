@@ -36,7 +36,13 @@ export function useScopeImage(
     save('loading')
     void (async () => {
       try {
-        const source = await loadSmallPreview(url, orientation, aspectRatio, controller.signal)
+        const source = await loadSmallPreview(
+          url,
+          orientation,
+          aspectRatio,
+          controller.signal,
+          'selected'
+        )
         if (controller.signal.aborted) return
         const context = source.getContext('2d')
         if (!context) throw new Error('no 2d context')

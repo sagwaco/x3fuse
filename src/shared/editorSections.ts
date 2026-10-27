@@ -1,18 +1,22 @@
 import {
+  DEFAULT_DNG_DEMOSAIC,
   DEFAULT_EFFECTS,
   DEFAULT_FILM,
   DEFAULT_WHEELS,
+  demosaicsOf,
   FILM_MONOCHROME_FILTERS,
   IDENTITY_RAW_MATRIX,
   MONOCHROME_RAW_MATRIX,
   monochromeRawMatrix,
   filmGrainDefaults,
   filmHalationDefaults,
+  hasWhiteBalance,
   monochromeFilm,
   type EditRecipe,
   type EffectsSettings,
   type FilmSettings,
-  type MonochromeFilter
+  type MonochromeFilter,
+  type SourceCapabilities
 } from './editor'
 
 type Patch = Partial<EditRecipe>
@@ -137,6 +141,11 @@ export const EDITOR_SECTIONS = {
     })
   },
   curves: { take: (from) => pick(from, ['curves']) },
+  // A legacy recipe has no demosaic to give. A reset selects the default demosaic.
+  demosaic: {
+    take: (from) => (from.dngDemosaic ? { dngDemosaic: from.dngDemosaic } : {}),
+    reset: () => ({ dngDemosaic: DEFAULT_DNG_DEMOSAIC })
+  },
   whiteBalance: {
     take: (from, to) =>
       from.rawColor && to.rawColor
@@ -212,4 +221,34 @@ export function resetSection(
   defaults: EditRecipe
 ): Patch {
   return section.reset?.(recipe) ?? section.take(defaults, recipe)
+}
+
+/**
+ * A paste of a section from a photo with `from` capabilities. White balance gains and raw
+ * color belong to one sensor, so they do not go to another sensor. A DNG does not change
+ * the Foveon settings of an X3F. The editor removes the settings that the target does not support.
+ */
+export function pasteSection(
+  section: EditorSection,
+  id: string,
+  source: EditRecipe,
+  target: EditRecipe,
+  from: SourceCapabilities,
+  to: SourceCapabilities
+): Patch {
+  if (
+    id === 'whiteBalance' &&
+    (!hasWhiteBalance(from, source) ||
+      (from.foveon !== to.foveon && (source.rawColor || source.whiteBalanceGains)))
+  )
+    return {}
+  const patch = section.take(source, target)
+  // A monochrome DNG keeps its demosaic when the source method is for a Bayer DNG only.
+  if (patch.dngDemosaic && !demosaicsOf(to).includes(patch.dngDemosaic)) delete patch.dngDemosaic
+  if (!from.foveon && to.foveon) {
+    delete patch.fillLight
+    delete patch.denoise
+    delete patch.denoiseOptions
+  }
+  return patch
 }

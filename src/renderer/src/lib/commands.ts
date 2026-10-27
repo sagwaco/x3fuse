@@ -4,7 +4,7 @@ import type { ConversionSettings, QueueViewMode } from '@shared/types'
 import { ipc } from './ipc'
 import { appInfo } from './appInfo'
 import { addFilesViaDialog, addFolderViaDialog } from './addFilesViaDialog'
-import { shownFiles, useQueueStore } from '../stores/queueStore'
+import { renderedOnly, shownFiles, useQueueStore } from '../stores/queueStore'
 import { useEditorStore, isTextEditing } from '../stores/editorStore'
 import { useNavStore } from '../stores/navStore'
 import { useSettingsStore } from '../stores/settingsStore'
@@ -130,7 +130,9 @@ function runDefault(name: MenuCommand, { advance, toggle }: CommandOptions): boo
       targets.some((file) => file.pending) ||
       (preset === 'previous' && !settings.settings.hasPreviousConversion) ||
       // The editor offers only the formats that include the edit.
-      (returnScreen === 'editor' && (preset === 'dng' || preset === 'embeddedJpg'))
+      // A DNG has no original export.
+      ((returnScreen === 'editor' || targets.some(renderedOnly)) &&
+        (preset === 'dng' || preset === 'embeddedJpg'))
     )
       return false
     const ids = new Set(targets.map((file) => file.id))

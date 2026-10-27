@@ -302,7 +302,7 @@ describe('renderer smoke', () => {
     await act(async () => {
       render(<MainWindow />)
     })
-    expect(screen.getByRole('button', { name: 'Load X3F Files' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Load RAW Files' })).toBeTruthy()
     expect(screen.getByText('Export')).toBeTruthy()
     const toggle = screen.getByRole('button', { name: 'Toggle info panel' }) as HTMLButtonElement
     expect(toggle.disabled).toBe(false)

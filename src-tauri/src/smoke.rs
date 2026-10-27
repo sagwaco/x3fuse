@@ -4,7 +4,7 @@ use std::{
     path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
-        mpsc,
+        mpsc, Arc,
     },
     time::{Duration, Instant},
 };
@@ -61,6 +61,75 @@ fn probe(webview: &Webview, input: &str) -> Result<Value, String> {
         .set_always_on_top(true)
         .map_err(|e| e.to_string())?;
     webview.window().set_focus().map_err(|e| e.to_string())?;
+    if let Some(manifest) = std::env::var_os("X3FUSE_CACHE_SMOKE_MANIFEST") {
+        let paths: Vec<PathBuf> =
+            serde_json::from_slice(&std::fs::read(manifest).map_err(|error| error.to_string())?)
+                .map_err(|error| error.to_string())?;
+        if paths.is_empty()
+            || paths
+                .iter()
+                .any(|path| !path.is_absolute() || !path.is_file())
+        {
+            return Err("Cache benchmark needs absolute photo paths".into());
+        }
+        let script = CACHE_SCRIPT
+            .replace("__PATHS__", &serde_json::to_string(&paths).unwrap())
+            .replace(
+                "__WARMUP__",
+                if std::env::var("X3FUSE_CACHE_SMOKE_WARMUP").as_deref() == Ok("1") {
+                    "true"
+                } else {
+                    "false"
+                },
+            );
+        webview.eval(script).map_err(|error| error.to_string())?;
+        let deadline = Instant::now() + Duration::from_secs(1800);
+        let mut progress = Value::Null;
+        while Instant::now() < deadline {
+            let mut sample = evaluate(
+                webview,
+                "({result: window.__x3fSmoke ?? null, stage: window.__x3fSmokeProgress ?? null})",
+            )?;
+            if sample["stage"] != progress {
+                progress = sample["stage"].take();
+                eprintln!("Preview cache benchmark: {progress}");
+            }
+            let mut result = sample["result"].take();
+            if !result.is_null() {
+                let state = webview.app_handle().state::<Arc<crate::AppState>>();
+                let stats = &state.previews.store.stats;
+                let renders = stats.renders.load(Ordering::Relaxed);
+                let misses = stats.misses.load(Ordering::Relaxed);
+                let derived = stats.derived_thumbnails.load(Ordering::Relaxed);
+                let dropped = stats.dropped_persistence.load(Ordering::Relaxed);
+                result["cacheCounters"] = json!({
+                    "memoryHits": stats.memory_hits.load(Ordering::Relaxed),
+                    "diskHits": stats.disk_hits.load(Ordering::Relaxed),
+                    "misses": misses,
+                    "writes": stats.writes.load(Ordering::Relaxed),
+                    "writeFailures": stats.write_failures.load(Ordering::Relaxed),
+                    "derivedThumbnails": derived,
+                    "renders": renders,
+                    "droppedPersistence": dropped,
+                });
+                if dropped != 0 {
+                    result["ok"] = false.into();
+                    result["error"] = format!("Dropped {dropped} preview cache writes").into();
+                }
+                if result["phase"] == "application-restart"
+                    && (renders != 0 || misses != 0 || derived != 0)
+                {
+                    result["ok"] = false.into();
+                    result["error"] =
+                        format!("Restart needed {renders} renders, {misses} uncached previews, and {derived} thumbnail derivations")
+                            .into();
+                }
+                return Ok(result);
+            }
+            std::thread::sleep(Duration::from_millis(250));
+        }
+        return Err("Preview cache benchmark exceeded 30 minutes".into());
+    }
     webview
         .eval(
             SCRIPT
@@ -371,6 +440,22 @@ const SCRIPT: &str = r#"
     return window.__x3fRunNativeSmoke(__INPUT_PATH__, __EDITOR_SMOKE__);
   })().then(result => { window.__x3fSmoke = result; }, error => {
     window.__x3fSmoke = {ok: false, error: String(error), url: location.href};
+  });
+})()
+"#;
+
+const CACHE_SCRIPT: &str = r#"
+(() => {
+  window.__x3fSmoke = null;
+  void (async () => {
+    const deadline = Date.now() + 15000;
+    while (!window.__x3fRunPreviewCacheSmoke && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    if (!window.__x3fRunPreviewCacheSmoke) throw new Error('Cache smoke bridge missing');
+    return window.__x3fRunPreviewCacheSmoke(__PATHS__, __WARMUP__);
+  })().then(result => { window.__x3fSmoke = result; }, error => {
+    window.__x3fSmoke = {ok: false, error: String(error)};
   });
 })()
 "#;

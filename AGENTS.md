@@ -19,9 +19,11 @@ Intel and Apple Silicon support. Windows and Linux x64 builds are portable alpha
 - `src-tauri/`: Rust backend, Tauri configuration, and backend acceptance tests.
 - `src-tauri/crates/x3f-render/`: GPU renderer, edit recipes, camera profiles, and film data.
 - `src-tauri/resources/opcodes/`: tracked camera/lens flat-field corrections.
-- `scripts/prepare-resources.mjs`: downloads checksum-verified ExifTool 13.59 for the
-  host OS and prepares bundled license notices. Generated ExifTool and license resources
-  are not tracked. Windows uses the standalone runtime; macOS and Linux use Perl.
+- `scripts/prepare-resources.mjs`: downloads checksum-verified LibRaw 0.22.2 source
+  and ExifTool 13.59 for the host OS, and prepares bundled license notices.
+  Generated LibRaw, ExifTool, and license resources are not tracked. Run
+  `npm run sync:resources` before direct Cargo builds in a fresh checkout.
+  Windows uses the standalone ExifTool runtime; macOS and Linux use Perl.
 - `tests/`: frontend, artifact, and native-window tests.
 - `scripts/`: resource preparation, artifact packaging, and native smoke checks.
 - `Configuration/`: release version parsing and legacy appcast note injection.
@@ -96,11 +98,18 @@ reuse the Debug probe executable. Release builds omit the probe.
 - `x3f-preview` serves extracted previews through an asynchronous Tauri URI protocol.
   `x3f-edit` serves revisioned rendered images. The renderer uses bounded caches,
   worker-based scopes, and virtualized browsing views.
-- `preview::DiskCache` keeps embedded previews and import metadata on disk, keyed by
-  the source path and its `SourceStamp`, so that `queue:add` and thumbnails skip
-  ExifTool for photos seen before. Settings > Cache controls it: the
-  `previewCacheEnabled` and `previewCacheLimit` preferences, least-recently-used
-  eviction, and Clear. Edited thumbnails keep their own cache in `edits/thumbnails-v1`.
+- `cache::Store` keeps original small and full previews, edited thumbnails and
+  large previews, and source metadata under `app_cache_dir()/previews-v2`.
+  Settings > Cache controls one disk budget, enabled state, and Clear for all
+  preview types. The default is 20 GB; the old 1 GB default upgrades to 20 GB,
+  and other saved limits are kept. The shared index records bytes and last use.
+  Compatible legacy entries are adopted on read.
+  `cacheOnly=1` on either image protocol returns 200 or an empty 204 without
+  waiting for image generation. Original URLs use `previewRevision`, derived
+  from the canonical path, `SourceStamp`, and decoder identity. `sourceRevision`
+  remains the content fingerprint used to validate saved edits and exports.
+  Final 2048-pixel edited previews supply 640-pixel thumbnails. Clear invalidates
+  older producers and idle memory entries, but keeps displayed frames alive.
   On the first import, the first shown photo is active and follows the shown order
   until the user changes the selection; the dialog and Finder path order is arbitrary.
   RAW files without embedded JPEGs, including SD9 and SD10 files, get a rendered
@@ -161,8 +170,8 @@ reuse the Debug probe executable. Release builds omit the probe.
 - Pick/reject flags and star ratings live separately in app-data `culling.json`,
   keyed by path. Moving or renaming a photo loses its flags and rating.
 - Tauri resolves storage under `com.sagwa.X3Fuse`: preferences use
-  `app_config_dir()/settings.json`; edits and caches use `app_data_dir()/edits`;
-  the preview cache uses `app_cache_dir()/previews-v1`; logs use `app_log_dir()`.
+  `app_config_dir()/settings.json`; edits and SFD scenes use `app_data_dir()/edits`;
+  the preview cache uses `app_cache_dir()/previews-v2`; logs use `app_log_dir()`.
   On macOS, settings and app data are under
   `~/Library/Application Support/com.sagwa.X3Fuse`, the preview cache is under
   `~/Library/Caches/com.sagwa.X3Fuse`, and logs are under

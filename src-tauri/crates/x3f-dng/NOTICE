@@ -1,0 +1,74 @@
+X3Fuse DNG input / x3f-dng
+==========================
+
+Adapter source: GPL-3.0-only, as part of X3Fuse.
+
+LibRaw 0.22.2
+-------------
+
+    Copyright (C) 2008-2025 LibRaw LLC (info@libraw.org)
+    https://www.libraw.org/
+
+The build downloads the unmodified LibRaw 0.22.2 source from
+https://www.libraw.org/data/LibRaw-0.22.2.tar.gz (SHA-256
+de86b035655accff8d4010f1a221fdf50d353cb7b1422ba26f14a0db92612cfa).
+Resource preparation verifies this checksum and keeps the source without the
+samples, documentation, build files, and three unused placeholder sources.
+The app statically links this library.
+LibRaw is available under either the GNU Lesser General Public License 2.1
+(LIBRAW_LICENSE.LGPL) or the Common Development and Distribution License 1.0
+(LIBRAW_LICENSE.CDDL); X3Fuse uses it under LGPL 2.1. LIBRAW_COPYRIGHT lists
+the code that LibRaw is based on, including dcraw by Dave Coffin.
+
+zlib
+----
+
+Deflate DNG decoding uses zlib, built from source by the libz-sys crate.
+License: ZLIB_LICENSE.txt.
+
+mozjpeg
+-------
+
+Lossy JPEG DNG decoding uses mozjpeg, built from source by the mozjpeg-sys
+crate. License: MOZJPEG_LICENSE.txt (IJG, BSD-3-Clause, and zlib terms).
+This software is based in part on the work of the Independent JPEG Group.
+
+librtprocess Bayer demosaicing
+------------------------------
+
+Source: https://github.com/CarVac/librtprocess
+Commit: 9a858270acb2096e2e403d932760ee688fcac425
+Archive SHA-256:
+a85bac0d67fc08ceaf61a7deeedff5ffaf8edabcebeb9a59924df378efc800f6
+
+The app statically links the AMaZE, DCB, AHD, HPHD, IGV, LMMSE, VNG4,
+Fast, and border kernels. The code comes from RawTherapee and its
+contributors. License: GPL version 3 or later (LIBRTPROCESS_LICENSE.txt).
+DCB demosaicing is by Jacek Gozdz (cuniek@kft.umcs.lublin.pl).
+Its BSD notice is in DCB_LICENSE.txt.
+
+scripts/prepare-rtprocess.mjs verifies the archive and applies counted
+patches. The patches make the kernels stop on cancellation, split serial
+HPHD passes into strips, and prevent an AMaZE tail write past a row.
+Each changed source has a dated modification notice. The kernels run
+without OpenMP. The adapter uses float input and output, and replaces the
+outer bands of DCB, IGV, and LMMSE with the library's border interpolation
+to correct edge artifacts. No integer quantization is used.
+
+RawTherapee EAHD
+----------------
+
+Source: https://github.com/RawTherapee/RawTherapee
+Version: 5.13, commit 1924179107995b01b73cdc7f4fe91e44fc8227a7
+rtengine/eahd_demosaic.cc SHA-256:
+d8bbe5fbdbab0932057f99de81eae14f09eb4be09141a930aef866e9e4aae4cc
+
+Copyright (c) 2004-2018 Gabor Horvath and RawTherapee contributors.
+Compilation unit and speed improvements: Ingo Weyrich, 2018.
+License: GPL version 3 or later (LIBRTPROCESS_LICENSE.txt).
+
+src/eahd.cpp ports EAHD and interpolate_row_rb_mul_pp from
+rtengine/rawimagesource_i.h to the library interface. It keeps float green
+values, computes CIELab directly, corrects the camera-matrix orientation,
+fills the first and last rows, and stops on cancellation. The source header
+lists these changes and retains the upstream copyright and license notice.

@@ -1,3 +1,4 @@
+pub mod cache;
 mod commands;
 pub mod conversion;
 mod culling;
@@ -9,6 +10,7 @@ pub mod model;
 pub mod preview;
 #[cfg(debug_assertions)]
 mod smoke;
+pub mod source;
 pub mod storage;
 mod updater;
 mod x3i;
@@ -24,6 +26,9 @@ use tauri::{Emitter, Manager, WebviewWindow};
 
 pub struct AppState {
     pub preferences: storage::Preferences,
+    /// The shared preview disk cache, and the backend half of the memory budget.
+    pub cache: Arc<cache::Store>,
+    pub memory: Arc<cache::Memory>,
     pub logs: Arc<storage::Logs>,
     pub exif: Arc<metadata::ExifTool>,
     pub previews: preview::Previews,
@@ -40,6 +45,48 @@ impl AppState {
     /// Unsaved edits or queued flags and ratings need the window's close handshake.
     pub fn needs_close_flush(&self) -> bool {
         self.editor.needs_close_flush() || (self.culling.used() && !self.editor.close_allowed())
+    }
+}
+
+/// Storage roots. Debug builds can put them all under the absolute directory in
+/// `X3FUSE_SMOKE_STORAGE`, so that native tests never touch live user data.
+struct Directories {
+    config: PathBuf,
+    data: PathBuf,
+    cache: PathBuf,
+    log: PathBuf,
+}
+
+impl Directories {
+    fn resolve(app: &tauri::AppHandle) -> tauri::Result<(Self, bool)> {
+        if cfg!(debug_assertions) {
+            if let Some(root) = std::env::var_os("X3FUSE_SMOKE_STORAGE").map(PathBuf::from) {
+                if !root.is_absolute() {
+                    return Err(std::io::Error::other(
+                        "X3FUSE_SMOKE_STORAGE must be an absolute path",
+                    )
+                    .into());
+                }
+                return Ok((
+                    Self {
+                        config: root.join("config"),
+                        data: root.join("data"),
+                        cache: root.join("cache"),
+                        log: root.join("logs"),
+                    },
+                    true,
+                ));
+            }
+        }
+        Ok((
+            Self {
+                config: app.path().app_config_dir()?,
+                data: app.path().app_data_dir()?,
+                cache: app.path().app_cache_dir()?,
+                log: app.path().app_log_dir()?,
+            },
+            false,
+        ))
     }
 }
 
@@ -222,13 +269,17 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
-            let migration_logs = migrate_alpha_directories(app.handle());
-            let logs = Arc::new(storage::Logs::new(app.path().app_log_dir()?));
+            let (directories, isolated) = Directories::resolve(app.handle())?;
+            let migration_logs = if isolated {
+                vec![]
+            } else {
+                migrate_alpha_directories(app.handle())
+            };
+            let logs = Arc::new(storage::Logs::new(directories.log.clone()));
             for (kind, message) in migration_logs {
                 logs.write(kind, message);
             }
-            let preferences =
-                storage::Preferences::load(app.path().app_config_dir()?.join("settings.json"));
+            let preferences = storage::Preferences::load(directories.config.join("settings.json"));
             logs.debug
                 .store(preferences.get().debug_logging_enabled, Ordering::Relaxed);
             let resources = if cfg!(debug_assertions) {
@@ -236,7 +287,7 @@ pub fn run() {
             } else {
                 app.path().resource_dir()?.join("resources")
             };
-            let edits = app.path().app_data_dir()?.join("edits");
+            let edits = directories.data.join("edits");
             let exif = Arc::new(metadata::ExifTool::new(
                 resources.join("exiftool"),
                 edits.join(x3i::DIRECTORY),
@@ -249,15 +300,27 @@ pub fn run() {
                 );
             }
             let settings = preferences.get();
-            let disk = Arc::new(preview::DiskCache::new(
-                app.path().app_cache_dir()?.join(preview::CACHE_DIRECTORY),
+            // The store reconciles its index and applies its limit on its own
+            // thread, without delaying the window.
+            let store = cache::Store::open(
+                directories.cache.join(cache::DIRECTORY),
+                vec![
+                    (
+                        cache::LEGACY_PREVIEWS,
+                        directories.cache.join(cache::LEGACY_PREVIEWS),
+                    ),
+                    (
+                        cache::LEGACY_THUMBNAILS,
+                        edits.join(cache::LEGACY_THUMBNAILS),
+                    ),
+                    (cache::LEGACY_MEDIUMS, edits.join(cache::LEGACY_MEDIUMS)),
+                ],
                 settings.preview_cache_enabled,
                 settings.preview_cache_limit,
                 logs.clone(),
-            ));
-            // Count the cache and apply its limit without delaying the window.
-            let trim = disk.clone();
-            std::thread::spawn(move || trim.trim());
+            );
+            let memory = Arc::new(cache::Memory::new(cache::memory_budget() / 2));
+            source::use_store(store.clone());
             let _ = CORE_LOGS.set(logs.clone());
             // Legacy library globals are initialized once before any conversion workers exist.
             x3f_core::set_verbosity(x3f_core::Verbosity::Debug);
@@ -274,9 +337,11 @@ pub fn run() {
             app.manage(Arc::new(AppState {
                 preferences,
                 logs,
-                previews: preview::Previews::new(exif.clone(), disk),
-                editor: editor::Editor::new(edits),
-                culling: culling::Culling::load(app.path().app_data_dir()?.join("culling.json")),
+                previews: preview::Previews::new(exif.clone(), store.clone(), memory.clone()),
+                editor: editor::Editor::with_cache(edits, store.clone(), memory.clone()),
+                culling: culling::Culling::load(directories.data.join("culling.json")),
+                cache: store,
+                memory,
                 exif,
                 resources,
                 running: AtomicBool::new(false),
@@ -296,12 +361,17 @@ pub fn run() {
             let app = context.app_handle().clone();
             tauri::async_runtime::spawn(async move {
                 let state = app.state::<Arc<AppState>>();
-                let result = match preview::protocol_path(&request.uri().to_string()) {
-                    Ok((path, full)) => state.previews.get(&path, full).await,
-                    Err(e) => Err(e),
+                let (result, cache_only) = match preview::protocol_path(&request.uri().to_string())
+                {
+                    Ok((path, full, cache_only)) => (
+                        state.previews.get(&path, full, cache_only).await,
+                        cache_only,
+                    ),
+                    Err(e) => (Err(e), false),
                 };
                 let (status, bytes) = match result {
                     Ok(Some(bytes)) => (200, bytes.as_ref().clone()),
+                    Ok(None) if cache_only => (204, vec![]),
                     Ok(None) => (404, b"No preview".to_vec()),
                     Err(e) => {
                         state.logs.write("debug", format!("Preview: {e}"));
@@ -423,6 +493,7 @@ pub fn run() {
             commands::logs_sizes,
             commands::cache_size,
             commands::cache_clear,
+            commands::cache_memory_budget,
             commands::cache_sfd_size,
             commands::cache_sfd_clear,
             commands::app_info,

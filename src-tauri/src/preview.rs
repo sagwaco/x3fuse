@@ -1,287 +1,105 @@
 use crate::{
-    edits::SourceStamp,
+    cache::{source_key, Memory, Stats, Store},
     metadata::{is_jpeg, DisplayMeta, ExifTool},
     model::source_path,
-    storage::{write_bytes_atomic, Logs},
 };
-use sha2::{Digest, Sha256};
 use std::{
-    collections::{HashMap, VecDeque},
-    fs,
-    io::Read,
+    collections::HashMap,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, MutexGuard, PoisonError},
-    time::{SystemTime, UNIX_EPOCH},
+    sync::Arc,
 };
 use tokio::sync::{Mutex as AsyncMutex, Semaphore};
 
-const BUDGET: usize = 128 * 1024 * 1024;
-/// The preview cache directory in the app cache directory.
-pub const CACHE_DIRECTORY: &str = "previews-v1";
-/// The largest preview or metadata file that the cache stores and reads.
-const ENTRY_LIMIT: u64 = 16 * 1024 * 1024;
 type Image = Option<Arc<Vec<u8>>>;
-#[derive(Default)]
-struct Cache {
-    entries: VecDeque<(String, Image)>,
-    bytes: usize,
+
+/// The disk names of an original: `<key>.jpg` is the embedded or rendered
+/// preview, `<key>.full.jpg` the full JPEG (empty when the photo has none, so
+/// that the full view reuses the preview), and `<key>.json` import metadata.
+fn name(key: &str, kind: &str) -> String {
+    format!("{key}.{kind}")
 }
 
-/// JPEG previews (`<key>.jpg`) and import metadata (`<key>.json`) on disk, so that
-/// photos seen before load without ExifTool. Errors only cause a miss.
-pub struct DiskCache {
-    dir: PathBuf,
-    state: Mutex<DiskState>,
-    logs: Arc<Logs>,
-}
-
-struct DiskState {
-    enabled: bool,
-    limit: u64,
-    /// The bytes in the directory, counted from the directory once.
-    used: Option<u64>,
-    /// Clear and Disable increment it, so that older work cannot store entries after them.
-    generation: u64,
+/// The legacy `previews-v1` names had the same keys, without the full JPEG.
+fn legacy(key: &str, kind: &str) -> Vec<String> {
+    match kind {
+        "jpg" | "json" => vec![format!("{}/{key}.{kind}", crate::cache::LEGACY_PREVIEWS)],
+        _ => vec![],
+    }
 }
 
 /// The cache key of a source file, taken before the file is read.
+#[derive(Clone)]
 pub struct Ticket {
     key: String,
     generation: u64,
 }
 
-impl DiskCache {
-    pub fn new(dir: PathBuf, enabled: bool, limit: u64, logs: Arc<Logs>) -> Self {
-        Self {
-            dir,
-            state: Mutex::new(DiskState {
-                enabled,
-                limit,
-                used: None,
-                generation: 0,
-            }),
-            logs,
-        }
-    }
-
-    fn state(&self) -> MutexGuard<'_, DiskState> {
-        self.state.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
-    /// The SHA-256 of the path and its `SourceStamp`. On Unix the stamp has the device,
-    /// inode and change time, so a replaced file misses even with the same size and
-    /// modified time. On Windows it has only the size and the modified and created
-    /// times: a replacement that keeps all three hits the old entry.
-    fn key(path: &Path) -> Option<String> {
-        let stamp = SourceStamp::new(&fs::metadata(path).ok()?).ok()?;
-        let bytes = serde_json::to_vec(&(path, stamp)).ok()?;
-        Some(format!("{:x}", Sha256::digest(bytes)))
-    }
-
-    /// None while the cache is disabled.
-    pub fn ticket(&self, path: &Path) -> Option<Ticket> {
-        let generation = {
-            let state = self.state();
-            if !state.enabled {
-                return None;
-            }
-            state.generation
-        };
-        Some(Ticket {
-            key: Self::key(path)?,
+impl Ticket {
+    fn new(store: &Store, path: &Path) -> Option<Self> {
+        let generation = store.generation();
+        Some(Self {
+            key: source_key(path)?,
             generation,
         })
     }
 
-    fn file(&self, ticket: &Ticket, extension: &str) -> PathBuf {
-        self.dir.join(format!("{}.{extension}", ticket.key))
-    }
-
-    fn current(&self, ticket: &Ticket) -> bool {
-        let state = self.state();
-        state.enabled && state.generation == ticket.generation
-    }
-
-    fn read(&self, ticket: &Ticket, extension: &str) -> Option<Vec<u8>> {
-        if !self.current(ticket) {
-            return None;
-        }
-        let mut file = fs::File::options()
-            .read(true)
-            .write(true)
-            .open(self.file(ticket, extension))
-            .ok()?;
-        let mut bytes = Vec::new();
-        file.by_ref()
-            .take(ENTRY_LIMIT + 1)
-            .read_to_end(&mut bytes)
-            .ok()?;
-        if bytes.len() as u64 > ENTRY_LIMIT {
-            return None;
-        }
-        // Eviction removes the files with the oldest modified time first.
-        let _ = file.set_modified(SystemTime::now());
-        Some(bytes)
-    }
-
-    /// A corrupt entry is a miss. The next read from the source replaces it.
-    fn corrupt(&self, ticket: &Ticket, extension: &str, error: impl std::fmt::Display) {
-        let path = self.file(ticket, extension);
-        self.logs.write(
-            "error",
-            format!("Preview cache entry {}: {error}", path.display()),
-        );
-    }
-
-    /// The cached import metadata, with the cached preview when there is one.
-    pub fn metadata(&self, ticket: &Ticket) -> Option<DisplayMeta> {
-        let bytes = self.read(ticket, "json")?;
-        match serde_json::from_slice::<DisplayMeta>(&bytes) {
-            Ok(mut meta) => {
-                meta.preview = self.preview(ticket);
-                Some(meta)
-            }
-            Err(error) => {
-                self.corrupt(ticket, "json", error);
-                None
-            }
-        }
-    }
-
-    pub fn preview(&self, ticket: &Ticket) -> Option<Vec<u8>> {
-        let bytes = self.read(ticket, "jpg")?;
-        if is_jpeg(&bytes) {
-            Some(bytes)
-        } else {
-            self.corrupt(ticket, "jpg", "not a JPEG");
-            None
-        }
-    }
-
-    /// Stores data read from `path`. It does nothing when the file changed after the
-    /// ticket, or when a Clear or Disable came after it.
-    pub fn store(&self, path: &Path, ticket: &Ticket, extension: &str, bytes: &[u8]) {
-        if bytes.len() as u64 > ENTRY_LIMIT || Self::key(path).as_ref() != Some(&ticket.key) {
-            return;
-        }
-        let mut state = self.state();
-        if !state.enabled || state.generation != ticket.generation {
-            return;
-        }
-        let target = self.file(ticket, extension);
-        let used = self.used(&mut state);
-        let old = fs::metadata(&target).map_or(0, |meta| meta.len());
-        match write_bytes_atomic(&target, bytes, false) {
-            Ok(()) => {
-                state.used = Some(used.saturating_sub(old) + bytes.len() as u64);
-                self.trim_locked(&mut state);
-            }
-            Err(error) => self.logs.write(
-                "error",
-                format!("Preview cache write {}: {error}", target.display()),
-            ),
-        }
-    }
-
-    fn scan(&self) -> Vec<(SystemTime, u64, PathBuf)> {
-        let Ok(entries) = fs::read_dir(&self.dir) else {
-            return vec![];
-        };
-        entries
-            .flatten()
-            .filter_map(|entry| {
-                let meta = entry.metadata().ok()?;
-                meta.is_file().then(|| {
-                    (
-                        meta.modified().unwrap_or(UNIX_EPOCH),
-                        meta.len(),
-                        entry.path(),
-                    )
-                })
-            })
-            .collect()
-    }
-
-    fn used(&self, state: &mut DiskState) -> u64 {
-        *state
-            .used
-            .get_or_insert_with(|| self.scan().iter().map(|(_, len, _)| len).sum())
-    }
-
-    /// Over the limit, removes the least recently used files down to 90% of it.
-    // ponytail: each eviction lists the directory; keep an index if that gets slow.
-    fn trim_locked(&self, state: &mut DiskState) {
-        if self.used(state) <= state.limit {
-            return;
-        }
-        let mut files = self.scan();
-        files.sort_unstable_by_key(|(modified, _, _)| *modified);
-        let mut used: u64 = files.iter().map(|(_, len, _)| len).sum();
-        for (_, len, path) in files {
-            if used <= state.limit / 10 * 9 {
-                break;
-            }
-            if fs::remove_file(&path).is_ok() {
-                used -= len;
-            }
-        }
-        state.used = Some(used);
-    }
-
-    /// Counts the cache and removes files over the limit.
-    pub fn trim(&self) {
-        self.trim_locked(&mut self.state());
-    }
-
-    /// Disable keeps the files until Clear. A lower limit removes files at once.
-    pub fn configure(&self, enabled: bool, limit: u64) {
-        let mut state = self.state();
-        if state.enabled && !enabled {
-            state.generation += 1;
-        }
-        state.enabled = enabled;
-        state.limit = limit;
-        self.trim_locked(&mut state);
-    }
-
-    pub fn size(&self) -> u64 {
-        self.used(&mut self.state())
-    }
-
-    pub fn clear(&self) -> Result<(), String> {
-        let mut state = self.state();
-        state.generation += 1;
-        state.used = None;
-        match fs::remove_dir_all(&self.dir) {
-            Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error.to_string()),
-            _ => {
-                state.used = Some(0);
-                Ok(())
-            }
+    /// Stores data read from `path`. It does nothing when the file changed after
+    /// the ticket, or when a Clear or Disable came after it.
+    fn store(&self, store: &Store, path: &Path, kind: &str, bytes: &[u8]) {
+        if source_key(path).as_ref() == Some(&self.key) {
+            store.put(self.generation, &name(&self.key, kind), bytes);
         }
     }
 }
 
+fn read_jpeg(store: &Store, key: &str, kind: &str) -> Option<Vec<u8>> {
+    store.get(&name(key, kind), &legacy(key, kind), |bytes| {
+        is_jpeg(bytes) || (kind == "full.jpg" && bytes.is_empty())
+    })
+}
+
+/// The cached import metadata, with the cached preview when there is one.
+fn read_metadata(store: &Store, key: &str) -> Option<DisplayMeta> {
+    let bytes = store.get(&name(key, "json"), &legacy(key, "json"), |bytes| {
+        serde_json::from_slice::<DisplayMeta>(bytes).is_ok()
+    })?;
+    let mut meta = serde_json::from_slice::<DisplayMeta>(&bytes).ok()?;
+    meta.preview = read_jpeg(store, key, "jpg");
+    Some(meta)
+}
+
+/// A disk lookup for `get`. The full JPEG falls back to the preview when the
+/// photo has none. Outer None: no entry.
+fn read_preview(store: &Store, key: &str, full: bool) -> Option<Vec<u8>> {
+    if full {
+        let bytes = read_jpeg(store, key, "full.jpg")?;
+        if !bytes.is_empty() {
+            return Some(bytes);
+        }
+    }
+    read_jpeg(store, key, "jpg")
+}
+
 pub struct Previews {
-    cache: Mutex<Cache>,
+    memory: Arc<Memory>,
     flights: AsyncMutex<HashMap<String, Arc<AsyncMutex<()>>>>,
     slots: Semaphore,
     thumbnail_slots: Semaphore,
     raw_slot: Semaphore,
     exif: Arc<ExifTool>,
-    pub disk: Arc<DiskCache>,
+    pub store: Arc<Store>,
 }
 
 impl Previews {
-    pub fn new(exif: Arc<ExifTool>, disk: Arc<DiskCache>) -> Self {
+    pub fn new(exif: Arc<ExifTool>, store: Arc<Store>, memory: Arc<Memory>) -> Self {
         Self {
-            cache: Mutex::new(Cache::default()),
+            memory,
             flights: AsyncMutex::new(HashMap::new()),
             slots: Semaphore::new(4),
             thumbnail_slots: Semaphore::new(3),
             raw_slot: Semaphore::new(1),
             exif,
-            disk,
+            store,
         }
     }
 
@@ -289,13 +107,16 @@ impl Previews {
     /// ExifTool call reads the rest. Missing JPEGs are rendered from RAW.
     /// The previews go to the memory cache, not the result.
     pub async fn import(&self, paths: &[PathBuf]) -> HashMap<PathBuf, DisplayMeta> {
-        let (disk, inputs) = (self.disk.clone(), paths.to_vec());
+        let generation = self.store.generation();
+        let (store, inputs) = (self.store.clone(), paths.to_vec());
         let lookups = tauri::async_runtime::spawn_blocking(move || {
             inputs
                 .into_iter()
                 .map(|path| {
-                    let ticket = disk.ticket(&path);
-                    let hit = ticket.as_ref().and_then(|ticket| disk.metadata(ticket));
+                    let ticket = Ticket::new(&store, &path);
+                    let hit = ticket
+                        .as_ref()
+                        .and_then(|ticket| read_metadata(&store, &ticket.key));
                     (path, ticket, hit)
                 })
                 .collect::<Vec<_>>()
@@ -304,7 +125,11 @@ impl Previews {
         .unwrap_or_default();
         let mut result = HashMap::new();
         let mut tickets = HashMap::new();
+        let mut keys = HashMap::new();
         for (path, ticket, hit) in lookups {
+            if let Some(ticket) = &ticket {
+                keys.insert(path.clone(), ticket.key.clone());
+            }
             match (hit, ticket) {
                 (Some(meta), _) => {
                     result.insert(path, meta);
@@ -320,8 +145,9 @@ impl Previews {
             .filter(|path| !result.contains_key(*path))
             .cloned()
             .collect();
+        let mut read = HashMap::new();
         if !misses.is_empty() {
-            let read = self.exif.display(&misses).await;
+            read = self.exif.display(&misses).await;
             let writes: Vec<_> = read
                 .iter()
                 .filter_map(|(path, meta)| {
@@ -334,107 +160,129 @@ impl Previews {
                     ))
                 })
                 .collect();
-            let disk = self.disk.clone();
-            let _ = tauri::async_runtime::spawn_blocking(move || {
+            let store = self.store.clone();
+            // Writes are not on the import path.
+            tauri::async_runtime::spawn_blocking(move || {
                 for (path, ticket, json, preview) in writes {
                     // Without a preview, keep a JPEG that `get` may have stored.
                     if let Some(jpeg) = preview {
-                        disk.store(&path, &ticket, "jpg", &jpeg);
+                        ticket.store(&store, &path, "jpg", &jpeg);
                     }
-                    disk.store(&path, &ticket, "json", &json);
+                    ticket.store(&store, &path, "json", &json);
                 }
-            })
-            .await;
-            result.extend(read);
+            });
         }
+        let fresh: std::collections::HashSet<_> = read.keys().cloned().collect();
+        result.extend(read);
         for (path, meta) in &mut result {
+            let Some(key) = keys.get(path) else { continue };
             if let Some(bytes) = meta.preview.take() {
-                self.prime(path, bytes);
-            } else if let Err(error) = self.get(path, false).await {
-                self.disk
-                    .logs
-                    .write("error", format!("Preview {}: {error}", path.display()));
+                self.prime(key, bytes, generation);
+            } else if fresh.contains(path) {
+                // A photo without an embedded JPEG gets its rendered preview now.
+                // A cache hit without one renders on its first request instead.
+                if let Err(error) = self.get(path, false, false).await {
+                    self.store
+                        .logs
+                        .write("error", format!("Preview {}: {error}", path.display()));
+                }
             }
         }
         result
     }
-    fn key(path: &Path, full: bool) -> Result<String, String> {
-        source_path(path)?;
-        let meta = std::fs::metadata(path).map_err(|e| e.to_string())?;
-        Ok(format!(
-            "{full}:{}:{:?}:{}",
-            meta.len(),
-            meta.modified().map_err(|e| e.to_string())?,
-            path.display()
-        ))
+
+    fn memory_key(key: &str, full: bool) -> String {
+        format!("original:{key}:{}", if full { "full" } else { "preview" })
     }
-    fn cached(&self, key: &str) -> Option<Image> {
-        let mut cache = self.cache.lock().unwrap();
-        let index = cache.entries.iter().position(|(k, _)| k == key)?;
-        let entry = cache.entries.remove(index)?;
-        let result = entry.1.clone();
-        cache.entries.push_back(entry);
-        Some(result)
-    }
-    fn store(&self, key: String, image: Image) {
-        let mut cache = self.cache.lock().unwrap();
-        if let Some(i) = cache.entries.iter().position(|(k, _)| k == &key) {
-            if let Some((_, old)) = cache.entries.remove(i) {
-                cache.bytes -= old.map_or(0, |b| b.len());
-            }
+
+    fn cached(&self, key: &str) -> Option<Arc<Vec<u8>>> {
+        let hit = self.memory.get(key);
+        if hit.is_some() {
+            Stats::add(&self.store.stats.memory_hits);
         }
-        cache.bytes += image.as_ref().map_or(0, |b| b.len());
-        cache.entries.push_back((key, image));
-        // ponytail: linear LRU lookup, bounded to 512 entries; use an indexed LRU if profiling warrants it.
-        while cache.bytes > BUDGET || cache.entries.len() > 512 {
-            if let Some((_, old)) = cache.entries.pop_front() {
-                cache.bytes -= old.map_or(0, |b| b.len());
-            }
-        }
+        hit
     }
-    pub fn prime(&self, path: &Path, bytes: Vec<u8>) {
+
+    fn prime(&self, key: &str, bytes: Vec<u8>, generation: u64) {
         if is_jpeg(&bytes) {
-            if let Ok(key) = Self::key(path, false) {
-                self.store(key, Some(Arc::new(bytes)));
-            }
+            self.store_memory(
+                &Self::memory_key(key, false),
+                &Some(Arc::new(bytes)),
+                generation,
+            );
         }
     }
-    pub async fn get(&self, path: &Path, full: bool) -> Result<Image, String> {
-        let key = Self::key(path, full)?;
-        if let Some(hit) = self.cached(&key) {
-            return Ok(hit);
+
+    /// The preview or full JPEG of `path`. With `cache_only`, only the memory
+    /// and disk caches answer: no ExifTool, RAW or wait for other work, and a
+    /// miss is Ok(None).
+    pub async fn get(&self, path: &Path, full: bool, cache_only: bool) -> Result<Image, String> {
+        source_path(path)?;
+        // Work that starts before a Clear or Disable cannot store after it.
+        let generation = self.store.generation();
+        let source = path.to_owned();
+        let key = tauri::async_runtime::spawn_blocking(move || source_key(&source))
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or("Preview source unavailable")?;
+        let memory_key = Self::memory_key(&key, full);
+        if let Some(hit) = self.cached(&memory_key) {
+            return Ok(Some(hit));
+        }
+        if cache_only {
+            let (store, disk_key) = (self.store.clone(), key.clone());
+            let hit =
+                tauri::async_runtime::spawn_blocking(move || read_preview(&store, &disk_key, full))
+                    .await
+                    .map_err(|e| e.to_string())?;
+            let Some(bytes) = hit else {
+                Stats::add(&self.store.stats.misses);
+                return Ok(None);
+            };
+            let image = Arc::new(bytes);
+            self.store_memory(&memory_key, &Some(image.clone()), generation);
+            return Ok(Some(image));
         }
         let flight = self
             .flights
             .lock()
             .await
-            .entry(key.clone())
+            .entry(memory_key.clone())
             .or_insert_with(|| Arc::new(AsyncMutex::new(())))
             .clone();
+        let ticket = Ticket { key, generation };
+        let result = self
+            .generate(path, full, ticket, &memory_key, &flight)
+            .await;
+        self.flights.lock().await.remove(&memory_key);
+        result
+    }
+
+    async fn generate(
+        &self,
+        path: &Path,
+        full: bool,
+        ticket: Ticket,
+        memory_key: &str,
+        flight: &AsyncMutex<()>,
+    ) -> Result<Image, String> {
+        let generation = ticket.generation;
         let _guard = flight.lock().await;
-        if let Some(hit) = self.cached(&key) {
-            return Ok(hit);
+        if let Some(hit) = self.cached(memory_key) {
+            return Ok(Some(hit));
         }
-        // The disk cache has only the small preview. A hit needs no ExifTool slot.
-        let ticket = if full {
-            None
-        } else {
-            let (disk, source) = (self.disk.clone(), path.to_owned());
-            let (ticket, hit) = tauri::async_runtime::spawn_blocking(move || {
-                let ticket = disk.ticket(&source);
-                let hit = ticket.as_ref().and_then(|ticket| disk.preview(ticket));
-                (ticket, hit)
-            })
-            .await
-            .unwrap_or((None, None));
-            if let Some(bytes) = hit {
-                let image = Some(Arc::new(bytes));
-                self.store(key.clone(), image.clone());
-                self.flights.lock().await.remove(&key);
-                return Ok(image);
-            }
-            ticket
-        };
+        // A disk hit needs no ExifTool slot.
+        let (store, disk_key) = (self.store.clone(), ticket.key.clone());
+        let hit =
+            tauri::async_runtime::spawn_blocking(move || read_preview(&store, &disk_key, full))
+                .await
+                .unwrap_or(None);
+        if let Some(bytes) = hit {
+            let image = Some(Arc::new(bytes));
+            self.store_memory(memory_key, &image, ticket.generation);
+            return Ok(image);
+        }
+        Stats::add(&self.store.stats.misses);
         // Acquire this first so waiting thumbnails cannot occupy the foreground slot.
         let _thumbnail_slot = if full {
             None
@@ -448,41 +296,66 @@ impl Previews {
         };
         let _slot = self.slots.acquire().await.map_err(|e| e.to_string())?;
         // Import metadata can prime the preview while extraction is queued.
-        let result = match self.cached(&key) {
-            Some(hit) => Ok(hit),
-            None => {
-                let mut result = self.exif.preview(path, full).await.map(|b| b.map(Arc::new));
-                if matches!(result, Ok(None)) {
-                    // Release extraction slots before the full view requests its thumbnail.
-                    drop(_slot);
-                    drop(_thumbnail_slot);
-                    result = if full {
-                        Box::pin(self.get(path, false)).await
-                    } else {
-                        let _raw_slot = self.raw_slot.acquire().await.map_err(|e| e.to_string())?;
-                        let source = path.to_owned();
-                        tauri::async_runtime::spawn_blocking(move || {
-                            x3f_render::raw_preview(&source).map(|bytes| Some(Arc::new(bytes)))
-                        })
-                        .await
-                        .unwrap_or_else(|e| Err(e.to_string()))
-                    };
-                }
-                if let (Ok(Some(bytes)), Some(ticket)) = (&result, ticket) {
-                    let (disk, source, bytes) = (self.disk.clone(), path.to_owned(), bytes.clone());
-                    let _ = tauri::async_runtime::spawn_blocking(move || {
-                        disk.store(&source, &ticket, "jpg", &bytes)
-                    })
-                    .await;
-                }
-                result
-            }
-        };
-        if let Ok(image) = &result {
-            self.store(key.clone(), image.clone());
+        if let Some(hit) = self.cached(memory_key) {
+            return Ok(Some(hit));
         }
-        self.flights.lock().await.remove(&key);
+        let mut result = self.exif.preview(path, full).await.map(|b| b.map(Arc::new));
+        let mut kind = if full { "full.jpg" } else { "jpg" };
+        if matches!(result, Ok(None)) {
+            // Release extraction slots before the full view requests its thumbnail.
+            drop(_slot);
+            drop(_thumbnail_slot);
+            result = if full {
+                // An empty full entry records that the photo has no full JPEG.
+                let (store, source, marker) = (self.store.clone(), path.to_owned(), ticket.clone());
+                tauri::async_runtime::spawn_blocking(move || {
+                    marker.store(&store, &source, "full.jpg", &[])
+                });
+                kind = "";
+                Box::pin(self.get(path, false, false)).await
+            } else {
+                let _raw_slot = self.raw_slot.acquire().await.map_err(|e| e.to_string())?;
+                let source = path.to_owned();
+                Stats::add(&self.store.stats.renders);
+                tauri::async_runtime::spawn_blocking(move || {
+                    let bytes = if crate::source::Kind::of(&source) == crate::source::Kind::Dng {
+                        let cancel = std::sync::atomic::AtomicBool::new(false);
+                        let info = crate::source::Info::read(&source, &cancel)?;
+                        crate::metadata::preview_orientation(
+                            x3f_dng::preview(&source, &cancel)?,
+                            info.orientation.unwrap_or(1),
+                        )?
+                    } else {
+                        x3f_render::raw_preview(&source)?
+                    };
+                    Ok(Some(Arc::new(bytes)))
+                })
+                .await
+                .unwrap_or_else(|e| Err(e.to_string()))
+            };
+        }
+        if let (Ok(Some(bytes)), false) = (&result, kind.is_empty()) {
+            let (store, source, bytes) = (self.store.clone(), path.to_owned(), bytes.clone());
+            // The response does not wait for the disk.
+            tauri::async_runtime::spawn_blocking(move || {
+                ticket.store(&store, &source, kind, &bytes)
+            });
+        }
+        if let Ok(image) = &result {
+            self.store_memory(memory_key, image, generation);
+        }
         result
+    }
+
+    /// Keeps an image in memory, unless a Clear came after `generation`. The
+    /// check runs under the memory lock, and Clear changes the generation
+    /// before it empties memory, so late work cannot fill it again.
+    fn store_memory(&self, key: &str, image: &Image, generation: u64) {
+        if let Some(bytes) = image {
+            self.memory.put_if(key.to_owned(), bytes.clone(), || {
+                self.store.current(generation)
+            });
+        }
     }
 }
 
@@ -500,7 +373,9 @@ pub fn cache_control(uri: &str, status: u16) -> &'static str {
     }
 }
 
-pub fn protocol_path(uri: &str) -> Result<(std::path::PathBuf, bool), String> {
+/// The source path, whether the request is for the full JPEG, and whether it
+/// is cache-only (`cacheOnly=1`).
+pub fn protocol_path(uri: &str) -> Result<(std::path::PathBuf, bool, bool), String> {
     let url = url::Url::parse(uri).map_err(|e| e.to_string())?;
     // convertFileSrc percent-encodes the entire native path into one URL component.
     let encoded = url.path().strip_prefix('/').ok_or("Missing preview path")?;
@@ -517,26 +392,51 @@ pub fn protocol_path(uri: &str) -> Result<(std::path::PathBuf, bool), String> {
         Some("full") => true,
         _ => return Err("Invalid preview variant".into()),
     };
+    let cache_only = cache_only(&url)?;
     let path = std::path::PathBuf::from(path.as_ref());
     source_path(&path)?;
-    Ok((path, full))
+    Ok((path, full, cache_only))
+}
+
+/// `cacheOnly=1` asks for a cache hit only: 200, or 204 on a miss.
+pub fn cache_only(url: &url::Url) -> Result<bool, String> {
+    match url.query_pairs().find(|(k, _)| k == "cacheOnly") {
+        None => Ok(false),
+        Some((_, v)) if v == "1" => Ok(true),
+        _ => Err("Invalid cacheOnly value".into()),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::ExifPair;
-    use std::{future::Future, task::Poll, time::Duration};
+    use crate::{model::ExifPair, storage::Logs};
+    use std::{fs, future::Future, task::Poll, time::Duration};
 
     const JPEG: &[u8] = &[0xff, 0xd8, 0xff, 0xd9];
 
+    fn store(dir: &Path, limit: u64) -> Arc<Store> {
+        let logs = Arc::new(Logs::new(dir.join("logs")));
+        let cache = dir.join("cache");
+        Arc::new(Store::new(
+            cache.join(crate::cache::DIRECTORY),
+            vec![(
+                crate::cache::LEGACY_PREVIEWS,
+                cache.join(crate::cache::LEGACY_PREVIEWS),
+            )],
+            true,
+            limit,
+            logs,
+        ))
+    }
+
     /// Without an ExifTool binary in `exiftool`, only the caches can answer.
     fn previews(dir: &Path, exiftool: PathBuf, limit: u64) -> Previews {
-        let logs = Arc::new(Logs::new(dir.join("logs")));
-        let disk = DiskCache::new(dir.join("cache"), true, limit, logs.clone());
+        let store = store(dir, limit);
         Previews::new(
-            Arc::new(ExifTool::new(exiftool, dir.join("x3i"), logs)),
-            Arc::new(disk),
+            Arc::new(ExifTool::new(exiftool, dir.join("x3i"), store.logs.clone())),
+            store,
+            Arc::new(Memory::new(1 << 30)),
         )
     }
 
@@ -558,20 +458,23 @@ mod tests {
         }
     }
 
-    fn put(disk: &DiskCache, path: &Path, bytes: &[u8]) {
-        let ticket = disk.ticket(path).unwrap();
-        disk.store(path, &ticket, "jpg", bytes);
-        disk.store(path, &ticket, "json", &serde_json::to_vec(&meta()).unwrap());
+    fn put(store: &Store, path: &Path, bytes: &[u8]) {
+        let ticket = Ticket::new(store, path).unwrap();
+        ticket.store(store, path, "jpg", bytes);
+        ticket.store(store, path, "json", &serde_json::to_vec(&meta()).unwrap());
+    }
+
+    fn key(path: &Path) -> String {
+        source_key(path).unwrap()
     }
 
     #[test]
     fn disk_entries_round_trip_and_a_changed_file_misses() {
         let dir = tempfile::tempdir().unwrap();
-        let previews = previews(dir.path(), dir.path().into(), 1 << 20);
-        let disk = &previews.disk;
+        let store = store(dir.path(), 1 << 20);
         let path = source(dir.path(), "写真.X3F", b"raw");
-        put(disk, &path, JPEG);
-        let hit = disk.metadata(&disk.ticket(&path).unwrap()).unwrap();
+        put(&store, &path, JPEG);
+        let hit = read_metadata(&store, &key(&path)).unwrap();
         assert_eq!(
             (
                 hit.orientation,
@@ -581,135 +484,103 @@ mod tests {
             (Some(6), Some(1.5), "SIGMA dp2 Quattro")
         );
         assert_eq!(hit.preview.as_deref(), Some(JPEG));
-        let used = disk.size();
+        let used = store.size();
         // A second write of one key replaces the entry and its bytes.
-        put(disk, &path, JPEG);
-        assert_eq!(disk.size(), used);
-        assert_eq!(fs::read_dir(dir.path().join("cache")).unwrap().count(), 2);
+        put(&store, &path, JPEG);
+        assert_eq!(store.size(), used);
 
         // The same size with other content is another file: the stamp changes.
         std::thread::sleep(Duration::from_millis(5));
+        let ticket = Ticket::new(&store, &path).unwrap();
         fs::write(&path, b"RAW").unwrap();
-        let ticket = disk.ticket(&path).unwrap();
-        assert!(disk.metadata(&ticket).is_none());
-        assert!(disk.preview(&ticket).is_none());
-
+        assert!(read_metadata(&store, &key(&path)).is_none());
         // A file that changes during the read is not stored.
-        fs::write(&path, b"changed raw").unwrap();
-        disk.store(&path, &ticket, "jpg", JPEG);
-        assert!(disk.preview(&disk.ticket(&path).unwrap()).is_none());
-        assert_eq!(disk.size(), used);
+        ticket.store(&store, &path, "jpg", JPEG);
+        assert!(read_jpeg(&store, &key(&path), "jpg").is_none());
+        assert_eq!(store.size(), used);
+        // A symbolic link has the key of its target.
+        #[cfg(unix)]
+        {
+            let link = dir.path().join("link.X3F");
+            std::os::unix::fs::symlink(&path, &link).unwrap();
+            assert_eq!(key(&link), key(&path));
+        }
     }
 
     #[test]
-    fn corrupt_and_oversized_entries_are_misses_until_replaced() {
+    fn corrupt_entries_are_misses_until_replaced() {
         let dir = tempfile::tempdir().unwrap();
-        let previews = previews(dir.path(), dir.path().into(), 1 << 20);
-        let disk = &previews.disk;
+        let store = store(dir.path(), 1 << 20);
         let path = source(dir.path(), "image.X3F", b"raw");
-        let ticket = disk.ticket(&path).unwrap();
-        disk.store(&path, &ticket, "jpg", b"not a jpeg");
-        disk.store(&path, &ticket, "json", b"{");
-        assert!(disk.metadata(&ticket).is_none());
-        assert!(disk.preview(&ticket).is_none());
-        // The next read from the source replaces them. The size counts each file once.
-        put(disk, &path, JPEG);
-        assert!(disk.metadata(&ticket).is_some());
+        let ticket = Ticket::new(&store, &path).unwrap();
+        ticket.store(&store, &path, "jpg", b"not a jpeg");
+        ticket.store(&store, &path, "json", b"{");
+        assert!(read_metadata(&store, &ticket.key).is_none());
+        assert!(read_jpeg(&store, &ticket.key, "jpg").is_none());
+        assert_eq!(store.size(), 0);
+        put(&store, &path, JPEG);
+        assert!(read_metadata(&store, &ticket.key).is_some());
         let json = serde_json::to_vec(&meta()).unwrap();
-        assert_eq!(disk.size(), (JPEG.len() + json.len()) as u64);
-
-        // Files over the entry limit are not stored, and are misses when found.
-        let large = [JPEG, &vec![0; ENTRY_LIMIT as usize]].concat();
-        disk.store(&path, &ticket, "jpg", &large);
-        assert_eq!(disk.preview(&ticket).as_deref(), Some(JPEG));
-        fs::write(disk.file(&ticket, "jpg"), &large).unwrap();
-        assert!(disk.preview(&ticket).is_none());
+        assert_eq!(store.size(), (JPEG.len() + json.len()) as u64);
     }
 
     #[test]
-    fn eviction_removes_the_least_recently_used_files() {
+    fn legacy_entries_move_once_and_disable_and_clear_stop_older_work() {
         let dir = tempfile::tempdir().unwrap();
-        let previews = previews(dir.path(), dir.path().into(), 1000);
-        let disk = &previews.disk;
-        let image = [JPEG, &[0; 396]].concat();
-        let [a, b, c] =
-            ["a", "b", "c"].map(|name| source(dir.path(), &format!("{name}.X3F"), b"raw"));
-        let store = |path: &Path| {
-            disk.store(path, &disk.ticket(path).unwrap(), "jpg", &image);
-            std::thread::sleep(Duration::from_millis(10));
-        };
-        store(&a);
-        store(&b);
-        assert!(disk.preview(&disk.ticket(&a).unwrap()).is_some());
-        std::thread::sleep(Duration::from_millis(10));
-        store(&c);
-        assert_eq!(disk.size(), 800);
-        assert!(disk.preview(&disk.ticket(&b).unwrap()).is_none());
-        assert!(disk.preview(&disk.ticket(&a).unwrap()).is_some());
-
-        // A lower limit evicts at once, and later writes keep to it.
-        disk.configure(true, 500);
-        assert_eq!(disk.size(), 400);
-        store(&b);
-        assert_eq!(disk.size(), 400);
-        assert!(disk.preview(&disk.ticket(&b).unwrap()).is_some());
-
-        // At startup, a cache over its limit is trimmed.
-        let logs = Arc::new(Logs::new(dir.path().join("logs")));
-        let restarted = DiskCache::new(dir.path().join("cache"), true, 200, logs);
-        restarted.trim();
-        assert_eq!(restarted.size(), 0);
-    }
-
-    #[test]
-    fn disable_and_clear_stop_older_work() {
-        let dir = tempfile::tempdir().unwrap();
-        let previews = previews(dir.path(), dir.path().into(), 1 << 20);
-        let disk = &previews.disk;
         let path = source(dir.path(), "image.X3F", b"raw");
-        put(disk, &path, JPEG);
-        let used = disk.size();
+        let legacy = dir.path().join("cache").join(crate::cache::LEGACY_PREVIEWS);
+        fs::create_dir_all(&legacy).unwrap();
+        let k = key(&path);
+        fs::write(legacy.join(format!("{k}.jpg")), JPEG).unwrap();
+        fs::write(
+            legacy.join(format!("{k}.json")),
+            serde_json::to_vec(&meta()).unwrap(),
+        )
+        .unwrap();
+        let store = store(dir.path(), 1 << 20);
+        store.reconcile();
+        let used = store.size();
+        assert!(used > 0, "Legacy entries count until adopted or evicted");
+        assert_eq!(
+            read_metadata(&store, &k).unwrap().preview.as_deref(),
+            Some(JPEG)
+        );
+        assert_eq!(store.size(), used, "Adoption moves, it does not copy");
+        assert!(fs::read_dir(&legacy).unwrap().next().is_none());
 
         // Disabled: no reads and no writes. The files stay.
-        let before = disk.ticket(&path).unwrap();
-        disk.configure(false, 1 << 20);
-        assert!(disk.ticket(&path).is_none());
-        assert!(disk.metadata(&before).is_none());
+        let before = Ticket::new(&store, &path).unwrap();
+        store.configure(false, 1 << 20);
+        assert!(read_metadata(&store, &k).is_none());
         let other = source(dir.path(), "other.X3F", b"raw");
-        let ticket = DiskCache::key(&other).map(|key| Ticket { key, generation: 0 });
-        disk.store(&other, &ticket.unwrap(), "jpg", JPEG);
-        assert_eq!(disk.size(), used);
-        disk.configure(true, 1 << 20);
-        assert!(disk.metadata(&disk.ticket(&path).unwrap()).is_some());
+        put(&store, &other, JPEG);
+        assert_eq!(store.size(), used);
+        store.configure(true, 1 << 20);
+        assert!(read_metadata(&store, &k).is_some());
         // A read that started before Disable cannot store after it.
-        disk.store(&path, &before, "jpg", &[JPEG, b"new"].concat());
-        assert_eq!(disk.size(), used);
+        before.store(&store, &path, "jpg", &[JPEG, b"new"].concat());
+        assert_eq!(read_jpeg(&store, &k, "jpg").as_deref(), Some(JPEG));
 
         // Clear during an extraction: the extraction does not store its result.
-        // The previews in memory stay.
-        let extracting = disk.ticket(&other).unwrap();
-        previews.prime(&path, JPEG.to_vec());
-        disk.clear().unwrap();
-        assert_eq!(disk.size(), 0);
-        assert!(previews
-            .cached(&Previews::key(&path, false).unwrap())
-            .is_some());
-        disk.store(&other, &extracting, "jpg", JPEG);
-        assert_eq!(disk.size(), 0);
-        assert!(!dir.path().join("cache").exists());
-        put(disk, &other, JPEG);
-        assert!(disk.size() > 0);
+        let extracting = Ticket::new(&store, &other).unwrap();
+        store.clear().unwrap();
+        assert_eq!(store.size(), 0);
+        extracting.store(&store, &other, "jpg", JPEG);
+        assert_eq!(store.size(), 0);
+        assert!(!dir
+            .path()
+            .join("cache")
+            .join(crate::cache::DIRECTORY)
+            .exists());
+        put(&store, &other, JPEG);
+        assert!(store.size() > 0);
     }
 
     #[tokio::test]
-    async fn disk_hits_need_no_exiftool() {
+    async fn disk_hits_need_no_exiftool_and_cache_only_never_waits() {
         let dir = tempfile::tempdir().unwrap();
         let path = source(dir.path(), "image.X3F", b"raw");
-        put(
-            &previews(dir.path(), dir.path().into(), 1 << 20).disk,
-            &path,
-            JPEG,
-        );
+        put(&store(dir.path(), 1 << 20), &path, JPEG);
         // A new instance has an empty memory cache.
         let previews = previews(dir.path(), dir.path().into(), 1 << 20);
         let missing = source(dir.path(), "missing.X3F", b"raw");
@@ -719,34 +590,67 @@ mod tests {
         assert_eq!(hit.orientation, Some(6));
         // The preview goes to the memory cache.
         assert!(hit.preview.is_none());
-        let key = Previews::key(&path, false).unwrap();
-        assert_eq!(previews.cached(&key).unwrap().unwrap().as_slice(), JPEG);
+        let memory_key = Previews::memory_key(&key(&path), false);
+        assert_eq!(previews.cached(&memory_key).unwrap().as_slice(), JPEG);
 
         let previews = self::previews(dir.path(), dir.path().into(), 1 << 20);
-        let image = previews.get(&path, false).await.unwrap().unwrap();
-        assert_eq!(image.as_slice(), JPEG);
-        assert!(previews.flights.lock().await.is_empty());
-        // The full variant is not in the disk cache.
-        assert!(previews.get(&path, true).await.is_err());
+        // Cache-only requests do not wait for a flight or an extraction slot.
+        let flight = Arc::new(AsyncMutex::new(()));
+        let held = flight.clone().lock_owned().await;
+        previews
+            .flights
+            .lock()
+            .await
+            .insert(memory_key.clone(), flight);
+        let slots = previews.slots.acquire_many(4).await.unwrap();
+        let get = |path: PathBuf, full| {
+            let previews = &previews;
+            async move {
+                tokio::time::timeout(Duration::from_secs(5), previews.get(&path, full, true))
+                    .await
+                    .unwrap()
+                    .unwrap()
+            }
+        };
+        assert_eq!(get(path.clone(), false).await.unwrap().as_slice(), JPEG);
+        // No full entry and no other photo entry: misses, without ExifTool.
+        assert!(get(path.clone(), true).await.is_none());
+        assert!(get(missing.clone(), false).await.is_none());
+        drop((held, slots));
+        previews.flights.lock().await.clear();
+        // The full variant has no disk entry: a normal request needs ExifTool.
+        assert!(previews.get(&path, true, false).await.is_err());
     }
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn missing_full_jpeg_reuses_thumbnail_without_holding_slots() {
+    async fn missing_full_jpeg_reuses_thumbnail_and_is_remembered() {
         let dir = tempfile::tempdir().unwrap();
         fs::write(dir.path().join("exiftool"), r#"if (grep { $_ eq "-PreviewImage" } @ARGV) { print pack("C*", 255, 216, 255, 217); }"#).unwrap();
         let path = source(dir.path(), "no-jpeg.X3F", b"raw");
         let previews = previews(dir.path(), dir.path().into(), 1 << 20);
         let occupied = previews.slots.acquire_many(3).await.unwrap();
-        let image =
-            tokio::time::timeout(std::time::Duration::from_secs(5), previews.get(&path, true))
-                .await
-                .unwrap()
-                .unwrap()
-                .unwrap();
+        let image = tokio::time::timeout(Duration::from_secs(5), previews.get(&path, true, false))
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
         assert_eq!(image.as_slice(), JPEG);
         assert!(previews.flights.lock().await.is_empty());
         drop(occupied);
+        // Disk writes run after the response.
+        for _ in 0..100 {
+            if read_jpeg(&previews.store, &key(&path), "full.jpg").is_some()
+                && read_jpeg(&previews.store, &key(&path), "jpg").is_some()
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        // After a restart, without ExifTool, the full view is a cache hit.
+        let fresh = self::previews(dir.path(), dir.path().join("missing"), 1 << 20);
+        let full = fresh.get(&path, true, true).await.unwrap().unwrap();
+        assert_eq!(full.as_slice(), JPEG);
     }
 
     #[cfg(unix)]
@@ -756,14 +660,11 @@ mod tests {
         fs::write(dir.path().join("exiftool"), "exit 0;").unwrap();
         let path = source(dir.path(), "invalid.X3F", b"invalid raw");
         let previews = previews(dir.path(), dir.path().into(), 1 << 20);
-        assert!(previews.get(&path, false).await.is_err());
+        assert!(previews.get(&path, false, false).await.is_err());
         assert!(previews
-            .cached(&Previews::key(&path, false).unwrap())
+            .cached(&Previews::memory_key(&key(&path), false))
             .is_none());
-        assert!(previews
-            .disk
-            .preview(&previews.disk.ticket(&path).unwrap())
-            .is_none());
+        assert!(read_jpeg(&previews.store, &key(&path), "jpg").is_none());
         assert!(previews.flights.lock().await.is_empty());
     }
 
@@ -779,12 +680,16 @@ mod tests {
             .import(std::slice::from_ref(&path))
             .await
             .contains_key(&path));
-        let small = previews.get(&path, false).await.unwrap().unwrap();
+        let small = previews.get(&path, false, false).await.unwrap().unwrap();
         assert!(is_jpeg(&small));
-        assert_eq!(small, previews.get(&path, true).await.unwrap().unwrap());
+        assert_eq!(
+            small,
+            previews.get(&path, true, false).await.unwrap().unwrap()
+        );
+        tokio::time::sleep(Duration::from_millis(500)).await;
         // A fresh service with no ExifTool must read the rendered JPEG from disk.
         let fresh = self::previews(dir.path(), dir.path().join("missing"), 1 << 20);
-        assert_eq!(small, fresh.get(&path, false).await.unwrap().unwrap());
+        assert_eq!(small, fresh.get(&path, false, true).await.unwrap().unwrap());
         assert_eq!(fresh.import(&[path]).await.len(), 1);
     }
 
@@ -792,30 +697,31 @@ mod tests {
     async fn waiting_thumbnails_leave_foreground_capacity_and_reuse_imported_previews() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("image.X3F");
-        std::fs::write(&path, b"raw").unwrap();
+        fs::write(&path, b"raw").unwrap();
         let previews = previews(dir.path(), dir.path().into(), 1 << 20);
         let occupied = previews.thumbnail_slots.acquire_many(3).await.unwrap();
-        let request = previews.get(&path, false);
+        let request = previews.get(&path, false, false);
         tokio::pin!(request);
-        std::future::poll_fn(|cx| {
-            assert!(request.as_mut().poll(cx).is_pending());
-            Poll::Ready(())
-        })
-        .await;
+        for _ in 0..50 {
+            std::future::poll_fn(|cx| {
+                assert!(request.as_mut().poll(cx).is_pending());
+                Poll::Ready(())
+            })
+            .await;
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
         assert_eq!(previews.slots.available_permits(), 4);
 
         // No ExifTool binary exists: success requires checking the cache after the wait.
         let jpeg = vec![0xff, 0xd8, 0xff, 0xd9];
-        previews.prime(&path, jpeg.clone());
+        previews.prime(&key(&path), jpeg.clone(), previews.store.generation());
         drop(occupied);
         assert_eq!(request.await.unwrap().unwrap().as_ref(), &jpeg);
         assert!(previews.flights.lock().await.is_empty());
 
-        let old_key = Previews::key(&path, false).unwrap();
-        std::fs::write(&path, b"changed raw").unwrap();
-        let new_key = Previews::key(&path, false).unwrap();
-        assert_ne!(old_key, new_key);
-        assert!(previews.cached(&new_key).is_none());
+        let old_key = key(&path);
+        fs::write(&path, b"changed raw").unwrap();
+        assert_ne!(old_key, key(&path));
     }
 
     #[test]
@@ -847,9 +753,14 @@ mod tests {
             percent_encoding::NON_ALPHANUMERIC,
         );
         for host in ["x3f-preview://localhost", "http://x3f-preview.localhost"] {
-            let (decoded, full) = protocol_path(&format!("{host}/{encoded}?v=full&r=1")).unwrap();
+            let (decoded, full, cache_only) =
+                protocol_path(&format!("{host}/{encoded}?v=full&r=1")).unwrap();
             assert_eq!(decoded, path);
-            assert!(full);
+            assert!(full && !cache_only);
+            let (_, full, cache_only) =
+                protocol_path(&format!("{host}/{encoded}?cacheOnly=1")).unwrap();
+            assert!(!full && cache_only);
+            assert!(protocol_path(&format!("{host}/{encoded}?cacheOnly=yes")).is_err());
         }
         assert!(protocol_path("x3f-preview://localhost/%2Fetc%2Fpasswd").is_err());
     }
@@ -880,7 +791,7 @@ mod tests {
                 let import = start.elapsed();
                 let start = std::time::Instant::now();
                 for path in &paths {
-                    previews.get(path, false).await.unwrap();
+                    previews.get(path, false, false).await.unwrap();
                 }
                 eprintln!(
                     "{label}: import {} of {} files in {import:?}, then thumbnails in {:?}",
@@ -896,7 +807,7 @@ mod tests {
             previews(dir.path(), exiftool.clone(), 1 << 30),
         )
         .await;
-        let previews_dir = dir.path().join("cache");
+        let previews_dir = dir.path().join("cache").join(crate::cache::DIRECTORY);
         fs::remove_dir_all(&previews_dir).unwrap();
         run(
             "cold (before this cache)",
@@ -912,7 +823,7 @@ mod tests {
         let fresh = previews(dir.path(), exiftool, 1 << 30);
         let start = std::time::Instant::now();
         for path in &paths {
-            fresh.get(path, false).await.unwrap().unwrap();
+            fresh.get(path, false, false).await.unwrap().unwrap();
         }
         eprintln!("warm thumbnails alone: {:?}", start.elapsed());
     }

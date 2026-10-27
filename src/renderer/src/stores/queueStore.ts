@@ -3,6 +3,7 @@ import {
   batchSettings,
   cameraModel,
   DEFAULT_SETTINGS,
+  RAW_PATH,
   shouldShowDngHighlightRecoveryOption,
   type BatchConversionSettings,
   type ConversionStatus,
@@ -10,6 +11,7 @@ import {
   type OutputFormat,
   type X3FFileDTO
 } from '@shared/types'
+import { capabilitiesOf } from '@shared/editor'
 import type { BatchSummary, ConvertFile, IpcEventMap, OutputConflict } from '@shared/ipc'
 import { ipc } from '../lib/ipc'
 import { basename } from '../lib/path'
@@ -19,8 +21,21 @@ import { isFiltering, NO_FILTER, successor, visibleFiles, type CullFilter } from
 import { useSettingsStore } from './settingsStore'
 import { useNavStore } from './navStore'
 import { useEditorStore } from './editorStore'
+import { t } from '../lib/strings'
 
 const newPlaceholderId = (): string => crypto.randomUUID()
+/** Concurrent `queue:add` calls, and the photos in each batch after the active ones. */
+const IMPORT_LANES = 3
+const IMPORT_BATCH = 8
+/** Shown rows go in smaller batches, so that they show soon. */
+const SHOWN_BATCH = 4
+/** Pending rows that each virtualized view renders now. Import loads them after the active photo. */
+const shownRows = new Map<object, string[]>()
+
+export function setShownRows(view: object, ids: string[] | null): void {
+  if (ids?.length) shownRows.set(view, ids)
+  else shownRows.delete(view)
+}
 
 export interface ExportDraft {
   files: X3FFileDTO[]
@@ -29,6 +44,15 @@ export interface ExportDraft {
   fileSettings?: Record<string, BatchConversionSettings>
   returnScreen?: 'queue' | 'editor'
 }
+
+/** True when a file exports only rendered images, as a DNG does. */
+export const renderedOnly = (file: X3FFileDTO): boolean => capabilitiesOf(file).renderedOnly
+
+/** True when the settings export a rendered JPEG or 16-bit TIFF. As in the backend,
+    JPEG output is always rendered; TIFF output is rendered only with `rendering`. */
+const rendersImage = (settings: BatchConversionSettings): boolean =>
+  settings.outputFormat === 'jpeg' ||
+  (settings.rendering === 'rendered' && settings.outputFormat === 'tiff')
 
 export function exportSettings(draft: ExportDraft, id: string): BatchConversionSettings {
   return draft.fileSettings?.[id] ?? draft.settings
@@ -192,7 +216,7 @@ export const useQueueStore = create<QueueState>((set, get) => {
     )
     if (!files.length || files.some((f) => f.pending)) return null
     const snapshot = batchSettings(settings.settings)
-    if (returnScreen === 'editor' || files.some((file) => file.edit)) {
+    if (returnScreen === 'editor' || files.some((file) => file.edit || renderedOnly(file))) {
       snapshot.rendering = 'rendered'
       if (snapshot.outputFormat !== 'tiff' && snapshot.outputFormat !== 'jpeg')
         snapshot.outputFormat = 'jpeg'
@@ -268,6 +292,15 @@ export const useQueueStore = create<QueueState>((set, get) => {
     let draft = get().draft
     if (!draft || get().isProcessing || get().isPreparing || useEditorStore.getState().closing)
       return
+    // A DNG never exports as an original, also with settings of an earlier batch or file.
+    if (
+      draft.files.some(
+        (file) => renderedOnly(file) && !rendersImage(exportSettings(draft!, file.id))
+      )
+    ) {
+      set({ error: t('export.dng_rendered_only') })
+      return
+    }
     set({ isPreparing: true, error: null })
     try {
       draft = await prepareRendered(draft)
@@ -383,8 +416,8 @@ export const useQueueStore = create<QueueState>((set, get) => {
     async addFiles(paths) {
       if (useEditorStore.getState().closing) return
       // Match main's filter so placeholders line up positionally with the DTOs
-      // it returns (it builds them from the same .x3f/.x3i subset, in the same order).
-      const x3f = paths.filter((p) => /\.x3[fi]$/i.test(p))
+      // it returns (it builds them from the same X3F, X3I, and DNG subset, in the same order).
+      const x3f = paths.filter((p) => RAW_PATH.test(p))
       if (x3f.length === 0) return
 
       // Show rows the instant files are dropped: the filename is known from the
@@ -417,24 +450,33 @@ export const useQueueStore = create<QueueState>((set, get) => {
         if (screen !== 'queue') pin = null
       })
 
-      // Re-evaluate priorities between batches: rapid browsing can move far ahead of import.
+      // Re-evaluate priorities before each batch: rapid browsing can move far ahead of import.
+      // The active photo and its neighbors go alone in a small batch, then the rows that the
+      // views show. A few batches run at once, so that a slow file does not hold the photos
+      // that the backend has cached.
       const remaining = new Set(placeholders.map((file) => file.id))
-      while (remaining.size) {
+      const nextChunk = (): X3FFileDTO[] => {
         const current = get()
         const { sortField, sortAscending } = useSettingsStore.getState().settings
         const ordered = sortFiles(current.files, sortField, sortAscending)
         const active = ordered.findIndex((file) => file.id === current.activeId)
         const nearby = active < 0 ? [] : [ordered[active], ordered[active + 1], ordered[active - 1]]
-        const priority = new Set(nearby.filter(Boolean).map((file) => file.id))
-        const chunk = [
-          ...ordered.filter((file) => priority.has(file.id) && remaining.has(file.id)),
-          ...ordered.filter((file) => !priority.has(file.id) && remaining.has(file.id))
-        ].slice(0, 8)
-        // Keep the active item first even when sorting places its neighbor before it.
-        const index = chunk.findIndex((file) => file.id === current.activeId)
-        if (index > 0) chunk.unshift(...chunk.splice(index, 1))
-        if (!chunk.length) break
+        const priority = nearby.filter((file) => file && remaining.has(file.id))
+        const shown = new Set([...shownRows.values()].flat())
+        const waiting = ordered.filter((file) => remaining.has(file.id))
+        const visible = waiting.filter((file) => shown.has(file.id)).slice(0, SHOWN_BATCH)
+        const chunk = priority.length
+          ? priority
+          : visible.length
+            ? visible
+            : waiting.slice(0, IMPORT_BATCH)
         for (const file of chunk) remaining.delete(file.id)
+        return chunk
+      }
+      const importLane = async (): Promise<void> => {
+        for (let chunk = nextChunk(); chunk.length; chunk = nextChunk()) await importChunk(chunk)
+      }
+      const importChunk = async (chunk: X3FFileDTO[]): Promise<void> => {
         let added: X3FFileDTO[] = []
         try {
           added = await ipc.invoke('queue:add', { paths: chunk.map((file) => file.path) })
@@ -466,6 +508,7 @@ export const useQueueStore = create<QueueState>((set, get) => {
                 ...f,
                 fileSize: dto.fileSize,
                 sourceRevision: dto.sourceRevision,
+                previewRevision: dto.previewRevision,
                 capturedDate: dto.capturedDate,
                 orientation: dto.orientation,
                 aspectRatio: dto.aspectRatio,
@@ -473,6 +516,8 @@ export const useQueueStore = create<QueueState>((set, get) => {
                 edit: dto.edit,
                 editError: dto.editError,
                 frames: dto.frames,
+                sourceKind: dto.sourceKind,
+                capabilities: dto.capabilities,
                 flag: dto.flag,
                 rating: dto.rating,
                 pending: false
@@ -497,6 +542,7 @@ export const useQueueStore = create<QueueState>((set, get) => {
           }
         })
       }
+      await Promise.all(Array.from({ length: IMPORT_LANES }, importLane))
       leave()
     },
 
@@ -591,7 +637,11 @@ export const useQueueStore = create<QueueState>((set, get) => {
       if (get().isPreparing || get().isProcessing || useEditorStore.getState().closing) return
       const state = get()
       const focused = state.draft ? exportSettings(state.draft, state.activeId ?? '') : undefined
-      if (patch.rendering === 'rendered' || patch.outputFormat === 'jpeg') {
+      // A selection with a DNG uses the settings that all its files support: rendered images.
+      const rendered = !!state.draft?.files.some(
+        (file) => state.selectedIds.has(file.id) && renderedOnly(file)
+      )
+      if (patch.rendering === 'rendered' || patch.outputFormat === 'jpeg' || rendered) {
         const format = patch.outputFormat ?? focused?.outputFormat
         const profile = patch.colorProfile ?? focused?.colorProfile ?? 'sRGB'
         patch = {
@@ -669,6 +719,11 @@ export const useQueueStore = create<QueueState>((set, get) => {
         return
       const draft = capture(ids, returnScreen)
       if (!draft) return
+      // A DNG has no original export. The Export screen shows the formats that it supports.
+      if ((format === 'dng' || format === 'embeddedJpg') && draft.files.some(renderedOnly)) {
+        get().openExport(ids, returnScreen)
+        return
+      }
       draft.settings = batchSettings({
         ...DEFAULT_SETTINGS,
         outputFormat: format,
@@ -707,6 +762,12 @@ export const useQueueStore = create<QueueState>((set, get) => {
         return
       const draft = capture(ids, returnScreen)
       if (!draft) return
+      // Previous settings that a DNG cannot use open the Export screen for review.
+      const previous = batchSettings(useSettingsStore.getState().settings)
+      if (!rendersImage(previous) && draft.files.some(renderedOnly)) {
+        get().openExport(ids, returnScreen)
+        return
+      }
       set({ draft })
       await checkAndStart()
       // A failed shortcut can be corrected in the ordinary export screen.

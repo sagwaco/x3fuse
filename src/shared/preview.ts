@@ -4,7 +4,9 @@ import type { X3FFileDTO } from './types'
 export function displayPreviewUrl(file: X3FFileDTO, variant: PreviewVariant = 'preview'): string {
   const url =
     file.displayPreviewUrl ??
-    (file.edit ? (file.edit.previewUrl ?? '') : previewUrl(file.path, variant, file.id))
+    (file.edit
+      ? (file.edit.previewUrl ?? '')
+      : previewUrl(file.path, variant, file.previewRevision ?? file.id))
   // Explicit editor frames already exist; reuse them instead of requesting another render.
   if (
     !file.displayPreviewUrl &&
@@ -38,8 +40,9 @@ export const PREVIEW_SCHEME = 'x3f-preview'
 
 /**
  * Build a `x3f-preview://` URL for an absolute file path, usable as an
- * `<img src>` or `fetch()` target in the renderer. A queue file's stable ID
- * keeps browser caches reusable while browsing and fresh after reimporting.
+ * `<img src>` or `fetch()` target in the renderer. The source's preview revision
+ * keeps caches reusable after a reimport and fresh after the source changes.
+ * A pending row uses its queue ID until the revision arrives.
  */
 export function previewUrl(
   path: string,

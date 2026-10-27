@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 let input = process.env.X3FUSE_SMOKE_FILE
-if (!input || !isAbsolute(input)) throw new Error('Set X3FUSE_SMOKE_FILE to an absolute X3F path')
+if (!input || !isAbsolute(input)) throw new Error('Set X3FUSE_SMOKE_FILE to an absolute RAW path')
 await access(input)
 if (process.argv.includes('--build')) {
   const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm'

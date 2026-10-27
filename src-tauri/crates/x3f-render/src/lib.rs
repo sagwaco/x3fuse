@@ -1,6 +1,7 @@
 //! GPU-only scene-linear RAW editing. The physical film implementation is GPL-3.0-only.
 mod camera;
 mod color;
+mod export;
 mod fill;
 mod film;
 mod geometry;
@@ -12,9 +13,10 @@ pub use color::{
     as_shot_channel_gains, as_shot_white_balance, pick_channel_gains, pick_white_balance,
     recipe_white_balance, WhiteBalance,
 };
+pub use export::{ExportResize, ResamplingMethod};
 pub use preview::raw_preview;
 pub use recipe::{
-    ColorWheels, Crop, Curves, EditRecipe, EffectsSettings, FilmSettings, GrainParams,
+    ColorWheels, Crop, Curves, DngDemosaic, EditRecipe, EffectsSettings, FilmSettings, GrainParams,
     HalationParams, HslBand, MonochromeFilter, MonochromeSettings, Point, RawColor, Wheel,
 };
 pub use stocks::STOCKS_JSON;
@@ -33,7 +35,10 @@ pub use stocks::STOCKS_JSON;
 /// Version 11 reduces the default grain blur.
 /// Version 12 adds monochrome warmth and source-color tone mixing.
 /// Version 13 renders a monochrome RAW mix as a monochrome image.
-pub const RENDER_VERSION: u32 = 13;
+/// Version 15 adds neutral DNG rendering without the Sigma tone curve.
+/// Version 16 corrects DNG highlight clipping.
+/// Version 17 adds selectable Bayer DNG demosaicing.
+pub const RENDER_VERSION: u32 = 17;
 
 use image::ImageEncoder;
 use serde::{Deserialize, Serialize};
@@ -165,6 +170,28 @@ impl RenderedImage {
     pub fn png(&self) -> Result<Vec<u8>, RenderError> {
         self.png_preview(self.width.max(self.height))
     }
+    /// Decodes a preview PNG as an 8-bit sRGB frame, so that a smaller
+    /// preview can come from it without a render.
+    pub fn from_png(bytes: &[u8]) -> Result<Self, RenderError> {
+        let rgba =
+            image::load_from_memory_with_format(bytes, image::ImageFormat::Png)?.into_rgba8();
+        let (width, height) = rgba.dimensions();
+        let mut frame = Vec::with_capacity(FRAME_HEADER + rgba.len());
+        frame.extend_from_slice(b"X3F8");
+        for value in [width, height, 0] {
+            frame.extend_from_slice(&value.to_le_bytes());
+        }
+        frame.extend_from_slice(rgba.as_raw());
+        Ok(Self {
+            width,
+            height,
+            data: Pixels::Rgba8(frame),
+            color_profile: ColorProfile::Srgb,
+            full_width: width,
+            full_height: height,
+            region: None,
+        })
+    }
     /// Reuse a completed editor frame for a small preview without preparing RAW again.
     pub fn png_preview(&self, max_edge: u32) -> Result<Vec<u8>, RenderError> {
         if max_edge == 0 {
@@ -251,6 +278,7 @@ fn cancelled(cancel: &AtomicBool) -> Result<(), RenderError> {
 pub struct PreparedImage {
     image: SceneLinearImage,
     camera_profiles: CameraProfiles,
+    dng: Option<bool>,
     gpu: Mutex<Option<GpuSource>>,
     as_shot: OnceLock<(f32, f32)>,
 }
@@ -260,6 +288,7 @@ impl PreparedImage {
         Ok(Self {
             image,
             camera_profiles: CameraProfiles::default(),
+            dng: None,
             gpu: Mutex::new(None),
             as_shot: OnceLock::new(),
         })
@@ -276,6 +305,11 @@ impl PreparedImage {
     /// Attaches the source file's calibration for camera-profile rendering.
     pub fn with_camera_profiles(mut self, camera_profiles: CameraProfiles) -> Self {
         self.camera_profiles = camera_profiles;
+        self
+    }
+    /// Use scene-linear DNG tone and exposure, without Sigma calibration.
+    pub fn with_dng_source(mut self, monochrome: bool) -> Self {
+        self.dng = Some(monochrome);
         self
     }
 }
@@ -581,6 +615,7 @@ struct Look<'a> {
     metered_gray: f64,
     /// spektrafilm's scanner white and black correction on film looks.
     scanner: bool,
+    sigma_tone: bool,
 }
 impl Look<'_> {
     fn plain() -> Self {
@@ -589,6 +624,7 @@ impl Look<'_> {
             native: None,
             metered_gray: camera::fallback_metered_gray(),
             scanner: true,
+            sigma_tone: true,
         }
     }
     /// spektrafilm's own defaults, for parity checks against its reference.
@@ -1046,6 +1082,11 @@ impl Renderer {
     ) -> Result<RenderedImage, RenderError> {
         cancelled(cancel)?;
         recipe.validate().map_err(RenderError::Invalid)?;
+        if let Some(monochrome) = image.dng {
+            recipe
+                .validate_dng(monochrome)
+                .map_err(RenderError::Invalid)?;
+        }
         let recipe = camera::effective_recipe(recipe);
         // Sigma's native Color Mode needs the sensor calibration measured
         // while preparing the scene.
@@ -1057,6 +1098,15 @@ impl Renderer {
                 .camera_profiles
                 .metered_gray(sensor, image.image.white_balance.camera_to_rgb),
             scanner: true,
+            sigma_tone: image.dng.is_none(),
+        };
+        let look = if image.dng.is_some() {
+            Look {
+                metered_gray: 0.184,
+                ..look
+            }
+        } else {
+            look
         };
         let mut gpu = self.source(image, cancel)?;
         self.render_source(
@@ -1631,6 +1681,7 @@ impl Renderer {
         look: Look<'_>,
     ) -> Result<Parameters, RenderError> {
         let mut p: Parameters = [[0.; 4]; PARAMETER_SLOTS];
+        p[62][2] = f32::from(!look.sigma_tone);
         // A B&W film already makes a neutral image; the sensor-layer mix is
         // only for colour film or no film. Both neutralize the output.
         let silver = r.film.is_some() && pair.is_some_and(|pair| pair.monochrome);
@@ -1638,7 +1689,10 @@ impl Renderer {
         // A monochrome RAW mix takes its hue from the color infrared image, then
         // mixes it to gray with the shared row, as the sensor-layer mix does.
         let raw_row = r.raw_color.as_ref().and_then(RawColor::monochrome_row);
-        let neutral = r.monochrome.is_some() || silver || raw_row.is_some();
+        let neutral = r.monochrome.is_some()
+            || silver
+            || raw_row.is_some()
+            || r.dng_demosaic == Some(DngDemosaic::Mono);
         p[1] = [
             g.scale,
             o.color_profile.index(),
@@ -1658,6 +1712,9 @@ impl Renderer {
             if neutral { 0. } else { r.vibrance / 100. },
         ];
         p[4][0] = r.sharpen / 100.;
+        if r.dng_demosaic == Some(DngDemosaic::Mono) {
+            p[4][1..].copy_from_slice(&[0., 1., 0.]);
+        }
         if let Some(monochrome) = sensor_mix {
             p[4][1..].copy_from_slice(&color::monochrome_mix(
                 &image.white_balance,

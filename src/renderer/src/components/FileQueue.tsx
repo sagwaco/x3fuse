@@ -8,7 +8,7 @@ import { useFileDrop } from '../hooks/useFileDrop'
 import { useQueueSelection, type QueueSelection } from '../hooks/useQueueSelection'
 import { useMarquee } from '../hooks/useMarquee'
 import { MarqueeBox } from './ui/marqueeBox'
-import { useScrollToActive } from '../hooks/useScrollToActive'
+import { useScrollToActive, useShownRows } from '../hooks/useScrollToActive'
 import { useElementWidth } from '../hooks/useElementWidth'
 import { useShownFiles } from '../hooks/useCulling'
 import { formatBytes, formatDateWithOrdinal } from '../lib/format'
@@ -18,6 +18,7 @@ import { QueueContextMenu } from './QueueContextMenu'
 import { Thumbnail } from './Thumbnail'
 import { CullBadge } from './CullBadge'
 import { StackBadge } from './StackBadge'
+import { EditErrorBadge } from './EditErrorBadge'
 import { ResizeHandle } from './ui/resizeHandle'
 
 const ROW_HEIGHT = 30
@@ -79,6 +80,7 @@ export function FileQueue({ draft }: { draft?: ExportDraft }): React.JSX.Element
       .map((file) => file.id)
   )
   useScrollToActive(virtualizer, sorted, activeId)
+  useShownRows(virtualizer, sorted)
 
   function toggleSort(field: SortField): void {
     if (sortField === field) void updateSettings({ sortAscending: !sortAscending })
@@ -278,6 +280,7 @@ const Row = memo(function Row({
         <span className="truncate">{file.fileName}</span>
         <CullBadge file={file} />
         <StackBadge file={file} />
+        <EditErrorBadge file={file} />
       </div>
       <span className="truncate pl-2 text-tone-400 group-data-[selected]:text-tone-100">
         {file.pending ? (

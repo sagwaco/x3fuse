@@ -41,6 +41,8 @@ src-tauri/target/
 src-tauri/gen/
 src-tauri/resources/exiftool/
 src-tauri/resources/licenses/
+src-tauri/crates/x3f-dng/libraw/
+src-tauri/crates/x3f-dng/rtprocess/
 .cache/
 artifacts/
 src-tauri/.cargo/config.toml

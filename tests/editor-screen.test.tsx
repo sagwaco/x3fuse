@@ -331,6 +331,85 @@ it('draws the Before pill as a glass overlay', () => {
   expect(screen.getByText(t('editor.before')).classList.contains('glass-overlay')).toBe(true)
 })
 
+it('shows a canvas status for a changed demosaic through the draft refinement gap', () => {
+  const bayerSession = {
+    ...session,
+    capabilities: { foveon: false, whiteBalance: true, renderedOnly: true, bayer: true }
+  }
+  const pendingDoc = { ...doc, recipe: { ...doc.recipe, dngDemosaic: 'dcb' as const } }
+  editor.setState({
+    session: bayerSession,
+    documents: { [file.path]: pendingDoc },
+    preview: { ...frame, draft: true },
+    renderedDemosaic: 'amaze',
+    loading: false,
+    rendering: false
+  })
+  const view = render(<EditorScreen />)
+  const status = screen.getByText(t('editor.demosaicLoading'))
+  expect(status.closest('[role=status]')).not.toBeNull()
+  expect(status.classList.contains('glass-overlay')).toBe(true)
+  expect(
+    status.querySelector('[aria-hidden=true]')?.classList.contains('motion-safe:animate-spin')
+  ).toBe(true)
+  expect(
+    view.container.querySelector('[data-editor-frame]')?.getAttribute('data-editor-frame')
+  ).toBe(frame.url)
+  // Undo before refinement already has the selected method on screen.
+  act(() =>
+    editor.setState({
+      documents: { [file.path]: { ...doc, recipe: { ...doc.recipe, dngDemosaic: 'amaze' } } }
+    })
+  )
+  expect(screen.queryByText(t('editor.demosaicLoading'))).toBeNull()
+  act(() => editor.setState({ documents: { [file.path]: pendingDoc } }))
+  // An autosave error does not stop the pending render or its status.
+  act(() => editor.setState({ error: 'Save failed' }))
+  expect(screen.queryByText(t('editor.demosaicLoading'))).not.toBeNull()
+  act(() => editor.setState({ rendering: true }))
+  expect(screen.queryByText(t('editor.demosaicLoading'))).not.toBeNull()
+  act(() => editor.setState({ renderedDemosaic: 'dcb', preview: frame, rendering: false }))
+  expect(screen.queryByText(t('editor.demosaicLoading'))).toBeNull()
+  // Other adjustments can render drafts without a demosaic status.
+  act(() => editor.setState({ preview: { ...frame, draft: true }, rendering: true }))
+  expect(screen.queryByText(t('editor.demosaicLoading'))).toBeNull()
+  act(() =>
+    editor.setState({
+      renderedDemosaic: 'amaze',
+      rendering: false,
+      renderFailed: true,
+      error: 'Demosaic failed'
+    })
+  )
+  expect(screen.queryByText(t('editor.demosaicLoading'))).toBeNull()
+  // A retry shows progress even while the previous error remains on screen.
+  act(() => editor.setState({ rendering: true, renderFailed: false }))
+  expect(screen.queryByText(t('editor.demosaicLoading'))).not.toBeNull()
+  act(() => editor.setState({ loading: true }))
+  expect(screen.queryByText(t('editor.demosaicLoading'))).toBeNull()
+  act(() => editor.setState({ session, loading: false }))
+  expect(screen.queryByText(t('editor.demosaicLoading'))).toBeNull()
+})
+
+it('shows the demosaic status for Default on a monochrome DNG until it renders', () => {
+  const monoSession = {
+    ...session,
+    capabilities: { foveon: false, whiteBalance: false, renderedOnly: true }
+  }
+  editor.setState({
+    session: monoSession,
+    documents: { [file.path]: { ...doc, recipe: { ...doc.recipe, dngDemosaic: 'default' } } },
+    preview: { ...frame, draft: true },
+    renderedDemosaic: undefined,
+    loading: false,
+    rendering: true
+  })
+  render(<EditorScreen />)
+  expect(screen.queryByText(t('editor.demosaicLoading'))).not.toBeNull()
+  act(() => editor.setState({ renderedDemosaic: 'default', preview: frame, rendering: false }))
+  expect(screen.queryByText(t('editor.demosaicLoading'))).toBeNull()
+})
+
 it('leaves no focus on Crop after the toolbar exit animation ends', async () => {
   const finishers: Array<() => void> = []
   Element.prototype.animate = function () {
@@ -826,6 +905,29 @@ it('toggles the neutral picker with W', () => {
   dialog.remove()
   fireEvent.keyDown(document, { key: 'w' })
   expect(picking()).toBe('true')
+})
+
+it('disarms the neutral picker when a Bayer DNG changes to the Mono demosaic', () => {
+  const bayer = { foveon: false, whiteBalance: true, renderedOnly: true, bayer: true }
+  const amaze = { ...doc, recipe: { ...doc.recipe, film: null, dngDemosaic: 'amaze' as const } }
+  editor.setState({
+    session: { ...session, capabilities: bayer },
+    documents: { [file.path]: amaze },
+    loading: false,
+    preview: frame
+  })
+  const view = render(<EditorScreen />)
+  const picking = (): string | null | undefined =>
+    view.container.querySelector('[data-editor-frame]')?.getAttribute('data-picking')
+  fireEvent.keyDown(document, { key: 'w' })
+  expect(picking()).toBe('true')
+  // The source capabilities stay the same; the recipe removes the white balance.
+  const mono = { ...amaze, recipe: { ...amaze.recipe, dngDemosaic: 'mono' as const } }
+  act(() => editor.setState({ documents: { [file.path]: mono } }))
+  expect(picking()).not.toBe('true')
+  fireEvent.keyDown(document, { key: 'w' })
+  expect(picking()).not.toBe('true')
+  expect(runCommand('whiteBalancePicker')).toBe(false)
 })
 
 function scopeAttribute(name: string): string | null | undefined {
@@ -1578,4 +1680,50 @@ it('shows a dismissible qualifier toast outside the sidebar scroll body without 
   expect(view.container.contains(toast)).toBe(true)
   expect(toast.textContent).toBe('')
   expect(within(toast as HTMLElement).queryByRole('button')).toBeNull()
+})
+
+it('offers no white balance picker for a monochrome DNG from a key, the menu, or the context menu', async () => {
+  let choose: (value: string | null) => void = () => {}
+  const invoke = vi.fn((channel: string, _payload?: unknown) =>
+    channel === 'menu:popup' ? new Promise((resolve) => (choose = resolve)) : Promise.resolve(null)
+  )
+  ;(window as unknown as { x3f: unknown }).x3f = { invoke, on: () => () => {} }
+  const capabilities = { foveon: false, whiteBalance: false, renderedOnly: true }
+  const pickWhiteBalance = vi.fn(async () => {})
+  editor.setState({
+    session: { ...session, sourceKind: 'dng', capabilities },
+    documents: { [file.path]: doc },
+    loading: false,
+    preview: frame,
+    pickWhiteBalance
+  })
+  const view = render(<EditorScreen />)
+  const picker = screen.getByRole('button', { name: 'Pick white balance' })
+  fireEvent.keyDown(document.body, { key: 'w' })
+  expect(runCommand('whiteBalancePicker', { source: 'menu' })).toBe(false)
+  expect(picker.ariaPressed).toBe('false')
+  fireEvent.click(view.container.querySelector('[data-menu]')!, { detail: 1 })
+  const request = invoke.mock.calls.filter(([channel]) => channel === 'menu:popup').at(-1)![1]
+  expect((request as NativeMenuRequest).items[2]).toMatchObject({
+    value: 'whiteBalance',
+    disabled: true
+  })
+  await act(async () => choose('whiteBalance'))
+  expect(pickWhiteBalance).not.toHaveBeenCalled()
+  // A color DNG keeps its white balance picker.
+  act(() =>
+    editor.setState({
+      session: {
+        ...session,
+        sourceKind: 'dng',
+        capabilities: { ...capabilities, whiteBalance: true }
+      }
+    })
+  )
+  let ran = false
+  act(() => {
+    ran = runCommand('whiteBalancePicker', { source: 'menu' })
+  })
+  expect(ran).toBe(true)
+  expect(picker.ariaPressed).toBe('true')
 })

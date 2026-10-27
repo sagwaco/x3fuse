@@ -1,22 +1,26 @@
 //! Non-destructive recipes. Originals are opened read-only; failed writes stay pending.
 use crate::{
+    cache::Store,
     model::source_path,
     storage::{read_json_bounded, write_bytes_atomic, write_json_atomic},
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{BTreeMap, HashMap, VecDeque},
     fs,
     io::Read,
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
 };
 use x3f_render::EditRecipe;
 
 const FINGERPRINTS_FILE: &str = "fingerprints-v2.json";
+/// The most entries in `FINGERPRINTS_FILE`. The preview cache keeps the others.
 const FINGERPRINT_LIMIT: usize = 1024;
+/// The most fingerprints in memory, about 300 bytes each.
+const FINGERPRINT_MEMORY_LIMIT: usize = 16 * 1024;
 const JSON_LIMIT: usize = 1024 * 1024;
 /// Version 2 documents were saved after photos opened with their camera
 /// defaults. Version 1 documents can hold an untouched photo's old defaults.
@@ -80,40 +84,111 @@ impl SourceStamp {
 
 type Fingerprint = (PathBuf, SourceStamp, String);
 
+fn hash_valid(hash: &str) -> bool {
+    hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+struct Remembered {
+    stamp: SourceStamp,
+    hash: String,
+    tick: u64,
+    /// The cache generation in which the preview cache stored this
+    /// fingerprint. A Clear changes the generation and removes it.
+    stored: Option<u64>,
+}
+
+/// Fingerprints by canonical path, least recently used out.
 #[derive(Default)]
 struct FingerprintCache {
-    // ponytail: linear LRU lookup, bounded to 1024 sources like the preview cache.
-    entries: VecDeque<Fingerprint>,
+    entries: HashMap<PathBuf, Remembered>,
+    order: BTreeMap<u64, PathBuf>,
+    tick: u64,
     dirty: bool,
 }
 
 impl FingerprintCache {
     fn get(&mut self, path: &Path, stamp: &SourceStamp) -> Option<String> {
-        let index = self
-            .entries
-            .iter()
-            .position(|(p, s, _)| p == path && s == stamp)?;
-        let entry = self.entries.remove(index)?;
-        let hash = entry.2.clone();
-        self.entries.push_back(entry);
+        let entry = self.entries.get_mut(path).filter(|e| e.stamp == *stamp)?;
+        self.tick += 1;
+        let old = std::mem::replace(&mut entry.tick, self.tick);
+        let hash = entry.hash.clone();
+        let path = self.order.remove(&old)?;
+        self.order.insert(self.tick, path);
         Some(hash)
     }
 
-    fn put(&mut self, path: PathBuf, stamp: SourceStamp, hash: String) {
-        self.entries.retain(|(p, _, _)| p != &path);
-        self.entries.push_back((path, stamp, hash));
-        while self.entries.len() > FINGERPRINT_LIMIT {
-            self.entries.pop_front();
+    /// Returns the removed fingerprints that the preview cache does not have
+    /// in the `current` generation.
+    fn put(
+        &mut self,
+        path: PathBuf,
+        stamp: SourceStamp,
+        hash: String,
+        stored: Option<u64>,
+        current: Option<u64>,
+    ) -> Vec<Fingerprint> {
+        self.tick += 1;
+        let tick = self.tick;
+        if let Some(old) = self.entries.insert(
+            path.clone(),
+            Remembered {
+                stamp,
+                hash,
+                tick,
+                stored,
+            },
+        ) {
+            self.order.remove(&old.tick);
         }
+        self.order.insert(tick, path);
         self.dirty = true;
+        let mut evicted = vec![];
+        while self.entries.len() > FINGERPRINT_MEMORY_LIMIT {
+            let Some((_, path)) = self.order.pop_first() else {
+                break;
+            };
+            if let Some(old) = self.entries.remove(&path).filter(|e| e.stored != current) {
+                evicted.push((path, old.stamp, old.hash));
+            }
+        }
+        evicted
+    }
+
+    /// The newest fingerprints, newest first.
+    fn newest(&self, limit: usize) -> Vec<Fingerprint> {
+        self.order
+            .values()
+            .rev()
+            .take(limit)
+            .map(|path| {
+                let entry = &self.entries[path];
+                (path.clone(), entry.stamp.clone(), entry.hash.clone())
+            })
+            .collect()
+    }
+
+    /// The fingerprints after the newest `skip` that the preview cache does
+    /// not have in the `current` generation. A snapshot leaves them out, so the
+    /// preview cache must keep them.
+    fn unstored(&self, skip: usize, current: u64) -> Vec<Fingerprint> {
+        self.order
+            .values()
+            .rev()
+            .skip(skip)
+            .filter_map(|path| {
+                let entry = &self.entries[path];
+                (entry.stored != Some(current))
+                    .then(|| (path.clone(), entry.stamp.clone(), entry.hash.clone()))
+            })
+            .collect()
     }
 }
 
-fn fingerprint_snapshot(entries: &VecDeque<Fingerprint>) -> Vec<u8> {
-    // Newest first on disk. Bad paths/timestamps only omit their own entry;
+fn fingerprint_snapshot(entries: &[Fingerprint]) -> Vec<u8> {
+    // Newest first, as given. Bad paths/timestamps only omit their own entry;
     // long paths cannot make us publish a file the bounded reader rejects.
     let mut bytes = vec![b'['];
-    for entry in entries.iter().rev() {
+    for entry in entries {
         let Ok(json) = serde_json::to_vec(entry) else {
             continue;
         };
@@ -129,16 +204,35 @@ fn fingerprint_snapshot(entries: &VecDeque<Fingerprint>) -> Vec<u8> {
     bytes
 }
 
+/// The preview cache entry of one fingerprint. It is keyed by the canonical
+/// path and the full stamp only, as the hash does not depend on a decoder.
+fn fingerprint_name(path: &Path, stamp: &SourceStamp) -> Option<String> {
+    let key = serde_json::to_vec(&("fp", path, stamp)).ok()?;
+    Some(format!("{:x}.fp.json", Sha256::digest(key)))
+}
+
+/// The hash in a preview cache entry, if the entry is for `path` and `stamp`.
+fn stored_fingerprint(bytes: &[u8], path: &Path, stamp: &SourceStamp) -> Option<String> {
+    let (p, s, hash): Fingerprint = serde_json::from_slice(bytes).ok()?;
+    (p == path && s == *stamp && hash_valid(&hash)).then_some(hash)
+}
+
 pub struct Edits {
     directory: PathBuf,
     // Serializes saves/flush so an older request cannot publish after a newer one.
     pending: Mutex<HashMap<PathBuf, Document>>,
     fingerprints: Mutex<FingerprintCache>,
     fingerprint_writer: Mutex<()>,
+    /// Keeps the fingerprints beyond `FINGERPRINT_LIMIT` across restarts.
+    store: Option<Arc<Store>>,
 }
 
 impl Edits {
     pub fn new(directory: PathBuf) -> Self {
+        Self::with_store(directory, None)
+    }
+
+    pub fn with_store(directory: PathBuf, store: Option<Arc<Store>>) -> Self {
         // PNGs already survive restarts; their source validation must too, or
         // importing saved edits reads every full RAW before showing cached pixels.
         // ponytail: Windows keeps session-only hashes until file-ID/change-time
@@ -154,19 +248,55 @@ impl Edits {
         } else {
             VecDeque::new()
         };
-        entries.retain(|(path, _, hash)| {
-            path.is_absolute() && hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_hexdigit())
-        });
+        entries.retain(|(path, _, hash)| path.is_absolute() && hash_valid(hash));
         entries.truncate(FINGERPRINT_LIMIT);
-        entries.make_contiguous().reverse();
+        let mut fingerprints = FingerprintCache::default();
+        // Oldest first, so that the newest has the highest tick. A first-level
+        // entry is not known to be in the preview cache; eviction stores it.
+        for (path, stamp, hash) in entries.into_iter().rev() {
+            fingerprints.put(path, stamp, hash, None, None);
+        }
+        fingerprints.dirty = false;
         Self {
             directory,
             pending: Mutex::new(HashMap::new()),
-            fingerprints: Mutex::new(FingerprintCache {
-                entries,
-                dirty: false,
-            }),
+            fingerprints: Mutex::new(fingerprints),
             fingerprint_writer: Mutex::new(()),
+            // The Windows stamp cannot detect a replacement with the same size
+            // and times, so its hashes stay in memory for this session only.
+            store: store.filter(|_| cfg!(unix)),
+        }
+    }
+
+    /// Puts fingerprints into the preview cache for `generation`. Returns the
+    /// stored ones.
+    fn spill(&self, entries: Vec<Fingerprint>, generation: u64) -> Vec<Fingerprint> {
+        let Some(store) = &self.store else {
+            return vec![];
+        };
+        entries
+            .into_iter()
+            .filter(|entry| {
+                let (Some(name), Ok(bytes)) = (
+                    fingerprint_name(&entry.0, &entry.1),
+                    serde_json::to_vec(entry),
+                ) else {
+                    return false;
+                };
+                store.put(generation, &name, &bytes)
+            })
+            .collect()
+    }
+
+    fn remember(&self, path: PathBuf, stamp: SourceStamp, hash: String, stored: Option<u64>) {
+        let current = self.store.as_ref().map(|s| s.generation());
+        let evicted = match self.fingerprints.lock() {
+            Ok(mut cache) => cache.put(path, stamp, hash, stored, current),
+            Err(_) => return,
+        };
+        // Memory no longer has them, so there is nothing to mark.
+        if let Some(current) = current {
+            self.spill(evicted, current);
         }
     }
 
@@ -179,15 +309,39 @@ impl Edits {
         let Ok(_writer) = self.fingerprint_writer.lock() else {
             return;
         };
-        let entries = {
+        // A Clear removes stored fingerprints without a change here, so check
+        // the generation on each flush, not only when the snapshot changes.
+        let generation = self
+            .store
+            .as_ref()
+            .filter(|s| s.enabled())
+            .map(|s| s.generation());
+        let (entries, beyond) = {
             let Ok(mut cache) = self.fingerprints.lock() else {
                 return;
             };
-            if !cache.dirty {
+            let beyond = generation.map_or_else(Vec::new, |g| cache.unstored(FINGERPRINT_LIMIT, g));
+            if !cache.dirty && beyond.is_empty() {
                 return;
             }
+            let entries = cache.dirty.then(|| cache.newest(FINGERPRINT_LIMIT));
             cache.dirty = false;
-            cache.entries.clone()
+            (entries, beyond)
+        };
+        // Store the fingerprints that the snapshot leaves out before it
+        // replaces a snapshot that has them.
+        if let Some(generation) = generation {
+            let stored = self.spill(beyond, generation);
+            if let Ok(mut cache) = self.fingerprints.lock() {
+                for (path, stamp, _) in stored {
+                    if let Some(entry) = cache.entries.get_mut(&path).filter(|e| e.stamp == stamp) {
+                        entry.stored = Some(generation);
+                    }
+                }
+            }
+        }
+        let Some(entries) = entries else {
+            return;
         };
         let bytes = fingerprint_snapshot(&entries);
         if write_bytes_atomic(&self.directory.join(FINGERPRINTS_FILE), &bytes, false).is_err() {
@@ -200,6 +354,9 @@ impl Edits {
     pub fn source_revision(&self, path: &Path) -> Result<String, String> {
         source_path(path)?;
         let canonical = path.canonicalize().map_err(|e| e.to_string())?;
+        // Capture the generation before the stamp. A Clear after this point
+        // makes the store reject this fingerprint.
+        let generation = self.store.as_ref().map(|s| s.generation());
         let before = SourceStamp::new(&fs::metadata(&canonical).map_err(|e| e.to_string())?)?;
         if let Some(hash) = self
             .fingerprints
@@ -208,6 +365,21 @@ impl Edits {
             .get(&canonical, &before)
         {
             return Ok(hash);
+        }
+        let cached = self
+            .store
+            .as_ref()
+            .zip(fingerprint_name(&canonical, &before));
+        if let Some((store, name)) = &cached {
+            if let Some(hash) = store
+                .get(name, &[], |b| {
+                    stored_fingerprint(b, &canonical, &before).is_some()
+                })
+                .and_then(|b| stored_fingerprint(&b, &canonical, &before))
+            {
+                self.remember(canonical, before, hash.clone(), generation);
+                return Ok(hash);
+            }
         }
         let mut file = fs::File::open(&canonical).map_err(|e| e.to_string())?;
         let mut digest = Sha256::new();
@@ -224,11 +396,19 @@ impl Edits {
             return Err("The source changed while being read; reopen the photo".into());
         }
         let hash = format!("{:x}", digest.finalize());
-        let mut cache = self
-            .fingerprints
-            .lock()
-            .map_err(|_| "Source cache unavailable")?;
-        cache.put(canonical, before, hash.clone());
+        let persisted = match (&cached, generation) {
+            (Some((store, name)), Some(generation)) => {
+                serde_json::to_vec(&(&canonical, &before, &hash))
+                    .is_ok_and(|bytes| store.put(generation, name, &bytes))
+            }
+            _ => false,
+        };
+        self.remember(
+            canonical,
+            before,
+            hash.clone(),
+            generation.filter(|_| persisted),
+        );
         Ok(hash)
     }
 
@@ -237,6 +417,22 @@ impl Edits {
             "{:x}.json",
             Sha256::digest(path.to_string_lossy().as_bytes())
         ))
+    }
+
+    pub fn protect_backup(&self, output: &Path) -> Result<(), String> {
+        if let Ok(target) = output.canonicalize() {
+            if self
+                .backup(&target)
+                .try_exists()
+                .map_err(|e| e.to_string())?
+            {
+                return Err(format!(
+                    "Cannot overwrite a source photo with saved edits: {}",
+                    output.display()
+                ));
+            }
+        }
+        Ok(())
     }
 
     fn read(path: &Path) -> Result<Option<Document>, String> {
@@ -290,6 +486,7 @@ impl Edits {
         if document.source_revision != self.source_revision(&path)? {
             return Err("The saved edits belong to different source contents. Both files have been preserved.".into());
         }
+        crate::source::validate_recipe(&path, &document.recipe)?;
         Ok(Some(record(document, storage, storage_path)))
     }
 
@@ -300,7 +497,7 @@ impl Edits {
         revision: u64,
         expected_source: Option<&str>,
     ) -> Result<EditRecord, String> {
-        recipe.validate().map_err(|e| e.to_string())?;
+        crate::source::validate_recipe(path, &recipe)?;
         if revision == 0 || revision > 9_007_199_254_740_991 {
             return Err("Invalid edit revision".into());
         }
@@ -485,6 +682,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn backup_edits_protect_an_unimported_source_after_restart() {
+        let temp = tempfile::tempdir().unwrap();
+        let input = temp.path().join("photo.dng");
+        fs::write(&input, b"source").unwrap();
+        let input = input.canonicalize().unwrap();
+        let directory = temp.path().join("edits");
+        fs::create_dir_all(&directory).unwrap();
+        let edits = Edits::new(directory.clone());
+        assert!(edits.protect_backup(&input).is_ok());
+        fs::write(edits.backup(&input), b"saved edits").unwrap();
+        let reopened = Edits::new(directory);
+        assert!(reopened.protect_backup(&input).is_err());
+    }
+
+    #[test]
     fn saved_source_fingerprints_survive_restart_and_reject_changed_raws() {
         let temp = tempfile::tempdir().unwrap();
         let input = temp.path().join("photo.X3F");
@@ -498,14 +710,7 @@ mod tests {
         let reopened = Edits::new(directory.clone());
         #[cfg(unix)]
         assert_eq!(
-            reopened
-                .fingerprints
-                .lock()
-                .unwrap()
-                .entries
-                .back()
-                .unwrap()
-                .2,
+            reopened.fingerprints.lock().unwrap().newest(1)[0].2,
             saved.source_revision,
             "A restart must restore the validated hash before loading saved edits"
         );
@@ -626,14 +831,44 @@ mod tests {
         let path = |n| temp.path().join(format!("{n}.X3F"));
         {
             let mut cache = edits.fingerprints.lock().unwrap();
-            for n in 0..FINGERPRINT_LIMIT {
-                cache.put(path(n), stamp.clone(), hash.clone());
+            for n in 0..FINGERPRINT_MEMORY_LIMIT {
+                let stored = (n == 2 || n == 3).then_some(0);
+                cache.put(path(n), stamp.clone(), hash.clone(), stored, Some(0));
             }
             assert_eq!(cache.get(&path(0), &stamp), Some(hash.clone()));
-            cache.put(path(FINGERPRINT_LIMIT), stamp.clone(), hash.clone());
-            assert_eq!(cache.entries.len(), FINGERPRINT_LIMIT);
+            let evicted = cache.put(
+                path(FINGERPRINT_MEMORY_LIMIT),
+                stamp.clone(),
+                hash.clone(),
+                None,
+                Some(0),
+            );
+            assert_eq!(evicted.len(), 1);
+            assert_eq!(evicted[0].0, path(1));
+            assert_eq!(cache.entries.len(), FINGERPRINT_MEMORY_LIMIT);
             assert!(cache.get(&path(1), &stamp).is_none());
             assert_eq!(cache.get(&path(0), &stamp), Some(hash.clone()));
+            // A stored fingerprint leaves memory without a second write.
+            assert!(cache
+                .put(
+                    path(FINGERPRINT_MEMORY_LIMIT + 1),
+                    stamp.clone(),
+                    hash.clone(),
+                    None,
+                    Some(0)
+                )
+                .is_empty());
+            assert!(!cache.entries.contains_key(&path(2)));
+            // After a Clear, a fingerprint stored earlier is not stored.
+            let evicted = cache.put(
+                path(FINGERPRINT_MEMORY_LIMIT + 2),
+                stamp.clone(),
+                hash.clone(),
+                None,
+                Some(1),
+            );
+            assert_eq!(evicted.len(), 1);
+            assert_eq!(evicted[0].0, path(3));
         }
         edits.flush_fingerprints();
         let reopened = Edits::new(directory);
@@ -642,7 +877,7 @@ mod tests {
             let mut cache = reopened.fingerprints.lock().unwrap();
             assert_eq!(cache.entries.len(), FINGERPRINT_LIMIT);
             assert_eq!(cache.get(&path(0), &stamp), Some(hash));
-            assert!(cache.get(&path(1), &stamp).is_none());
+            assert!(cache.get(&path(3), &stamp).is_none());
         }
         #[cfg(not(unix))]
         assert!(reopened.fingerprints.lock().unwrap().entries.is_empty());
@@ -676,7 +911,8 @@ mod tests {
             ));
         }
         entries.push_back((input.clone(), stamp, "b".repeat(64)));
-        let bytes = fingerprint_snapshot(&entries);
+        let newest: Vec<_> = entries.into_iter().rev().collect();
+        let bytes = fingerprint_snapshot(&newest);
         assert!(bytes.len() <= JSON_LIMIT);
         let cache_path = temp.path().join(FINGERPRINTS_FILE);
         write_bytes_atomic(&cache_path, &bytes, false).unwrap();
@@ -712,6 +948,221 @@ mod tests {
         });
     }
 
+    fn store(root: &Path, enabled: bool) -> Arc<Store> {
+        let logs = Arc::new(crate::storage::Logs::new(root.join("logs")));
+        Arc::new(Store::new(
+            root.join("cache"),
+            vec![],
+            enabled,
+            crate::cache::DEFAULT_LIMIT,
+            logs,
+        ))
+    }
+
+    #[cfg(unix)]
+    fn stored_entry(root: &Path, path: &Path) -> PathBuf {
+        let path = path.canonicalize().unwrap();
+        let stamp = SourceStamp::new(&fs::metadata(&path).unwrap()).unwrap();
+        let name = fingerprint_name(&path, &stamp).unwrap();
+        root.join("cache").join(&name[..2]).join(name)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fingerprints_beyond_the_snapshot_survive_restart_in_the_preview_cache() {
+        use std::sync::atomic::Ordering;
+        let temp = tempfile::tempdir().unwrap();
+        let directory = temp.path().join("edits");
+        let count = FINGERPRINT_LIMIT + 8;
+        let inputs: Vec<_> = (0..count)
+            .map(|n| {
+                let input = temp.path().join(format!("{n}.X3F"));
+                fs::write(&input, format!("RAW {n}")).unwrap();
+                input
+            })
+            .collect();
+        let edits = Edits::with_store(directory.clone(), Some(store(temp.path(), true)));
+        let hashes: Vec<_> = inputs
+            .iter()
+            .map(|input| edits.source_revision(input).unwrap())
+            .collect();
+        edits.flush_fingerprints();
+        drop(edits);
+
+        // Replace the stored hash of the oldest source. Only a cache hit can
+        // return it, so the source is not hashed again.
+        let fake = "c".repeat(64);
+        let entry = stored_entry(temp.path(), &inputs[0]);
+        let canonical = inputs[0].canonicalize().unwrap();
+        let stamp = SourceStamp::new(&fs::metadata(&canonical).unwrap()).unwrap();
+        fs::write(
+            &entry,
+            serde_json::to_vec(&(&canonical, &stamp, &fake)).unwrap(),
+        )
+        .unwrap();
+        let store = store(temp.path(), true);
+        let reopened = Edits::with_store(directory, Some(store.clone()));
+        assert_eq!(
+            reopened.fingerprints.lock().unwrap().entries.len(),
+            FINGERPRINT_LIMIT
+        );
+        for (n, input) in inputs.iter().enumerate() {
+            let expected = if n == 0 { &fake } else { &hashes[n] };
+            assert_eq!(&reopened.source_revision(input).unwrap(), expected);
+        }
+        assert_eq!(store.stats.disk_hits.load(Ordering::Relaxed), 8);
+        // A changed source misses its old entry.
+        fs::write(&inputs[0], b"replacement RAW contents").unwrap();
+        assert_eq!(
+            reopened.source_revision(&inputs[0]).unwrap(),
+            format!("{:x}", Sha256::digest(b"replacement RAW contents"))
+        );
+        assert_eq!(fs::read(&inputs[1]).unwrap(), b"RAW 1");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn snapshot_fingerprints_move_to_the_preview_cache_before_the_snapshot_drops_them() {
+        use std::sync::atomic::Ordering;
+        let temp = tempfile::tempdir().unwrap();
+        let directory = temp.path().join("edits");
+        let inputs: Vec<_> = (0..FINGERPRINT_LIMIT + 8)
+            .map(|n| {
+                let input = temp.path().join(format!("{n}.X3F"));
+                fs::write(&input, format!("RAW {n}")).unwrap();
+                input
+            })
+            .collect();
+        // An earlier session without the preview cache wrote a full snapshot.
+        let earlier = Edits::new(directory.clone());
+        for input in &inputs[..FINGERPRINT_LIMIT] {
+            earlier.source_revision(input).unwrap();
+        }
+        earlier.flush_fingerprints();
+        drop(earlier);
+
+        let edits = Edits::with_store(directory.clone(), Some(store(temp.path(), true)));
+        for input in &inputs[FINGERPRINT_LIMIT..] {
+            edits.source_revision(input).unwrap();
+        }
+        assert!(!stored_entry(temp.path(), &inputs[0]).exists());
+        edits.flush_fingerprints();
+        assert!(inputs[..8]
+            .iter()
+            .all(|input| stored_entry(temp.path(), input).is_file()));
+        assert!(!stored_entry(temp.path(), &inputs[8]).exists());
+        drop(edits);
+
+        let cache = store(temp.path(), true);
+        let reopened = Edits::with_store(directory, Some(cache.clone()));
+        for input in &inputs {
+            reopened.source_revision(input).unwrap();
+        }
+        assert_eq!(cache.stats.disk_hits.load(Ordering::Relaxed), 8);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn flush_stores_fingerprints_again_after_clear() {
+        use std::sync::atomic::Ordering;
+        let temp = tempfile::tempdir().unwrap();
+        let directory = temp.path().join("edits");
+        let inputs: Vec<_> = (0..FINGERPRINT_LIMIT + 8)
+            .map(|n| {
+                let input = temp.path().join(format!("{n}.X3F"));
+                fs::write(&input, format!("RAW {n}")).unwrap();
+                input
+            })
+            .collect();
+        let cache = store(temp.path(), true);
+        let edits = Edits::with_store(directory.clone(), Some(cache.clone()));
+        for input in &inputs {
+            edits.source_revision(input).unwrap();
+        }
+        edits.flush_fingerprints();
+        cache.clear().unwrap();
+        assert!(!stored_entry(temp.path(), &inputs[0]).exists());
+        // Nothing changed in memory, but the Clear removed the stored copies.
+        edits.flush_fingerprints();
+        assert!(inputs[..8]
+            .iter()
+            .all(|input| stored_entry(temp.path(), input).is_file()));
+        assert!(!stored_entry(temp.path(), &inputs[8]).exists());
+        drop(edits);
+
+        let cache = store(temp.path(), true);
+        let reopened = Edits::with_store(directory, Some(cache.clone()));
+        for input in &inputs {
+            reopened.source_revision(input).unwrap();
+        }
+        assert_eq!(cache.stats.disk_hits.load(Ordering::Relaxed), 8);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tampered_or_disabled_preview_cache_entries_are_not_trusted() {
+        let temp = tempfile::tempdir().unwrap();
+        let input = temp.path().join("photo.X3F");
+        let other = temp.path().join("other.X3F");
+        fs::write(&input, b"RAW").unwrap();
+        fs::write(&other, b"other RAW").unwrap();
+        let real = format!("{:x}", Sha256::digest(b"RAW"));
+        let directory = temp.path().join("edits");
+        let store = store(temp.path(), true);
+        assert_eq!(
+            Edits::with_store(directory.clone(), Some(store.clone()))
+                .source_revision(&input)
+                .unwrap(),
+            real
+        );
+        let entry = stored_entry(temp.path(), &input);
+        let valid = fs::read(&entry).unwrap();
+        let canonical = input.canonicalize().unwrap();
+        let stamp = SourceStamp::new(&fs::metadata(&canonical).unwrap()).unwrap();
+        let other_stamp = SourceStamp::new(&fs::metadata(&other).unwrap()).unwrap();
+        let fake = "c".repeat(64);
+        for bytes in [
+            b"{incomplete".to_vec(),
+            serde_json::to_vec(&(&canonical, &stamp, "c".repeat(63))).unwrap(),
+            serde_json::to_vec(&(&canonical, &stamp, "z".repeat(64))).unwrap(),
+            serde_json::to_vec(&(&canonical, &other_stamp, &fake)).unwrap(),
+            serde_json::to_vec(&(other.canonicalize().unwrap(), &stamp, &fake)).unwrap(),
+        ] {
+            fs::write(&entry, &bytes).unwrap();
+            // A new instance without a fingerprints file.
+            let edits = Edits::with_store(directory.clone(), Some(store.clone()));
+            assert_eq!(edits.source_revision(&input).unwrap(), real);
+            assert_eq!(fs::read(&entry).unwrap(), valid);
+        }
+
+        // A disabled cache neither reads nor writes fingerprints.
+        fs::write(
+            &entry,
+            serde_json::to_vec(&(&canonical, &stamp, &fake)).unwrap(),
+        )
+        .unwrap();
+        store.configure(false, crate::cache::DEFAULT_LIMIT);
+        let edits = Edits::with_store(directory.clone(), Some(store.clone()));
+        assert_eq!(edits.source_revision(&input).unwrap(), real);
+        assert_eq!(edits.source_revision(&other).unwrap().len(), 64);
+        assert!(!stored_entry(temp.path(), &other).exists());
+        // After Clear, nothing remains to trust.
+        store.configure(true, crate::cache::DEFAULT_LIMIT);
+        store.clear().unwrap();
+        assert!(!entry.exists());
+        let edits = Edits::with_store(directory, Some(store));
+        assert_eq!(edits.source_revision(&input).unwrap(), real);
+        assert!(entry.is_file());
+    }
+
+    #[cfg(not(unix))]
+    #[test]
+    fn windows_hashes_do_not_use_the_preview_cache() {
+        let temp = tempfile::tempdir().unwrap();
+        let edits = Edits::with_store(temp.path().join("edits"), Some(store(temp.path(), true)));
+        assert!(edits.store.is_none());
+    }
+
     #[cfg(not(unix))]
     #[test]
     fn persisted_hashes_are_not_trusted_without_change_time_validation() {
@@ -721,7 +1172,8 @@ mod tests {
         let directory = temp.path().join("edits");
         let edits = Edits::new(directory.clone());
         edits.save(&input, EditRecipe::default(), 1, None).unwrap();
-        let snapshot = fingerprint_snapshot(&edits.fingerprints.lock().unwrap().entries);
+        let snapshot =
+            fingerprint_snapshot(&edits.fingerprints.lock().unwrap().newest(FINGERPRINT_LIMIT));
         write_bytes_atomic(&directory.join(FINGERPRINTS_FILE), &snapshot, false).unwrap();
         let modified = fs::metadata(&input).unwrap().modified().unwrap();
         fs::write(&input, b"replaced").unwrap();

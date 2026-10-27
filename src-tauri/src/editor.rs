@@ -1,15 +1,15 @@
 //! One RAW preparation/GPU worker shared by interactive previews and edited exports.
 pub use crate::edits::EditRecord;
 use crate::{
+    cache::{ms, Memory, Stats, Store},
     edits::Edits,
     model::{source_path, BatchSettings, ColorProfile, OutputFormat},
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::{HashMap, VecDeque},
-    fs,
-    io::Write,
+    cmp::Reverse,
+    collections::{BTreeSet, HashMap, HashSet, VecDeque},
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering},
@@ -17,7 +17,7 @@ use std::{
     },
 };
 use x3f_core::{SceneLinearImage, SceneLinearOptions};
-use x3f_render::{Crop, EditRecipe, PreparedImage, RenderOptions, Renderer};
+use x3f_render::{Crop, DngDemosaic, EditRecipe, PreparedImage, RenderOptions, Renderer};
 
 /// Runs RAW preparation. On macOS it runs in a pool at utility QoS. At the
 /// default QoS it takes the cores that WebKit needs to draw frames, and the
@@ -58,15 +58,18 @@ struct Prepared {
     source_revision: String,
     denoise: u8,
     denoise_options: x3f_core::DenoiseOptions,
+    dng_demosaic: Option<DngDemosaic>,
     /// Denoise settings do not change this source, as for a merged X3I.
     denoise_free: bool,
     x3i_source: x3f_core::X3iSource,
     image: PreparedImage,
 }
 impl Prepared {
-    fn matches_denoise(&self, recipe: &EditRecipe) -> bool {
-        self.denoise_free
-            || (self.denoise == recipe.denoise && self.denoise_options == recipe.denoise_options)
+    fn matches_preparation(&self, recipe: &EditRecipe) -> bool {
+        self.dng_demosaic == recipe.dng_demosaic
+            && (self.denoise_free
+                || (self.denoise == recipe.denoise
+                    && self.denoise_options == recipe.denoise_options))
     }
     fn matches_source(&self, path: &Path, source_revision: &str, recipe: &EditRecipe) -> bool {
         self.path == path
@@ -84,7 +87,42 @@ struct PreviewWork {
     foreground: usize,
     background_cancel: Arc<AtomicBool>,
     background_request: Option<String>,
+    /// The priority of the running background render.
+    background_priority: Option<u8>,
+    /// Background requests that wait for the worker: the highest priority
+    /// first, then the oldest.
+    waiting: BTreeSet<(Reverse<u8>, u64)>,
+    next_waiter: u64,
 }
+/// A background request's place in `PreviewWork::waiting`, until it drops.
+struct Waiter<'a> {
+    gate: &'a PreviewGate,
+    place: (Reverse<u8>, u64),
+}
+impl<'a> Waiter<'a> {
+    fn new(gate: &'a PreviewGate, priority: u8) -> Result<Self, String> {
+        let mut work = gate.0.lock().map_err(|_| "Renderer unavailable")?;
+        let place = (Reverse(priority), work.next_waiter);
+        work.next_waiter += 1;
+        work.waiting.insert(place);
+        Ok(Self { gate, place })
+    }
+    fn first(&self, work: &PreviewWork) -> bool {
+        work.waiting.first() == Some(&self.place)
+    }
+}
+impl Drop for Waiter<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut work) = self.gate.0.lock() {
+            work.waiting.remove(&self.place);
+            self.gate.1.notify_all();
+        }
+    }
+}
+/// Background request priorities, from the `priority` query parameter.
+pub const PRIORITY_LOW: u8 = 0;
+pub const PRIORITY_NORMAL: u8 = 1;
+pub const PRIORITY_HIGH: u8 = 2;
 type PreviewGate = Arc<(Mutex<PreviewWork>, Condvar)>;
 struct ForegroundRequest {
     gate: PreviewGate,
@@ -109,49 +147,62 @@ struct Asset {
 struct Assets {
     recipes: HashMap<String, Asset>,
     recipe_order: VecDeque<String>,
-    /// Encoded PNG previews.
-    pngs: Images,
-    /// Raw RGBA8 frame bodies. A frame is read once after its render, and
-    /// again only to encode a PNG on demand. 128 MiB holds two 4096 px frames
-    /// or eleven 2048 px frames.
-    frames: Images,
+    /// IDs that rendered as drafts. Their pixels are not persisted.
+    drafts: HashSet<String>,
 }
-/// Bodies by preview ID, least recently used first out, at most 128 MiB and 128 entries.
-#[derive(Default)]
-struct Images {
-    images: HashMap<String, Arc<Vec<u8>>>,
-    order: VecDeque<String>,
-    bytes: usize,
+/// A final frame whose large preview and thumbnail are not yet on disk.
+struct Persist {
+    id: String,
+    frame: Arc<Vec<u8>>,
+    /// The PNG of the frame, when a request encoded it already.
+    png: Option<Arc<Vec<u8>>>,
+    generation: u64,
+    path: PathBuf,
+    source_revision: String,
 }
-impl Images {
-    const BUDGET: usize = 128 * 1024 * 1024;
-    fn get(&mut self, id: &str) -> Option<Arc<Vec<u8>>> {
-        let image = self.images.get(id)?.clone();
-        self.order.retain(|entry| entry != id);
-        self.order.push_back(id.into());
-        Some(image)
+/// A disk write: the generation it started at, the entry name and the bytes.
+type DiskWrite = (u64, String, Arc<Vec<u8>>);
+impl Persist {
+    fn bytes(&self) -> usize {
+        self.frame.len() + self.png.as_ref().map_or(0, |png| png.len())
     }
-    fn put(&mut self, id: String, bytes: impl Into<Arc<Vec<u8>>>) {
-        let bytes = bytes.into();
-        if bytes.len() > Self::BUDGET {
-            return;
-        }
-        if let Some(old) = self.images.remove(&id) {
-            self.bytes -= old.len();
-        }
-        self.order.retain(|entry| entry != &id);
-        self.bytes += bytes.len();
-        self.images.insert(id.clone(), bytes);
-        self.order.push_back(id);
-        while self.bytes > Self::BUDGET || self.images.len() > 128 {
-            let Some(old) = self.order.pop_front() else {
-                break;
-            };
-            if let Some(bytes) = self.images.remove(&old) {
-                self.bytes -= bytes.len();
-            }
-        }
-    }
+}
+/// The edge of a browsing thumbnail, derived from a final preview.
+const THUMBNAIL_EDGE: u32 = 640;
+
+fn frame_key(id: &str) -> String {
+    format!("edit-frame:{id}")
+}
+fn png_key(id: &str) -> String {
+    format!("edit-png:{id}")
+}
+fn thumbnail_key(id: &str) -> String {
+    format!("edit-thumbnail:{id}")
+}
+/// The disk name of the PNG of a final preview.
+fn medium_name(id: &str) -> String {
+    format!("{id}.png")
+}
+/// The disk name of the thumbnail derived from the final preview `id`. Direct
+/// 640-pixel renders have other IDs and are not persisted.
+fn thumbnail_name(id: &str) -> String {
+    format!("{id}-t{THUMBNAIL_EDGE}.png")
+}
+/// Large previews of earlier builds had the same IDs. Earlier thumbnails mixed
+/// direct and derived renders under one ID, so they are not adopted.
+fn legacy_medium(id: &str) -> Vec<String> {
+    vec![format!("{}/{id}.png", crate::cache::LEGACY_MEDIUMS)]
+}
+fn png_valid(bytes: &[u8]) -> bool {
+    bytes.starts_with(PNG_SIGNATURE) && bytes.ends_with(b"\0\0\0\0IEND\xaeB`\x82")
+}
+/// A decoded `x3f-edit` URL.
+struct ImageQuery {
+    id: String,
+    thumbnail: bool,
+    raw: bool,
+    cache_only: bool,
+    priority: u8,
 }
 pub struct Editor {
     pub edits: Edits,
@@ -164,11 +215,13 @@ pub struct Editor {
     opening: AtomicU64,
     render_revision: AtomicU64,
     assets: Mutex<Assets>,
-    /// Frames whose medium and thumbnail PNGs are not yet persisted.
-    pending: Mutex<VecDeque<(String, Arc<Vec<u8>>)>>,
+    /// Frames whose large previews and thumbnails are not yet persisted.
+    pending: Mutex<VecDeque<Persist>>,
+    /// Derived thumbnails and encoded PNGs that wait for a disk write.
+    writes: Mutex<Vec<DiskWrite>>,
     image_requests: Mutex<HashMap<String, Arc<AtomicBool>>>,
-    thumbnails: PathBuf,
-    mediums: PathBuf,
+    pub store: Arc<Store>,
+    memory: Arc<Memory>,
     /// Cached X3I frame copies and merged scenes.
     x3i: PathBuf,
     /// The last merge that `x3i_process` started for each X3I.
@@ -188,7 +241,9 @@ pub struct EditorSession {
     pub recipe: EditRecipe,
     pub as_shot_crop: Option<Crop>,
     pub camera_profiles: Vec<x3f_render::CameraProfile>,
-    pub as_shot_camera_profile: String,
+    pub as_shot_camera_profile: Option<String>,
+    pub source_kind: crate::source::Kind,
+    pub capabilities: crate::source::Capabilities,
     pub revision: u64,
     pub source_revision: String,
     pub storage: String,
@@ -321,14 +376,38 @@ pub struct RenderedPreview {
 }
 
 impl Editor {
+    /// An editor with its own preview cache in `directory`, as for tests.
     pub fn new(directory: PathBuf) -> Self {
+        let logs = Arc::new(crate::storage::Logs::new(directory.join("logs")));
+        let store = Store::open(
+            directory.join(crate::cache::DIRECTORY),
+            vec![
+                (
+                    crate::cache::LEGACY_THUMBNAILS,
+                    directory.join(crate::cache::LEGACY_THUMBNAILS),
+                ),
+                (
+                    crate::cache::LEGACY_MEDIUMS,
+                    directory.join(crate::cache::LEGACY_MEDIUMS),
+                ),
+            ],
+            true,
+            crate::cache::DEFAULT_LIMIT,
+            logs,
+        );
+        let memory = Arc::new(Memory::new(crate::cache::memory_budget() / 2));
+        Self::with_cache(directory, store, memory)
+    }
+
+    /// An editor with edits in `directory` and the shared preview caches.
+    pub fn with_cache(directory: PathBuf, store: Arc<Store>, memory: Arc<Memory>) -> Self {
         crate::x3i::prune(&directory.join(crate::x3i::DIRECTORY));
         Self {
-            thumbnails: directory.join("thumbnails-v1"),
             x3i: directory.join(crate::x3i::DIRECTORY),
             x3i_jobs: Mutex::new(HashMap::new()),
-            mediums: directory.join("mediums-v1"),
-            edits: Edits::new(directory),
+            edits: Edits::with_store(directory, Some(store.clone())),
+            store,
+            memory,
             session: Mutex::new(None),
             worker: Mutex::new(Worker::default()),
             preview_work: Arc::new((Mutex::new(PreviewWork::default()), Condvar::new())),
@@ -338,6 +417,7 @@ impl Editor {
             render_revision: AtomicU64::new(u64::MAX),
             assets: Mutex::new(Assets::default()),
             pending: Mutex::new(VecDeque::new()),
+            writes: Mutex::new(Vec::new()),
             image_requests: Mutex::new(HashMap::new()),
             paused: AtomicBool::new(false),
             close_allowed: AtomicBool::new(false),
@@ -472,16 +552,8 @@ impl Editor {
         self.edits.flush()?;
         let saved = self.load(&path)?;
         let source_revision = self.edits.source_revision(&path)?;
-        let as_shot_crop = x3f_core::read_as_shot_crop(&path)
-            .map_err(|e| e.to_string())?
-            .map(|[x, y, width, height]| Crop {
-                x,
-                y,
-                width,
-                height,
-            });
-        let camera_profiles = x3f_render::read_camera_profiles(&path, &AtomicBool::new(false))
-            .map_err(|e| e.to_string())?;
+        let (source, as_shot_crop, camera_profiles) =
+            camera_defaults(&path, &AtomicBool::new(false))?;
         if self.edits.source_revision(&path)? != source_revision {
             return Err("Source changed while reading camera framing; reopen the photo".into());
         }
@@ -492,8 +564,14 @@ impl Editor {
             return Err("Source changed while opening; reopen the photo".into());
         }
         let recipe = saved.as_ref().map(|r| r.recipe.clone()).unwrap_or_else(|| {
-            as_shot_recipe(as_shot_crop, &camera_profiles.as_shot, &source_revision)
+            source_recipe(
+                source,
+                as_shot_crop,
+                &camera_profiles.as_shot,
+                &source_revision,
+            )
         });
+        source.validate_recipe(&recipe)?;
         let x3i = self.x3i_status(&path, &recipe)?;
         let session = Session {
             id: uuid::Uuid::new_v4().to_string(),
@@ -523,7 +601,12 @@ impl Editor {
             recipe,
             as_shot_crop,
             camera_profiles: camera_profiles.available,
-            as_shot_camera_profile: camera_profiles.as_shot,
+            as_shot_camera_profile: source
+                .capabilities
+                .foveon
+                .then_some(camera_profiles.as_shot),
+            source_kind: source.kind,
+            capabilities: source.capabilities,
             revision: saved.as_ref().map_or(0, |s| s.revision),
             storage: saved
                 .as_ref()
@@ -888,19 +971,16 @@ impl Editor {
         cancel: &AtomicBool,
     ) -> Result<EditRecipe, String> {
         check_cancel(cancel)?;
-        let crop = x3f_core::read_as_shot_crop(path)
-            .map_err(|e| e.to_string())?
-            .map(|[x, y, width, height]| Crop {
-                x,
-                y,
-                width,
-                height,
-            });
-        let profiles = x3f_render::read_camera_profiles(path, cancel).map_err(|e| e.to_string())?;
+        let (source, crop, profiles) = camera_defaults(path, cancel)?;
         if self.edits.source_revision(path)? != source_revision {
             return Err("Source changed while reading camera defaults".into());
         }
-        Ok(as_shot_recipe(crop, &profiles.as_shot, source_revision))
+        Ok(source_recipe(
+            source,
+            crop,
+            &profiles.as_shot,
+            source_revision,
+        ))
     }
 
     /// The photo's defaults when `recipe` is one of them (see `matches_defaults`).
@@ -930,7 +1010,10 @@ impl Editor {
         max_edge: u32,
         region: Option<Crop>,
     ) -> Result<String, String> {
-        recipe.validate()?;
+        let source = crate::source::Info::read(path, &AtomicBool::new(false))?;
+        source.validate_recipe(recipe)?;
+        let mut recipe = recipe.clone();
+        recipe.dng_demosaic = source.resolve_demosaic(recipe.dng_demosaic);
         if !(1..=4096).contains(&max_edge) {
             return Err("Invalid preview dimensions".into());
         }
@@ -938,25 +1021,7 @@ impl Editor {
             region.validate()?;
         }
         let canonical = path.canonicalize().map_err(|e| e.to_string())?;
-        // The renderer version is part of the key: an unchanged recipe renders
-        // differently after the renderer changes, and the persisted thumbnail
-        // and medium PNGs would otherwise keep showing the old pixels beside
-        // freshly rendered exports. Superseded entries fall out of the caches
-        // through the existing size/count eviction in `store_image`.
-        let mut key = serde_json::to_vec(&(
-            &canonical,
-            source_revision,
-            recipe.pixels(),
-            max_edge,
-            region,
-            x3f_render::RENDER_VERSION,
-        ))
-        .map_err(|e| e.to_string())?;
-        // An X3I renders differently after its merge changes. X3F keys stay as they were.
-        if let Some(identity) = crate::x3i::identity(&canonical) {
-            key.extend(identity.as_bytes());
-        }
-        let id = format!("{:x}", Sha256::digest(key));
+        let id = asset_id(&canonical, source_revision, &recipe, max_edge, region)?;
         let mut assets = self
             .assets
             .lock()
@@ -977,6 +1042,7 @@ impl Editor {
             while assets.recipes.len() > 16384 {
                 if let Some(old) = assets.recipe_order.pop_front() {
                     assets.recipes.remove(&old);
+                    assets.drafts.remove(&old);
                 }
             }
         }
@@ -996,6 +1062,10 @@ impl Editor {
         if self.edits.source_revision(&asset.path)? != asset.source_revision {
             return Err("Source contents changed; reopen the photo".into());
         }
+        let source = crate::source::Info::read(&asset.path, cancel)?;
+        source.validate_recipe(&asset.recipe)?;
+        let mut recipe = asset.recipe.clone();
+        recipe.dng_demosaic = source.resolve_demosaic(recipe.dng_demosaic);
         let same_source = worker
             .prepared
             .as_ref()
@@ -1004,30 +1074,47 @@ impl Editor {
             && worker
                 .prepared
                 .as_ref()
-                .is_some_and(|p| p.matches_denoise(&asset.recipe));
+                .is_some_and(|p| p.matches_preparation(&recipe));
         if !reuse {
             // Keep the responsive source if refinement is interrupted. A different
             // photo releases it first to bound memory while browsing.
             if !same_source {
                 worker.prepared = None;
             }
-            let options = scene_options(&asset.recipe);
-            let (image, denoise_free) = prepare_in_background(|| {
-                crate::x3i::prepare_scene(
-                    &self.x3i,
-                    &asset.path,
-                    &asset.source_revision,
-                    &options,
-                    cancel,
-                    merge.then_some(|| {
-                        self.edits.source_revision(&asset.path).as_ref()
-                            == Ok(&asset.source_revision)
-                    }),
-                    |_| (),
+            let options = scene_options(&recipe);
+            let (image, denoise_free) = if source.kind == crate::source::Kind::Dng {
+                let method = recipe.dng_demosaic.map(dng_method).transpose()?;
+                (
+                    prepare_in_background(|| {
+                        x3f_dng::prepare_with_method(&asset.path, method, cancel)
+                    })?,
+                    true,
                 )
-            })?;
-            let profiles =
-                x3f_render::read_camera_profiles(&asset.path, cancel).map_err(|e| e.to_string())?;
+            } else {
+                prepare_in_background(|| {
+                    crate::x3i::prepare_scene(
+                        &self.x3i,
+                        &asset.path,
+                        &asset.source_revision,
+                        &options,
+                        cancel,
+                        merge.then_some(|| {
+                            self.edits.source_revision(&asset.path).as_ref()
+                                == Ok(&asset.source_revision)
+                        }),
+                        |_| (),
+                    )
+                })?
+            };
+            let mut image = PreparedImage::new(image, cancel).map_err(|e| e.to_string())?;
+            if source.kind == crate::source::Kind::Dng {
+                image = image.with_dng_source(!source.white_balance_available(&asset.recipe));
+            } else {
+                image = image.with_camera_profiles(
+                    x3f_render::read_camera_profiles(&asset.path, cancel)
+                        .map_err(|e| e.to_string())?,
+                );
+            }
             check_cancel(cancel)?;
             if self.edits.source_revision(&asset.path)? != asset.source_revision {
                 return Err("Source contents changed during RAW preparation".into());
@@ -1037,11 +1124,10 @@ impl Editor {
                 source_revision: asset.source_revision.clone(),
                 denoise: asset.recipe.denoise,
                 denoise_options: asset.recipe.denoise_options,
+                dng_demosaic: recipe.dng_demosaic,
                 denoise_free,
                 x3i_source: asset.recipe.x3i_source,
-                image: PreparedImage::new(image, cancel)
-                    .map_err(|e| e.to_string())?
-                    .with_camera_profiles(profiles),
+                image,
             });
         }
         Ok(worker
@@ -1089,15 +1175,17 @@ impl Editor {
     }
 
     /// The recipe a request renders: an interactive frame reuses the prepared
-    /// denoise. Before any RAW is prepared, it skips only BM3D, which can take
-    /// seconds; the first preparation applies NLM at once. Returns the recipe
-    /// and whether the frame is a draft.
+    /// source. A cold Bayer DNG starts with Fast; a Foveon source skips BM3D.
+    /// The saved recipe stays unchanged. Returns the recipe and whether it is a draft.
     fn effective_recipe(
         worker: &Worker,
         request: &RenderRequest,
         session: &Session,
+        source: crate::source::Info,
     ) -> (EditRecipe, bool) {
         let mut recipe = request.recipe.clone();
+        let requested_demosaic = source.resolve_demosaic(recipe.dng_demosaic);
+        recipe.dng_demosaic = requested_demosaic;
         if request.interactive {
             if let Some(prepared) = worker
                 .prepared
@@ -1108,12 +1196,24 @@ impl Editor {
                     recipe.denoise = prepared.denoise;
                     recipe.denoise_options = prepared.denoise_options;
                 }
-            } else if recipe.denoise_options.algorithm == x3f_core::DenoiseAlgorithm::Bm3d {
-                recipe.denoise = 0;
+                // A Mono transition changes calibration. Render its requested source.
+                if prepared.dng_demosaic != Some(DngDemosaic::Mono)
+                    && recipe.dng_demosaic != Some(DngDemosaic::Mono)
+                {
+                    recipe.dng_demosaic = prepared.dng_demosaic;
+                }
+            } else {
+                if source.capabilities.bayer && requested_demosaic != Some(DngDemosaic::Mono) {
+                    recipe.dng_demosaic = Some(DngDemosaic::Fast);
+                }
+                if recipe.denoise_options.algorithm == x3f_core::DenoiseAlgorithm::Bm3d {
+                    recipe.denoise = 0;
+                }
             }
         }
         let draft = recipe.denoise != request.recipe.denoise
-            || recipe.denoise_options != request.recipe.denoise_options;
+            || recipe.denoise_options != request.recipe.denoise_options
+            || recipe.dng_demosaic != requested_demosaic;
         (recipe, draft)
     }
 
@@ -1125,12 +1225,14 @@ impl Editor {
             priority: _priority,
         } = job;
         check_cancel(&cancel)?;
-        request.recipe.validate()?;
+        let generation = self.store.generation();
+        let source = crate::source::Info::read(&session.path, &cancel)?;
+        source.validate_recipe(&request.recipe)?;
         let mut worker = self
             .worker
             .lock()
             .map_err(|_| "Renderer unavailable; restart the app")?;
-        let (recipe, draft) = Self::effective_recipe(&worker, &request, &session);
+        let (recipe, draft) = Self::effective_recipe(&worker, &request, &session, source);
         let url = self.register(
             &session.path,
             &session.source_revision,
@@ -1148,15 +1250,22 @@ impl Editor {
         };
         let (rendered, (source_width, source_height)) =
             self.render_with_worker(&mut worker, &asset, &cancel)?;
-        let as_shot = worker.prepared.as_ref().map(|p| {
-            (
-                p.image.as_shot_white_balance(),
-                x3f_render::as_shot_channel_gains(&p.image.image().white_balance),
-            )
-        });
+        let white_balance_available =
+            crate::source::Info::read(&asset.path, &cancel)?.white_balance_available(&asset.recipe);
+        let as_shot = worker
+            .prepared
+            .as_ref()
+            .filter(|_| white_balance_available)
+            .map(|p| {
+                (
+                    p.image.as_shot_white_balance(),
+                    x3f_render::as_shot_channel_gains(&p.image.image().white_balance),
+                )
+            });
         let calibration = worker
             .prepared
             .as_ref()
+            .filter(|_| white_balance_available)
             .map(|p| p.image.image().white_balance);
         drop(worker);
         let white_balance = calibration.and_then(|cal| {
@@ -1196,44 +1305,115 @@ impl Editor {
         let frame = Arc::new(frame_body(rendered)?);
         check_cancel(&cancel)?;
         self.session(&preview.session_id)?;
-        self.assets
-            .lock()
-            .map_err(|_| "Preview cache unavailable")?
-            .frames
-            .put(id.clone(), frame.clone());
-        // PNGs are encoded on demand. Only a refined medium is persisted, by
-        // `persist_previews` after the frame is returned.
-        if !draft && request.max_edge == 2048 && request.region.is_none() {
-            self.defer_persist(id, frame);
+        Stats::add(&self.store.stats.renders);
+        if let Ok(mut assets) = self.assets.lock() {
+            if draft {
+                assets.drafts.insert(id.clone());
+            } else {
+                assets.drafts.remove(&id);
+            }
         }
+        // PNGs are encoded on demand. Only a refined large preview is
+        // persisted, by `persist_previews` after the frame is returned.
+        self.publish_frame(&id, &frame, generation, (!draft).then_some(&asset), None);
         Ok(preview)
     }
 
-    /// Queues a frame for `persist_previews`. Only the newest jobs are kept;
-    /// a dropped job is encoded on demand instead.
-    fn defer_persist(&self, id: String, frame: Arc<Vec<u8>>) {
-        if let Ok(mut pending) = self.pending.lock() {
-            pending.retain(|(queued, _)| queued != &id);
-            pending.push_back((id, frame));
-            while pending.len() > 4 {
-                pending.pop_front();
-            }
+    /// Keeps a rendered frame in memory. With `asset`, a final 2048-pixel
+    /// preview without a region also goes to disk later, with its thumbnail.
+    fn publish_frame(
+        &self,
+        id: &str,
+        frame: &Arc<Vec<u8>>,
+        generation: u64,
+        asset: Option<&Asset>,
+        png: Option<Arc<Vec<u8>>>,
+    ) {
+        self.memory.put_if(frame_key(id), frame.clone(), || {
+            self.store.current(generation)
+        });
+        let Some(asset) = asset.filter(|asset| persistable(asset)) else {
+            return;
+        };
+        let Ok(mut pending) = self.pending.lock() else {
+            return;
+        };
+        pending.retain(|queued| queued.id != id);
+        pending.push_back(Persist {
+            id: id.into(),
+            frame: frame.clone(),
+            png,
+            generation,
+            path: asset.path.clone(),
+            source_revision: asset.source_revision.clone(),
+        });
+        // Queued frames are outside the memory budget: keep at most an eighth
+        // of it, and always the newest frame. A drain follows each render, so
+        // an older frame drops only in a burst, and the counter records it.
+        let budget = crate::cache::memory_budget() as usize / 8;
+        while pending.len() > 1 && pending.iter().map(Persist::bytes).sum::<usize>() > budget {
+            pending.pop_front();
+            Stats::add(&self.store.stats.dropped_persistence);
         }
     }
 
-    /// Encodes and persists the queued medium and thumbnail PNGs. Call it off
-    /// the critical path, after the frame went to the webview.
+    /// Encodes and persists queued large previews and thumbnails. Call it off
+    /// the critical path, after the response went to the webview.
     pub fn persist_previews(&self) {
-        while let Some((id, frame)) = self.pending.lock().ok().and_then(|mut p| p.pop_front()) {
-            let Ok(rendered) = frame_image(&frame) else {
+        let writes = self
+            .writes
+            .lock()
+            .map(|mut writes| std::mem::take(&mut *writes))
+            .unwrap_or_default();
+        for (generation, name, bytes) in writes {
+            self.store.put(generation, &name, &bytes);
+        }
+        while let Some(job) = self.pending.lock().ok().and_then(|mut p| p.pop_front()) {
+            let started = std::time::Instant::now();
+            // The frame must be current: no later Clear or Disable, and the
+            // same source contents.
+            if !self.store.enabled()
+                || !self.store.current(job.generation)
+                || self.edits.source_revision(&job.path).ok().as_deref()
+                    != Some(job.source_revision.as_str())
+            {
                 continue;
-            };
-            self.prime_thumbnail(&id, &rendered);
-            if matches!(self.cached_png(&id), Ok(None)) {
-                if let Ok(png) = rendered.png() {
-                    self.store_image(&id, png);
-                }
             }
+            let thumbnail = match self.memory.get(&thumbnail_key(&job.id)) {
+                Some(thumbnail) => Some(thumbnail),
+                None => self.derive_thumbnail(&job.id, &job.frame, job.generation, false),
+            };
+            if let Some(thumbnail) = thumbnail {
+                self.store
+                    .put(job.generation, &thumbnail_name(&job.id), &thumbnail);
+            }
+            let png = match job.png.or_else(|| self.memory.get(&png_key(&job.id))) {
+                Some(png) => Some(png),
+                None => frame_image(&job.frame)
+                    .ok()
+                    .and_then(|image| image.png().ok())
+                    .map(Arc::new),
+            };
+            if let Some(png) = png {
+                self.store.put(job.generation, &medium_name(&job.id), &png);
+            }
+            self.store.debug(|| {
+                format!(
+                    "Edited preview {} persisted in {:.1} ms",
+                    job.id,
+                    ms(started)
+                )
+            });
+        }
+    }
+
+    /// Drops queued disk work after Clear. Memory goes with the shared cache.
+    pub fn cache_cleared(&self) {
+        if let Ok(mut pending) = self.pending.lock() {
+            pending.clear();
+        }
+        if let Ok(mut writes) = self.writes.lock() {
+            writes.clear();
         }
     }
 
@@ -1256,39 +1436,28 @@ impl Editor {
         asset: &Asset,
         cancel: &AtomicBool,
     ) -> Result<(x3f_render::RenderedImage, (u32, u32)), String> {
+        let started = std::time::Instant::now();
         self.ready(worker, asset, cancel)?;
+        let prepared_at = std::time::Instant::now();
         let Worker { renderer, prepared } = worker;
         let prepared = prepared.as_ref().ok_or("RAW preparation unavailable")?;
+        let mut recipe = asset.recipe.clone();
+        recipe.dng_demosaic = prepared.dng_demosaic;
         let rendered = renderer
             .as_mut()
             .ok_or("GPU renderer unavailable")?
-            .render_prepared(
-                &prepared.image,
-                &asset.recipe,
-                preview_options(asset),
-                cancel,
-            )
+            .render_prepared(&prepared.image, &recipe, preview_options(asset), cancel)
             .map_err(|e| e.to_string())?;
         check_cancel(cancel)?;
+        self.store.debug(|| {
+            format!(
+                "Edited render {} px: RAW preparation {:.1} ms, render {:.1} ms",
+                asset.max_edge,
+                (prepared_at - started).as_secs_f64() * 1000.,
+                ms(prepared_at)
+            )
+        });
         Ok((rendered, oriented_size(prepared.image.image())))
-    }
-
-    fn thumbnail_id(&self, id: &str) -> Result<String, String> {
-        let asset = self
-            .assets
-            .lock()
-            .map_err(|_| "Preview cache unavailable")?
-            .recipes
-            .get(id)
-            .cloned()
-            .ok_or("Preview expired; reopen the photo")?;
-        protocol_id(&self.register(
-            &asset.path,
-            &asset.source_revision,
-            &asset.recipe,
-            640,
-            asset.region,
-        )?)
     }
 
     pub fn begin_image_request(&self) -> Result<String, String> {
@@ -1325,11 +1494,17 @@ impl Editor {
         Ok(())
     }
 
-    /// Serves an `x3f-edit` request: an edited preview as an RGBA8 frame or a PNG.
+    /// Serves an `x3f-edit` request: an edited preview as an RGBA8 frame or a
+    /// PNG. A cache-only request (`cacheOnly=1`) gets 204 on a miss.
     pub fn respond(&self, uri: &str) -> Body {
         let octets = "application/octet-stream";
-        match self.image_uri(uri) {
-            Ok(bytes) => {
+        let result = match parse_image_uri(uri) {
+            Ok(query) if query.cache_only => Ok(self.lookup(&query.id, query.thumbnail, query.raw)),
+            Ok(query) => self.image_query(uri, &query).map(Some),
+            Err(error) => Err(error),
+        };
+        match result {
+            Ok(Some(bytes)) => {
                 let bytes = Arc::unwrap_or_clone(bytes);
                 let png = bytes.starts_with(PNG_SIGNATURE);
                 Body {
@@ -1338,6 +1513,11 @@ impl Editor {
                     bytes,
                 }
             }
+            Ok(None) => Body {
+                status: 204,
+                bytes: vec![],
+                content_type: "text/plain",
+            },
             Err(error) => Body {
                 status: 400,
                 bytes: error.into_bytes(),
@@ -1347,7 +1527,16 @@ impl Editor {
     }
 
     pub fn image_uri(&self, uri: &str) -> Result<Arc<Vec<u8>>, String> {
-        let id = protocol_id(uri)?;
+        let query = parse_image_uri(uri)?;
+        if query.cache_only {
+            return self
+                .lookup(&query.id, query.thumbnail, query.raw)
+                .ok_or_else(|| "Preview is not cached".into());
+        }
+        self.image_query(uri, &query)
+    }
+
+    fn image_query(&self, uri: &str, query: &ImageQuery) -> Result<Arc<Vec<u8>>, String> {
         let url = url::Url::parse(uri).map_err(|e| e.to_string())?;
         let request = url
             .query_pairs()
@@ -1364,194 +1553,165 @@ impl Editor {
                 Ok((id.into_owned(), cancel))
             })
             .transpose()?;
-        let id = match url
-            .query_pairs()
-            .find(|(key, _)| key == "v")
-            .map(|(_, value)| value)
-        {
-            None => id,
-            Some(variant) if variant == "thumbnail" => self.thumbnail_id(&id)?,
-            _ => return Err("Invalid rendered preview variant".into()),
-        };
-        let raw = match url.query_pairs().find(|(key, _)| key == "format") {
-            None => false,
-            Some((_, format)) if format == "rgba8" => true,
-            _ => return Err("Invalid rendered preview format".into()),
-        };
         self.image_request(
-            &id,
+            &query.id,
+            query.thumbnail,
+            query.raw,
             request
                 .as_ref()
                 .map(|(id, cancel)| (id.as_str(), cancel.as_ref())),
-            raw,
+            query.priority,
         )
     }
 
-    fn image_cache(&self, asset: &Asset) -> Option<(&Path, u64, u64)> {
-        match (asset.max_edge, asset.region.is_none()) {
-            (640, _) => Some((&self.thumbnails, 2 * 1024 * 1024, 256 * 1024 * 1024)),
-            (2048, true) => Some((&self.mediums, 16 * 1024 * 1024, 1024 * 1024 * 1024)),
-            _ => None,
+    /// A cached image by ID alone, with no registration, RAW or GPU work, and
+    /// no wait for other work. A thumbnail can come from the final preview in
+    /// memory or on disk. With `raw`, a frame, else a PNG; the frame layer
+    /// decodes either.
+    fn lookup(&self, id: &str, thumbnail: bool, raw: bool) -> Option<Arc<Vec<u8>>> {
+        let generation = self.store.generation();
+        if let Some(hit) = self.memory_hit(id, thumbnail, raw) {
+            Stats::add(&self.store.stats.memory_hits);
+            return Some(hit);
         }
-    }
-
-    /// A finished preview: with `raw`, the RGBA8 frame, or else a PNG that
-    /// exists already (the frame layer decodes either body). Without `raw`, a
-    /// PNG, encoded from a cached frame when needed.
-    fn cached_image(&self, id: &str, raw: bool) -> Result<Option<Arc<Vec<u8>>>, String> {
-        let frame = self
-            .assets
-            .lock()
-            .map_err(|_| "Preview cache unavailable")?
-            .frames
-            .get(id);
-        if raw {
-            return Ok(match frame {
-                Some(frame) => Some(frame),
-                None => self.cached_png(id)?,
-            });
-        }
-        if let Some(png) = self.cached_png(id)? {
-            return Ok(Some(png));
-        }
-        let Some(frame) = frame else {
-            return Ok(None);
-        };
-        let png = frame_image(&frame)?.png().map_err(|e| e.to_string())?;
-        self.store_image(id, png);
-        self.cached_png(id)
-    }
-
-    fn cached_png(&self, id: &str) -> Result<Option<Arc<Vec<u8>>>, String> {
-        let mut assets = self
-            .assets
-            .lock()
-            .map_err(|_| "Preview cache unavailable")?;
-        if let Some(image) = assets.pngs.get(id) {
-            return Ok(Some(image));
-        }
-        let Some((directory, max_size, _)) = assets
-            .recipes
-            .get(id)
-            .and_then(|asset| self.image_cache(asset))
-        else {
-            return Ok(None);
-        };
-        let path = directory.join(format!("{id}.png"));
-        if fs::metadata(&path).is_ok_and(|m| m.len() <= max_size) {
-            if let Ok(bytes) = fs::read(path) {
-                // Cache writes are atomic. Reject missing/truncated PNGs and regenerate.
-                if bytes.starts_with(PNG_SIGNATURE) && bytes.ends_with(b"\0\0\0\0IEND\xaeB`\x82") {
-                    assets.pngs.put(id.into(), bytes);
-                    return Ok(assets.pngs.get(id));
-                }
+        if thumbnail {
+            if let Some(bytes) = self.store.get(&thumbnail_name(id), &[], png_valid) {
+                let bytes = Arc::new(bytes);
+                self.memory.put_if(thumbnail_key(id), bytes.clone(), || {
+                    self.store.current(generation)
+                });
+                return Some(bytes);
             }
-        }
-        Ok(None)
-    }
-
-    fn store_image(&self, id: &str, bytes: Vec<u8>) {
-        // A disposable cache must never make a successful preview/save fail.
-        let _ = (|| -> std::io::Result<()> {
-            let Some((directory, max_size, budget)) = self.assets.lock().ok().and_then(|assets| {
-                assets
-                    .recipes
-                    .get(id)
-                    .and_then(|asset| self.image_cache(asset))
-            }) else {
-                return Ok(());
+            let (source, persist) = match self.memory.get(&frame_key(id)) {
+                Some(frame) => (frame, self.persistable_id(id)),
+                None => match self.memory.get(&png_key(id)) {
+                    Some(png) => (png, self.persistable_id(id)),
+                    // Only final previews are on disk.
+                    None => (self.disk_medium(id, generation)?, true),
+                },
             };
-            if bytes.len() as u64 > max_size {
-                return Ok(());
+            return self.derive_thumbnail(id, &source, generation, persist);
+        }
+        if let Some(png) = self.disk_medium(id, generation) {
+            return Some(png);
+        }
+        if raw {
+            Stats::add(&self.store.stats.misses);
+            return None;
+        }
+        let Some(frame) = self.memory.get(&frame_key(id)) else {
+            Stats::add(&self.store.stats.misses);
+            return None;
+        };
+        let png = Arc::new(frame_image(&frame).ok()?.png().ok()?);
+        self.memory
+            .put_if(png_key(id), png.clone(), || self.store.current(generation));
+        if self.persistable_id(id) {
+            if let Ok(mut writes) = self.writes.lock() {
+                writes.push((generation, medium_name(id), png.clone()));
             }
-            fs::create_dir_all(directory)?;
-            let mut file = tempfile::NamedTempFile::new_in(directory)?;
-            file.write_all(&bytes)?;
-            file.persist(directory.join(format!("{id}.png")))?;
-            let mut entries: Vec<_> = fs::read_dir(directory)?
-                .filter_map(Result::ok)
-                .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "png"))
-                .filter_map(|entry| entry.metadata().ok().map(|meta| (entry.path(), meta)))
-                .collect();
-            entries.sort_by_key(|(_, meta)| meta.modified().ok());
-            let mut size: u64 = entries.iter().map(|(_, meta)| meta.len()).sum();
-            let mut count = entries.len();
-            // ponytail: scan a bounded cache on writes; use an index above 512 images.
-            for (path, meta) in entries {
-                if size <= budget && count <= 512 {
-                    break;
-                }
-                if fs::remove_file(path).is_ok() {
-                    size -= meta.len();
-                    count -= 1;
-                }
-            }
-            Ok(())
-        })();
-        if let Ok(mut assets) = self.assets.lock() {
-            // An ID names exact pixels. Keep the PNG that a concurrent request
-            // stored first, so that all requests share one copy.
-            if assets.pngs.get(id).is_none() {
-                assets.pngs.put(id.into(), bytes);
-            }
+        }
+        Some(png)
+    }
+
+    fn memory_hit(&self, id: &str, thumbnail: bool, raw: bool) -> Option<Arc<Vec<u8>>> {
+        if thumbnail {
+            self.memory.get(&thumbnail_key(id))
+        } else if raw {
+            self.memory
+                .get(&frame_key(id))
+                .or_else(|| self.memory.get(&png_key(id)))
+        } else {
+            self.memory.get(&png_key(id))
         }
     }
 
-    fn prime_thumbnail(&self, id: &str, rendered: &x3f_render::RenderedImage) {
-        if let Ok(thumbnail) = self.thumbnail_id(id) {
-            if matches!(self.cached_png(&thumbnail), Ok(None)) {
-                if let Ok(bytes) = rendered.png_preview(640) {
-                    self.store_image(&thumbnail, bytes);
-                }
+    /// The PNG of a final preview on disk.
+    fn disk_medium(&self, id: &str, generation: u64) -> Option<Arc<Vec<u8>>> {
+        let bytes = Arc::new(
+            self.store
+                .get(&medium_name(id), &legacy_medium(id), png_valid)?,
+        );
+        self.memory.put_if(png_key(id), bytes.clone(), || {
+            self.store.current(generation)
+        });
+        Some(bytes)
+    }
+
+    /// Whether the registered `id` is a final preview whose pixels persist.
+    fn persistable_id(&self, id: &str) -> bool {
+        self.assets.lock().is_ok_and(|assets| {
+            !assets.drafts.contains(id) && assets.recipes.get(id).is_some_and(persistable)
+        })
+    }
+
+    /// The thumbnail of the preview `id`, from its frame or PNG, without GPU work.
+    fn derive_thumbnail(
+        &self,
+        id: &str,
+        source: &[u8],
+        generation: u64,
+        persist: bool,
+    ) -> Option<Arc<Vec<u8>>> {
+        let image = if source.starts_with(PNG_SIGNATURE) {
+            x3f_render::RenderedImage::from_png(source).ok()?
+        } else {
+            frame_image(source).ok()?
+        };
+        let png = Arc::new(image.png_preview(THUMBNAIL_EDGE).ok()?);
+        Stats::add(&self.store.stats.derived_thumbnails);
+        self.memory.put_if(thumbnail_key(id), png.clone(), || {
+            self.store.current(generation)
+        });
+        if persist {
+            if let Ok(mut writes) = self.writes.lock() {
+                writes.push((generation, thumbnail_name(id), png.clone()));
             }
         }
+        Some(png)
     }
 
     pub fn image(&self, id: &str) -> Result<Arc<Vec<u8>>, String> {
-        self.image_request(id, None, false)
+        self.image_request(id, false, false, None, PRIORITY_NORMAL)
     }
 
     fn image_request(
         &self,
         id: &str,
-        request: Option<(&str, &AtomicBool)>,
+        thumbnail: bool,
         raw: bool,
+        request: Option<(&str, &AtomicBool)>,
+        priority: u8,
     ) -> Result<Arc<Vec<u8>>, String> {
+        let started = std::time::Instant::now();
+        // Work that starts before a Clear or Disable cannot store after it.
+        let generation = self.store.generation();
         let uncancellable = AtomicBool::new(false);
         let request_cancel = request.map_or(&uncancellable, |(_, cancel)| cancel);
+        check_cancel(request_cancel)?;
+        if let Some(image) = self.lookup(id, thumbnail, raw) {
+            check_cancel(request_cancel)?;
+            return Ok(image);
+        }
+        let asset = self
+            .assets
+            .lock()
+            .map_err(|_| "Preview cache unavailable")?
+            .recipes
+            .get(id)
+            .cloned()
+            .ok_or("Preview expired; reopen the photo")?;
+        let looked_up = ms(started);
+        let waiter = Waiter::new(&self.preview_work, priority)?;
         loop {
             check_cancel(request_cancel)?;
-            if let Some(image) = self.cached_image(id, raw)? {
-                check_cancel(request_cancel)?;
-                return Ok(image);
-            }
-            let mut worker = match self.worker.try_lock() {
-                Ok(worker) => worker,
-                Err(std::sync::TryLockError::WouldBlock) => {
-                    let work = self
-                        .preview_work
-                        .0
-                        .lock()
-                        .map_err(|_| "Renderer unavailable")?;
-                    check_cancel(request_cancel)?;
-                    // ponytail: poll availability every 10 ms; notify on worker
-                    // release if needed. Cancellation wakes this wait immediately.
-                    drop(
-                        self.preview_work
-                            .1
-                            .wait_timeout(work, std::time::Duration::from_millis(10))
-                            .map_err(|_| "Renderer unavailable")?,
-                    );
-                    continue;
-                }
-                Err(std::sync::TryLockError::Poisoned(_)) => {
-                    return Err("Renderer unavailable; restart the app".into());
-                }
-            };
-            check_cancel(request_cancel)?;
-            // Recheck after waiting: a duplicate request or editor refinement may
-            // already have generated this snapshot.
-            if let Some(image) = self.cached_image(id, raw)? {
+            // A duplicate request or an editor refinement can make this image.
+            // Memory only: disk was checked, and is checked again before a render.
+            if let Some(image) = self.memory_hit(id, thumbnail, raw).or_else(|| {
+                self.memory
+                    .get(&frame_key(id))
+                    .and_then(|_| self.lookup(id, thumbnail, raw))
+            }) {
                 check_cancel(request_cancel)?;
                 return Ok(image);
             }
@@ -1561,8 +1721,18 @@ impl Editor {
                 .lock()
                 .map_err(|_| "Renderer unavailable")?;
             check_cancel(request_cancel)?;
+            let wait = |work| -> Result<(), String> {
+                // ponytail: poll availability every 10 ms; releases notify too.
+                // Cancellation wakes this wait immediately.
+                drop(
+                    self.preview_work
+                        .1
+                        .wait_timeout(work, std::time::Duration::from_millis(10))
+                        .map_err(|_| "Renderer unavailable")?,
+                );
+                Ok(())
+            };
             if work.foreground > 0 {
-                drop(worker);
                 drop(
                     self.preview_work
                         .1
@@ -1573,18 +1743,47 @@ impl Editor {
                 );
                 continue;
             }
+            if !waiter.first(&work) {
+                wait(work)?;
+                continue;
+            }
+            let mut worker = match self.worker.try_lock() {
+                Ok(worker) => worker,
+                Err(std::sync::TryLockError::WouldBlock) => {
+                    // A more urgent request interrupts a background render,
+                    // which then waits and retries.
+                    if work
+                        .background_priority
+                        .is_some_and(|running| running < priority)
+                    {
+                        work.background_cancel.store(true, Ordering::SeqCst);
+                    }
+                    wait(work)?;
+                    continue;
+                }
+                Err(std::sync::TryLockError::Poisoned(_)) => {
+                    return Err("Renderer unavailable; restart the app".into());
+                }
+            };
             let cancel = Arc::new(AtomicBool::new(false));
             work.background_cancel = cancel.clone();
             work.background_request = request.map(|(id, _)| id.to_owned());
+            work.background_priority = Some(priority);
             drop(work);
-            let asset = self
-                .assets
-                .lock()
-                .map_err(|_| "Preview cache unavailable")?
-                .recipes
-                .get(id)
-                .cloned()
-                .ok_or("Preview expired; reopen the photo")?;
+            let release = || {
+                if let Ok(mut work) = self.preview_work.0.lock() {
+                    work.background_priority = None;
+                    self.preview_work.1.notify_all();
+                }
+            };
+            // Recheck the disk too: another request may have stored it.
+            if let Some(image) = self.lookup(id, thumbnail, raw) {
+                drop(worker);
+                release();
+                check_cancel(request_cancel)?;
+                return Ok(image);
+            }
+            let queued = ms(started);
             // A background photo must not evict the active editor's prepared RAW;
             // otherwise every preemption would make the next slider change decode again.
             let active = self.kept_source()?;
@@ -1594,7 +1793,7 @@ impl Editor {
                         &asset.path,
                         &asset.source_revision,
                         &asset.recipe,
-                    ) || !prepared.matches_denoise(&asset.recipe))
+                    ) || !prepared.matches_preparation(&asset.recipe))
             });
             let previous = if preserve {
                 worker.prepared.take()
@@ -1605,6 +1804,8 @@ impl Editor {
             if previous.is_some() {
                 worker.prepared = previous;
             }
+            drop(worker);
+            release();
             check_cancel(request_cancel)?;
             let rendered = match result {
                 Ok((rendered, _)) => rendered,
@@ -1613,34 +1814,40 @@ impl Editor {
                         && !self.paused.load(Ordering::SeqCst)
                         && !self.close_allowed.load(Ordering::SeqCst) =>
                 {
-                    // Let interactive work run first, then retry this immutable
+                    // Let more urgent work run first, then retry this immutable
                     // snapshot instead of returning a broken thumbnail to WebKit.
                     continue;
                 }
                 Err(error) => return Err(error),
             };
+            Stats::add(&self.store.stats.renders);
+            let rendered_at = std::time::Instant::now();
             let frame = Arc::new(frame_body(rendered)?);
-            self.assets
-                .lock()
-                .map_err(|_| "Preview cache unavailable")?
-                .frames
-                .put(id.into(), frame.clone());
-            if raw {
-                if self.image_cache(&asset).is_some() {
-                    self.defer_persist(id.into(), frame.clone());
-                }
-                check_cancel(request_cancel)?;
-                return Ok(frame);
-            }
-            let rendered = frame_image(&frame)?;
-            if asset.max_edge == 2048 && asset.region.is_none() {
-                self.prime_thumbnail(id, &rendered);
-            }
-            self.store_image(id, rendered.png().map_err(|e| e.to_string())?);
+            let image = if thumbnail {
+                self.publish_frame(id, &frame, generation, Some(&asset), None);
+                self.derive_thumbnail(id, &frame, generation, false)
+                    .ok_or("Could not make the thumbnail")?
+            } else if raw {
+                self.publish_frame(id, &frame, generation, Some(&asset), None);
+                frame
+            } else {
+                let png = Arc::new(frame_image(&frame)?.png().map_err(|e| e.to_string())?);
+                self.memory
+                    .put_if(png_key(id), png.clone(), || self.store.current(generation));
+                self.publish_frame(id, &frame, generation, Some(&asset), Some(png.clone()));
+                png
+            };
+            self.store.debug(|| {
+                format!(
+                    "Edited preview {id}: lookup {looked_up:.1} ms, queue {:.1} ms, \
+                     render {:.1} ms, encode {:.1} ms",
+                    queued - looked_up,
+                    (rendered_at - started).as_secs_f64() * 1000. - queued,
+                    ms(rendered_at)
+                )
+            });
             check_cancel(request_cancel)?;
-            return self
-                .cached_png(id)?
-                .ok_or_else(|| "Preview cache unavailable".into());
+            return Ok(image);
         }
     }
 
@@ -1651,12 +1858,20 @@ impl Editor {
         recipe: EditRecipe,
     ) -> Result<x3f_render::WhiteBalance, String> {
         let session = self.session(id)?;
-        recipe.validate()?;
+        let source = crate::source::Info::read(&session.path, &AtomicBool::new(false))?;
+        source.validate_recipe(&recipe)?;
+        if !source.white_balance_available(&recipe) {
+            return Err("White balance is unavailable for monochrome DNG inputs".into());
+        }
         let worker = self.worker.lock().map_err(|_| "Renderer unavailable")?;
         let prepared = worker
             .prepared
             .as_ref()
-            .filter(|p| p.matches_source(&session.path, &session.source_revision, &recipe))
+            .filter(|p| {
+                p.matches_source(&session.path, &session.source_revision, &recipe)
+                    && (p.dng_demosaic == Some(DngDemosaic::Mono))
+                        == (source.resolve_demosaic(recipe.dng_demosaic) == Some(DngDemosaic::Mono))
+            })
             .ok_or("White balance calibration is not ready")?;
         x3f_render::recipe_white_balance(&prepared.image.image().white_balance, &recipe)
     }
@@ -1675,6 +1890,11 @@ impl Editor {
         }
         recipe.validate()?;
         let session = self.session(id)?;
+        let source = crate::source::Info::read(&session.path, &AtomicBool::new(false))?;
+        source.validate_recipe(&recipe)?;
+        if !source.white_balance_available(&recipe) {
+            return Err("White balance is unavailable for monochrome DNG inputs".into());
+        }
         let _priority = self.foreground_request()?;
         let cancel = self.fresh_request()?;
         let asset = Asset {
@@ -1712,7 +1932,10 @@ impl Editor {
         output: &Path,
         cancel: &AtomicBool,
     ) -> Result<(), String> {
-        recipe.validate()?;
+        crate::source::validate_recipe(path, recipe)?;
+        crate::source::Kind::of(path).validate_export(settings)?;
+        crate::source::protect_output(output, [path.to_owned()])?;
+        self.edits.protect_backup(output)?;
         let expected_source = expected_source.ok_or("Review the source before edited export")?;
         let source_revision = self.edits.source_revision(path)?;
         if expected_source != source_revision {
@@ -1739,15 +1962,15 @@ impl Editor {
             ColorProfile::None => return Err("Edited export requires a color profile".into()),
         };
         let Worker { renderer, prepared } = &mut *worker;
+        let prepared = prepared.as_ref().ok_or("RAW preparation unavailable")?;
+        let mut recipe = recipe.clone();
+        recipe.dng_demosaic = prepared.dng_demosaic;
         let result = renderer
             .as_mut()
             .ok_or("GPU renderer unavailable")?
             .render_prepared(
-                &prepared
-                    .as_ref()
-                    .ok_or("RAW preparation unavailable")?
-                    .image,
-                recipe,
+                &prepared.image,
+                &recipe,
                 RenderOptions {
                     max_dimension: None,
                     region: None,
@@ -1757,7 +1980,14 @@ impl Editor {
                 cancel,
             )
             .map_err(|e| e.to_string())?;
+        drop(worker);
         check_cancel(cancel)?;
+        let result = match settings.resize {
+            Some(resize) => result
+                .resize_for_export(resize, cancel)
+                .map_err(|e| e.to_string())?,
+            None => result,
+        };
         match settings.output_format {
             OutputFormat::RenderedJpeg => {
                 use std::io::Write;
@@ -1781,6 +2011,72 @@ impl Editor {
     }
 }
 
+fn camera_defaults(
+    path: &Path,
+    cancel: &AtomicBool,
+) -> Result<
+    (
+        crate::source::Info,
+        Option<Crop>,
+        x3f_render::CameraProfiles,
+    ),
+    String,
+> {
+    let source = crate::source::Info::read(path, cancel)?;
+    let (crop, profiles) = if source.kind == crate::source::Kind::Dng {
+        (source.crop, x3f_render::CameraProfiles::default())
+    } else {
+        (
+            x3f_core::read_as_shot_crop(path).map_err(|e| e.to_string())?,
+            x3f_render::read_camera_profiles(path, cancel).map_err(|e| e.to_string())?,
+        )
+    };
+    Ok((
+        source,
+        crop.map(|[x, y, width, height]| Crop {
+            x,
+            y,
+            width,
+            height,
+        }),
+        profiles,
+    ))
+}
+
+fn dng_method(method: DngDemosaic) -> Result<x3f_dng::DemosaicMethod, String> {
+    use x3f_dng::DemosaicMethod as Native;
+    Ok(match method {
+        DngDemosaic::Default => {
+            return Err("Default demosaic must resolve before preparation".into())
+        }
+        DngDemosaic::Amaze => Native::Amaze,
+        DngDemosaic::Dcb => Native::Dcb,
+        DngDemosaic::Ahd => Native::Ahd,
+        DngDemosaic::Eahd => Native::Eahd,
+        DngDemosaic::Hphd => Native::Hphd,
+        DngDemosaic::Igv => Native::Igv,
+        DngDemosaic::Lmmse => Native::Lmmse,
+        DngDemosaic::Vng4 => Native::Vng4,
+        DngDemosaic::Mono => Native::Mono,
+        DngDemosaic::Fast => Native::Fast,
+    })
+}
+
+fn source_recipe(
+    source: crate::source::Info,
+    crop: Option<Crop>,
+    profile: &str,
+    revision: &str,
+) -> EditRecipe {
+    let mut recipe = as_shot_recipe(crop, profile, revision);
+    if source.kind == crate::source::Kind::Dng {
+        recipe.camera_profile = None;
+        recipe.denoise = 0;
+        recipe.dng_demosaic = source.supports_demosaic().then_some(DngDemosaic::Default);
+    }
+    recipe
+}
+
 fn as_shot_recipe(crop: Option<Crop>, profile: &str, source_revision: &str) -> EditRecipe {
     EditRecipe {
         camera_profile: Some(profile.into()),
@@ -1802,6 +2098,8 @@ fn near_default(recipe: &EditRecipe) -> bool {
         camera_profile: base.camera_profile.clone(),
         film: base.film.clone(),
         monochrome: base.monochrome,
+        denoise: base.denoise,
+        dng_demosaic: base.dng_demosaic,
         crop: base.crop,
         seed: base.seed,
         ..recipe.pixels()
@@ -1896,6 +2194,73 @@ fn asset_url(id: &str) -> String {
     }
 }
 
+/// Whether the pixels of `asset` persist: a 2048-pixel preview of the whole image.
+fn persistable(asset: &Asset) -> bool {
+    asset.max_edge == 2048 && asset.region.is_none()
+}
+
+/// The ID of a preview. The renderer version is part of the key: an unchanged
+/// recipe renders differently after the renderer changes. `recipe` has its
+/// demosaicing method resolved.
+fn asset_id(
+    canonical: &Path,
+    source_revision: &str,
+    recipe: &EditRecipe,
+    max_edge: u32,
+    region: Option<Crop>,
+) -> Result<String, String> {
+    let mut key = serde_json::to_vec(&(
+        canonical,
+        source_revision,
+        recipe.pixels(),
+        max_edge,
+        region,
+        x3f_render::RENDER_VERSION,
+    ))
+    .map_err(|e| e.to_string())?;
+    // An X3I renders differently after its merge changes. X3F keys stay as they were.
+    if let Some(identity) = crate::x3i::identity(canonical) {
+        key.extend(identity.as_bytes());
+    }
+    key.extend(crate::source::decoder_identity(canonical).as_bytes());
+    Ok(format!("{:x}", Sha256::digest(key)))
+}
+
+/// Decodes an `x3f-edit` URL: `v=thumbnail`, `format=rgba8`, `cacheOnly=1`
+/// and `priority=high|normal|low`.
+fn parse_image_uri(uri: &str) -> Result<ImageQuery, String> {
+    let id = protocol_id(uri)?;
+    let url = url::Url::parse(uri).map_err(|e| e.to_string())?;
+    let value = |name: &str| {
+        url.query_pairs()
+            .find(|(key, _)| key == name)
+            .map(|(_, value)| value.into_owned())
+    };
+    let thumbnail = match value("v").as_deref() {
+        None => false,
+        Some("thumbnail") => true,
+        _ => return Err("Invalid rendered preview variant".into()),
+    };
+    let raw = match value("format").as_deref() {
+        None => false,
+        Some("rgba8") => true,
+        _ => return Err("Invalid rendered preview format".into()),
+    };
+    let priority = match value("priority").as_deref() {
+        Some("low") => PRIORITY_LOW,
+        None | Some("normal") => PRIORITY_NORMAL,
+        Some("high") => PRIORITY_HIGH,
+        _ => return Err("Invalid rendered preview priority".into()),
+    };
+    Ok(ImageQuery {
+        id,
+        thumbnail,
+        raw,
+        cache_only: crate::preview::cache_only(&url)?,
+        priority,
+    })
+}
+
 pub fn protocol_id(uri: &str) -> Result<String, String> {
     let url = url::Url::parse(uri).map_err(|e| e.to_string())?;
     if !((url.scheme() == "x3f-edit" && url.host_str() == Some("localhost"))
@@ -1912,6 +2277,19 @@ pub fn protocol_id(uri: &str) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
+    fn bayer_source() -> crate::source::Info {
+        crate::source::Info {
+            kind: crate::source::Kind::Dng,
+            capabilities: crate::source::Capabilities {
+                bayer: true,
+                ..crate::source::Capabilities::for_kind(crate::source::Kind::Dng, false)
+            },
+            crop: None,
+            orientation: Some(1),
+            iso: None,
+        }
+    }
+
     #[test]
     fn sfd_cache_clear_waits_for_registered_jobs_to_finish() {
         let temporary = tempfile::tempdir().unwrap();
@@ -1950,6 +2328,7 @@ mod tests {
             denoise: recipe.denoise,
             denoise_options: recipe.denoise_options,
             denoise_free: false,
+            dng_demosaic: None,
             x3i_source: recipe.x3i_source,
             image: PreparedImage::new(
                 SceneLinearImage {
@@ -2038,7 +2417,7 @@ mod tests {
     #[test]
     #[ignore = "set X3F_CAMERA_PROFILE_INPUT to a real file with FCBlue calibration"]
     fn real_camera_defaults_do_not_save_and_existing_recipes_are_preserved() {
-        use std::io::{Read, Seek, SeekFrom};
+        use std::io::{Read, Seek, SeekFrom, Write};
         let input = std::env::var_os("X3F_CAMERA_PROFILE_INPUT").expect("X3F_CAMERA_PROFILE_INPUT");
         let temporary = tempfile::tempdir().unwrap();
         let photo = temporary.path().join("photo.X3F");
@@ -2059,7 +2438,7 @@ mod tests {
         drop(file);
         let editor = Editor::new(temporary.path().join("edits"));
         let session = editor.open(photo.clone()).unwrap();
-        assert_eq!(session.as_shot_camera_profile, "FCBlue");
+        assert_eq!(session.as_shot_camera_profile.as_deref(), Some("FCBlue"));
         assert_eq!(session.recipe.camera_profile.as_deref(), Some("FCBlue"));
         assert_eq!(session.recipe.film, None);
         assert_eq!(session.revision, 0);
@@ -2147,6 +2526,170 @@ mod tests {
         assert_eq!(legacy.exposure, 1.);
     }
     use super::*;
+    use std::fs;
+
+    #[test]
+    fn bayer_defaults_do_not_migrate_legacy_demosaicing() {
+        let source = bayer_source();
+        let defaults = source_recipe(source, None, "Standard", "12345678abcdef");
+        assert_eq!(defaults.dng_demosaic, Some(DngDemosaic::Default));
+        assert!(near_default(&defaults));
+        assert!(matches_defaults(&defaults, &defaults, false));
+        for method in [None, Some(DngDemosaic::Fast), Some(DngDemosaic::Mono)] {
+            let recipe = EditRecipe {
+                dng_demosaic: method,
+                ..defaults.clone()
+            };
+            assert!(!matches_defaults(&recipe, &defaults, false));
+            assert!(!matches_defaults(&recipe, &defaults, true));
+        }
+        let linear = crate::source::Info {
+            capabilities: crate::source::Capabilities::for_kind(crate::source::Kind::Dng, false),
+            ..source
+        };
+        assert_eq!(
+            source_recipe(linear, None, "Standard", "12345678abcdef").dng_demosaic,
+            None
+        );
+    }
+
+    #[test]
+    fn a_cold_bayer_preview_uses_fast_then_resolves_the_selected_method() {
+        let session = Session {
+            id: "photo".into(),
+            path: "/photo.dng".into(),
+            source_revision: "a".repeat(64),
+            cancelled_revision: None,
+        };
+        for iso in [None, Some(1600.)] {
+            let source = crate::source::Info {
+                iso,
+                ..bayer_source()
+            };
+            for method in [
+                None,
+                Some(DngDemosaic::Default),
+                Some(DngDemosaic::Amaze),
+                Some(DngDemosaic::Fast),
+                Some(DngDemosaic::Mono),
+            ] {
+                let mut request = RenderRequest {
+                    session_id: session.id.clone(),
+                    recipe: EditRecipe {
+                        dng_demosaic: method,
+                        denoise: 0,
+                        ..Default::default()
+                    },
+                    revision: 1,
+                    max_edge: 1024,
+                    region: None,
+                    interactive: true,
+                };
+                let target = source.resolve_demosaic(method);
+                let (first, draft) =
+                    Editor::effective_recipe(&Worker::default(), &request, &session, source);
+                assert_eq!(
+                    first.dng_demosaic,
+                    if target == Some(DngDemosaic::Mono) {
+                        target
+                    } else {
+                        Some(DngDemosaic::Fast)
+                    }
+                );
+                assert_eq!(draft, first.dng_demosaic != target);
+                request.interactive = false;
+                let (final_recipe, draft) =
+                    Editor::effective_recipe(&Worker::default(), &request, &session, source);
+                assert!(!draft);
+                assert_eq!(final_recipe.dng_demosaic, target);
+                assert_eq!(request.recipe.dng_demosaic, method);
+            }
+        }
+        let mono = crate::source::Info {
+            capabilities: crate::source::Capabilities::for_kind(crate::source::Kind::Dng, true),
+            ..bayer_source()
+        };
+        let request = RenderRequest {
+            session_id: session.id.clone(),
+            recipe: EditRecipe {
+                dng_demosaic: Some(DngDemosaic::Default),
+                denoise: 0,
+                ..Default::default()
+            },
+            revision: 1,
+            max_edge: 1024,
+            region: None,
+            interactive: true,
+        };
+        let (recipe, draft) =
+            Editor::effective_recipe(&Worker::default(), &request, &session, mono);
+        assert_eq!(recipe.dng_demosaic, Some(DngDemosaic::Mono));
+        assert!(!draft);
+    }
+
+    #[test]
+    fn interactive_demosaic_reuses_color_preparation_but_not_mono_calibration() {
+        let source = bayer_source();
+        let directory = tempfile::tempdir().unwrap();
+        let editor = Editor::new(directory.path().join("edits"));
+        let path = directory.path().join("photo.dng");
+        set_prepared(&editor, &path);
+        let mut worker = editor.worker.lock().unwrap();
+        let prepared = worker.prepared.as_mut().unwrap();
+        prepared.denoise_free = true;
+        prepared.dng_demosaic = Some(DngDemosaic::Amaze);
+        let session = Session {
+            id: "photo".into(),
+            path,
+            source_revision: "a".repeat(64),
+            cancelled_revision: None,
+        };
+        let mut request = RenderRequest {
+            session_id: session.id.clone(),
+            recipe: EditRecipe {
+                denoise: 0,
+                dng_demosaic: Some(DngDemosaic::Igv),
+                ..Default::default()
+            },
+            revision: 1,
+            max_edge: 512,
+            region: None,
+            interactive: true,
+        };
+        assert!(prepared.matches_source(&session.path, &session.source_revision, &request.recipe));
+        assert!(!prepared.matches_preparation(&request.recipe));
+        let (draft, is_draft) = Editor::effective_recipe(&worker, &request, &session, source);
+        assert!(is_draft);
+        assert_eq!(draft.dng_demosaic, Some(DngDemosaic::Amaze));
+        assert!(worker
+            .prepared
+            .as_ref()
+            .unwrap()
+            .matches_preparation(&draft));
+        request.recipe.dng_demosaic = Some(DngDemosaic::Default);
+        let (warmed, draft) = Editor::effective_recipe(&worker, &request, &session, source);
+        assert_eq!(warmed.dng_demosaic, Some(DngDemosaic::Amaze));
+        assert!(!draft);
+        request.recipe.dng_demosaic = Some(DngDemosaic::Igv);
+        request.interactive = false;
+        assert_eq!(
+            Editor::effective_recipe(&worker, &request, &session, source),
+            (request.recipe.clone(), false)
+        );
+        request.interactive = true;
+        request.recipe.dng_demosaic = Some(DngDemosaic::Mono);
+        assert_eq!(
+            Editor::effective_recipe(&worker, &request, &session, source),
+            (request.recipe.clone(), false)
+        );
+        worker.prepared.as_mut().unwrap().dng_demosaic = Some(DngDemosaic::Mono);
+        request.recipe.dng_demosaic = Some(DngDemosaic::Amaze);
+        request.recipe.temperature = Some(5000.);
+        assert_eq!(
+            Editor::effective_recipe(&worker, &request, &session, source),
+            (request.recipe.clone(), false)
+        );
+    }
 
     #[cfg(target_os = "macos")]
     #[test]
@@ -2173,6 +2716,7 @@ mod tests {
             denoise: 0,
             denoise_options: Default::default(),
             denoise_free: false,
+            dng_demosaic: None,
             x3i_source: EditRecipe::default().x3i_source,
             image: PreparedImage::new(
                 SceneLinearImage {
@@ -2208,6 +2752,7 @@ mod tests {
                 denoise: 0,
                 denoise_options: Default::default(),
                 denoise_free: false,
+                dng_demosaic: None,
                 x3i_source: EditRecipe::default().x3i_source,
                 image: PreparedImage::new(
                     SceneLinearImage {
@@ -2293,14 +2838,19 @@ mod tests {
             region: None,
             interactive: true,
         };
+        let source = crate::source::Info {
+            kind: crate::source::Kind::X3f,
+            capabilities: crate::source::Capabilities::for_kind(crate::source::Kind::X3f, false),
+            ..bayer_source()
+        };
         let worker = Worker::default();
         let nlm = request(x3f_core::DenoiseAlgorithm::Nlm);
         assert_eq!(
-            Editor::effective_recipe(&worker, &nlm, &session),
+            Editor::effective_recipe(&worker, &nlm, &session, source),
             (nlm.recipe.clone(), false)
         );
         let bm3d = request(x3f_core::DenoiseAlgorithm::Bm3d);
-        let (recipe, draft) = Editor::effective_recipe(&worker, &bm3d, &session);
+        let (recipe, draft) = Editor::effective_recipe(&worker, &bm3d, &session, source);
         assert_eq!((recipe.denoise, draft), (0, true));
     }
 
@@ -2428,84 +2978,54 @@ mod tests {
     }
 
     #[test]
-    fn preview_urls_and_cache_are_bounded() {
+    fn preview_urls_parse_their_options() {
         let id = "a".repeat(64);
         assert_eq!(protocol_id(&asset_url(&id)).unwrap(), id);
         assert!(protocol_id("x3f-edit://localhost/../../etc/passwd").is_err());
         assert!(protocol_id(&format!("https://example.com/{id}")).is_err());
-        let mut cache = Images::default();
-        for n in 0..140 {
-            cache.put(n.to_string(), vec![0; 4]);
+        let url = asset_url(&id);
+        let query =
+            parse_image_uri(&format!("{url}?v=thumbnail&cacheOnly=1&priority=high")).unwrap();
+        assert!(query.thumbnail && query.cache_only && !query.raw);
+        assert_eq!(query.priority, PRIORITY_HIGH);
+        let query = parse_image_uri(&format!("{url}?format=rgba8")).unwrap();
+        assert!(query.raw && !query.cache_only && !query.thumbnail);
+        assert_eq!(query.priority, PRIORITY_NORMAL);
+        for bad in ["v=small", "format=jpeg", "cacheOnly=0", "priority=urgent"] {
+            assert!(parse_image_uri(&format!("{url}?{bad}")).is_err(), "{bad}");
         }
-        assert_eq!(cache.images.len(), 128);
-        assert_eq!(cache.bytes, 512);
-        assert!(cache.get("12").is_some());
-        cache.put("next".into(), vec![0; 4]);
-        assert!(
-            cache.get("12").is_some(),
-            "A cache hit must renew its LRU position"
-        );
-        assert!(cache.get("13").is_none());
     }
 
-    #[test]
-    fn thumbnails_survive_eviction_restart_and_editor_cancellation() {
-        let temporary = tempfile::tempdir().unwrap();
-        let path = temporary.path().join("photo.X3F");
-        fs::write(&path, b"No RAW decoding should be needed").unwrap();
-        let directory = temporary.path().join("edits");
-        let recipe = EditRecipe::default();
-        let editor = Editor::new(directory.clone());
-        let url = editor
-            .register(&path, &"a".repeat(64), &recipe, 2048, None)
-            .unwrap();
-        let rendered = x3f_render::RenderedImage {
-            width: 900,
-            height: 600,
-            data: x3f_render::Pixels::Rgb16(vec![32768; 900 * 600 * 3]),
+    /// A final 2048-pixel PNG, as a render stores it.
+    fn final_png(width: u32, height: u32) -> Vec<u8> {
+        x3f_render::RenderedImage {
+            width,
+            height,
+            data: x3f_render::Pixels::Rgb16(vec![32768; (width * height * 3) as usize]),
             color_profile: x3f_render::ColorProfile::Srgb,
-            full_width: 900,
-            full_height: 600,
+            full_width: width,
+            full_height: height,
             region: None,
-        };
-        editor.prime_thumbnail(&protocol_id(&url).unwrap(), &rendered);
-        let uri = format!("{url}?v=thumbnail");
-        let expected = editor.image_uri(&uri).unwrap();
-        assert_eq!(
-            u32::from_be_bytes(expected[16..20].try_into().unwrap()),
-            640
-        );
-        assert_eq!(
-            u32::from_be_bytes(expected[20..24].try_into().unwrap()),
-            427
-        );
-        drop(editor);
+        }
+        .png()
+        .unwrap()
+    }
 
-        let reopened = Editor::new(directory);
-        assert_eq!(
-            reopened
-                .register(&path, &"a".repeat(64), &recipe, 2048, None)
-                .unwrap(),
-            url
-        );
-        reopened.cancel_preview();
-        reopened.paused.store(true, Ordering::SeqCst);
-        assert_eq!(*reopened.image_uri(&uri).unwrap(), *expected);
-        assert!(reopened.worker.lock().unwrap().renderer.is_none());
-        assert!(reopened.image_uri(&format!("{url}?v=unknown")).is_err());
+    fn png_size(png: &[u8]) -> (u32, u32) {
+        (
+            u32::from_be_bytes(png[16..20].try_into().unwrap()),
+            u32::from_be_bytes(png[20..24].try_into().unwrap()),
+        )
+    }
 
-        *reopened.session.lock().unwrap() = Some(Session {
-            id: "active".into(),
-            path: path.clone(),
-            source_revision: "a".repeat(64),
-            cancelled_revision: None,
-        });
-        reopened.worker.lock().unwrap().prepared = Some(Prepared {
-            path: path.clone(),
+    fn prepared(path: &Path, recipe: &EditRecipe) -> Prepared {
+        Prepared {
+            path: path.to_owned(),
             source_revision: "a".repeat(64),
             denoise: recipe.denoise,
             denoise_options: recipe.denoise_options,
             denoise_free: false,
+            dng_demosaic: None,
             x3i_source: EditRecipe::default().x3i_source,
             image: PreparedImage::new(
                 SceneLinearImage {
@@ -2523,14 +3043,62 @@ mod tests {
                 &AtomicBool::new(false),
             )
             .unwrap(),
-        });
+        }
+    }
 
+    #[test]
+    fn thumbnails_derive_from_final_previews_and_survive_restart() {
+        let temporary = tempfile::tempdir().unwrap();
+        let path = temporary.path().join("photo.X3F");
+        fs::write(&path, b"No RAW decoding should be needed").unwrap();
+        let directory = temporary.path().join("edits");
+        let recipe = EditRecipe::default();
+        let editor = Editor::new(directory.clone());
+        let url = editor
+            .register(&path, &"a".repeat(64), &recipe, 2048, None)
+            .unwrap();
+        let id = protocol_id(&url).unwrap();
+        let medium = final_png(900, 600);
+        assert!(editor
+            .store
+            .put(editor.store.generation(), &medium_name(&id), &medium));
+        // No render may start, and the RAW is not decodable.
+        editor.cancel_preview();
+        editor.paused.store(true, Ordering::SeqCst);
+        let uri = format!("{url}?v=thumbnail");
+        let expected = editor.image_uri(&uri).unwrap();
+        assert_eq!(png_size(&expected), (640, 427));
+        editor.persist_previews();
+        assert!(editor.worker.lock().unwrap().renderer.is_none());
+        drop(editor);
+
+        // After a restart, the derived thumbnail is on disk, without registration.
+        let reopened = Editor::new(directory);
+        reopened.paused.store(true, Ordering::SeqCst);
+        let cached = reopened.respond(&format!("{uri}&cacheOnly=1"));
+        assert_eq!((cached.status, cached.bytes), (200, (*expected).clone()));
+        assert_eq!(*reopened.image_uri(&uri).unwrap(), *expected);
+        assert!(reopened.image_uri(&format!("{url}?v=unknown")).is_err());
+
+        *reopened.session.lock().unwrap() = Some(Session {
+            id: "active".into(),
+            path: path.clone(),
+            source_revision: "a".repeat(64),
+            cancelled_revision: None,
+        });
+        reopened.worker.lock().unwrap().prepared = Some(prepared(&path, &recipe));
         let mut changed = recipe.clone();
         changed.exposure = 1.;
         for (source, recipe) in [("b".repeat(64), &recipe), ("a".repeat(64), &changed)] {
             let url = reopened
                 .register(&path, &source, recipe, 2048, None)
                 .unwrap();
+            assert_eq!(
+                reopened
+                    .respond(&format!("{url}?v=thumbnail&cacheOnly=1"))
+                    .status,
+                204
+            );
             assert!(reopened
                 .image_uri(&format!("{url}?v=thumbnail"))
                 .unwrap_err()
@@ -2543,7 +3111,47 @@ mod tests {
     }
 
     #[test]
-    fn medium_previews_survive_eviction_restart_and_keep_source_and_recipe_identity() {
+    fn cache_only_requests_never_wait_for_the_worker_or_registration() {
+        let temporary = tempfile::tempdir().unwrap();
+        let path = temporary.path().join("photo.X3F");
+        fs::write(&path, b"Not a decodable RAW").unwrap();
+        let editor = Editor::new(temporary.path().join("edits"));
+        let url = editor
+            .register(&path, &"a".repeat(64), &EditRecipe::default(), 2048, None)
+            .unwrap();
+        let id = protocol_id(&url).unwrap();
+        let unknown = asset_url(&"b".repeat(64));
+        // A busy worker and foreground work block generation, not cache reads.
+        let _foreground = editor.foreground_request().unwrap();
+        let worker = editor.worker.lock().unwrap();
+        for uri in [
+            format!("{url}?cacheOnly=1"),
+            format!("{url}?v=thumbnail&cacheOnly=1"),
+            format!("{url}?format=rgba8&cacheOnly=1"),
+            format!("{unknown}?cacheOnly=1&requestId=expired"),
+        ] {
+            let body = editor.respond(&uri);
+            assert_eq!((body.status, body.bytes.len()), (204, 0), "{uri}");
+        }
+        // A legacy large preview moves into the shared cache on its first hit.
+        let legacy = temporary
+            .path()
+            .join("edits")
+            .join(crate::cache::LEGACY_MEDIUMS);
+        fs::create_dir_all(&legacy).unwrap();
+        let medium = final_png(2048, 1024);
+        fs::write(legacy.join(format!("{id}.png")), &medium).unwrap();
+        let thumbnail = editor.respond(&format!("{url}?v=thumbnail&cacheOnly=1"));
+        assert_eq!(thumbnail.status, 200);
+        assert_eq!(png_size(&thumbnail.bytes), (640, 320));
+        assert!(!legacy.join(format!("{id}.png")).exists());
+        let body = editor.respond(&format!("{url}?cacheOnly=1"));
+        assert_eq!((body.status, body.bytes), (200, medium));
+        assert!(worker.renderer.is_none());
+    }
+
+    #[test]
+    fn medium_previews_survive_restart_and_keep_source_and_recipe_identity() {
         let temporary = tempfile::tempdir().unwrap();
         let path = temporary.path().join("photo.X3F");
         fs::write(&path, b"No RAW decoding should be needed").unwrap();
@@ -2555,29 +3163,11 @@ mod tests {
             .register(&path, &source, &recipe, 2048, None)
             .unwrap();
         let id = protocol_id(&url).unwrap();
-        let rendered = x3f_render::RenderedImage {
-            width: 2048,
-            height: 1024,
-            data: x3f_render::Pixels::Rgb16(vec![32768; 2048 * 1024 * 3]),
-            color_profile: x3f_render::ColorProfile::Srgb,
-            full_width: 2048,
-            full_height: 1024,
-            region: None,
-        };
-        let expected = rendered.png().unwrap();
-        editor.store_image(&id, expected.clone());
-        assert_eq!(
-            fs::read(directory.join("mediums-v1").join(format!("{id}.png"))).unwrap(),
-            expected
-        );
-        assert!(!directory.join("thumbnails-v1").exists());
-        {
-            let mut assets = editor.assets.lock().unwrap();
-            for n in 0..128 {
-                assets.pngs.put(format!("evict-{n}"), vec![0]);
-            }
-            assert!(assets.pngs.get(&id).is_none());
-        }
+        let expected = final_png(2048, 1024);
+        editor
+            .store
+            .put(editor.store.generation(), &medium_name(&id), &expected);
+        editor.memory.clear();
         editor.cancel_preview();
         editor.paused.store(true, Ordering::SeqCst);
         assert_eq!(*editor.image_uri(&url).unwrap(), expected);
@@ -2600,14 +3190,26 @@ mod tests {
         bm3d.denoise_options.algorithm = x3f_core::DenoiseAlgorithm::Bm3d;
         let mut chroma = recipe.clone();
         chroma.denoise_options.nlm.chroma_search = 21;
-        for (source, recipe) in [
-            ("b".repeat(64), &recipe),
-            (source.clone(), &draft),
-            (source.clone(), &bm3d),
-            (source, &chroma),
+        for (source, recipe, edge, region) in [
+            ("b".repeat(64), &recipe, 2048, None),
+            (source.clone(), &draft, 2048, None),
+            (source.clone(), &bm3d, 2048, None),
+            (source.clone(), &chroma, 2048, None),
+            // Direct thumbnails and regions are other images.
+            (source.clone(), &recipe, 640, None),
+            (
+                source,
+                &recipe,
+                2048,
+                Some(Crop {
+                    width: 0.5,
+                    height: 0.5,
+                    ..Default::default()
+                }),
+            ),
         ] {
             let distinct = reopened
-                .register(&path, &source, recipe, 2048, None)
+                .register(&path, &source, recipe, edge, region)
                 .unwrap();
             assert_ne!(distinct, url);
             assert!(reopened
@@ -2625,8 +3227,9 @@ mod tests {
         fs::write(&path, b"No RAW decoding should be needed").unwrap();
         let directory = temporary.path().join("edits");
         let editor = Editor::new(directory.clone());
+        let source = editor.edits.source_revision(&path).unwrap();
         let url = editor
-            .register(&path, &"a".repeat(64), &EditRecipe::default(), 2048, None)
+            .register(&path, &source, &EditRecipe::default(), 2048, None)
             .unwrap();
         let id = protocol_id(&url).unwrap();
         let mut frame = b"X3F8\x03\0\0\0\x02\0\0\0\0\0\0\0".to_vec();
@@ -2634,13 +3237,8 @@ mod tests {
         assert_eq!(frame_image(&frame).unwrap().rgb8(), [10, 20, 30].repeat(6));
         assert!(frame_image(&frame[..20]).is_err());
         let frame = Arc::new(frame);
-        editor
-            .assets
-            .lock()
-            .unwrap()
-            .frames
-            .put(id.clone(), frame.clone());
-        editor.defer_persist(id.clone(), frame.clone());
+        let asset = editor.assets.lock().unwrap().recipes[&id].clone();
+        editor.publish_frame(&id, &frame, editor.store.generation(), Some(&asset), None);
         // No render may start: every body below comes from the frame or disk.
         editor.paused.store(true, Ordering::SeqCst);
         let raw = editor.respond(&format!("{url}?format=rgba8"));
@@ -2649,23 +3247,115 @@ mod tests {
         assert_eq!(raw.content_type, "application/octet-stream");
         let png = editor.respond(&url);
         assert_eq!((png.status, png.content_type), (200, "image/png"));
-        let medium = directory.join("mediums-v1").join(format!("{id}.png"));
-        assert_eq!(fs::read(&medium).unwrap(), png.bytes);
         editor.persist_previews();
         assert!(editor.pending.lock().unwrap().is_empty());
-        assert!(directory.join("thumbnails-v1").is_dir());
+        let stored = |name: &str| {
+            directory
+                .join(crate::cache::DIRECTORY)
+                .join(&name[..2])
+                .join(name)
+        };
+        assert_eq!(fs::read(stored(&medium_name(&id))).unwrap(), png.bytes);
+        assert!(stored(&thumbnail_name(&id)).is_file());
+        drop(editor);
 
         // After a restart only the disk PNG exists; a raw request gets it.
         let reopened = Editor::new(directory);
         reopened.paused.store(true, Ordering::SeqCst);
-        reopened
-            .register(&path, &"a".repeat(64), &EditRecipe::default(), 2048, None)
-            .unwrap();
         let fallback = reopened.respond(&format!("{url}?format=rgba8"));
         assert_eq!(fallback.bytes, png.bytes);
         assert_eq!(fallback.content_type, "image/png");
         let invalid = reopened.respond(&format!("{url}?format=jpeg"));
         assert_eq!((invalid.status, invalid.content_type), (400, "text/plain"));
+    }
+
+    #[test]
+    fn clear_disable_drafts_and_changed_sources_do_not_persist() {
+        let temporary = tempfile::tempdir().unwrap();
+        let path = temporary.path().join("photo.X3F");
+        fs::write(&path, b"source").unwrap();
+        let editor = Editor::new(temporary.path().join("edits"));
+        let source = editor.edits.source_revision(&path).unwrap();
+        let url = editor
+            .register(&path, &source, &EditRecipe::default(), 2048, None)
+            .unwrap();
+        let id = protocol_id(&url).unwrap();
+        let asset = editor.assets.lock().unwrap().recipes[&id].clone();
+        let mut frame = b"X3F8\x01\0\0\0\x01\0\0\0\0\0\0\0".to_vec();
+        frame.extend([1, 2, 3, 255]);
+        let frame = Arc::new(frame);
+        // The shared store also holds source fingerprints: look for the images.
+        let persisted = |editor: &Editor| {
+            editor.persist_previews();
+            [medium_name(&id), thumbnail_name(&id)]
+                .iter()
+                .any(|name| editor.store.get(name, &[], png_valid).is_some())
+        };
+
+        // A render that started before Clear: no memory entry, no disk entry.
+        let before = editor.store.generation();
+        editor.store.clear().unwrap();
+        editor.publish_frame(&id, &frame, before, Some(&asset), None);
+        assert!(editor.memory.get(&frame_key(&id)).is_none());
+        assert!(!persisted(&editor));
+        // Queued before Clear, persisted after it: dropped.
+        let generation = editor.store.generation();
+        editor.publish_frame(&id, &frame, generation, Some(&asset), None);
+        editor.store.clear().unwrap();
+        editor.memory.clear();
+        editor.cache_cleared();
+        assert!(!persisted(&editor));
+        // Disabled: nothing persists.
+        let generation = editor.store.generation();
+        editor.publish_frame(&id, &frame, generation, Some(&asset), None);
+        editor.store.configure(false, crate::cache::DEFAULT_LIMIT);
+        assert!(!persisted(&editor));
+        editor.store.configure(true, crate::cache::DEFAULT_LIMIT);
+        // A draft has no asset to persist; its derived thumbnail stays in memory.
+        let generation = editor.store.generation();
+        editor.assets.lock().unwrap().drafts.insert(id.clone());
+        editor.publish_frame(&id, &frame, generation, None, None);
+        assert!(editor.pending.lock().unwrap().is_empty());
+        assert_eq!(
+            editor
+                .respond(&format!("{url}?v=thumbnail&cacheOnly=1"))
+                .status,
+            200
+        );
+        assert!(!persisted(&editor));
+        editor.assets.lock().unwrap().drafts.clear();
+        // The source changed after the render: not persisted.
+        editor.publish_frame(&id, &frame, generation, Some(&asset), None);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        fs::write(&path, b"changed").unwrap();
+        editor.memory.clear();
+        assert!(!persisted(&editor));
+        fs::write(&path, b"source").unwrap();
+        let asset = Asset {
+            source_revision: editor.edits.source_revision(&path).unwrap(),
+            ..asset
+        };
+        editor.publish_frame(&id, &frame, generation, Some(&asset), None);
+        assert!(persisted(&editor));
+    }
+
+    #[test]
+    fn waiting_requests_follow_priority_then_age() {
+        let gate: PreviewGate = Arc::new((Mutex::new(PreviewWork::default()), Condvar::new()));
+        let low = Waiter::new(&gate, PRIORITY_LOW).unwrap();
+        let normal = Waiter::new(&gate, PRIORITY_NORMAL).unwrap();
+        let later = Waiter::new(&gate, PRIORITY_NORMAL).unwrap();
+        let high = Waiter::new(&gate, PRIORITY_HIGH).unwrap();
+        let first = |waiter: &Waiter| waiter.first(&gate.0.lock().unwrap());
+        assert!(first(&high) && !first(&normal));
+        drop(high);
+        assert!(first(&normal) && !first(&later));
+        drop(normal);
+        assert!(first(&later));
+        drop(later);
+        assert!(first(&low));
+        drop(low);
+        assert!(gate.0.lock().unwrap().waiting.is_empty());
     }
 
     #[test]
@@ -2725,7 +3415,15 @@ mod tests {
     #[test]
     fn cancelled_image_request_leaves_worker_wait_without_decoding() {
         let temporary = tempfile::tempdir().unwrap();
+        let path = temporary.path().join("photo.X3F");
+        fs::write(&path, b"Not a decodable RAW").unwrap();
         let editor = Arc::new(Editor::new(temporary.path().join("edits")));
+        let id = protocol_id(
+            &editor
+                .register(&path, &"a".repeat(64), &EditRecipe::default(), 2048, None)
+                .unwrap(),
+        )
+        .unwrap();
         let request = editor.begin_image_request().unwrap();
         let cancel = editor.image_requests.lock().unwrap()[&request].clone();
         let worker = editor.worker.lock().unwrap();
@@ -2733,8 +3431,14 @@ mod tests {
         let image = editor.clone();
         let requested = request.clone();
         let task = std::thread::spawn(move || {
-            send.send(image.image_request(&"a".repeat(64), Some((&requested, &cancel)), false))
-                .unwrap();
+            send.send(image.image_request(
+                &id,
+                true,
+                false,
+                Some((&requested, &cancel)),
+                PRIORITY_HIGH,
+            ))
+            .unwrap();
         });
         assert!(matches!(
             receive.recv_timeout(std::time::Duration::from_millis(50)),
@@ -2783,11 +3487,8 @@ mod tests {
             "Waiting thumbnails must release the GPU worker"
         );
         editor
-            .assets
-            .lock()
-            .unwrap()
-            .pngs
-            .put(id, b"completed pixels".to_vec());
+            .memory
+            .put(png_key(&id), Arc::new(b"completed pixels".to_vec()));
         drop(foreground);
         assert_eq!(
             &**receive

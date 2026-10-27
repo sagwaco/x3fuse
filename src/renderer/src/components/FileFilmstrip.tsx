@@ -9,7 +9,7 @@ import {
   type ReactNode
 } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { useScrollToActive } from '../hooks/useScrollToActive'
+import { useScrollToActive, useShownRows } from '../hooks/useScrollToActive'
 import type { X3FFileDTO } from '@shared/types'
 import type { PreviewRegion } from '@shared/editor'
 import { displayPreviewUrl } from '@shared/preview'
@@ -25,6 +25,7 @@ import { cn } from '../lib/cn'
 import { Thumbnail } from './Thumbnail'
 import { CullBadge } from './CullBadge'
 import { StackBadge } from './StackBadge'
+import { EditErrorBadge } from './EditErrorBadge'
 import { ZoomablePreview } from './ZoomablePreview'
 import { QueueContextMenu } from './QueueContextMenu'
 import { DevelopingCloud } from '../lib/developingCloud'
@@ -215,6 +216,7 @@ export function FilmstripStrip({
     overscan: 4
   })
   useScrollToActive(virtualizer, files, active?.id ?? null)
+  useShownRows(virtualizer, files)
   return (
     <div
       ref={stripRef}
@@ -287,6 +289,7 @@ const FilmstripCell = memo(function FilmstripCell({
       />
       <CullBadge file={file} overlay />
       <StackBadge file={file} overlay />
+      <EditErrorBadge file={file} overlay />
     </div>
   )
 })

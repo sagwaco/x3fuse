@@ -31,6 +31,189 @@ fn image(width: u32, height: u32) -> SceneLinearImage {
         color_mode_calibration: None,
     }
 }
+
+#[test]
+fn dng_method_serialization_preserves_legacy_and_rejects_unknown_methods() {
+    let legacy: EditRecipe = serde_json::from_str(r#"{"version":1}"#).unwrap();
+    assert_eq!(legacy.dng_demosaic, None);
+    assert!(serde_json::to_value(&legacy)
+        .unwrap()
+        .get("dngDemosaic")
+        .is_none());
+    for name in [
+        "default", "amaze", "dcb", "ahd", "eahd", "hphd", "igv", "lmmse", "vng4", "mono", "fast",
+    ] {
+        let input = serde_json::json!({"dngDemosaic": name});
+        let recipe: EditRecipe = serde_json::from_value(input).unwrap();
+        assert_eq!(serde_json::to_value(recipe).unwrap()["dngDemosaic"], name);
+    }
+    assert!(serde_json::from_str::<EditRecipe>(r#"{"dngDemosaic":"future"}"#).is_err());
+}
+
+#[test]
+#[ignore = "requires a supported GPU"]
+fn mono_demosaic_render_keeps_gray_and_applies_warmth() {
+    let cancel = AtomicBool::new(false);
+    let renderer = Renderer::new().unwrap();
+    let mut scene = image(8, 8);
+    scene.data.fill(0.18);
+    let source = PreparedImage::new(scene, &cancel)
+        .unwrap()
+        .with_dng_source(true);
+    let recipe = EditRecipe {
+        denoise: 0,
+        film: None,
+        dng_demosaic: Some(DngDemosaic::Mono),
+        ..Default::default()
+    };
+    let gray = renderer
+        .render_prepared(&source, &recipe, RenderOptions::default(), &cancel)
+        .unwrap();
+    for rgb in gray.data.as_chunks::<3>().0 {
+        assert!(rgb[0] > 1000);
+        assert_eq!(rgb[0], rgb[1]);
+        assert_eq!(rgb[1], rgb[2]);
+    }
+    let warm = renderer
+        .render_prepared(
+            &source,
+            &EditRecipe {
+                warmth: 50.,
+                ..recipe
+            },
+            RenderOptions::default(),
+            &cancel,
+        )
+        .unwrap();
+    assert!(warm.data.as_chunks::<3>().0.iter().all(|rgb| rgb[0] > rgb[2]));
+}
+
+#[test]
+fn dng_recipes_reject_sensor_controls_and_allow_spectral_film_filters() {
+    let base = EditRecipe {
+        film: None,
+        denoise: 0,
+        ..Default::default()
+    };
+    base.validate_dng(false).unwrap();
+    base.validate_dng(true).unwrap();
+    for recipe in [
+        EditRecipe {
+            camera_profile: Some("Standard".into()),
+            ..base.clone()
+        },
+        EditRecipe {
+            fill_light: 1.,
+            ..base.clone()
+        },
+        EditRecipe {
+            denoise: 1,
+            ..base.clone()
+        },
+        EditRecipe {
+            raw_color: Some(RawColor {
+                gains: [1.; 3],
+                matrix: [1., 0., 0., 0., 1., 0., 0., 0., 1.],
+            }),
+            ..base.clone()
+        },
+        EditRecipe {
+            monochrome: Some(MonochromeSettings::default()),
+            ..base.clone()
+        },
+    ] {
+        assert!(recipe.validate_dng(false).is_err());
+    }
+    let balanced = EditRecipe {
+        temperature: Some(6500.),
+        ..base.clone()
+    };
+    balanced.validate_dng(false).unwrap();
+    assert!(balanced.validate_dng(true).is_err());
+    let mono = EditRecipe {
+        dng_demosaic: Some(DngDemosaic::Mono),
+        ..base.clone()
+    };
+    mono.validate_dng(false).unwrap();
+    for invalid in [
+        EditRecipe {
+            temperature: Some(5000.),
+            ..mono.clone()
+        },
+        EditRecipe {
+            tint: 5.,
+            ..mono.clone()
+        },
+        EditRecipe {
+            white_balance_gains: Some([1.; 3]),
+            ..mono.clone()
+        },
+    ] {
+        assert!(invalid.validate_dng(false).is_err());
+    }
+    for film in 0..film::profile::FILM_COUNT as u32 {
+        let profile = film::profile::load(film as usize).unwrap();
+        let recipe = EditRecipe {
+            film: Some(FilmSettings {
+                film,
+                ..Default::default()
+            }),
+            monochrome: Some(MonochromeSettings::default()),
+            ..base.clone()
+        };
+        assert_eq!(recipe.validate_dng(false).is_ok(), profile.is_monochrome());
+    }
+}
+
+#[test]
+#[ignore = "requires a supported GPU"]
+fn dng_neutral_render_uses_linear_scene_tone_and_keeps_highlight_edits() {
+    let cancel = AtomicBool::new(false);
+    let renderer = Renderer::new().unwrap();
+    let mut scene = image(1, 1);
+    scene.data = vec![0.18; 3];
+    let source = PreparedImage::new(scene, &cancel)
+        .unwrap()
+        .with_dng_source(false);
+    let recipe = EditRecipe {
+        film: None,
+        denoise: 0,
+        ..Default::default()
+    };
+    let result = renderer
+        .render_prepared(&source, &recipe, RenderOptions::default(), &cancel)
+        .unwrap();
+    let expected = ((1.055 * 0.18_f64.powf(1. / 2.4) - 0.055) * 65535.).round() as i32;
+    assert!(
+        result
+            .data
+            .iter()
+            .all(|&v| (i32::from(v) - expected).abs() < 32),
+        "{:?}",
+        result.data
+    );
+    let mut scene = image(1, 1);
+    scene.data = vec![2.; 3];
+    let source = PreparedImage::new(scene, &cancel)
+        .unwrap()
+        .with_dng_source(false);
+    let result = renderer
+        .render_prepared(
+            &source,
+            &EditRecipe {
+                exposure: -2.,
+                ..recipe
+            },
+            RenderOptions::default(),
+            &cancel,
+        )
+        .unwrap();
+    assert!(
+        result.data.iter().all(|&v| v > 45_000 && v < 50_000),
+        "{:?}",
+        result.data
+    );
+}
 #[test]
 fn recipes_validate_and_round_trip() {
     let recipe = EditRecipe::default();
@@ -1615,7 +1798,7 @@ fn spektrafilm_license_ships_unmodified() {
     for (shader, expected) in [
         (
             include_bytes!("render.wgsl").as_slice(),
-            "f0098bb64f6cf7a404f1ed57b1e36dc143153f138e5676943ff48409de01f2ca",
+            "b009bcbc34437fdde278d3b6c09455bc8ce7a45d5be9bd4409b519827e73a458",
         ),
         (
             include_bytes!("gamut.wgsl").as_slice(),
@@ -2865,8 +3048,17 @@ fn gpu_raw_color(renderer: &Renderer) {
         ..plain.clone()
     };
     let gray = render(&source, &mono);
-    assert!(gray.chunks(3).all(|p| p[0] == p[1] && p[1] == p[2]), "{gray:?}");
-    let warm = render(&source, &EditRecipe { warmth: 80., ..mono });
+    assert!(
+        gray.chunks(3).all(|p| p[0] == p[1] && p[1] == p[2]),
+        "{gray:?}"
+    );
+    let warm = render(
+        &source,
+        &EditRecipe {
+            warmth: 80.,
+            ..mono
+        },
+    );
     assert!(warm[0] > warm[2], "{:?}", &warm[..3]);
 }
 

@@ -1,5 +1,5 @@
 import type { NativeMenuItem } from '@shared/ipc'
-import { useQueueStore } from '../stores/queueStore'
+import { renderedOnly, useQueueStore } from '../stores/queueStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { t } from '../lib/strings'
 
@@ -28,11 +28,15 @@ export function useExportMenu(
 ): { items: NativeMenuItem[]; select: (value?: string) => void; openScreen: () => void } {
   const openExport = useQueueStore((s) => s.openExport)
   const hasPrevious = useSettingsStore((s) => s.settings.hasPreviousConversion)
+  // A DNG exports only rendered images, so a selection with one has no original formats.
+  const hasDng = useQueueStore((s) =>
+    s.files.some((file) => (ids ?? s.selectedIds).has(file.id) && renderedOnly(file))
+  )
   return {
     items: [
       { value: 'jpeg', label: t('batch.export_jpeg') },
       // The editor offers only formats that include the edit.
-      ...(returnScreen === 'editor'
+      ...(returnScreen === 'editor' || hasDng
         ? []
         : [
             { value: 'embeddedJpg', label: t('editor.exportEmbeddedJpeg') },

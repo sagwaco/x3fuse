@@ -1,2 +1,4 @@
 # Byte-exact hash assertions (licences, shaders) must survive a Windows checkout.
 * text=auto eol=lf
+# Keep the vendored LibRaw archive bytes, including its whitespace.
+src-tauri/crates/x3f-dng/libraw/** -text -whitespace linguist-vendored

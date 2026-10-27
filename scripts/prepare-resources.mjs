@@ -1,9 +1,11 @@
-import { createHash } from 'node:crypto'
 import { cp, mkdir, readFile, readdir, rename, rm, writeFile, mkdtemp } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { downloadVerified } from './download-verified.mjs'
+import { prepareLibraw } from './prepare-libraw.mjs'
+import { prepareRtprocess } from './prepare-rtprocess.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const resources = join(root, 'src-tauri/resources')
@@ -19,21 +21,8 @@ const sha256 = windows
   : '668ea3acececb7235fbd0f4900e72d5f12c9b07e5c778fd36cb1e9b5828fd65a'
 const marker = `${process.platform}:${version}:${sha256}`
 
-/** Fetch with three attempts. SourceForge redirects to a mirror that sometimes times out; a retry gets another one. */
-async function download(url) {
-  let last
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
-    try {
-      const response = await fetch(url, { signal: AbortSignal.timeout(60_000) })
-      if (!response.ok) throw new Error(`HTTP ${response.status}`)
-      return Buffer.from(await response.arrayBuffer())
-    } catch (error) {
-      last = error
-      console.warn(`ExifTool download failed (attempt ${attempt}): ${error.message}`)
-    }
-  }
-  throw new Error(`ExifTool download: ${last.message}`)
-}
+await prepareLibraw(root)
+await prepareRtprocess(root)
 const destination = join(resources, 'exiftool')
 await mkdir(resources, { recursive: true })
 const coreNotices = join(resources, 'licenses/x3fuse-core')
@@ -51,19 +40,24 @@ const renderer = resolve(root, 'src-tauri/crates/x3f-render')
 await rm(join(resources, 'licenses/x3f-render'), { recursive: true, force: true })
 await cp(join(renderer, 'licenses'), join(resources, 'licenses/x3f-render'), { recursive: true })
 await cp(join(renderer, 'NOTICE'), join(resources, 'licenses/x3f-render/NOTICE'))
+const dng = resolve(root, 'src-tauri/crates/x3f-dng')
+await rm(join(resources, 'licenses/x3f-dng'), { recursive: true, force: true })
+await cp(join(dng, 'licenses'), join(resources, 'licenses/x3f-dng'), { recursive: true })
+await cp(join(dng, 'NOTICE'), join(resources, 'licenses/x3f-dng/NOTICE'))
+for (const name of ['LICENSE.LGPL', 'LICENSE.CDDL', 'COPYRIGHT']) {
+  await cp(join(dng, 'libraw', name), join(resources, `licenses/x3f-dng/LIBRAW_${name}`))
+}
+await cp(join(dng, 'rtprocess/LICENSE.txt'), join(resources, 'licenses/x3f-dng/LIBRTPROCESS_LICENSE.txt'))
 
 if ((await readFile(join(destination, '.version'), 'utf8').catch(() => '')) !== marker) {
   const cache = join(root, '.cache')
   await mkdir(cache, { recursive: true })
   const archivePath = join(cache, archive)
-  let bytes = await readFile(archivePath).catch(() => null)
-  const hash = (data) => createHash('sha256').update(data).digest('hex')
-  if (!bytes || hash(bytes) !== sha256) {
-    console.log(`Downloading ExifTool ${version} (${process.platform})`)
-    bytes = await download(`https://downloads.sourceforge.net/project/exiftool/${archive}`)
-    if (hash(bytes) !== sha256) throw new Error('ExifTool checksum mismatch')
-    await writeFile(archivePath, bytes)
-  }
+  await downloadVerified(
+    `https://downloads.sourceforge.net/project/exiftool/${archive}`,
+    archivePath,
+    sha256
+  )
   const temporary = await mkdtemp(join(cache, 'exiftool-'))
   try {
     execFileSync(tar, ['-xf', archivePath, '-C', temporary], { stdio: 'inherit' })
@@ -98,4 +92,4 @@ const executable = windows ? join(destination, 'exiftool.exe') : 'perl'
 const args = windows ? ['-ver'] : [join(destination, 'exiftool'), '-ver']
 const actual = execFileSync(executable, args, { encoding: 'utf8' }).trim()
 if (actual !== version) throw new Error(`Expected ExifTool ${version}, found ${actual}`)
-console.log(`Resources ready: ExifTool ${actual}, opcodes`)
+console.log(`Resources ready: LibRaw, librtprocess, ExifTool ${actual}, opcodes`)

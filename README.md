@@ -1,6 +1,6 @@
 # X3Fuse
 
-A cross-platform app for converting and editing Sigma classic, Merrill, and Quattro X3F RAW files.
+A cross-platform app for converting and editing Sigma X3F RAW files and editing DNG files.
 
 ![X3Fuse logo and app screenshot](app-screenshot.png)
 
@@ -52,7 +52,7 @@ If your camera is not listed, please open an issue with a sample X3F.
 ## System Requirements
 
 - **macOS release**: macOS 14.0 (Sonoma) or later, Intel or Apple Silicon.
-- **Windows alpha**: x64, with Microsoft WebView2 Runtime.
+- **Windows alpha**: x64, with Microsoft WebView2 Runtime and the Microsoft Visual C++ x64 runtime.
 - **Linux alpha**: x64, with WebKitGTK 4.1, GTK 3, and Perl.
 - **RAW editor**: Metal on macOS, DirectX 12 on Windows, or Vulkan on Linux.
   Original conversion can run without a GPU.
@@ -92,7 +92,7 @@ You do not need a separate ExifTool installation or a sibling core checkout.
 
 ## Usage
 
-1. Open X3Fuse. Drag X3F files onto the window, or add files from the File menu.
+1. Open X3Fuse. Drag X3F, X3I, or DNG files onto the window, or add files from the File menu.
 2. Browse the queue in list, grid, or filmstrip view. Use flags and ratings to cull photos.
 3. To edit a photo, select it and choose **Edit**. Adjustments save automatically.
 4. Choose **Export all** or **Export selected**. Review the output format, folder,
@@ -101,7 +101,16 @@ You do not need a separate ExifTool installation or a sibling core checkout.
 5. Click **Export** and monitor progress. Review any overwrite confirmation before
    replacing existing output files.
 
-For DNG and TIFF, Settings provides NLM and BM3D denoising, separate luminance and color
+DNG inputs use the bundled LibRaw decoder. They export edited JPEG or 16-bit TIFF
+only. A selection that includes DNG inputs offers these two formats. Original DNG,
+original TIFF, and Embedded JPG export remain available for X3F and X3I inputs.
+An unsupported DNG shows an error beside the photo; other imports can continue.
+Support depends on the bundled decoder and DNG metadata. JPEG XL and VC-5 DNGs
+need the Adobe DNG SDK, which is not bundled. Four-color sensor arrays and
+unimplemented required DNG operations also report an error. An embedded preview
+can still be shown when RAW decoding is unavailable.
+
+For X3F and X3I conversion to DNG and TIFF, Settings provides NLM and BM3D denoising, separate luminance and color
 noise controls, and the existing intensity slider. Advanced denoise settings provide a
 strength multiplier, NLM patch and search sizes in pixels, and Automatic, CPU, or GPU
 processing. Automatic uses the GPU when available and falls back to the CPU. Forced GPU
@@ -201,6 +210,10 @@ identifier is `com.sagwa.X3Fuse`.
 - [**x3f-core 0.4.0**](https://github.com/sagwaco/x3fuse-core): published on crates.io;
   converts X3F files and prepares RAW data directly in Rust.
 - **x3f-render**: in-repo GPU renderer for RAW edits and the spektrafilm film model.
+- **x3f-dng**: in-repo adapter for bundled [LibRaw 0.22.2](https://www.libraw.org/),
+  with static JPEG and Deflate codecs. Bayer demosaicing uses
+  [librtprocess](https://github.com/CarVac/librtprocess) and RawTherapee's EAHD.
+  It needs no installed RAW processing library.
 - [**ExifTool 13.59**](https://github.com/exiftool/exiftool): bundled metadata handling.
 - **tauri-plugin-updater**: macOS updates from `docs/Support/latest.json`.
   Windows and Linux portable alphas have no updater.
@@ -254,8 +267,17 @@ Windows bundles the complete ExifTool standalone runtime. macOS and Linux use it
 Perl script and modules. `npm run sync:resources` includes renderer license and
 spectral-data notices in the app.
 
-Both the backend and `src-tauri/crates/x3f-render` use published `x3f-core` 0.4.0,
-which includes X3I support.
+The same step downloads checksum-verified LibRaw 0.22.2 and pinned librtprocess
+source for `x3f-dng`.
+Archives are cached in `.cache/`. The prepared source in
+`src-tauri/crates/x3f-dng/libraw/` and `src-tauri/crates/x3f-dng/rtprocess/`
+is not tracked by Git. The first preparation
+needs network access; later runs can use the cached archives. Run
+`npm run sync:resources` before direct Cargo commands in a fresh checkout.
+LibRaw is compiled into the app, so users need no separate download.
+
+The backend, `x3f-render`, and `x3f-dng` use published `x3f-core` 0.4.0,
+which includes X3I (SFD) support.
 `src-tauri/Cargo.lock` pins dependency versions. To test an unpublished core, use a
 temporary `[patch.crates-io]` for `x3f-core` and `x3f-sys`. Never commit this patch
 or its local-path lockfile changes; CI cannot access local checkouts.
@@ -293,6 +315,27 @@ cargo test --manifest-path src-tauri/Cargo.toml --locked --test conversion_accep
 This checks full-strength denoising with compressed DNG/TIFF and DNG highlight
 recovery, with a 60-second limit per conversion. Use the default test profile to
 check development-build performance too.
+
+DNG acceptance uses a temporary copy of the input and needs a supported GPU:
+
+```sh
+X3FUSE_TEST_DNG=/absolute/path/photo.dng \
+cargo test --manifest-path src-tauri/Cargo.toml --test dng_acceptance -- --ignored
+```
+
+This checks import capabilities, editing, JPEG and TIFF export, sidecar reload,
+source protection, and rejection of incompatible recipes and original exports.
+
+Resize acceptance also uses a temporary source copy. Run it with an X3F or DNG:
+
+```sh
+X3FUSE_TEST_RESIZE=/absolute/path/photo.dng \
+cargo test --manifest-path src-tauri/Cargo.toml --test export_resize_acceptance -- --ignored --nocapture
+```
+
+This checks JPEG and TIFF dimensions after crop and rotation, no enlargement,
+16-bit TIFF output, orientation, and color profiles. It needs a supported GPU
+and prepared ExifTool resources.
 
 Build a macOS app bundle with `npm run dist`, or a native executable with
 `npm run pack`. Windows/Linux currently use the executable build. Package it with:
@@ -374,6 +417,34 @@ and exits within 100 seconds after building. Reports go to
 `artifacts/native-smoke-<platform>.json`; use `X3FUSE_SMOKE_REPORT` to override it.
 Repeat with Merrill and Quattro files.
 
+The preview cache benchmark uses temporary copies of every RAW and saved edit in
+a folder. It uses isolated application storage with the old 1 GB setting to check
+its upgrade, and runs twice: first to populate the cache, then in a new process
+to measure restart behavior.
+
+```sh
+X3FUSE_CACHE_SMOKE_DIRECTORY=/absolute/path/photos npm run test:preview-cache -- --build
+```
+
+Run `npm run sync:resources` before the first build. The benchmark reports import,
+first visible grid, thumbnail, and large-preview times in
+`artifacts/preview-cache-<platform>.json`. `X3FUSE_SMOKE_REPORT` selects another
+report path. `X3FUSE_CACHE_SMOKE_LIMIT` limits the number of input files for a short
+check. Each process has a 30-minute deadline. The report lists performance targets
+separately from functional failures. The operating system disk cache is not cleared.
+An unlocked, visible desktop is required. The benchmark checks that the window
+can paint before it imports photos.
+
+The backend check uses two fresh processes and temporary photo copies to verify
+all cached previews and their exact bytes after restart. It needs a supported GPU
+but no visible desktop, and writes `artifacts/preview-cache-backend.json`.
+
+```sh
+X3FUSE_CACHE_SMOKE_DIRECTORY=/absolute/path/photos \
+cargo test --manifest-path src-tauri/Cargo.toml --locked --test preview_cache_acceptance \
+  -- --ignored --exact folder_previews_survive_restart_as_cache_hits --nocapture
+```
+
 Run each extracted artifact outside the repository on its target OS. Check native
 import and drops, list/grid/filmstrip views, portrait and cropped previews, scopes,
 pinch and keyboard zoom, Settings, native menu selection and dismissal, output
@@ -389,10 +460,18 @@ manual check. Unit tests do not exercise WKWebView, WebView2, or WebKitGTK.
 Select a photo and choose **Edit**. The editor shares browsing's filmstrip,
 zoom/pan, and scopes. It provides light, calibrated white balance, curves, HSL,
 monochrome filters, crop/straighten, denoise, sharpening, and film controls.
-Film rendering starts enabled. Exposure adjusts film exposure while it is enabled.
+New X3F edits use the as-shot camera profile. New DNG edits use a neutral look.
+Select a film stock to enable film rendering. Exposure adjusts film exposure while it is enabled.
 The spektrafilm model simulates negative response, DIR couplers, grain, halation,
 and print paper. Existing film recipes load unchanged but render differently
 from the model used in earlier alphas; no re-save is required.
+
+DNG inputs have light, white balance, curves, HSL, geometry, sharpening, effects,
+and film controls. They do not have Sigma camera profiles, full spectrum looks,
+sensor-layer monochrome filters, Fill Light, or Foveon sensor denoise. A
+monochrome DNG also has no white balance controls. Black-and-white film stocks
+retain their film filters. Pasted adjustments exclude controls that the target
+photo cannot use.
 
 The Fspec group includes **Full spectrum**, which starts with an identity channel
 matrix, and **Aerochrome-style (Foveon)**, which uses an empirical 3x3 mix followed
@@ -418,7 +497,23 @@ strength controls and advanced settings. New edits use the camera's as-shot crop
 Monochrome filters mix calibrated Foveon sensor-layer responses and remain gray
 through color film and channel-curve processing.
 
-Edits autosave to `<photo>.X3F.x3fuse.json`; the RAW stays unchanged. Move the
+Bayer DNGs have a **Demosaic** section below **Detail** in Develop. It starts
+collapsed. **Algorithm** offers Default, AMaZE, DCB, AHD, EAHD, HPHD, IGV, LMMSE,
+VNG4, Mono, and Fast. It supports active images from 64 pixels per edge to
+64 megapixels. New supported photos use Default: AMaZE below ISO 1600 or when
+ISO is unknown, LMMSE at ISO 1600 and above, and Mono for monochrome cameras.
+Monochrome DNGs offer Default and Mono only. Earlier saved DNG recipes show
+Legacy and keep their LibRaw rendering until you choose a method.
+The method is saved per photo and is used by edited previews and JPEG/TIFF exports.
+The first Bayer edit preview uses Fast while the selected algorithm loads. The
+canvas shows a loading indicator until that algorithm finishes rendering.
+Before and pasted looks keep the selected method. Mono reads each sensor site as
+gray and is for sensors with no color filter array; it disables white balance.
+X-Trans DNGs and Bayer images outside these size limits use their existing
+processing. Linear DNGs do not need demosaicing.
+
+Edits autosave beside the source, for example `<photo>.X3F.x3fuse.json` or
+`<photo>.dng.x3fuse.json`; the RAW stays unchanged. Move the
 sidecar with the photo to carry its edits. Unwritable source folders use the
 application-data `edits/` backup directory, and the app shows its location.
 Invalid/newer recipes and source-content mismatches are reported without
@@ -429,8 +524,17 @@ and star ratings are separate, stored by path in app-data `culling.json`.
 Editor and main-view exports share the review screen. Rendered JPEG and 16-bit
 TIFF bake saved edits and carry sRGB, Adobe RGB, or ProPhoto RGB profiles with
 normalized orientation. TIFF batches with edited photos default to rendered
-mode; unedited photos in that batch use the default film recipe. Original DNG
-and Embedded JPG remain separate options and do not bake edits.
+mode; unedited photos in that batch use their default recipe. Original DNG
+and Embedded JPG remain separate options for X3F and X3I inputs and do not bake edits.
+
+For developed JPEG and TIFF exports, enable **Resize to fit** and set the maximum
+width and height in pixels. The image keeps its edited aspect ratio and fits
+inside both limits after crop and rotation. Smaller images are not enlarged.
+Choose nearest neighbor, bilinear, area average, bicubic, or Lanczos resampling.
+Lanczos is the default. Resampling keeps 16-bit precision and uses linear light
+in the selected output color profile. Resize settings are remembered for later exports.
+Bilinear and bicubic widen their filters for reductions to limit aliasing.
+Lanczos and bicubic can add edge ringing; choose area or bilinear for smoother edges.
 
 NLM and BM3D controls are available in Detail and original-export settings.
 Advanced controls separate luminance/chroma reduction, strength, and NLM window
@@ -451,10 +555,19 @@ The backend validates RAW inputs, caches prepared data, serializes GPU work, and
 renders bounded overlapping tiles. Interactive previews refine after input stops.
 Zoomed requests render the viewport at native detail, capped at 4096 pixels.
 Returning to Fit refreshes the full image. Scopes show the visible region.
-Saved edits use bounded persistent thumbnail and medium-preview caches under
-`edits/thumbnails-v1` and `edits/mediums-v1`. Initial uncached preparation can take
-time. Rendering pauses during export. Driver/device failures are reported as
-errors; they do not silently bypass film rendering.
+Original previews, edited thumbnails, and edited large previews share one disk
+cache under `app_cache_dir()/previews-v2`. Settings > Cache controls the total
+limit and usage. The default is 20 GB. The old 1 GB default upgrades to 20 GB;
+other saved limits are kept. The cache reuses compatible files from earlier
+preview directories. Clear removes preview
+files, but keeps saved edits, ratings, and stored SFD RAWs.
+
+Image memory uses 10% of system RAM, between 512 MiB and 4 GiB, shared between the
+backend and the webview. Cached image requests do not wait for RAW preparation or
+GPU rendering. Edited thumbnails use the final large preview, so one render can
+serve both views. Initial uncached preparation can take time. Rendering pauses
+during export. Driver/device failures are reported as errors; they do not
+silently bypass film rendering.
 
 GPU correctness and real-photo acceptance checks:
 

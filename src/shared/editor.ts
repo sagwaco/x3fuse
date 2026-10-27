@@ -149,7 +149,29 @@ export interface EditRecipe {
   /** The frames of an X3I. Absent means the middle exposure, the unfused RAW.
       X3F files ignore it. */
   x3iSource?: X3iSource
+  /** The RawTherapee demosaic of a Bayer or monochrome DNG. Missing or null keeps the
+      legacy LibRaw rendering. Other sources do not have it. */
+  dngDemosaic?: DngDemosaic | null
 }
+/** RawTherapee demosaic methods for a Bayer DNG. Default lets the backend select AMaZE,
+    LMMSE at high ISO, or Mono on a monochrome sensor. Mono reads the CFA values as gray,
+    for a sensor without a color filter array. */
+export const DNG_DEMOSAICS = [
+  'default',
+  'amaze',
+  'dcb',
+  'ahd',
+  'eahd',
+  'hphd',
+  'igv',
+  'lmmse',
+  'vng4',
+  'mono',
+  'fast'
+] as const
+export type DngDemosaic = (typeof DNG_DEMOSAICS)[number]
+/** The demosaic that a new Bayer or monochrome DNG recipe starts with. */
+export const DEFAULT_DNG_DEMOSAIC: DngDemosaic = 'default'
 /** Gains on the bottom, middle, and top sensor layers, then a row-major 3x3 mix to RGB.
     Rows are output red, green, and blue. The renderer divides the gains by the middle gain. */
 export interface RawColor {
@@ -181,6 +203,100 @@ export function boundedWhiteBalanceGains(gains: Rgb): Rgb | undefined {
 export const AEROCHROME_MATRIX: number[] = [
   1.6874, 0.7225, -1.4099, -0.7473, 2.965, -1.2177, -1.5352, 1.93, 0.6052
 ]
+/** The RAW format of a photo. x3f-core opens X3F and X3I files; LibRaw opens DNG files. */
+export type SourceKind = 'x3f' | 'x3i' | 'dng'
+/** The settings that a photo supports. A DNG has no Foveon settings and exports only
+    rendered images. A monochrome DNG also has no white balance. A Bayer or monochrome
+    DNG has a demosaic setting. */
+export interface SourceCapabilities {
+  foveon: boolean
+  whiteBalance: boolean
+  renderedOnly: boolean
+  /** True only for a DNG with a 2x2 Bayer pattern. Missing means false. */
+  bayer?: boolean
+}
+/** A photo, with the source fields that the backend sends. */
+export interface Source {
+  path: string
+  sourceKind?: SourceKind
+  capabilities?: SourceCapabilities
+}
+export const FOVEON_CAPABILITIES: SourceCapabilities = {
+  foveon: true,
+  whiteBalance: true,
+  renderedOnly: false
+}
+/** The source kind. Without it, a `.dng` path is a DNG and other paths are Foveon files. */
+export const sourceKindOf = (source: Source): SourceKind =>
+  source.sourceKind ??
+  (/\.dng$/i.test(source.path) ? 'dng' : /\.x3i$/i.test(source.path) ? 'x3i' : 'x3f')
+/** The capabilities. Without them, a DNG is a color DNG and other files are Foveon files. */
+export function capabilitiesOf(source: Source): SourceCapabilities {
+  if (source.capabilities) return source.capabilities
+  return sourceKindOf(source) === 'dng'
+    ? { foveon: false, whiteBalance: true, renderedOnly: true }
+    : FOVEON_CAPABILITIES
+}
+const MONO_DEMOSAICS: readonly DngDemosaic[] = ['default', 'mono']
+const NO_DEMOSAICS: readonly DngDemosaic[] = []
+/** The demosaic methods of a source. A Bayer DNG has all methods. A monochrome DNG has
+    Default and Mono. Other sources have none. The arrays are constants, for selectors. */
+export const demosaicsOf = (capabilities: SourceCapabilities): readonly DngDemosaic[] =>
+  capabilities.bayer
+    ? DNG_DEMOSAICS
+    : !capabilities.foveon && !capabilities.whiteBalance
+      ? MONO_DEMOSAICS
+      : NO_DEMOSAICS
+/** True when the demosaic of the recipe gives a gray image: Mono, or Default on a
+    monochrome DNG. A legacy recipe or an unsupported method is not Mono. */
+export const monoDemosaic = (
+  capabilities: SourceCapabilities,
+  recipe: Pick<EditRecipe, 'dngDemosaic'>
+): boolean =>
+  !!recipe.dngDemosaic &&
+  demosaicsOf(capabilities).includes(recipe.dngDemosaic) &&
+  (recipe.dngDemosaic === 'mono' || (recipe.dngDemosaic === 'default' && !capabilities.bayer))
+/** True when the photo has white balance with this recipe. The capabilities do not
+    change with the recipe, but a Mono demosaic gives a gray image without white balance. */
+export const hasWhiteBalance = (
+  capabilities: SourceCapabilities,
+  recipe: Pick<EditRecipe, 'dngDemosaic'>
+): boolean => capabilities.whiteBalance && !monoDemosaic(capabilities, recipe)
+/** The settings that a source does not support, set to their neutral values. Foveon files
+    keep the recipe. A black-and-white film keeps its taking filter; without that film,
+    the monochrome filter mixes Foveon layers. Only a Bayer or monochrome DNG keeps a
+    demosaic that it supports. */
+export function supportedRecipe(recipe: EditRecipe, capabilities: SourceCapabilities): EditRecipe {
+  if (capabilities.foveon && capabilities.whiteBalance && !('dngDemosaic' in recipe)) return recipe
+  const { dngDemosaic, ...rest } = recipe
+  return {
+    ...rest,
+    ...(dngDemosaic && demosaicsOf(capabilities).includes(dngDemosaic) && { dngDemosaic }),
+    ...(!capabilities.foveon && {
+      cameraProfile: null,
+      rawColor: null,
+      fillLight: 0,
+      denoise: 0,
+      denoiseOptions: defaultDenoiseOptions(),
+      monochrome: monochromeFilm(recipe.film) ? recipe.monochrome : null
+    }),
+    ...(!hasWhiteBalance(capabilities, recipe) && {
+      temperature: null,
+      tint: 0,
+      whiteBalanceGains: null
+    })
+  }
+}
+/** The default recipe of a source. A DNG starts with the neutral digital look, without film.
+    A Bayer or monochrome DNG starts with Default; an older recipe without a demosaic
+    stays legacy. */
+export const sourceDefaultRecipe = (capabilities: SourceCapabilities): EditRecipe =>
+  capabilities.foveon
+    ? defaultRecipe()
+    : supportedRecipe(
+        { ...defaultRecipe(), film: null, dngDemosaic: DEFAULT_DNG_DEMOSAIC },
+        capabilities
+      )
 /** The frames of an X3I (Super Fine Detail) photo: all merged, or the middle exposure only. */
 export type X3iSource = 'merge' | 'middle_exposure'
 /** True when an X3I uses its SFD RAW, the merge of all its frames. */
@@ -317,6 +433,8 @@ export interface EditRecord {
 export interface EditorSession extends EditRecord {
   sessionId: string
   path: string
+  sourceKind?: SourceKind
+  capabilities?: SourceCapabilities
   /** Camera framing inside the EXIF-oriented active image. */
   asShotCrop?: EditRecipe['crop']
   cameraProfiles?: Array<{ id: string; name: string }>
@@ -391,9 +509,22 @@ export function pixelRecipe(recipe: EditRecipe): EditRecipe {
   }
 }
 
-/** Geometry and the per-photo stochastic seed never travel with adjustments. */
-export function pasteRecipe(source: EditRecipe, target: EditRecipe): EditRecipe {
-  return {
+/** Settings that only Foveon files have. */
+const FOVEON_ONLY = ['fillLight', 'denoise', 'denoiseOptions'] as const
+
+/**
+ * Geometry, the per-photo stochastic seed, and the source settings (X3I frames, DNG
+ * demosaic) never travel with adjustments. White balance gains and raw color belong to
+ * one sensor, so across sensors the target keeps its white balance. A gray source has
+ * no white balance to give. A DNG does not change the Foveon settings of an X3F.
+ */
+export function pasteRecipe(
+  source: EditRecipe,
+  target: EditRecipe,
+  from: SourceCapabilities = FOVEON_CAPABILITIES,
+  to: SourceCapabilities = FOVEON_CAPABILITIES
+): EditRecipe {
+  const recipe: EditRecipe = {
     ...structuredClone(source),
     crop: target.crop,
     rotation: target.rotation,
@@ -401,8 +532,27 @@ export function pasteRecipe(source: EditRecipe, target: EditRecipe): EditRecipe 
     pitch: target.pitch,
     yaw: target.yaw,
     seed: target.seed,
-    x3iSource: target.x3iSource
+    x3iSource: target.x3iSource,
+    dngDemosaic: target.dngDemosaic
   }
+  if (
+    !hasWhiteBalance(from, source) ||
+    (from.foveon !== to.foveon && (source.rawColor || source.whiteBalanceGains))
+  ) {
+    recipe.temperature = target.temperature
+    recipe.tint = target.tint
+    recipe.whiteBalanceGains = structuredClone(target.whiteBalanceGains ?? null)
+  }
+  if (!from.foveon && to.foveon) {
+    for (const key of FOVEON_ONLY) Object.assign(recipe, { [key]: structuredClone(target[key]) })
+    // A film look has no camera profile or raw color. Without film, the target keeps its look.
+    if (!source.film) {
+      recipe.cameraProfile = target.cameraProfile ?? null
+      recipe.rawColor = structuredClone(target.rawColor ?? null)
+      recipe.monochrome = structuredClone(target.monochrome)
+    }
+  }
+  return supportedRecipe(recipe, to)
 }
 
 export interface PreviewRegion {

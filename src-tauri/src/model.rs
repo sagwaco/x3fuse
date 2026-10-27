@@ -61,6 +61,8 @@ pub struct BatchSettings {
     pub rendering: Rendering,
     #[serde(default = "default_jpeg_quality")]
     pub jpeg_quality: u8,
+    #[serde(default)]
+    pub resize: Option<x3f_render::ExportResize>,
     pub compress: bool,
     pub denoise_intensity: u8,
     #[serde(default)]
@@ -86,6 +88,7 @@ impl Default for BatchSettings {
             output_format: OutputFormat::Dng,
             rendering: Rendering::Original,
             jpeg_quality: default_jpeg_quality(),
+            resize: None,
             compress: false,
             denoise_intensity: 10,
             denoise_options: x3f_core::DenoiseOptions::default(),
@@ -107,6 +110,9 @@ impl BatchSettings {
 
     pub fn validate(&self) -> Result<(), String> {
         self.denoise_options.validate()?;
+        if let Some(resize) = self.resize {
+            resize.validate()?;
+        }
         if self.denoise_intensity > 10
             || self.concurrency > 8
             || !(1..=100).contains(&self.jpeg_quality)
@@ -185,12 +191,16 @@ pub struct Settings {
     pub light_theme: String,
     #[serde(default = "default_dark_theme")]
     pub dark_theme: String,
-    /// The disk cache of embedded previews and import metadata.
+    /// The disk cache of original and edited previews and source metadata.
     #[serde(default = "default_true")]
     pub preview_cache_enabled: bool,
     /// The size limit of the preview cache in bytes.
     #[serde(default = "default_preview_cache_limit")]
     pub preview_cache_limit: u64,
+    /// The limit applies to the shared preview cache. Settings files without
+    /// it can hold the old 1 GB default of the embedded preview cache.
+    #[serde(default = "default_true")]
+    pub preview_cache_unified: bool,
     /// The interface language: "auto" follows the system, or a locale name.
     #[serde(default = "default_language")]
     pub language: String,
@@ -200,7 +210,7 @@ pub struct Settings {
 const PREVIEW_CACHE_LIMITS: std::ops::RangeInclusive<u64> = 100_000_000..=1_000_000_000_000;
 
 fn default_preview_cache_limit() -> u64 {
-    1_000_000_000
+    crate::cache::DEFAULT_LIMIT
 }
 
 fn default_language() -> String {
@@ -247,6 +257,7 @@ impl Default for Settings {
             dark_theme: default_dark_theme(),
             preview_cache_enabled: true,
             preview_cache_limit: default_preview_cache_limit(),
+            preview_cache_unified: true,
             language: default_language(),
         }
     }
@@ -392,10 +403,16 @@ pub struct BatchSummary {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FileDto {
+    pub source_kind: crate::source::Kind,
+    pub capabilities: crate::source::Capabilities,
     pub id: String,
     pub path: PathBuf,
     pub file_name: String,
     pub file_size: u64,
+    /// The stable identity of the source for original preview URLs: see
+    /// `cache::source_key`. It is not the content fingerprint `sourceRevision`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preview_revision: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub captured_date: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -423,14 +440,16 @@ pub struct ExifPair {
 
 pub fn validate_source_path(path: &Path) -> Result<(), String> {
     if !path.is_absolute() || !path.extension().is_some_and(is_source_extension) {
-        return Err("Expected an absolute X3F or X3I path".into());
+        return Err("Expected an absolute X3F, X3I, or DNG path".into());
     }
     Ok(())
 }
 
-/// X3F photos and Quattro SFD X3I containers.
+/// Supported source filename extensions. DNG contents are checked by LibRaw.
 pub fn is_source_extension(extension: &std::ffi::OsStr) -> bool {
-    extension.eq_ignore_ascii_case("x3f") || extension.eq_ignore_ascii_case("x3i")
+    extension.eq_ignore_ascii_case("x3f")
+        || extension.eq_ignore_ascii_case("x3i")
+        || extension.eq_ignore_ascii_case("dng")
 }
 
 pub fn source_path(path: &Path) -> Result<(), String> {
@@ -470,6 +489,36 @@ pub fn concurrency(setting: u8) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn export_resize_migrates_validates_and_round_trips() {
+        let mut wire = serde_json::to_value(BatchSettings::default()).unwrap();
+        wire.as_object_mut().unwrap().remove("resize");
+        let original: BatchSettings = serde_json::from_value(wire.clone()).unwrap();
+        assert!(original.resize.is_none());
+        for method in ["nearest", "bilinear", "area", "bicubic", "lanczos3"] {
+            wire["resize"] = serde_json::json!({"maxWidth":1920,"maxHeight":1080,"method":method});
+            let settings: BatchSettings = serde_json::from_value(wire.clone()).unwrap();
+            // Original exports can retain the preference without applying it.
+            settings.validate().unwrap();
+            assert_eq!(
+                serde_json::to_value(settings).unwrap()["resize"],
+                wire["resize"]
+            );
+        }
+        for dimensions in [(0, 100), (100, 0), (65536, 100), (100, 65536)] {
+            wire["resize"]["maxWidth"] = dimensions.0.into();
+            wire["resize"]["maxHeight"] = dimensions.1.into();
+            assert!(serde_json::from_value::<BatchSettings>(wire.clone())
+                .unwrap()
+                .validate()
+                .is_err());
+        }
+        wire["resize"]["maxWidth"] = 1.5.into();
+        assert!(serde_json::from_value::<BatchSettings>(wire.clone()).is_err());
+        wire["resize"] = serde_json::json!({"maxWidth":100,"maxHeight":100,"method":"unknown"});
+        assert!(serde_json::from_value::<BatchSettings>(wire).is_err());
+    }
 
     #[test]
     fn per_file_settings_are_optional_and_use_camel_case() {
@@ -540,7 +589,7 @@ mod tests {
         fields.remove("previewCacheLimit");
         let mut settings: Settings = serde_json::from_value(wire).unwrap();
         assert!(settings.preview_cache_enabled);
-        assert_eq!(settings.preview_cache_limit, 1_000_000_000);
+        assert_eq!(settings.preview_cache_limit, 20_000_000_000);
         assert!(settings.validate().is_ok());
         for limit in [0, 99_999_999, 1_000_000_000_001] {
             settings.preview_cache_limit = limit;

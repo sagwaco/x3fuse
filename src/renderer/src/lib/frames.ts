@@ -13,7 +13,10 @@ export type ImageRequest = {
   id?: string
   end?: () => Promise<void>
   cancelled?: boolean
+  /** Native render priority of an edited preview that must be generated. */
+  renderPriority?: RenderPriority
 }
+export type RenderPriority = 'high' | 'normal' | 'low'
 
 const EDITED = /^(x3f-edit:\/\/|https?:\/\/x3f-edit\.localhost([/:]|$))/i
 const EMBEDDED = /^(x3f-preview:\/\/|https?:\/\/x3f-preview\.localhost([/:]|$))/i
@@ -26,6 +29,71 @@ const isRaw = (url: string): boolean =>
 const cancelled = (): DOMException => new DOMException('Cancelled', 'AbortError')
 const stopped = (request: ImageRequest): boolean =>
   !!request.cancelled || request.controller.signal.aborted
+
+/** Stored-image lookups are quick, so a few slots serve them apart from generation. */
+const LOOKUP_SLOTS = 4
+let lookups = 0
+const lookupWaiting: Array<() => void> = []
+
+/**
+ * Ask the backend for a stored image only, without a RAW decode, a render, or a
+ * wait for generation. Resolve undefined on a miss (204) or another failure.
+ * A lookup keeps its slot until its body is read. The newest waiting lookup goes
+ * first, as the newest visible image does.
+ */
+export async function fetchCached(
+  source: string,
+  signal: AbortSignal,
+  format?: string
+): Promise<Blob | undefined> {
+  // A finished lookup gives its slot to a waiter directly, so a new caller cannot take it.
+  if (lookups >= LOOKUP_SLOTS) await new Promise<void>((resolve) => lookupWaiting.push(resolve))
+  else lookups++
+  try {
+    if (signal.aborted) throw cancelled()
+    const query = `cacheOnly=1${format ? `&format=${format}` : ''}`
+    const url = `${source}${source.includes('?') ? '&' : '?'}${query}`
+    try {
+      const response = await fetch(url, { signal, cache: 'no-store' })
+      return response.status === 200 ? await response.blob() : undefined
+    } catch (error) {
+      if (signal.aborted) throw error
+      return undefined
+    }
+  } finally {
+    const next = lookupWaiting.pop()
+    if (next) next()
+    else lookups--
+  }
+}
+
+/** Decode a stored image, or resolve undefined on a miss or an unreadable body. */
+export async function cachedFrame(url: string, signal: AbortSignal): Promise<Frame | undefined> {
+  const raw = isRaw(url)
+  const blob = await fetchCached(url, signal, raw ? 'rgba8' : undefined)
+  if (!blob) return undefined
+  let image: ImageBitmap
+  try {
+    if (raw) {
+      const pixels = parseFrame(await blob.arrayBuffer())
+      if (!pixels) return undefined
+      image = await (pixels instanceof Blob ? createImageBitmap(pixels) : bitmap(pixels))
+    } else {
+      // Small embedded previews carry no orientation; the viewer applies the EXIF value.
+      image = await (isEditedFrame(url)
+        ? createImageBitmap(blob)
+        : createImageBitmap(blob, { imageOrientation: 'none' }))
+    }
+  } catch (error) {
+    if (signal.aborted) throw error
+    return undefined
+  }
+  if (signal.aborted) {
+    image.close()
+    throw cancelled()
+  }
+  return ownedFrame(image)
+}
 
 /** Edited previews register one native request ID; later fetches of the request reuse it. */
 export async function fetchPreview(
@@ -44,6 +112,7 @@ export async function fetchPreview(
     const uri = new URL(url)
     uri.searchParams.set('requestId', request.id!)
     if (format) uri.searchParams.set('format', format)
+    if (request.renderPriority) uri.searchParams.set('priority', request.renderPriority)
     url = uri.toString()
   }
   if (stopped(request)) throw cancelled()
@@ -174,9 +243,13 @@ export async function openFrame(url: string, request: ImageRequest): Promise<Fra
 }
 
 /** Edited-preview URLs load as raw RGBA8; other URLs decode. */
-export function loadFrame(url: string, signal?: AbortSignal): Promise<Frame> {
+export function loadFrame(
+  url: string,
+  signal?: AbortSignal,
+  priority?: RenderPriority
+): Promise<Frame> {
   if (signal?.aborted) return Promise.reject(cancelled())
-  const request: ImageRequest = { controller: new AbortController() }
+  const request: ImageRequest = { controller: new AbortController(), renderPriority: priority }
   const abort = (): void => cancelPreview(url, request)
   signal?.addEventListener('abort', abort, { once: true })
   return openFrame(url, request)

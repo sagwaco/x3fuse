@@ -253,10 +253,12 @@ export interface IpcRequestMap {
   'licenses:open': { payload: void; result: void }
   'logs:clear': { payload: void; result: void }
   'logs:sizes': { payload: void; result: LogSizes }
-  /** Bytes in the preview disk cache. */
+  /** Bytes in the preview disk cache of original and edited images. */
   'cache:size': { payload: void; result: number }
-  /** Removes the preview disk cache. The previews in memory stay. */
+  /** Removes the preview disk cache, then sends `cache:cleared`. Source files stay. */
   'cache:clear': { payload: void; result: void }
+  /** Total image-memory budget in bytes. The backend and each window use half of it. */
+  'cache:memoryBudget': { payload: void; result: number }
   /** Bytes used by merged SFD scenes. */
   'cache:sfdSize': { payload: void; result: number }
   /** Removes merged SFD scenes without changing thumbnails or recipes. */
@@ -292,6 +294,8 @@ export interface IpcEventMap {
   'update:available': { version: string }
   'update:downloaded': { version: string }
   'menu:command': { name: MenuCommand }
+  /** The preview cache was cleared: drop idle images in memory. */
+  'cache:cleared': null
 }
 
 export type IpcEventChannel = keyof IpcEventMap
@@ -334,6 +338,7 @@ export const IPC_REQUEST_CHANNELS: IpcRequestChannel[] = [
   'logs:sizes',
   'cache:size',
   'cache:clear',
+  'cache:memoryBudget',
   'cache:sfdSize',
   'cache:sfdClear',
   'app:info',
@@ -351,7 +356,8 @@ export const IPC_EVENT_CHANNELS: IpcEventChannel[] = [
   'batch:complete',
   'update:available',
   'update:downloaded',
-  'menu:command'
+  'menu:command',
+  'cache:cleared'
 ]
 
 /** Typed application command and event adapter. */

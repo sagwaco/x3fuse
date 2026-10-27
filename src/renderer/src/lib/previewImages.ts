@@ -1,6 +1,8 @@
 import { drawImageWithOrientation } from './orientation'
 import {
+  cachedFrame,
   cancelPreview,
+  fetchCached,
   fetchPreview,
   isEditedFrame,
   isEmbeddedPreview,
@@ -9,50 +11,78 @@ import {
   type Frame,
   type ImageRequest
 } from './frames'
+import { forget, getHeld, hold, memoryEpoch, unhold, type Held } from './memoryCache'
 
-const SMALL_BUDGET = 16 * 1024 * 1024
-const FULL_BUDGET = 64 * 1024 * 1024
-const small = new Map<string, HTMLCanvasElement>()
-let smallBytes = 0
+/** The photo that the user works on goes before the visible thumbnails. */
+export type SmallPriority = 'selected' | 'visible'
+/** Stored images bypass these slots; only generation waits for them. */
+const SMALL_SLOTS = 3
+type SmallConsumer = {
+  signal: AbortSignal
+  resolve: (canvas: HTMLCanvasElement) => void
+  reject: (error: unknown) => void
+}
 type SmallJob = ImageRequest & {
   key: string
   url: string
   orientation: number
   aspectRatio?: number
-  consumers: Set<{
-    signal: AbortSignal
-    resolve: (canvas: HTMLCanvasElement) => void
-    reject: (error: unknown) => void
-  }>
+  priority: SmallPriority
+  stage: 'lookup' | 'queued' | 'running'
+  /** The Clear count when the job started. */
+  epoch: number
+  lookup: AbortController
+  consumers: Set<SmallConsumer>
 }
 const smallJobs = new Map<string, SmallJob>()
 const smallQueue: SmallJob[] = []
 let smallRunning = 0
+const idleListeners = new Set<() => void>()
 
 export const smallPreviewKey = (url: string, orientation = 1, aspectRatio?: number): string =>
   JSON.stringify([url, orientation, aspectRatio])
+const smallMemoryKey = (key: string): string => `small:${key}`
 
 export function cachedSmallPreview(
   url: string,
   orientation = 1,
   aspectRatio?: number
 ): HTMLCanvasElement | undefined {
-  const key = smallPreviewKey(url, orientation, aspectRatio)
-  const canvas = small.get(key)
-  if (canvas) {
-    small.delete(key)
-    small.set(key, canvas)
+  return getHeld<HTMLCanvasElement>(smallMemoryKey(smallPreviewKey(url, orientation, aspectRatio)))
+    ?.value
+}
+
+/** True while no thumbnail waits for a lookup or for generation. */
+export const thumbnailsIdle = (): boolean => !smallJobs.size && !smallRunning
+
+/** Call `listener` once when thumbnails are idle. Returns a function that cancels the call. */
+export function whenThumbnailsIdle(listener: () => void): () => void {
+  if (thumbnailsIdle()) {
+    listener()
+    return () => {}
   }
-  return canvas
+  const once = (): void => {
+    idleListeners.delete(once)
+    listener()
+  }
+  idleListeners.add(once)
+  return () => idleListeners.delete(once)
+}
+
+function endSmall(job: SmallJob): void {
+  if (smallJobs.get(job.key) === job) smallJobs.delete(job.key)
+  pumpSmall()
 }
 
 function pumpSmall(): void {
-  while (smallRunning < 3 && smallQueue.length) {
+  while (smallRunning < SMALL_SLOTS && smallQueue.length) {
     const job = smallQueue.shift()!
     if (!job.consumers.size) {
-      smallJobs.delete(job.key)
+      if (smallJobs.get(job.key) === job) smallJobs.delete(job.key)
       continue
     }
+    job.stage = 'running'
+    job.renderPriority = job.priority === 'selected' ? 'high' : 'normal'
     smallRunning++
     void (async () => {
       try {
@@ -67,25 +97,7 @@ function pumpSmall(): void {
           if (!job.consumers.size) return
           frame = ownedFrame(await createImageBitmap(blob, { imageOrientation: 'none' }))
         }
-        const canvas = document.createElement('canvas')
-        try {
-          if (!job.consumers.size) return
-          if (!canvas.getContext('2d')) throw new Error('No preview canvas')
-          drawImageWithOrientation(canvas, frame.image, job.orientation, {
-            maxEdge: 640,
-            aspectRatio: job.aspectRatio
-          })
-        } finally {
-          frame.release()
-        }
-        small.set(job.key, canvas)
-        smallBytes += canvas.width * canvas.height * 4
-        while (smallBytes > SMALL_BUDGET && small.size) {
-          const [key, oldest] = small.entries().next().value!
-          small.delete(key)
-          smallBytes -= oldest.width * oldest.height * 4
-        }
-        for (const consumer of job.consumers) consumer.resolve(canvas)
+        deliverSmall(job, frame)
       } catch (error) {
         for (const consumer of job.consumers) consumer.reject(error)
       } finally {
@@ -96,14 +108,75 @@ function pumpSmall(): void {
       }
     })()
   }
+  if (thumbnailsIdle()) [...idleListeners].forEach((listener) => listener())
 }
 
-/** New visible requests take priority; shared consumers cancel independently. */
+function deliverSmall(job: SmallJob, frame: Frame): void {
+  const canvas = document.createElement('canvas')
+  try {
+    if (!job.consumers.size) return
+    if (!canvas.getContext('2d')) throw new Error('No preview canvas')
+    drawImageWithOrientation(canvas, frame.image, job.orientation, {
+      maxEdge: 640,
+      aspectRatio: job.aspectRatio
+    })
+  } finally {
+    frame.release()
+  }
+  const entry = hold(
+    smallMemoryKey(job.key),
+    canvas,
+    canvas.width * canvas.height * 4,
+    undefined,
+    job.epoch
+  )
+  for (const consumer of job.consumers) consumer.resolve(entry.value)
+}
+
+/** The selected photo goes first; within a priority, the newest request goes first. */
+function enqueueSmall(job: SmallJob): void {
+  const queued = smallQueue.indexOf(job)
+  if (queued >= 0) smallQueue.splice(queued, 1)
+  const index =
+    job.priority === 'selected' ? 0 : smallQueue.findIndex((other) => other.priority !== 'selected')
+  smallQueue.splice(index < 0 ? smallQueue.length : index, 0, job)
+}
+
+async function lookupSmall(job: SmallJob): Promise<void> {
+  let frame: Frame | undefined
+  try {
+    frame = await cachedFrame(job.url, job.lookup.signal)
+  } catch {
+    // An abandoned lookup has no consumers; the check below ends it.
+  }
+  if (!job.consumers.size) {
+    frame?.release()
+    return endSmall(job)
+  }
+  if (frame) {
+    try {
+      deliverSmall(job, frame)
+    } catch (error) {
+      for (const consumer of job.consumers) consumer.reject(error)
+    }
+    return endSmall(job)
+  }
+  job.stage = 'queued'
+  enqueueSmall(job)
+  pumpSmall()
+}
+
+/**
+ * Stored thumbnails load at once through the lookup lane. Misses wait for one of
+ * three generation slots: the selected photo first, then the newest visible
+ * thumbnail. Shared consumers cancel independently.
+ */
 export function loadSmallPreview(
   url: string,
   orientation: number,
   aspectRatio: number | undefined,
-  signal: AbortSignal
+  signal: AbortSignal,
+  priority: SmallPriority = 'visible'
 ): Promise<HTMLCanvasElement> {
   if (signal.aborted) return Promise.reject(new DOMException('Cancelled', 'AbortError'))
   const cached = cachedSmallPreview(url, orientation, aspectRatio)
@@ -111,18 +184,28 @@ export function loadSmallPreview(
   const key = smallPreviewKey(url, orientation, aspectRatio)
   let job = smallJobs.get(key)
   if (!job) {
-    job = {
+    const created: SmallJob = {
       key,
       url,
       orientation,
       aspectRatio,
+      priority,
+      stage: 'lookup',
+      epoch: memoryEpoch(),
+      lookup: new AbortController(),
       controller: new AbortController(),
       consumers: new Set()
     }
-    smallJobs.set(key, job)
-    smallQueue.push(job)
+    job = created
+    smallJobs.set(key, created)
+    // StrictMode may release/reacquire a consumer before this microtask runs.
+    queueMicrotask(() => {
+      if (created.consumers.size) void lookupSmall(created)
+      else endSmall(created)
+    })
   }
   const current = job
+  if (priority === 'selected') current.priority = 'selected'
   return new Promise<HTMLCanvasElement>((resolve, reject) => {
     const abort = (): void => {
       current.consumers.delete(consumer)
@@ -130,12 +213,16 @@ export function loadSmallPreview(
         const queued = smallQueue.indexOf(current)
         if (queued >= 0) {
           smallQueue.splice(queued, 1)
-          smallJobs.delete(current.key)
+          endSmall(current)
         } else {
           // StrictMode/view handoffs can reacquire this fetch before the microtask.
           queueMicrotask(() => {
             if (current.consumers.size) return
-            if (isEmbeddedPreview(current.url)) return
+            if (current.stage === 'lookup') {
+              current.lookup.abort()
+              return
+            }
+            if (current.stage !== 'running' || isEmbeddedPreview(current.url)) return
             if (smallJobs.get(current.key) === current) smallJobs.delete(current.key)
             cancelPreview(current.url, current)
           })
@@ -143,59 +230,98 @@ export function loadSmallPreview(
       }
       reject(new DOMException('Cancelled', 'AbortError'))
     }
-    const consumer = {
+    const consumer: SmallConsumer = {
       signal,
-      resolve: (canvas: HTMLCanvasElement): void => {
+      resolve: (canvas) => {
         signal.removeEventListener('abort', abort)
         resolve(canvas)
       },
-      reject: (error: unknown): void => {
+      reject: (error) => {
         signal.removeEventListener('abort', abort)
         reject(error)
       }
     }
     current.consumers.add(consumer)
     signal.addEventListener('abort', abort, { once: true })
-    const queued = smallQueue.indexOf(current)
-    if (queued >= 0) {
-      smallQueue.splice(queued, 1)
-      smallQueue.unshift(current)
+    if (current.stage === 'queued') {
+      enqueueSmall(current)
+      queueMicrotask(pumpSmall)
     }
-    // StrictMode may release/reacquire a consumer before this microtask runs.
-    queueMicrotask(pumpSmall)
   })
 }
 
-type FullEntry = { url: string; blob: Blob; bytes: number; users: number }
-type FullConsumer = { ready: (entry: FullEntry) => void; error: () => void }
+type FullEntry = { url: string; blob: Blob }
+type FullConsumer = {
+  ready: (entry: Held<FullEntry>) => void
+  /** `retry` is true when newer work replaced this request; the source did not fail. */
+  error: (retry?: boolean) => void
+}
 type FullJob = ImageRequest & {
   source: string
   consumers: Set<FullConsumer>
   priority: 'foreground' | 'background'
+  stage: 'lookup' | 'queued' | 'running'
+  epoch: number
+  lookup: AbortController
 }
-const full = new Map<string, FullEntry>()
-let fullBytes = 0
+const fullKey = (source: string): string => `full:${source}`
+const fullJobs = new Map<string, FullJob>()
 let running: FullJob | undefined
 let pending: FullJob | undefined
 let background: FullJob | undefined
 
-function trimFull(): void {
-  for (const [source, entry] of full) {
-    if (fullBytes <= FULL_BUDGET) break
-    if (entry.users) continue
-    full.delete(source)
-    fullBytes -= entry.bytes
-    URL.revokeObjectURL(entry.url)
-  }
+export function cachedFullPreview(source: string): string | undefined {
+  return getHeld<FullEntry>(fullKey(source))?.value.url
 }
 
-export function cachedFullPreview(source: string): string | undefined {
-  const entry = full.get(source)
-  if (entry) {
-    full.delete(source)
-    full.set(source, entry)
+/** Drop an unused full JPEG, as after a background medium was made from it. */
+export const forgetFullPreview = (source: string): void => forget(fullKey(source))
+
+function endFull(job: FullJob): void {
+  if (fullJobs.get(job.source) === job) fullJobs.delete(job.source)
+}
+
+function supersede(job: FullJob | undefined): void {
+  if (!job) return
+  endFull(job)
+  for (const consumer of job.consumers) consumer.error(true)
+}
+
+function deliverFull(job: FullJob, blob: Blob): void {
+  const url = URL.createObjectURL(blob)
+  const entry = hold(
+    fullKey(job.source),
+    { url, blob },
+    blob.size,
+    () => URL.revokeObjectURL(url),
+    job.epoch
+  )
+  for (const consumer of job.consumers) consumer.ready(entry)
+}
+
+async function lookupFull(job: FullJob): Promise<void> {
+  let blob: Blob | undefined
+  try {
+    blob = await fetchCached(job.source, job.lookup.signal)
+  } catch {
+    // An abandoned lookup has no consumers; the check below ends it.
   }
-  return entry?.url
+  if (!job.consumers.size) return endFull(job)
+  if (blob) {
+    endFull(job)
+    return deliverFull(job, blob)
+  }
+  job.stage = 'queued'
+  if (job.priority === 'foreground') {
+    if (pending !== job) supersede(pending)
+    pending = job
+    // Generation for the selection preempts background preparation.
+    if (running?.priority === 'background') cancelPreview(running.source, running)
+  } else {
+    if (background !== job) supersede(background)
+    background = job
+  }
+  pumpFull()
 }
 
 function pumpFull(): void {
@@ -205,6 +331,8 @@ function pumpFull(): void {
   pending = undefined
   if (!job) return
   const current = job
+  current.stage = 'running'
+  current.renderPriority = current.priority === 'foreground' ? 'high' : 'low'
   running = current
   void (async () => {
     try {
@@ -213,16 +341,14 @@ function pumpFull(): void {
       if (!response.ok) throw new Error(`preview ${response.status}`)
       const blob = await response.blob()
       if (current.cancelled) throw new DOMException('Cancelled', 'AbortError')
-      const entry = { url: URL.createObjectURL(blob), blob, bytes: blob.size, users: 0 }
-      full.set(current.source, entry)
-      fullBytes += entry.bytes
-      for (const consumer of current.consumers) consumer.ready(entry)
-      trimFull()
+      deliverFull(current, blob)
     } catch {
+      const retry = !!current.cancelled
       current.cancelled = true
-      for (const consumer of current.consumers) consumer.error()
+      for (const consumer of current.consumers) consumer.error(retry)
     } finally {
       current.cancelled = true
+      endFull(current)
       await current.end?.().catch(() => {})
       running = undefined
       pumpFull()
@@ -230,56 +356,54 @@ function pumpFull(): void {
   })()
 }
 
-/** One full extraction in flight, one latest foreground request; no navigation backlog. */
-export function subscribeFullPreview(
+function subscribeFull(
   source: string,
-  ready: (url: string) => void,
-  error: () => void,
-  priority: 'foreground' | 'background' = 'foreground'
+  ready: (entry: Held<FullEntry>) => void,
+  error: (retry?: boolean) => void,
+  priority: 'foreground' | 'background'
 ): () => void {
-  let held: FullEntry | undefined
+  let held: Held<FullEntry> | undefined
   let released = false
   const consumer: FullConsumer = {
     ready: (entry) => {
       if (released) return
       held = entry
       entry.users++
-      ready(entry.url)
+      ready(entry)
     },
     error
   }
-  const cached = full.get(source)
+  const cached = getHeld<FullEntry>(fullKey(source))
   let job: FullJob | undefined
-  if (cached) {
-    cachedFullPreview(source)
-    consumer.ready(cached)
-  } else {
-    job =
-      running?.source === source && !running.cancelled
-        ? running
-        : pending?.source === source
-          ? pending
-          : background?.source === source
-            ? background
-            : undefined
+  if (cached) consumer.ready(cached)
+  else {
+    job = fullJobs.get(source)
+    if (job?.cancelled) job = undefined
     if (!job) {
-      job = { source, consumers: new Set(), controller: new AbortController(), priority }
-      if (priority === 'foreground') {
-        if (pending) for (const old of pending.consumers) old.error()
-        pending = job
-      } else {
-        if (background) for (const old of background.consumers) old.error()
-        background = job
+      const created: FullJob = {
+        source,
+        consumers: new Set(),
+        controller: new AbortController(),
+        lookup: new AbortController(),
+        priority,
+        stage: 'lookup',
+        epoch: memoryEpoch()
       }
-    } else if (job === background && priority === 'foreground') {
-      background = undefined
-      if (pending) for (const old of pending.consumers) old.error()
-      pending = job
-    }
-    if (priority === 'foreground') {
+      job = created
+      fullJobs.set(source, created)
+      // A synchronous handoff can release and reacquire the source first.
+      queueMicrotask(() => {
+        if (created.consumers.size) void lookupFull(created)
+        else endFull(created)
+      })
+    } else if (priority === 'foreground' && job.priority === 'background') {
       job.priority = 'foreground'
-      if (running && running !== job && running.priority === 'background')
-        cancelPreview(running.source, running)
+      if (job === background) {
+        background = undefined
+        supersede(pending)
+        pending = job
+        if (running?.priority === 'background') cancelPreview(running.source, running)
+      }
     }
     job.consumers.add(consumer)
     queueMicrotask(pumpFull)
@@ -288,26 +412,42 @@ export function subscribeFullPreview(
     if (released) return
     released = true
     job?.consumers.delete(consumer)
-    if (pending === job && !job?.consumers.size) pending = undefined
-    if (background === job && !job?.consumers.size) background = undefined
-    if (job && job === running && !job.consumers.size) {
+    if (job && !job.consumers.size) {
       const current = job
-      queueMicrotask(() => {
-        if (!current.consumers.size) cancelPreview(current.source, current)
-      })
+      if (pending === current) pending = undefined
+      if (background === current) background = undefined
+      if (current.stage === 'queued') endFull(current)
+      else
+        queueMicrotask(() => {
+          if (current.consumers.size) return
+          if (current.stage === 'lookup') current.lookup.abort()
+          else if (current === running) cancelPreview(current.source, current)
+        })
     }
-    if (held) held.users--
     // Let a remounted viewer acquire the same URL before evicting an unpinned entry.
-    queueMicrotask(trimFull)
+    if (held) unhold(held)
   }
+}
+
+/**
+ * Stored full JPEGs load at once through the lookup lane. One extraction runs, with
+ * one latest foreground and one background request waiting; no navigation backlog.
+ */
+export function subscribeFullPreview(
+  source: string,
+  ready: (url: string) => void,
+  error: (retry?: boolean) => void,
+  priority: 'foreground' | 'background' = 'foreground'
+): () => void {
+  return subscribeFull(source, (entry) => ready(entry.value.url), error, priority)
 }
 
 /** Share the transport's original bytes with the fit-image worker, without another fetch. */
 export function subscribeFullPreviewBlob(
   source: string,
   ready: (blob: Blob) => void,
-  error: () => void,
+  error: (retry?: boolean) => void,
   priority: 'foreground' | 'background' = 'foreground'
 ): () => void {
-  return subscribeFullPreview(source, () => ready(full.get(source)!.blob), error, priority)
+  return subscribeFull(source, (entry) => ready(entry.value.blob), error, priority)
 }

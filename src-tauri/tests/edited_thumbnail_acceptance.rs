@@ -63,6 +63,9 @@ fn saved_thumbnails_reuse_pixels_across_requests_and_restarts() {
         let width = u32::from_be_bytes(a[16..20].try_into().unwrap());
         let height = u32::from_be_bytes(a[20..24].try_into().unwrap());
         assert_eq!(width.max(height), 640);
+        // The app persists after each response; the final preview and its
+        // thumbnail go to disk here.
+        editor.persist_previews();
         drop(editor);
 
         let start = Instant::now();
@@ -78,6 +81,23 @@ fn saved_thumbnails_reuse_pixels_across_requests_and_restarts() {
             .paused
             .store(true, std::sync::atomic::Ordering::SeqCst);
         let start = Instant::now();
+        let body = reopened.respond(&format!("{uri}&cacheOnly=1"));
+        eprintln!(
+            "{} cache-only thumbnail after restart: {:?}",
+            original.display(),
+            start.elapsed()
+        );
+        assert_eq!(
+            body.status, 200,
+            "A persisted thumbnail is a cache-only hit"
+        );
+        assert_eq!(body.bytes, *a);
+        let large = reopened.respond(&format!(
+            "{}?cacheOnly=1",
+            uri.trim_end_matches("?v=thumbnail")
+        ));
+        assert_eq!(large.status, 200, "The final large preview is on disk");
+        let start = Instant::now();
         let cached = reopened.image_uri(&uri).unwrap();
         eprintln!(
             "{} thumbnail after restart: {:?}",
@@ -88,6 +108,12 @@ fn saved_thumbnails_reuse_pixels_across_requests_and_restarts() {
             *a, *cached,
             "Persisted thumbnail must preserve the exact edited pixels"
         );
+        let renders = reopened
+            .store
+            .stats
+            .renders
+            .load(std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(renders, 0, "Cache hits after a restart need no render");
     }
 }
 

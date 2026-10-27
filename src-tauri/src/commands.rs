@@ -62,8 +62,7 @@ async fn write_settings(
             .debug
             .store(next.debug_logging_enabled, Ordering::Relaxed);
         state
-            .previews
-            .disk
+            .cache
             .configure(next.preview_cache_enabled, next.preview_cache_limit);
         if crate::menu::set_language(&next.language) {
             if let Err(error) = crate::menu::refresh(&app) {
@@ -114,8 +113,10 @@ pub async fn queue_add(
     let mut dtos = dtos.map_err(|e| e.to_string())??;
     for dto in &mut dtos {
         if let Some(meta) = meta.remove(&dto.path) {
-            dto.orientation = meta.orientation;
-            dto.aspect_ratio = meta.aspect_ratio;
+            dto.orientation = meta.orientation.or(dto.orientation);
+            if dto.source_kind != crate::source::Kind::Dng {
+                dto.aspect_ratio = meta.aspect_ratio;
+            }
             dto.exif = Some(meta.exif);
         }
     }
@@ -293,7 +294,7 @@ pub async fn dialog_pick_files(
                 .file()
                 .set_parent(&window)
                 .set_title(title)
-                .add_filter("X3F RAW", &["x3f", "X3F", "x3i", "X3I"]);
+                .add_filter("RAW photos", &["x3f", "X3F", "x3i", "X3I", "dng", "DNG"]);
             if let Some(last) = last {
                 dialog = dialog.set_directory(last);
             }
@@ -371,7 +372,7 @@ pub async fn dialog_pick_folder(
     .map_err(|e| e.to_string())?
 }
 
-/// The X3F and X3I files directly inside the folders, sorted by path. Hidden files,
+/// The RAW files directly inside the folders, sorted by path. Hidden files,
 /// such as the "._" files that macOS writes on memory cards, are not photos. A folder
 /// or a photo that cannot be read gives an error, not an incomplete list.
 fn folder_sources(folders: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
@@ -521,20 +522,33 @@ pub async fn logs_sizes(state: State<'_, Arc<AppState>>) -> Result<Value, String
         .await
         .map_err(|e| e.to_string())
 }
-/// The bytes in the preview disk cache.
+/// The bytes in the preview disk cache, for all preview types.
 #[tauri::command]
 pub async fn cache_size(state: State<'_, Arc<AppState>>) -> Result<u64, String> {
-    let state = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || state.previews.disk.size())
-        .await
-        .map_err(|e| e.to_string())
+    Ok(state.cache.size())
 }
+/// Removes all disposable previews, then emits `cache:cleared` (null payload),
+/// so that the renderer drops idle images and work that started before.
 #[tauri::command]
-pub async fn cache_clear(state: State<'_, Arc<AppState>>) -> Result<(), String> {
+pub async fn cache_clear(app: AppHandle, state: State<'_, Arc<AppState>>) -> Result<(), String> {
     let state = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || state.previews.disk.clear())
-        .await
-        .map_err(|e| e.to_string())?
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let result = state.cache.clear();
+        state.memory.clear();
+        state.editor.cache_cleared();
+        result
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    // A partial Clear still invalidates earlier work.
+    let _ = app.emit("cache:cleared", ());
+    result
+}
+/// The total memory budget in bytes for retained images. The backend and the
+/// renderer each use half of it.
+#[tauri::command]
+pub fn cache_memory_budget() -> u64 {
+    crate::cache::memory_budget()
 }
 #[tauri::command]
 pub async fn cache_sfd_size(state: State<'_, Arc<AppState>>) -> Result<u64, String> {
@@ -1007,6 +1021,11 @@ mod tests {
         let captured = BatchSettings {
             output_format: OutputFormat::Tiff,
             concurrency: 8,
+            resize: Some(x3f_render::ExportResize {
+                max_width: 1920,
+                max_height: 1080,
+                method: x3f_render::ResamplingMethod::Area,
+            }),
             ..Default::default()
         };
         let patch = batch_settings_patch(&captured).unwrap();
@@ -1016,8 +1035,16 @@ mod tests {
             let current = preferences.set(patch.clone()).unwrap();
             assert_eq!(current.batch.concurrency, concurrency);
             assert_eq!(current.batch.output_format, OutputFormat::Tiff);
+            assert_eq!(current.batch.resize, captured.resize);
             assert!(current.has_previous_conversion);
         }
+        assert_eq!(
+            crate::storage::Preferences::load(directory.path().join("settings.json"))
+                .get()
+                .batch
+                .resize,
+            captured.resize
+        );
     }
 
     #[test]
@@ -1026,12 +1053,12 @@ mod tests {
         let root = directory.path();
         std::fs::create_dir_all(root.join("sub")).unwrap();
         std::fs::create_dir_all(root.join("folder.X3F")).unwrap();
-        for name in ["b.x3i", "a.X3F", "c.jpg", "._a.X3F", "sub/d.x3f"] {
+        for name in ["b.x3i", "a.X3F", "c.jpg", "._a.X3F", "sub/d.x3f", "d.DNG"] {
             std::fs::write(root.join(name), b"x3f").unwrap();
         }
         assert_eq!(
             folder_sources(&[root.to_path_buf()]).unwrap(),
-            [root.join("a.X3F"), root.join("b.x3i")]
+            [root.join("a.X3F"), root.join("b.x3i"), root.join("d.DNG")]
         );
         // A photo or a folder that cannot be read stops the import with its path.
         let missing = root.join("missing");

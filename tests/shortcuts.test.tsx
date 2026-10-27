@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, renderHook, screen } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import shortcuts from '@shared/shortcuts.json'
 import type { MenuCommand } from '@shared/ipc'
@@ -18,6 +18,7 @@ import { useSettingsStore } from '../src/renderer/src/stores/settingsStore'
 import { useNavStore } from '../src/renderer/src/stores/navStore'
 import { useEditorStore as editor } from '../src/renderer/src/stores/editorStore'
 import { ShortcutSheet } from '../src/renderer/src/components/ShortcutSheet'
+import { useExportMenu } from '../src/renderer/src/hooks/useExportMenu'
 import { Slider } from '../src/renderer/src/components/ui/slider'
 
 const opener = vi.hoisted(() => vi.fn(async () => {}))
@@ -93,6 +94,32 @@ describe('runCommand', () => {
     expect(openExport).toHaveBeenLastCalledWith(new Set(['b']), 'editor')
     expect(runCommand('exportDng')).toBe(false)
     expect(runCommand('exportEmbeddedJpg')).toBe(false)
+  })
+
+  it('offers no original export presets for a selection with a DNG, from keys or menus', () => {
+    const openExport = vi.fn()
+    const exportPreset = vi.fn(async () => {})
+    const dng: X3FFileDTO = { id: 'd', path: '/photos/d.DNG', fileName: 'd.DNG', sourceKind: 'dng' }
+    queue.setState({
+      files: [...files, dng],
+      selectedIds: new Set(['a', 'd']),
+      openExport,
+      exportPreset
+    })
+    expect(runCommand('exportDng', { source: 'key' })).toBe(false)
+    expect(runCommand('exportEmbeddedJpg', { source: 'menu' })).toBe(false)
+    expect(exportPreset).not.toHaveBeenCalled()
+    expect(runCommand('exportJpeg')).toBe(true)
+    expect(exportPreset).toHaveBeenLastCalledWith('jpeg', new Set(['a', 'd']), 'queue')
+    expect(runCommand('exportTiff')).toBe(true)
+    const values = (): string[] =>
+      renderHook(() => useExportMenu()).result.current.items.map((item) => item.value)
+    expect(values()).toEqual(['jpeg', 'tiff', 'previous'])
+    // The X3F subset keeps its original presets.
+    queue.setState({ selectedIds: new Set(['a']) })
+    expect(values()).toEqual(['jpeg', 'embeddedJpg', 'dng', 'tiff', 'previous'])
+    expect(runCommand('exportDng')).toBe(true)
+    expect(exportPreset).toHaveBeenLastCalledWith('dng', new Set(['a']), 'queue')
   })
 
   it('shows the selection in Finder, or the open photo in the editor', () => {

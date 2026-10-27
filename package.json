@@ -11,6 +11,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:native": "node scripts/native-smoke.mjs",
+    "test:preview-cache": "node scripts/preview-cache-smoke.mjs",
     "lint": "eslint .",
     "format": "prettier --write \"src/**/*.{ts,tsx,css}\"",
     "tauri": "tauri",

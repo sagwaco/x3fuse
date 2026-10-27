@@ -1,5 +1,5 @@
 /** Data models serialized by the Rust backend and used by the renderer. */
-import type { EditRecord, X3iSource } from './editor'
+import type { EditRecord, SourceCapabilities, SourceKind, X3iSource } from './editor'
 import { defaultDenoiseOptions, type DenoiseOptions } from './denoise'
 import type { Locale } from './i18n/detect'
 
@@ -49,6 +49,9 @@ export interface ExifPair {
   value: string
 }
 
+/** The paths that the queue imports: X3F, X3I, and DNG files. */
+export const RAW_PATH = /\.(?:x3[fi]|dng)$/i
+
 /** Output extensions; outputName preserves .X3F for JPEG/TIFF and removes it for DNG. */
 export const OUTPUT_EXTENSION: Record<OutputFormat, string> = {
   dng: '.dng',
@@ -65,10 +68,32 @@ export type ThemeName = 'dark' | 'light' | 'gray'
 /** 'auto' follows the system language. */
 export type LanguageSetting = 'auto' | Locale
 
+export const RESIZE_METHODS = ['nearest', 'bilinear', 'area', 'bicubic', 'lanczos3'] as const
+export type ResizeMethod = (typeof RESIZE_METHODS)[number]
+
+/** Fits a rendered export inside a pixel box. The export keeps its aspect ratio and does not get larger. */
+export interface ExportResize {
+  maxWidth: number
+  maxHeight: number
+  method: ResizeMethod
+}
+
+/** The resize that "Resize to fit" turns on. */
+export const DEFAULT_EXPORT_RESIZE: ExportResize = {
+  maxWidth: 2048,
+  maxHeight: 2048,
+  method: 'lanczos3'
+}
+
+/** The bounds of a resize dimension, in pixels. */
+export const MAX_RESIZE_DIMENSION = 65535
+
 /** Application preferences persisted and validated by the Rust backend. */
 export interface ConversionSettings {
   rendering: 'original' | 'rendered'
   jpegQuality: number
+  /** Resize for rendered JPEG and TIFF exports; null keeps the full size. Original exports ignore it. */
+  resize: ExportResize | null
   editorPanelWidth: number
   /** Whether the editor's adjustments sidebar is open. */
   editorPanelOpen: boolean
@@ -113,7 +138,7 @@ export interface ConversionSettings {
   lightTheme: ThemeName
   /** Theme used while the appearance is dark. */
   darkTheme: ThemeName
-  /** Keep embedded previews and photo details on disk. */
+  /** Keep original and edited previews and photo details on disk. */
   previewCacheEnabled: boolean
   /** Size limit of the preview cache in bytes (decimal units, as shown). */
   previewCacheLimit: number
@@ -123,6 +148,7 @@ export interface ConversionSettings {
 export const DEFAULT_SETTINGS: ConversionSettings = {
   rendering: 'original',
   jpegQuality: 92,
+  resize: null,
   editorPanelWidth: 320,
   editorPanelOpen: true,
   outputFormat: 'dng',
@@ -153,7 +179,7 @@ export const DEFAULT_SETTINGS: ConversionSettings = {
   lightTheme: 'light',
   darkTheme: 'dark',
   previewCacheEnabled: true,
-  previewCacheLimit: 1_000_000_000,
+  previewCacheLimit: 20_000_000_000,
   language: 'auto'
 }
 
@@ -162,15 +188,20 @@ export const DEFAULT_SETTINGS: ConversionSettings = {
  * Conversion results belong to a batch, not to these browsing records.
  */
 export interface X3FFileDTO {
+  /** Content fingerprint for rendered exports and edits. */
   sourceRevision?: string
+  /** Stable revision of the original preview URLs; it changes when the source changes. */
+  previewRevision?: string
   edit?: EditRecord
   editError?: string
   /** Immutable render override for editor and export-review snapshots. */
   displayPreviewUrl?: string
   id: string
-  /** Absolute path to the source .X3F file. */
+  /** Absolute path to the source X3F, X3I, or DNG file. */
   path: string
   fileName: string
+  sourceKind?: SourceKind
+  capabilities?: SourceCapabilities
   /**
    * True for an optimistic placeholder row shown the instant a file is dropped,
    * before main has finished reading its metadata (size, date, orientation,
@@ -240,6 +271,7 @@ export type BatchConversionSettings = Pick<
   | 'outputFormat'
   | 'rendering'
   | 'jpegQuality'
+  | 'resize'
   | 'compress'
   | 'denoiseIntensity'
   | 'denoiseOptions'
@@ -256,6 +288,7 @@ export function batchSettings(settings: BatchConversionSettings): BatchConversio
   const {
     rendering,
     jpegQuality,
+    resize,
     outputFormat,
     compress,
     denoiseIntensity,
@@ -271,6 +304,7 @@ export function batchSettings(settings: BatchConversionSettings): BatchConversio
   return {
     rendering: rendering ?? 'original',
     jpegQuality: jpegQuality ?? 92,
+    resize: resize ? { ...resize } : null,
     outputFormat,
     compress,
     denoiseIntensity,

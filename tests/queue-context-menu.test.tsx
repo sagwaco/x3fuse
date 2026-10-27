@@ -10,7 +10,7 @@ import { useEditorStore } from '../src/renderer/src/stores/editorStore'
 import { useNavStore } from '../src/renderer/src/stores/navStore'
 import { t } from '../src/renderer/src/lib/strings'
 import { defaultRecipe } from '@shared/editor'
-import { DEFAULT_SETTINGS } from '@shared/types'
+import { DEFAULT_SETTINGS, type X3FFileDTO } from '@shared/types'
 
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }))
 vi.mock('../src/renderer/src/lib/ipc', () => ({ ipc: { invoke } }))
@@ -19,8 +19,14 @@ let choose: (value: string | null) => void
 const request = (): NativeMenuRequest =>
   invoke.mock.calls.filter(([channel]) => channel === 'menu:popup').at(-1)![1]
 
-function Surface({ disabled = false }: { disabled?: boolean }) {
-  const selection = useQueueSelection(files, { mode: 'vertical' })
+function Surface({
+  disabled = false,
+  items = files
+}: {
+  disabled?: boolean
+  items?: X3FFileDTO[]
+}) {
+  const selection = useQueueSelection(items, { mode: 'vertical' })
   return (
     <QueueContextMenu disabled={disabled}>
       <div
@@ -29,7 +35,7 @@ function Surface({ disabled = false }: { disabled?: boolean }) {
         onContextMenu={selection.handleContainerContextMenu}
         onKeyDown={selection.handleKeyDown}
       >
-        {files.map((file) => (
+        {items.map((file) => (
           <div key={file.id} onContextMenu={() => selection.handleItemContextMenu(file.id)}>
             {file.id}
           </div>
@@ -220,4 +226,31 @@ it('edits, copies, pastes, and exports the photos fixed when the menu opened', a
   useEditorStore.setState(editor, true)
   useQueueStore.setState({ exportPreset: queue.exportPreset })
   useNavStore.setState(nav, true)
+})
+
+it('offers no original export presets for a DNG, also for all shown photos', async () => {
+  const dng: X3FFileDTO = { id: 'd', path: '/photos/d.DNG', fileName: 'd.DNG', sourceKind: 'dng' }
+  const items = [...files, dng]
+  useQueueStore.setState({ files: items })
+  render(<Surface items={items} />)
+  const presets = (): Array<{ value: string; disabled?: boolean }> =>
+    request()
+      .items.find((item) => item.value === 'export')!
+      .items!.filter((item) => /^export:(jpeg|embeddedJpg|dng|tiff)$/.test(item.value))
+  const offered = (): string[] =>
+    presets()
+      .filter((item) => !item.disabled)
+      .map((item) => item.value)
+  fireEvent.contextMenu(screen.getByText('d'))
+  expect(offered()).toEqual(['export:jpeg', 'export:tiff'])
+  await act(async () => choose('export:dng'))
+  expect(invoke).not.toHaveBeenCalledWith('dialog:pickOutputDir')
+  // Without a selection, the presets apply to all shown photos, which include the DNG.
+  fireEvent.contextMenu(screen.getByTestId('surface'))
+  expect(offered()).toEqual(['export:jpeg', 'export:tiff'])
+  await act(async () => choose(null))
+  // An X3F alone keeps them.
+  fireEvent.contextMenu(screen.getByText('a'))
+  expect(offered()).toEqual(['export:jpeg', 'export:embeddedJpg', 'export:dng', 'export:tiff'])
+  await act(async () => choose(null))
 })
