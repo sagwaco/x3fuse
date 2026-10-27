@@ -523,6 +523,13 @@ html[data-platform='darwin'] .window-toolbar {
   height: 24px;
 }
 
+/* The pressed knob is 2px higher than the track above and below. A switch in the
+   first row of a section keeps that room below the header. A stuck header still
+   covers the knob. */
+.editor-section > div > :first-child:has(> .switch, > * > .switch) {
+  padding-top: 2px;
+}
+
 .switch[data-pressed]:not(:disabled) > .switch-knob[data-state='checked'] {
   --knob-x: 11px;
 }
