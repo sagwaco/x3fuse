@@ -335,6 +335,17 @@ fn raw_color_recipes_validate_and_round_trip() {
     let encoded = serde_json::to_value(&recipe).unwrap();
     assert_eq!(encoded["rawColor"]["gains"][2], 2.);
     assert_eq!(recipe, serde_json::from_value(encoded).unwrap());
+    assert!(serde_json::to_value(&recipe)
+        .unwrap()
+        .get("baseCurve")
+        .is_none());
+    let linear: EditRecipe = serde_json::from_str(r#"{"baseCurve":"linear"}"#).unwrap();
+    assert_eq!(linear.base_curve, BaseCurve::Linear);
+    assert_eq!(
+        serde_json::to_value(&linear).unwrap()["baseCurve"],
+        "linear"
+    );
+    assert!(serde_json::from_str::<EditRecipe>(r#"{"baseCurve":"film"}"#).is_err());
     for json in [
         r#"{"rawColor":{"gains":[1,1,1],"matrix":[1,0,0,0,1,0,0,0,1],"mix":1}}"#,
         r#"{"rawColor":{"gains":[1,1,1]}}"#,
@@ -1798,7 +1809,7 @@ fn spektrafilm_license_ships_unmodified() {
     for (shader, expected) in [
         (
             include_bytes!("render.wgsl").as_slice(),
-            "b009bcbc34437fdde278d3b6c09455bc8ce7a45d5be9bd4409b519827e73a458",
+            "1c9a54cd5351de9e7487ea7156529d656c78d4530d4070cec7b5534050c87413",
         ),
         (
             include_bytes!("gamut.wgsl").as_slice(),
@@ -3047,6 +3058,35 @@ fn gpu_raw_color(renderer: &Renderer) {
         }),
         ..plain.clone()
     };
+    // A linear base curve sends the layers directly to the sRGB encoding.
+    // The visible path ignores it.
+    let linear = EditRecipe {
+        raw_color: Some(RawColor {
+            gains,
+            matrix: [1., 0., 0., 0., 1., 0., 0., 0., 1.],
+        }),
+        base_curve: BaseCurve::Linear,
+        ..plain.clone()
+    };
+    let encode = |v: f32| {
+        let v = if v <= 0.0031308 {
+            12.92 * v
+        } else {
+            1.055 * v.powf(1. / 2.4) - 0.055
+        };
+        (v * 65535.).round() as u16
+    };
+    let want: Vec<u16> = layers.iter().flatten().map(|&v| encode(v)).collect();
+    let got = render(&source, &linear);
+    assert!(
+        got.iter().zip(&want).all(|(g, w)| g.abs_diff(*w) <= 128),
+        "{got:?} vs {want:?}"
+    );
+    let visible = EditRecipe {
+        base_curve: BaseCurve::Linear,
+        ..plain.clone()
+    };
+    assert_eq!(render(&source, &visible), render(&source, &plain));
     let gray = render(&source, &mono);
     assert!(
         gray.chunks(3).all(|p| p[0] == p[1] && p[1] == p[2]),

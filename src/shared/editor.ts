@@ -116,6 +116,8 @@ export interface EditRecipe {
   /** Full spectrum raw color. It replaces white balance and the camera color matrix.
       Missing or null keeps the calibrated visible path. */
   rawColor?: RawColor | null
+  /** The tone curve before the tone controls, for full spectrum color. Missing means 'sigma'. */
+  baseCurve?: BaseCurve
   contrast: number
   highlights: number
   shadows: number
@@ -172,6 +174,8 @@ export const DNG_DEMOSAICS = [
 export type DngDemosaic = (typeof DNG_DEMOSAICS)[number]
 /** The demosaic that a new Bayer or monochrome DNG recipe starts with. */
 export const DEFAULT_DNG_DEMOSAIC: DngDemosaic = 'default'
+/** 'sigma' is an S-curve fitted to Sigma's in-camera JPEGs. 'linear' has no curve. */
+export type BaseCurve = 'sigma' | 'linear'
 /** Gains on the bottom, middle, and top sensor layers, then a row-major 3x3 mix to RGB.
     Rows are output red, green, and blue. The renderer divides the gains by the middle gain. */
 export interface RawColor {
@@ -391,6 +395,7 @@ export function defaultRecipe(): EditRecipe {
     tint: 0,
     whiteBalanceGains: null,
     rawColor: null,
+    baseCurve: 'sigma',
     contrast: 0,
     highlights: 0,
     shadows: 0,

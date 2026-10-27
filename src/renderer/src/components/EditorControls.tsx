@@ -16,6 +16,7 @@ import {
   monochromeFilm,
   monochromeRawMatrix,
   negativePrint,
+  type BaseCurve,
   type EditRecipe,
   type FilmSettings,
   type CurvePoint,
@@ -37,7 +38,7 @@ import { cn } from '../lib/cn'
 import { blurOnClick, blurOnEnter } from '../lib/commitFocus'
 import { GlassGroup } from './ui/glassGroup'
 import { Slider } from './ui/slider'
-import { HelpTooltip, ToggleRow } from './ui/settingsLayout'
+import { HelpTooltip, Row, ToggleRow } from './ui/settingsLayout'
 import { Select } from './ui/select'
 import { LookPicker } from './LookPicker'
 import { SfdRaw, SfdRawInfo } from './SfdRaw'
@@ -722,6 +723,21 @@ export const EditorControls = memo(function EditorControls({
                 name={t('editor.curves')}
                 info={<HelpTooltip label={t('editor.curves')} text={t('editor.curveHint')} />}
               >
+                {recipe.rawColor && (
+                  <div className="pb-2">
+                    <Row label={t('editor.baseCurve')} help={t('editor.baseCurveHelp')}>
+                      <Select<BaseCurve>
+                        aria-label={t('editor.baseCurve')}
+                        value={recipe.baseCurve ?? 'sigma'}
+                        options={(['sigma', 'linear'] as const).map((value) => ({
+                          value,
+                          label: t(`editor.baseCurve.${value}`)
+                        }))}
+                        onValueChange={(baseCurve) => change({ baseCurve })}
+                      />
+                    </Row>
+                  </div>
+                )}
                 <Curves recipe={recipe} />
               </Section>
               <Section id="detail" name={t('editor.detail')}>

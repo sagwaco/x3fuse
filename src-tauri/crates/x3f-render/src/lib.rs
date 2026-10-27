@@ -16,8 +16,9 @@ pub use color::{
 pub use export::{ExportResize, ResamplingMethod};
 pub use preview::raw_preview;
 pub use recipe::{
-    ColorWheels, Crop, Curves, DngDemosaic, EditRecipe, EffectsSettings, FilmSettings, GrainParams,
-    HalationParams, HslBand, MonochromeFilter, MonochromeSettings, Point, RawColor, Wheel,
+    BaseCurve, ColorWheels, Crop, Curves, DngDemosaic, EditRecipe, EffectsSettings, FilmSettings,
+    GrainParams, HalationParams, HslBand, MonochromeFilter, MonochromeSettings, Point, RawColor,
+    Wheel,
 };
 pub use stocks::STOCKS_JSON;
 
@@ -38,7 +39,8 @@ pub use stocks::STOCKS_JSON;
 /// Version 15 adds neutral DNG rendering without the Sigma tone curve.
 /// Version 16 corrects DNG highlight clipping.
 /// Version 17 adds selectable Bayer DNG demosaicing.
-pub const RENDER_VERSION: u32 = 17;
+/// Version 18 adds a linear base curve for full spectrum color.
+pub const RENDER_VERSION: u32 = 18;
 
 use image::ImageEncoder;
 use serde::{Deserialize, Serialize};
@@ -1749,6 +1751,10 @@ impl Renderer {
                 p[60 + i / 4][i % 4] = value / 100.;
             }
             p[62][0] = r.warmth / 100.;
+        }
+        // A linear base curve skips the S-curve in `finish` for full spectrum color.
+        if r.raw_color.is_some() && r.base_curve == BaseCurve::Linear {
+            p[62][2] = 1.;
         }
         for (i, b) in r.hsl.iter().enumerate() {
             p[8 + i] = [

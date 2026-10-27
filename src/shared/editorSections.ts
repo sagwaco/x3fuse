@@ -140,7 +140,7 @@ export const EDITOR_SECTIONS = {
       ...(to.film && { film: { ...to.film, evFilm: from.film?.evFilm ?? DEFAULT_FILM.evFilm } })
     })
   },
-  curves: { take: (from) => pick(from, ['curves']) },
+  curves: { take: (from) => pick(from, ['curves', 'baseCurve']) },
   // A legacy recipe has no demosaic to give. A reset selects the default demosaic.
   demosaic: {
     take: (from) => (from.dngDemosaic ? { dngDemosaic: from.dngDemosaic } : {}),

@@ -16,6 +16,10 @@ pub struct EditRecipe {
     /// matrix. None keeps the calibrated visible path and is not written.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub raw_color: Option<RawColor>,
+    /// The tone curve before the editor's tone controls, for full spectrum
+    /// color. Other color paths ignore it. The default is not written.
+    #[serde(skip_serializing_if = "is_default")]
+    pub base_curve: BaseCurve,
     pub contrast: f32,
     pub highlights: f32,
     pub shadows: f32,
@@ -79,6 +83,7 @@ impl Default for EditRecipe {
             temperature: None,
             tint: 0.,
             raw_color: None,
+            base_curve: BaseCurve::Sigma,
             contrast: 0.,
             highlights: 0.,
             shadows: 0.,
@@ -173,6 +178,17 @@ pub enum MonochromeFilter {
     Yellow,
     Green,
     Blue,
+}
+
+/// The tone curve before the editor's tone controls.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum BaseCurve {
+    /// An S-curve fitted to Sigma's in-camera JPEGs.
+    #[default]
+    Sigma,
+    /// No curve: scene-linear values go directly to the display encoding.
+    Linear,
 }
 
 /// Full spectrum raw color: gains on the camera layers, then a 3x3 mix to RGB.
