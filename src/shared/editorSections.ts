@@ -9,6 +9,7 @@ import {
   MONOCHROME_RAW_MATRIX,
   monochromeRawMatrix,
   filmGrainDefaults,
+  filmBoostDefaults,
   filmHalationDefaults,
   hasWhiteBalance,
   monochromeFilm,
@@ -112,7 +113,13 @@ function effectSection(effect: 'grain' | 'halation'): EditorSection {
               ...pick(DEFAULT_FILM, filmKeys),
               ...(effect === 'grain'
                 ? { grainParams: filmGrainDefaults(recipe.film.film) }
-                : filmHalationDefaults(recipe.film.film)),
+                : {
+                    ...filmHalationDefaults(recipe.film.film),
+                    halationParams: {
+                      ...DEFAULT_FILM.halationParams!,
+                      ...filmBoostDefaults(recipe.film.film)
+                    }
+                  }),
               [effect]: recipe.film[effect]
             }
           }

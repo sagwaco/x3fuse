@@ -13,6 +13,8 @@ struct Uniforms { v: array<vec4<f32>, 63> }
 @group(0) @binding(5) var<storage, read> tc_lut: Table;
 @group(0) @binding(6) var<storage, read> curves: Pixels;
 @group(0) @binding(7) var<storage, read> output_gamut: Table;
+// The highest film raw exposure of the frame, as f32 bits, from `meter`.
+@group(0) @binding(8) var<storage, read_write> frame_peak: array<atomic<u32>>;
 @group(1) @binding(0) var raw_source: texture_2d<f32>;
 @group(1) @binding(1) var<storage, read_write> frame: array<u32>;
 @group(1) @binding(2) var<storage, read> fill: array<vec2<f32>>;
@@ -131,16 +133,57 @@ fn clump_field(native: vec2<f32>, size: f32, seed: u32) -> f32 {
     return mix(top,bottom,s.y);
 }
 
-@compute @workgroup_size(16,8)
-fn expose(@builtin(global_invocation_id) id:vec3<u32>) {
-    let pos=id.xy;if !in_bounds(pos) {return;}let i=index(pos);
-    let xyz=matrix_at(18u,source.v[i].rgb*p.v[16].x);
+fn film_raw(rgb:vec3<f32>)->vec3<f32> {
+    let xyz=matrix_at(18u,rgb*p.v[16].x);
     let b=xyz.x+xyz.y+xyz.z;
-    if b<=1e-10 { destination.v[i]=vec4<f32>(0,0,0,1); return; }
+    if b<=1e-10 { return vec3<f32>(0); }
     let chroma=xyz.xy/b;
     let tc=vec2<f32>(clamp((1.0-chroma.x)*(1.0-chroma.x),0.0,1.0),
                      clamp(chroma.y/max(1.0-chroma.x,1e-10),0.0,1.0));
-    destination.v[i]=vec4<f32>(sample_tc(tc)*b,1);
+    return sample_tc(tc)*b;
+}
+// exp(t)-t-1 without cancellation for small t.
+fn expm1_minus(t:vec3<f32>)->vec3<f32> {
+    let series=t*t*(0.5+t*(1.0/6.0+t*(1.0/24.0+t/120.0)));
+    return select(exp(t)-t-1.0,series,t<vec3<f32>(0.05));
+}
+// spektrafilm boost_highlights: raw values above x0 = 0.184 * 2^protect_ev
+// rise along exp(a*dx)-a*dx-1 until the frame peak gains boost_ev stops.
+// p.v[55]: y 2^boost_ev-1 (zero is off), z x0, w a = 28^(1-boost_range).
+// Detail bands run after `meter`, so a value above the peak keeps the peak boost.
+fn boost(raw:vec3<f32>)->vec3<f32> {
+    let gain=p.v[55].y;let x0=p.v[55].z;let a=p.v[55].w;
+    let top=bitcast<f32>(atomicLoad(&frame_peak[0]));
+    if gain<=0.0 || !(top>x0) { return raw; }
+    let span=1.0-x0/top;
+    let k=gain/expm1_minus(vec3<f32>(a*span)).x;
+    let dx=clamp((raw-x0)/top,vec3<f32>(0),vec3<f32>(span));
+    return raw+top*k*expm1_minus(a*dx);
+}
+@compute @workgroup_size(16,8)
+fn expose(@builtin(global_invocation_id) id:vec3<u32>) {
+    let pos=id.xy;if !in_bounds(pos) {return;}let i=index(pos);
+    destination.v[i]=vec4<f32>(boost(film_raw(source.v[i].rgb)),1);
+}
+// The frame peak for `boost`: `sample` at each source texel, then `adjust`
+// and film exposure. It covers the whole source, so every tile, region and
+// crop shares one peak. The caller clears `frame_peak` first.
+var<workgroup> group_peak: atomic<u32>;
+@compute @workgroup_size(16,8)
+fn meter(@builtin(global_invocation_id) id:vec3<u32>,@builtin(local_invocation_index) local:u32) {
+    if local==0u { atomicStore(&group_peak,0u); }
+    workgroupBarrier();
+    if all(id.xy<textureDimensions(raw_source)) {
+        let texel=vec2<i32>(id.xy);let c=textureLoad(raw_source,texel,0).rgb;
+        var gain=1.0;
+        if p.v[49].x!=0.0 { gain=fill_gain(fill_x(c,texel)); }
+        let raw=film_raw(adjusted(c,gain).rgb);
+        let top=max(raw.x,max(raw.y,raw.z));
+        // Positive floats keep their order as bits; NaN fails the test.
+        if top>0.0 { atomicMax(&group_peak,bitcast<u32>(top)); }
+    }
+    workgroupBarrier();
+    if local==0u { atomicMax(&frame_peak[0],atomicLoad(&group_peak)); }
 }
 // Halation scatter mix at spektrafilm's default scatter_amount of 1.0, with the
 // recipe's per-channel scatter strength as the tail weight.
@@ -269,10 +312,13 @@ fn fill_gain(x:f32)->f32 {
 }
 @compute @workgroup_size(16,8)
 fn adjust(@builtin(global_invocation_id) id:vec3<u32>) {
-    let pos=id.xy;if !in_bounds(pos) { return; }let i=index(pos);let c=source.v[i].rgb;
+    let pos=id.xy;if !in_bounds(pos) { return; }let i=index(pos);
+    destination.v[i]=adjusted(source.v[i].rgb,source.v[i].w);
+}
+fn adjusted(c:vec3<f32>,gain:f32)->vec4<f32> {
     // Fill Light gain from `sample`. Sigma's native Color Mode takes it on its
     // counts in `finish`, as SIGMA Photo Pro does.
-    let native=p.v[41].y>0.5;let gain=source.v[i].w;
+    let native=p.v[41].y>0.5;
     var rgb=vec3<f32>(dot(p.v[5].xyz,c),dot(p.v[6].xyz,c),dot(p.v[7].xyz,c))*exp2(p.v[2].x)*select(gain,1.0,native);
     if p.v[41].x>0.5 { rgb=camera_look(rgb); }
     if p.v[1].w>0.5 {
@@ -297,7 +343,7 @@ fn adjust(@builtin(global_invocation_id) id:vec3<u32>) {
     rgb*=exp2(p.v[2].w*shadow*2.0+p.v[2].z*high*2.0);
     // Film receives the selected camera look, including its native tone curve.
     if native && p.v[1].z>0.5 { rgb=native_look(rgb,gain); }
-    destination.v[i]=vec4<f32>(rgb,select(1.0,gain,native));
+    return vec4<f32>(rgb,select(1.0,gain,native));
 }
 // One axis of a separable Gaussian: p.v[21].xyz holds a sigma per channel,
 // p.v[21].w the tap radius and p.v[22].x the axis.

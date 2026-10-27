@@ -222,6 +222,16 @@
     "use": "cine"
   },
   {
+    "index": 22,
+    "key": "cinestill_800t",
+    "name": "Cinestill 800T",
+    "isPaper": false,
+    "isPositive": false,
+    "antihalation": "no",
+    "targetPaperKey": "kodak_2383",
+    "use": "cine"
+  },
+  {
     "index": 0,
     "key": "kodak_endura_premier",
     "name": "Kodak Professional Endura Premier",

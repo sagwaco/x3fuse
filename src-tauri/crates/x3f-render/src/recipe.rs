@@ -443,6 +443,14 @@ pub struct HalationParams {
     pub scatter_spatial_scale: f32,
     pub halation_amount: f32,
     pub halation_spatial_scale: f32,
+    /// spektrafilm's highlight boost. It stretches the brightest film exposure
+    /// by up to `boost_ev` stops before scatter and halation, to recover light
+    /// that the source clipped. Zero turns it off. Film stocks only.
+    pub boost_ev: f32,
+    /// The shape of the boost ramp, 0..1. Higher values start the ramp sooner.
+    pub boost_range: f32,
+    /// Stops above mid-gray that the boost does not change.
+    pub protect_ev: f32,
 }
 impl Default for HalationParams {
     fn default() -> Self {
@@ -451,6 +459,9 @@ impl Default for HalationParams {
             scatter_spatial_scale: 1.,
             halation_amount: 1.,
             halation_spatial_scale: 1.,
+            boost_ev: 0.,
+            boost_range: 0.3,
+            protect_ev: 4.,
         }
     }
 }
@@ -479,6 +490,9 @@ impl HalationParams {
             ("scatter spatial scale", self.scatter_spatial_scale, 4.),
             ("halation amount", self.halation_amount, 4.),
             ("halation spatial scale", self.halation_spatial_scale, 4.),
+            ("highlight boost", self.boost_ev, 20.),
+            ("boost range", self.boost_range, 1.),
+            ("boost protection", self.protect_ev, 10.),
         ] {
             range(name, value, 0., hi)?;
         }

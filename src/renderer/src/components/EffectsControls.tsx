@@ -2,6 +2,7 @@ import { useContext } from 'react'
 import {
   DEFAULT_EFFECTS,
   DEFAULT_FILM,
+  filmBoostDefaults,
   filmGrainDefaults,
   grainRmsBase,
   type EditRecipe,
@@ -206,14 +207,22 @@ export function EffectsSection({ recipe }: { recipe: EditRecipe }): React.JSX.El
               ['scatterAmount', 1, 0.05],
               ['scatterSpatialScale', 4, 0.1],
               ['halationAmount', 4, 0.05],
-              ['halationSpatialScale', 4, 0.1]
+              ['halationSpatialScale', 4, 0.1],
+              // spektrafilm boosts film exposure, so a look without a film stock has no boost.
+              ...(film
+                ? ([
+                    ['boostEv', 10, 0.1],
+                    ['protectEv', 8, 0.1],
+                    ['boostRange', 1, 0.05]
+                  ] as const)
+                : [])
             ] as const
           ).map(([key, max, step]) => (
             <Adjustment
               key={key}
               label={t(`editor.${key}`)}
               help={t(`editor.${key}Help`)}
-              value={halation[key]}
+              value={halation[key] ?? DEFAULT_FILM.halationParams![key]!}
               min={0}
               max={max}
               step={step}
@@ -222,7 +231,12 @@ export function EffectsSection({ recipe }: { recipe: EditRecipe }): React.JSX.El
               }
               reset={() =>
                 update({
-                  halationParams: { ...halation, [key]: DEFAULT_FILM.halationParams![key] }
+                  halationParams: {
+                    ...halation,
+                    [key]: film
+                      ? { ...DEFAULT_FILM.halationParams!, ...filmBoostDefaults(film.film) }[key]
+                      : DEFAULT_FILM.halationParams![key]
+                  }
                 })
               }
               commit={commit}

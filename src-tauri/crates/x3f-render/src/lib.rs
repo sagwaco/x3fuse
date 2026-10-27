@@ -43,7 +43,8 @@ pub use stocks::STOCKS_JSON;
 /// Version 17 adds selectable Bayer DNG demosaicing.
 /// Version 18 adds a linear base curve for full spectrum color.
 /// Version 19 sharpens the scene-linear RAW and adds texture and clarity.
-pub const RENDER_VERSION: u32 = 19;
+/// Version 20 adds the halation highlight boost.
+pub const RENDER_VERSION: u32 = 20;
 
 use image::ImageEncoder;
 use serde::{Deserialize, Serialize};
@@ -353,6 +354,8 @@ struct Workspace {
     spectral: wgpu::Buffer,
     tc_lut: wgpu::Buffer,
     curves: wgpu::Buffer,
+    /// The frame's highest film raw exposure, from `meter`, for the highlight boost.
+    peak: wgpu::Buffer,
     bindings: HashMap<[usize; 3], wgpu::BindGroup>,
 }
 fn validate_scene(image: &SceneLinearImage, cancel: &AtomicBool) -> Result<(), RenderError> {
@@ -718,6 +721,8 @@ struct Plan {
     curves: Vec<[f32; 4]>,
     /// Luminance weights of the Fill Light map; `None` without Fill Light.
     fill: Option<[f32; 4]>,
+    /// The `meter` parameters when the highlight boost is on.
+    meter: Option<Parameters>,
 }
 impl Plan {
     /// Padded `[width, height, origin x, origin y]` of a tile, as parameter slot 0.
@@ -970,7 +975,7 @@ impl Renderer {
                 .into(),
             ),
         });
-        let entries: Vec<_> = (0..8)
+        let entries: Vec<_> = (0..9)
             .map(|binding| wgpu::BindGroupLayoutEntry {
                 binding,
                 visibility: wgpu::ShaderStages::COMPUTE,
@@ -979,7 +984,7 @@ impl Renderer {
                         wgpu::BufferBindingType::Uniform
                     } else {
                         wgpu::BufferBindingType::Storage {
-                            read_only: binding != 2,
+                            read_only: binding != 2 && binding != 8,
                         }
                     },
                     has_dynamic_offset: binding == 3,
@@ -1073,6 +1078,7 @@ impl Renderer {
             "finish",
             "output",
             "pack",
+            "meter",
         ]
         .into_iter()
         .map(|name| {
@@ -1081,7 +1087,7 @@ impl Renderer {
                 device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                     label: Some(name),
                     layout: Some(match name {
-                        "sample" => &sample_layout,
+                        "sample" | "meter" => &sample_layout,
                         "pack" => &pack_layout,
                         _ => &pipeline_layout,
                     }),
@@ -1533,6 +1539,7 @@ impl Renderer {
             recipe.film.is_none(),
             detail,
         );
+        let meter = (base[55][1] > 0.).then_some(base);
         let candidates = match tiling {
             Some(tiling) => vec![tiling],
             None => tiling_candidates(width, height, options.max_dimension),
@@ -1581,6 +1588,7 @@ impl Renderer {
             buffer_bytes,
             tables,
             fill,
+            meter,
             curves: color::curve_table(&recipe.curves)
                 .into_iter()
                 .chain(camera::look_table(
@@ -1660,6 +1668,11 @@ impl Renderer {
         } else {
             Pixels::Rgb16(vec![0u16; width as usize * height as usize * 3])
         };
+        // The boost peak covers the whole source, so it is found before any tile.
+        // Later queue writes apply after this submit, so tiles may reuse slot 0.
+        if let Some(params) = &plan.meter {
+            self.meter(source, workspace, params);
+        }
         for (index, tile) in plan.tiles.iter().enumerate() {
             cancelled(cancel)?;
             let mut encoder = self.encode(source, workspace, &plan, tile, options.rgba8);
@@ -1956,6 +1969,14 @@ impl Renderer {
             } else {
                 f.halation_midtones
             };
+            // spektrafilm's highlight boost runs on film raw, so a look
+            // without a film stock does not take it. Its x0 uses spektrafilm's
+            // default mid-gray of 0.184, although film raw puts mid-gray at 1.
+            if let Some(h) = native.filter(|h| r.film.is_some() && f.halation && h.boost_ev > 0.) {
+                p[55][1] = 2f32.powf(h.boost_ev) - 1.;
+                p[55][2] = 0.184 * 2f32.powf(h.protect_ev);
+                p[55][3] = 28f32.powf(1. - h.boost_range);
+            }
         }
         let grain = g.grain_transform();
         p[22] = grain[0];
@@ -2012,6 +2033,11 @@ impl Renderer {
                 (1024 + camera::LOOK_ROWS) as u64 * 16,
                 wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             ),
+            peak: buffer(
+                "Highlight boost peak",
+                16,
+                wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            ),
             bindings: HashMap::new(),
         }
     }
@@ -2042,6 +2068,67 @@ impl Renderer {
             }],
         });
         workspace.frame = Some((bytes, frame, readback, bind));
+    }
+    /// The group 0 bind group for `[source, auxiliary, destination]` buffers.
+    fn bind<'w>(&self, workspace: &'w mut Workspace, indices: [usize; 3]) -> &'w wgpu::BindGroup {
+        workspace.bindings.entry(indices).or_insert_with(|| {
+        let bound = [
+            &workspace.buffers[indices[0]],
+            &workspace.buffers[indices[1]],
+            &workspace.buffers[indices[2]],
+            &workspace.uniform,
+            &workspace.spectral,
+            &workspace.tc_lut,
+            &workspace.curves,
+            &self.output_gamut,
+            &workspace.peak,
+        ];
+        let entries: Vec<_> = bound
+            .iter()
+            .enumerate()
+            .map(|(i, buffer)| wgpu::BindGroupEntry {
+                binding: i as u32,
+                resource: if i == 3 {
+                    wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: 0,
+                        size: std::num::NonZeroU64::new(PARAMETER_BYTES),
+                    })
+                } else {
+                    buffer.as_entire_binding()
+                },
+            })
+            .collect();
+        self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &self.layout,
+            entries: &entries,
+        })
+        })
+    }
+    /// Records `meter`: the frame's highest film raw exposure, into `peak`.
+    fn meter(&self, source: &GpuSource, workspace: &mut Workspace, params: &Parameters) {
+        self.queue
+            .write_buffer(&workspace.uniform, 0, bytemuck::cast_slice(params));
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Highlight boost peak"),
+            });
+        encoder.clear_buffer(&workspace.peak, 0, None);
+        let size = source.view.texture().size();
+        let bind = self.bind(workspace, [0, 0, 1]);
+        {
+            let mut compute = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("meter"),
+                timestamp_writes: None,
+            });
+            compute.set_pipeline(&self.pipelines["meter"]);
+            compute.set_bind_group(0, bind, &[0]);
+            compute.set_bind_group(1, &source.bind, &[]);
+            compute.dispatch_workgroups(size.width.div_ceil(16), size.height.div_ceil(8), 1);
+        }
+        self.queue.submit(Some(encoder.finish()));
     }
     /// Records the passes of one tile. With `pack`, the tile interior also goes
     /// to the RGBA8 frame buffer.
@@ -2087,45 +2174,13 @@ impl Renderer {
                 offset as u64,
                 bytemuck::cast_slice(&params),
             );
-            let bind = workspace.bindings.entry(indices).or_insert_with(|| {
-                let bound = [
-                    &workspace.buffers[indices[0]],
-                    &workspace.buffers[indices[1]],
-                    &workspace.buffers[indices[2]],
-                    &workspace.uniform,
-                    &workspace.spectral,
-                    &workspace.tc_lut,
-                    &workspace.curves,
-                    &self.output_gamut,
-                ];
-                let entries: Vec<_> = bound
-                    .iter()
-                    .enumerate()
-                    .map(|(i, buffer)| wgpu::BindGroupEntry {
-                        binding: i as u32,
-                        resource: if i == 3 {
-                            wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                                buffer,
-                                offset: 0,
-                                size: std::num::NonZeroU64::new(PARAMETER_BYTES),
-                            })
-                        } else {
-                            buffer.as_entire_binding()
-                        },
-                    })
-                    .collect();
-                self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: None,
-                    layout: &self.layout,
-                    entries: &entries,
-                })
-            });
+            let bind = self.bind(workspace, indices);
             let mut compute = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some(pass.entry),
                 timestamp_writes: None,
             });
             compute.set_pipeline(&self.pipelines[pass.entry]);
-            compute.set_bind_group(0, &*bind, &[offset]);
+            compute.set_bind_group(0, bind, &[offset]);
             let (width, height) = match pass.entry {
                 "sample" => {
                     compute.set_bind_group(1, &source.bind, &[]);

@@ -126,6 +126,9 @@ reuse the Debug probe executable. Release builds omit the probe.
   A look without a film stock keeps grain and halation in `recipe.effects`; the
   renderer borrows the default stock's grain tables and runs them on the
   scene-linear image before `finish`, with the Fill Light gain carried in alpha.
+  The halation highlight boost needs the frame's maximum film raw value. The
+  `meter` pass finds it over the whole source before the tiles render, so tiles,
+  regions and exports agree.
 - Editing requires Metal on macOS, DirectX 12 on Windows, or Vulkan on Linux.
   GPU work is serialized. Bounded tiles support previews and full-size exports.
   A device or driver failure is reported as an error.

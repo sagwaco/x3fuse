@@ -295,12 +295,18 @@ fn norm_cdf(a: f64) -> f64 {
 }
 
 macro_rules! profiles {
-    ($($key:literal),* $(,)?) => {
+    ($($key:literal $(as $file:literal)?),* $(,)?) => {
         /// Every bundled profile, in `stocks.json` order: films then papers.
-        pub const PROFILE_JSON: [(&str, &str); 31] = [
-            $(($key, include_str!(concat!("../../assets/profiles/", $key, ".json")))),*
+        pub const PROFILE_JSON: [(&str, &str); 32] = [
+            $(($key, include_str!(concat!(
+                "../../assets/profiles/",
+                profiles!(@file $key $($file)?),
+                ".json"
+            )))),*
         ];
     };
+    (@file $key:literal) => { $key };
+    (@file $key:literal $file:literal) => { $file };
 }
 profiles![
     "kodak_ektar_100",
@@ -325,6 +331,7 @@ profiles![
     "kodak_verita_200d",
     "kodak_doublex",
     "kodak_trix",
+    "cinestill_800t" as "kodak_vision3_500t",
     "kodak_endura_premier",
     "kodak_ektacolor_edge",
     "kodak_supra_endura",
@@ -337,12 +344,18 @@ profiles![
 ];
 
 /// Films come first in [`PROFILE_JSON`]; paper `n` is profile `FILM_COUNT + n`.
-pub const FILM_COUNT: usize = 22;
+pub const FILM_COUNT: usize = 23;
 
 pub fn load(index: usize) -> Result<Profile, RenderError> {
     let (key, json) = PROFILE_JSON[index];
-    serde_json::from_str(json)
-        .map_err(|e| RenderError::Invalid(format!("Bundled profile {key} is invalid: {e}")))
+    let mut profile: Profile = serde_json::from_str(json)
+        .map_err(|e| RenderError::Invalid(format!("Bundled profile {key} is invalid: {e}")))?;
+    // Cinestill 800T is Vision3 500T without the rem-jet backing. It keeps the
+    // 500T stock data, grain and couplers, but has no antihalation layer.
+    if key == "cinestill_800t" {
+        profile.info.antihalation = "no".into();
+    }
+    Ok(profile)
 }
 
 #[cfg(test)]

@@ -694,6 +694,9 @@ fn native_film_parameters_preserve_legacy_recipes_and_validate() {
         ("halationParams", "scatterSpatialScale", 4.),
         ("halationParams", "halationAmount", 4.),
         ("halationParams", "halationSpatialScale", 4.),
+        ("halationParams", "boostEv", 20.),
+        ("halationParams", "boostRange", 1.),
+        ("halationParams", "protectEv", 10.),
     ] {
         for (value, valid) in [(0., true), (high, true), (-0.1, false), (high + 0.1, false)] {
             let mut json = serde_json::to_value(&defaults).unwrap();
@@ -712,7 +715,7 @@ fn native_film_parameters_preserve_legacy_recipes_and_validate() {
     }
     for json in [
         r#"{"grainParams":{"microSublayers":2}}"#,
-        r#"{"halationParams":{"boostEv":1}}"#,
+        r#"{"halationParams":{"boostRangeEv":1}}"#,
     ] {
         assert!(serde_json::from_str::<FilmSettings>(json).is_err());
     }
@@ -746,6 +749,8 @@ fn native_stock_baselines_and_zero_effects_are_preserved() {
             strength,
             if profile.info.antihalation == "weak" {
                 [0.08, 0.02, 0.]
+            } else if profile.info.antihalation == "no" {
+                [0.30, 0.10, 0.015]
             } else {
                 [0.015, 0.005, 0.]
             }
@@ -923,6 +928,7 @@ fn gpu_native_film_controls() {
             scatter_spatial_scale: 4.,
             halation_amount: 4.,
             halation_spatial_scale: 4.,
+            ..Default::default()
         }),
         ..base.clone()
     };
@@ -1411,7 +1417,11 @@ fn bundled_spektrafilm_assets_cover_every_stock() {
     );
     for (index, stock) in stocks.iter().enumerate() {
         let profile = film::profile::load(index).unwrap();
-        assert_eq!(profile.info.stock, stock["key"].as_str().unwrap());
+        let key = stock["key"].as_str().unwrap();
+        assert_eq!(film::profile::PROFILE_JSON[index].0, key);
+        if key != "cinestill_800t" {
+            assert_eq!(profile.info.stock, key);
+        }
         assert_eq!(profile.info.use_kind, stock["use"].as_str().unwrap());
         assert_eq!(
             profile.info.antihalation,
@@ -1441,7 +1451,7 @@ fn bundled_spektrafilm_assets_cover_every_stock() {
         assert_eq!(profile.is_monochrome(), monochrome, "{index} channel model");
         if index < film::profile::FILM_COUNT {
             assert_eq!(
-                grain_defaults[&profile.info.stock],
+                grain_defaults[key],
                 film::grain::Preset::for_profile(&profile).rms,
                 "{} grain RMS",
                 profile.info.stock
@@ -1809,7 +1819,7 @@ fn spektrafilm_license_ships_unmodified() {
     for (shader, expected) in [
         (
             include_bytes!("render.wgsl").as_slice(),
-            "04e224877021689bd81cce5979ed8bba2b568d2a07ad7dc37ad8c2eff888528b",
+            "49acfeb036a8d57636684b258414ad28db0939da89372c53a2bb0695c0bba261",
         ),
         (
             include_bytes!("gamut.wgsl").as_slice(),
@@ -2067,6 +2077,82 @@ fn gpu_preview_matches_tiled(renderer: &Renderer) {
         delta <= 3,
         "whole preview versus tiles: max u16 delta {delta}"
     );
+}
+
+/// spektrafilm's highlight boost: one frame peak for every tile and region,
+/// and no change below the protected level.
+fn gpu_highlight_boost(renderer: &Renderer) {
+    let cancel = AtomicBool::new(false);
+    // Mid-gray, a band above the protected level, and a peak outside the band.
+    let scene = |peak: f32| {
+        let mut scene = image(96, 64);
+        for (i, rgb) in scene.data.as_chunks_mut::<3>().0.iter_mut().enumerate() {
+            let (x, y) = (i % 96, i / 96);
+            rgb.fill(if (85..90).contains(&x) && (5..10).contains(&y) {
+                peak
+            } else if (30..60).contains(&x) && (20..44).contains(&y) {
+                2.
+            } else {
+                0.18
+            });
+        }
+        scene
+    };
+    // Without spatial effects, each pixel shows only its own boost.
+    let recipe = |boost_ev: f32| EditRecipe {
+        film: Some(FilmSettings {
+            halation: true,
+            grain: false,
+            couplers: 0.,
+            halation_params: Some(HalationParams {
+                scatter_amount: 0.,
+                halation_amount: 0.,
+                boost_ev,
+                boost_range: 0.7,
+                ..Default::default()
+            }),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let render = |scene: &SceneLinearImage, recipe: &EditRecipe, options| {
+        renderer.render(scene, recipe, options, &cancel).unwrap()
+    };
+    let at = |image: &RenderedImage, x: usize, y: usize| -> [u16; 3] {
+        let i = (y * image.width as usize + x) * 3;
+        [image.data[i], image.data[i + 1], image.data[i + 2]]
+    };
+    let lit = scene(20.);
+    let off = render(&lit, &recipe(0.), RenderOptions::default());
+    let on = render(&lit, &recipe(5.), RenderOptions::default());
+    assert_eq!(at(&off, 5, 5), at(&on, 5, 5), "mid-gray is protected");
+    assert_ne!(at(&off, 45, 32), at(&on, 45, 32), "the band is boosted");
+    // The band reaches the full boost when it is the frame peak.
+    let without_peak = render(&scene(2.), &recipe(5.), RenderOptions::default());
+    assert_ne!(at(&on, 45, 32), at(&without_peak, 45, 32), "boost follows the peak");
+    let delta = |a: &[u16], b: &[u16]| a.iter().zip(b).map(|(a, b)| a.abs_diff(*b)).max();
+    let tiled = renderer
+        .render_tiled(&lit, &recipe(5.), RenderOptions::default(), &cancel, (32, 0))
+        .unwrap();
+    assert!(delta(&on.data, &tiled.data).unwrap() <= 3, "tiles share the peak");
+    // A region without the peak still uses the frame peak.
+    let region = render(
+        &lit,
+        &recipe(5.),
+        RenderOptions {
+            region: Some(Crop {
+                x: 0.25,
+                y: 0.25,
+                width: 0.5,
+                height: 0.5,
+            }),
+            ..Default::default()
+        },
+    );
+    let expected: Vec<u16> = (16..48)
+        .flat_map(|row| on.data[(row * 96 + 24) * 3..(row * 96 + 72) * 3].to_vec())
+        .collect();
+    assert!(delta(&region.data, &expected).unwrap() <= 3, "a region shares the peak");
 }
 
 /// A scene dark on the left half and bright on the right.
@@ -2702,6 +2788,7 @@ fn gpu_pack_flags_non_finite(renderer: &Renderer) {
         tables: None,
         curves: Vec::new(),
         fill: None,
+        meter: None,
     };
     let pixels: [[f32; 4]; 4] = [
         [0.5, 0.25, 1., 1.],
@@ -3228,6 +3315,7 @@ fn gpu_pipeline() {
     gpu_film_scanner_levels(&renderer);
     gpu_fill_light(&renderer);
     gpu_detail_bands(&renderer);
+    gpu_highlight_boost(&renderer);
     let img = image(96, 64);
     let cancel = AtomicBool::new(false);
     let recipe = EditRecipe {

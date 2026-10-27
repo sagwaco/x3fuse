@@ -199,7 +199,10 @@ it('keeps scatter and halation amount and size independent', () => {
     scatterAmount: 1,
     scatterSpatialScale: 1,
     halationAmount: 2,
-    halationSpatialScale: 1
+    halationSpatialScale: 1,
+    boostEv: 0,
+    boostRange: 0.3,
+    protectEv: 4
   })
   adjust(t('editor.halationSpatialScale'), 3)
   adjust(t('editor.scatterAmount'), 0.5)
@@ -311,6 +314,8 @@ it('edits generic grain and halation sliders and resets them to the defaults', (
   expect(effects()?.grainParams).toMatchObject({ blur: 1.5, multUsmAmount: 0 })
   adjust(t('editor.halationAmount'), 2)
   expect(effects()?.halationParams.halationAmount).toBe(2)
+  // The highlight boost acts on film exposure, so a look without film has none.
+  expect(screen.queryByRole('slider', { name: t('editor.boostEv') })).toBeNull()
   resetSection('grain')
   expect(effects()?.grainParams).toEqual(DEFAULT_EFFECTS.grainParams)
   expect(effects()).toMatchObject({ grain: true, halation: true })
@@ -366,12 +371,31 @@ it('initializes a legacy effect with the reset button while its switch is disabl
   expect(film()?.grainParams).toEqual(filmGrainDefaults(2))
 })
 
+it('starts Cinestill with its highlight boost from a legacy recipe', async () => {
+  const recipe = defaultRecipe()
+  recipe.film!.halationParams = null
+  render(<LookPicker kind="film" recipe={recipe} gallery />)
+  vi.stubGlobal('x3f', { invoke: () => Promise.resolve('cinemaFilm'), on: () => () => {} })
+  await act(async () =>
+    fireEvent.click(screen.getByRole('button', { name: t('editor.filmGroups') }))
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'Cinestill 800T' }))
+  expect(film()).toMatchObject({
+    halation: true,
+    halationParams: { ...DEFAULT_FILM.halationParams, boostEv: 5, boostRange: 0.7 }
+  })
+})
+
 it('loads stock grain defaults and preserves adjustments when selecting the active stock', async () => {
   const recipe = defaultRecipe()
   recipe.film!.grainParams = { rmsBase: 7, rmsGranularity: [9, 7, 5], blur: 1.2, multUsmAmount: 0 }
   function Both(): React.JSX.Element {
     const [current, update] = useState(recipe)
     setRecipe = update
+    useEffect(
+      () => editor.setState({ documents: { '/a.X3F': { recipe: current } } } as never),
+      [current]
+    )
     return (
       <>
         <LookPicker kind="film" recipe={current} gallery />
@@ -405,4 +429,19 @@ it('loads stock grain defaults and preserves adjustments when selecting the acti
   expect(film()?.grainParams?.rmsGranularity).toEqual([25, 25, 25])
   reset(t('editor.grainRmsGranularity'))
   expect(film()?.grainParams?.rmsGranularity).toEqual([44, 44, 44])
+  // Cinestill has no antihalation layer: it starts with halation and its highlight boost.
+  await choose('Cinestill 800T', 'cinemaFilm')
+  expect(film()).toMatchObject({
+    halation: true,
+    halationParams: { boostEv: 5, boostRange: 0.7, protectEv: 4 }
+  })
+  adjust(t('editor.boostEv'), 2)
+  adjust(t('editor.protectEv'), 1.5)
+  expect(film()?.halationParams).toMatchObject({ boostEv: 2, protectEv: 1.5 })
+  reset(t('editor.boostEv'))
+  expect(film()?.halationParams?.boostEv).toBe(5)
+  resetSection('halation')
+  expect(film()?.halationParams).toMatchObject({ boostEv: 5, boostRange: 0.7, protectEv: 4 })
+  await choose('Kodak Vision3 500T', 'cinemaFilm')
+  expect(film()?.halationParams).toMatchObject({ boostEv: 0, boostRange: 0.3, protectEv: 4 })
 })

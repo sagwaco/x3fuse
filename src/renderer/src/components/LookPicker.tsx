@@ -9,6 +9,7 @@ import {
   monochromeRawMatrix,
   FILM_MONOCHROME_FILTERS,
   filmGrainDefaults,
+  filmBoostDefaults,
   filmHalationDefaults,
   boundedWhiteBalanceGains,
   type EditRecipe
@@ -218,6 +219,21 @@ export function LookPicker({
                   ? {}
                   : {
                       ...(!base.halationParams && filmHalationDefaults(stock.index)),
+                      ...(base.halationParams && {
+                        halationParams: {
+                          ...base.halationParams,
+                          ...filmBoostDefaults(stock.index)
+                        }
+                      }),
+                      // Film without an antihalation layer, such as Cinestill, starts with
+                      // halation and its highlight boost, also from a legacy recipe.
+                      ...(stock.antihalation === 'no' && {
+                        halation: true,
+                        halationParams: {
+                          ...(base.halationParams ?? DEFAULT_FILM.halationParams!),
+                          ...filmBoostDefaults(stock.index)
+                        }
+                      }),
                       ...(base.grainParams && {
                         grainParams: {
                           ...base.grainParams,

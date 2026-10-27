@@ -15,6 +15,24 @@ These data files retain the CC BY-SA 4.0 terms in the unmodified
 `assets/stocks.json` is X3Fuse's index and matches `src/shared/film-stocks.json`.
 `src/shared/film-grain.json` copies each stock's RMS values from the grain presets.
 
+Cinestill 800T is an X3Fuse stock. It is Kodak Vision3 500T without the
+rem-jet backing, as Andrea Volpato describes at
+https://discuss.pixls.us/t/spectral-film-simulations-from-scratch/48209/778.
+It uses the unmodified `kodak_vision3_500t.json` profile and grain preset. Only
+the antihalation tag changes to `no`. That tag selects spektrafilm's halation
+preset for rem-jet-removed film: strength 0.30, 0.10 and 0.015. The editor
+starts it with halation on and the post's highlight boost of 5 stops at
+range 0.7.
+
+The highlight boost ports `boost_highlights` from
+`src/spektrafilm/utils/numba_boost_hightlights.py`, with the same defaults,
+curve and protection threshold of `0.184 * 2^protect_ev` in film raw units.
+spektrafilm normalizes by the maximum of the image that it renders. X3Fuse
+uses the maximum film raw value over the whole source instead, before crop and
+detail adjustments, so every tile, region and export uses the same value.
+Values above that maximum keep the maximum boost. The boost runs only with a
+film stock and halation on.
+
 `src/film/data.rs` samples D65, Incandescent and Kinoton 75P from Colour 0.4.7
 on spektrafilm's 380..780 nm grid at 5 nm intervals. The output transforms
 also use Colour's matrices and CAT02 adaptation. The source is
@@ -73,11 +91,11 @@ compression. Zero Warmth keeps neutral output.
 
 - `assets/camera-tone-deltas.json`: 2ee2bea81844b572b08d4b5eb1e21f0905798ac571aef66038eaa33482d19144
 
-- `src/render.wgsl`: 04e224877021689bd81cce5979ed8bba2b568d2a07ad7dc37ad8c2eff888528b
+- `src/render.wgsl`: 49acfeb036a8d57636684b258414ad28db0939da89372c53a2bb0695c0bba261
 - `licenses/SPEKTRAFILM_LICENSE.txt`: 76d629501783ae52e8d63aee1e054c1e1a9713b9fe7d36fb306e25b1d14b24e9
 - `assets/irradiance_xy_tc.npy`: 52f90c724811f5fab80769f8548bf24d08a521eb09e65ab6e016893258d2a783
 - `assets/neutral_print_filters.json`: 22ae6cca433cfbeab87df7f17cd58a2f65e88cab845818819195e6f1a80db67c
-- `assets/stocks.json`: ce6053c0c3b0bc56ed0f34b81507fbbde13f4cb68d8a5bc81d8bac06ff0f9e0c
+- `assets/stocks.json`: e079b233a5b5a590a72b3677f345624a46d1178790a8b2d0f7c9922cdc64505e
 - `assets/profiles/fujifilm_c200.json`: aa32ce52ea414fdd408c20f09cc3924a50801b58de5f0c7ec76a5ffcb06f28b3
 - `assets/profiles/fujifilm_crystal_archive_typeii.json`: 983ab9015bc7b4726b64a5bb937596cc215d7e411bb78bc63b431548cb25b42b
 - `assets/profiles/fujifilm_pro_400h.json`: d57fe6becc8e418385d92344de1588b3b70d7e145f320ab4f89a83265a5b8c19

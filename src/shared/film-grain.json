@@ -20,5 +20,6 @@
   "fujifilm_velvia_100": [8.0, 8.0, 8.0],
   "kodak_verita_200d": [6, 8, 10],
   "kodak_doublex": [14.0, 14.0, 14.0],
-  "kodak_trix": [44.0, 44.0, 44.0]
+  "kodak_trix": [44.0, 44.0, 44.0],
+  "cinestill_800t": [9.0, 13.0, 30.0]
 }

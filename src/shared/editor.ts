@@ -51,6 +51,12 @@ export interface HalationParams {
   scatterSpatialScale: number
   halationAmount: number
   halationSpatialScale: number
+  /** Highlight boost in stops, before scatter and halation. Film stocks only. Older recipes omit it. */
+  boostEv?: number
+  /** Boost ramp shape, 0 to 1. */
+  boostRange?: number
+  /** Stops above mid-gray that the boost does not change. */
+  protectEv?: number
 }
 /** Grain and halation for a look without a film stock, such as a camera matching profile.
     A film stock keeps its own grain and halation in `FilmSettings`. */
@@ -334,7 +340,10 @@ export const DEFAULT_FILM: FilmSettings = {
     scatterAmount: 1,
     scatterSpatialScale: 1,
     halationAmount: 1,
-    halationSpatialScale: 1
+    halationSpatialScale: 1,
+    boostEv: 0,
+    boostRange: 0.3,
+    protectEv: 4
   },
   halationStrength: 0.35,
   halationRadius: 0.0015,
@@ -361,6 +370,18 @@ export function filmHalationDefaults(
         ? [0.08, 0.02, 0]
         : [0.015, 0.005, 0]
   return { halationSizeRgb: [size, size, size], halationStrengthRgb: strength }
+}
+/**
+ * The stock's highlight boost. Film without an antihalation layer, such as Cinestill,
+ * starts with the boost that spektrafilm suggests for its red halos.
+ */
+export function filmBoostDefaults(
+  film: number
+): Required<Pick<HalationParams, 'boostEv' | 'boostRange' | 'protectEv'>> {
+  const stock = stocks.find((item) => !item.isPaper && item.index === film)
+  return stock?.antihalation === 'no'
+    ? { boostEv: 5, boostRange: 0.7, protectEv: 4 }
+    : { boostEv: 0, boostRange: 0.3, protectEv: 4 }
 }
 /** Generic effects for a look without a film stock: spektrafilm's schema-default grain, no halation. */
 export const DEFAULT_EFFECTS: EffectsSettings = {

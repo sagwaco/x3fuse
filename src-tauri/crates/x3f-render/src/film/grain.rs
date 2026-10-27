@@ -515,6 +515,7 @@ mod tests {
                 tables: None,
                 curves: Vec::new(),
                 fill: None,
+                meter: None,
             };
             let readback = renderer.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("Grain statistics"),
