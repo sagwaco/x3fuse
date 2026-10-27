@@ -253,7 +253,7 @@ function ImageContent({
       ref={containerRef}
       aria-busy={pending || (layer.url !== url && status !== 'error')}
       className={cn(
-        'relative flex items-center justify-center overflow-hidden',
+        'relative isolate flex items-center justify-center overflow-hidden',
         containerClassName
       )}
     >
