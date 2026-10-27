@@ -17,6 +17,11 @@ import { forget, getHeld, hold, memoryEpoch, unhold, type Held } from './memoryC
 export type SmallPriority = 'selected' | 'visible'
 /** Stored images bypass these slots; only generation waits for them. */
 const SMALL_SLOTS = 3
+/** Original extraction and edited rendering each have their own slots. */
+type SmallLane = { queue: SmallJob[]; running: number }
+const originalLane: SmallLane = { queue: [], running: 0 }
+const editedLane: SmallLane = { queue: [], running: 0 }
+const smallLanes = [originalLane, editedLane]
 type SmallConsumer = {
   signal: AbortSignal
   resolve: (canvas: HTMLCanvasElement) => void
@@ -28,6 +33,7 @@ type SmallJob = ImageRequest & {
   orientation: number
   aspectRatio?: number
   priority: SmallPriority
+  lane: SmallLane
   stage: 'lookup' | 'queued' | 'running'
   /** The Clear count when the job started. */
   epoch: number
@@ -35,8 +41,6 @@ type SmallJob = ImageRequest & {
   consumers: Set<SmallConsumer>
 }
 const smallJobs = new Map<string, SmallJob>()
-const smallQueue: SmallJob[] = []
-let smallRunning = 0
 const idleListeners = new Set<() => void>()
 
 export const smallPreviewKey = (url: string, orientation = 1, aspectRatio?: number): string =>
@@ -53,7 +57,8 @@ export function cachedSmallPreview(
 }
 
 /** True while no thumbnail waits for a lookup or for generation. */
-export const thumbnailsIdle = (): boolean => !smallJobs.size && !smallRunning
+export const thumbnailsIdle = (): boolean =>
+  !smallJobs.size && smallLanes.every((lane) => !lane.running)
 
 /** Call `listener` once when thumbnails are idle. Returns a function that cancels the call. */
 export function whenThumbnailsIdle(listener: () => void): () => void {
@@ -75,71 +80,77 @@ function endSmall(job: SmallJob): void {
 }
 
 function pumpSmall(): void {
-  while (smallRunning < SMALL_SLOTS && smallQueue.length) {
-    const job = smallQueue.shift()!
-    if (!job.consumers.size) {
-      if (smallJobs.get(job.key) === job) smallJobs.delete(job.key)
-      continue
-    }
-    job.stage = 'running'
-    job.renderPriority = job.priority === 'selected' ? 'high' : 'normal'
-    smallRunning++
-    void (async () => {
-      try {
-        let frame: Frame
-        // Edited frames need no decode.
-        if (isEditedFrame(job.url)) frame = await openFrame(job.url, job)
-        else {
-          const response = await fetchPreview(job.url, job)
-          if (!job.consumers.size) return
-          if (!response.ok) throw new Error(`preview ${response.status}`)
-          const blob = await response.blob()
-          if (!job.consumers.size) return
-          frame = ownedFrame(await createImageBitmap(blob, { imageOrientation: 'none' }))
-        }
-        deliverSmall(job, frame)
-      } catch (error) {
-        for (const consumer of job.consumers) consumer.reject(error)
-      } finally {
-        if (smallJobs.get(job.key) === job) smallJobs.delete(job.key)
-        await job.end?.().catch(() => {})
-        smallRunning--
-        pumpSmall()
-      }
-    })()
+  for (const lane of smallLanes) {
+    while (lane.running < SMALL_SLOTS && lane.queue.length) runSmall(lane, lane.queue.shift()!)
   }
   if (thumbnailsIdle()) [...idleListeners].forEach((listener) => listener())
 }
 
-function deliverSmall(job: SmallJob, frame: Frame): void {
+function runSmall(lane: SmallLane, job: SmallJob): void {
+  if (!job.consumers.size) {
+    if (smallJobs.get(job.key) === job) smallJobs.delete(job.key)
+    return
+  }
+  job.stage = 'running'
+  job.renderPriority = job.priority === 'selected' ? 'high' : 'normal'
+  lane.running++
+  void (async () => {
+    try {
+      let frame: Frame
+      // Edited frames need no decode.
+      if (isEditedFrame(job.url)) frame = await openFrame(job.url, job)
+      else {
+        const response = await fetchPreview(job.url, job)
+        if (!job.consumers.size) return
+        if (!response.ok) throw new Error(`preview ${response.status}`)
+        const blob = await response.blob()
+        if (!job.consumers.size) return
+        frame = ownedFrame(await createImageBitmap(blob, { imageOrientation: 'none' }))
+      }
+      deliverSmall(job, frame)
+    } catch (error) {
+      for (const consumer of job.consumers) consumer.reject(error)
+    } finally {
+      if (smallJobs.get(job.key) === job) smallJobs.delete(job.key)
+      await job.end?.().catch(() => {})
+      lane.running--
+      pumpSmall()
+    }
+  })()
+}
+
+/** Draw and keep a thumbnail, then release the frame. */
+function storeSmall(
+  key: string,
+  frame: Frame,
+  orientation: number,
+  aspectRatio: number | undefined,
+  epoch: number
+): HTMLCanvasElement {
   const canvas = document.createElement('canvas')
   try {
-    if (!job.consumers.size) return
     if (!canvas.getContext('2d')) throw new Error('No preview canvas')
-    drawImageWithOrientation(canvas, frame.image, job.orientation, {
-      maxEdge: 640,
-      aspectRatio: job.aspectRatio
-    })
+    drawImageWithOrientation(canvas, frame.image, orientation, { maxEdge: 640, aspectRatio })
   } finally {
     frame.release()
   }
-  const entry = hold(
-    smallMemoryKey(job.key),
-    canvas,
-    canvas.width * canvas.height * 4,
-    undefined,
-    job.epoch
-  )
-  for (const consumer of job.consumers) consumer.resolve(entry.value)
+  return hold(smallMemoryKey(key), canvas, canvas.width * canvas.height * 4, undefined, epoch).value
+}
+
+function deliverSmall(job: SmallJob, frame: Frame): void {
+  if (!job.consumers.size) return frame.release()
+  const canvas = storeSmall(job.key, frame, job.orientation, job.aspectRatio, job.epoch)
+  for (const consumer of job.consumers) consumer.resolve(canvas)
 }
 
 /** The selected photo goes first; within a priority, the newest request goes first. */
 function enqueueSmall(job: SmallJob): void {
-  const queued = smallQueue.indexOf(job)
-  if (queued >= 0) smallQueue.splice(queued, 1)
+  const { queue } = job.lane
+  const queued = queue.indexOf(job)
+  if (queued >= 0) queue.splice(queued, 1)
   const index =
-    job.priority === 'selected' ? 0 : smallQueue.findIndex((other) => other.priority !== 'selected')
-  smallQueue.splice(index < 0 ? smallQueue.length : index, 0, job)
+    job.priority === 'selected' ? 0 : queue.findIndex((other) => other.priority !== 'selected')
+  queue.splice(index < 0 ? queue.length : index, 0, job)
 }
 
 async function lookupSmall(job: SmallJob): Promise<void> {
@@ -167,9 +178,39 @@ async function lookupSmall(job: SmallJob): Promise<void> {
 }
 
 /**
+ * Load a decoded thumbnail from memory or the native cache only. Never generate,
+ * and never return pixels of another URL. Resolve undefined on a miss.
+ */
+export async function lookupSmallPreview(
+  url: string,
+  orientation: number,
+  aspectRatio: number | undefined,
+  signal: AbortSignal
+): Promise<HTMLCanvasElement | undefined> {
+  if (signal.aborted) throw new DOMException('Cancelled', 'AbortError')
+  const cached = cachedSmallPreview(url, orientation, aspectRatio)
+  if (cached) return cached
+  const epoch = memoryEpoch()
+  const frame = await cachedFrame(url, signal)
+  if (!frame) return undefined
+  if (signal.aborted) {
+    frame.release()
+    throw new DOMException('Cancelled', 'AbortError')
+  }
+  return storeSmall(
+    smallPreviewKey(url, orientation, aspectRatio),
+    frame,
+    orientation,
+    aspectRatio,
+    epoch
+  )
+}
+
+/**
  * Stored thumbnails load at once through the lookup lane. Misses wait for one of
- * three generation slots: the selected photo first, then the newest visible
- * thumbnail. Shared consumers cancel independently.
+ * three slots in their lane: original extraction and edited rendering have
+ * separate lanes. In a lane, the selected photo goes first, then the newest
+ * visible thumbnail. Shared consumers cancel independently.
  */
 export function loadSmallPreview(
   url: string,
@@ -190,6 +231,7 @@ export function loadSmallPreview(
       orientation,
       aspectRatio,
       priority,
+      lane: isEditedFrame(url) ? editedLane : originalLane,
       stage: 'lookup',
       epoch: memoryEpoch(),
       lookup: new AbortController(),
@@ -210,9 +252,9 @@ export function loadSmallPreview(
     const abort = (): void => {
       current.consumers.delete(consumer)
       if (!current.consumers.size) {
-        const queued = smallQueue.indexOf(current)
+        const queued = current.lane.queue.indexOf(current)
         if (queued >= 0) {
-          smallQueue.splice(queued, 1)
+          current.lane.queue.splice(queued, 1)
           endSmall(current)
         } else {
           // StrictMode/view handoffs can reacquire this fetch before the microtask.

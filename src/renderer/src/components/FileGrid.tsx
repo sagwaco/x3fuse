@@ -142,6 +142,7 @@ const GridCell = memo(function GridCell({
       onDoubleClick={() => sel.handleItemDoubleClick(file.id)}
       onContextMenu={() => sel.handleItemContextMenu(file.id)}
       title={file.fileName}
+      data-file-id={file.id}
       className="flex cursor-default flex-col"
       style={{ height: THUMB_H + LABEL_H }}
     >

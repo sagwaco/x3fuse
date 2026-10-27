@@ -518,6 +518,7 @@ export function DevelopingPreview({
       <OrientedImage
         file={thumbnail}
         loading="eager"
+        progressive={false}
         containerClassName="h-full w-full"
         className="h-auto w-auto object-contain"
       />

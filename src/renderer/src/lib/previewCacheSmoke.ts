@@ -59,30 +59,59 @@ export async function runPreviewCacheSmoke(
   await painted()
   useNavStore.getState().goToQueue()
   useQueueStore.getState().clearQueue()
-  const names = new Set(paths.map((path) => path.split(/[\\/]/).at(-1)!))
+  const inputs = new Set(paths)
   const started = performance.now()
   let firstThumbnailMs: number | undefined
   let firstGridMs: number | undefined
+  let firstEditedThumbnailMs: number | undefined
+  let firstEditedGridMs: number | undefined
   let frame = 0
   let observedFrames = 0
   let visibleCells = 0
   let paintedCells = 0
   const observe = (): void => {
     observedFrames++
-    const cells = [...document.querySelectorAll<HTMLElement>('div[title]')].filter((cell) => {
-      if (!names.has(cell.title)) return false
-      const box = cell.getBoundingClientRect()
-      return box.width > 0 && box.height > 0 && box.top < innerHeight && box.bottom > 0
-    })
+    const files = new Map(
+      useQueueStore
+        .getState()
+        .files.filter((file) => inputs.has(file.path))
+        .map((file) => [file.id, file])
+    )
+    const cells = [...document.querySelectorAll<HTMLElement>('div[data-file-id]')].filter(
+      (cell) => {
+        if (!files.has(cell.dataset.fileId!)) return false
+        const box = cell.getBoundingClientRect()
+        return box.width > 0 && box.height > 0 && box.top < innerHeight && box.bottom > 0
+      }
+    )
     const ready = cells.filter((cell) =>
       [...cell.querySelectorAll('canvas[role="img"]')].some(
-        (canvas) => getComputedStyle(canvas).opacity === '1'
+        (canvas) =>
+          !!(canvas as HTMLCanvasElement).dataset.previewUrl &&
+          getComputedStyle(canvas).display !== 'none' &&
+          getComputedStyle(canvas).opacity === '1'
       )
     )
+    const editedCells = cells.filter((cell) => {
+      const file = files.get(cell.dataset.fileId!)!
+      return file.edit && !file.pending
+    })
+    const editedReady = editedCells.filter((cell) => {
+      const file = files.get(cell.dataset.fileId!)!
+      return [...cell.querySelectorAll<HTMLCanvasElement>('canvas[data-preview-url]')].some(
+        (canvas) =>
+          canvas.dataset.previewUrl === displayPreviewUrl(file) &&
+          getComputedStyle(canvas).display !== 'none' &&
+          getComputedStyle(canvas).opacity === '1'
+      )
+    })
     visibleCells = cells.length
     paintedCells = ready.length
     if (ready.length) firstThumbnailMs ??= performance.now() - started
     if (cells.length && ready.length === cells.length) firstGridMs ??= performance.now() - started
+    if (editedReady.length) firstEditedThumbnailMs ??= performance.now() - started
+    if (editedCells.length && editedReady.length === editedCells.length)
+      firstEditedGridMs ??= performance.now() - started
     frame = requestAnimationFrame(observe)
   }
   frame = requestAnimationFrame(observe)
@@ -130,6 +159,8 @@ export async function runPreviewCacheSmoke(
     }
     const thumbnails = summary(thumbnailSamples)
     const largePreviews = summary(largeSamples)
+    // Include a painted frame after the last loader resolves.
+    await painted()
     return {
       ok: firstGridMs !== undefined,
       paintVerified: firstGridMs !== undefined,
@@ -140,6 +171,8 @@ export async function runPreviewCacheSmoke(
       importMs,
       firstThumbnailMs,
       firstGridMs,
+      firstEditedThumbnailMs,
+      firstEditedGridMs,
       ...(firstGridMs === undefined
         ? {
             paintFailure: {
@@ -167,7 +200,7 @@ export async function runPreviewCacheSmoke(
         largePreviewP95Under250Ms: largePreviews.p95Ms < 250
       },
       method:
-        'Real files in a native webview. Import and first grid paint include source validation. Per-image timings use the application loaders after import; visible images and background work can warm memory. The second process retains disk cache but starts with empty application memory. Application storage is isolated; the WebKit data directory is shared. OS disk caches are not flushed.'
+        'Real files in a native webview. Import and first grid paint include source validation. First thumbnail and grid timings accept an original fallback. Edited paint timings require the current edited URL at full opacity. Per-image loader timings wait for the requested pixels after import; visible images and background work can warm memory. The second process retains disk cache but starts with empty application memory. Application storage is isolated; the WebKit data directory is shared. OS disk caches are not flushed.'
     }
   } finally {
     cancelAnimationFrame(frame)

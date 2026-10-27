@@ -17,6 +17,7 @@ import {
   cachedFullPreview,
   cachedSmallPreview,
   loadSmallPreview,
+  lookupSmallPreview,
   subscribeFullPreview,
   subscribeFullPreviewBlob,
   thumbnailsIdle
@@ -38,6 +39,9 @@ const lookedUp = () =>
     .mocked(fetch)
     .mock.calls.filter(([url]) => isLookup(url))
     .map(([url]) => String(url).replace(/[?&]cacheOnly=1.*$/, ''))
+/** Finish the held request whose URL contains `part`. */
+const finishFor = (finish: Map<string, () => void>, part: string): void =>
+  [...finish].find(([url]) => url.includes(part))![1]()
 const once = (next: Generate): void => {
   generateOnce.push(next)
 }
@@ -526,7 +530,7 @@ it('draws edited frames from raw RGBA8 without a PNG decode', async () => {
   })
 })
 
-it('serves stored original and edited thumbnails while three edited misses hold every generation slot', async () => {
+it('serves stored original and edited thumbnails while three edited misses hold every edited slot', async () => {
   const finish = holdPreviews()
   const signal = new AbortController().signal
   const misses = [0, 1, 2].map((i) =>
@@ -563,7 +567,9 @@ it('serves stored original and edited thumbnails while three edited misses hold 
 it('generates the selected photo before visible thumbnails and asks native for high priority', async () => {
   const finish = holdPreviews()
   const signal = new AbortController().signal
-  const first = [0, 1, 2].map((i) => loadSmallPreview(`small-busy-${i}`, 1, undefined, signal))
+  const first = [0, 1, 2].map((i) =>
+    loadSmallPreview(`x3f-edit://localhost/busy-${i}?v=thumbnail`, 1, undefined, signal)
+  )
   await vi.waitFor(() => expect(generated()).toHaveLength(3))
   const visible = loadSmallPreview('x3f-edit://localhost/visible?v=thumbnail', 1, undefined, signal)
   const selected = loadSmallPreview(
@@ -574,21 +580,146 @@ it('generates the selected photo before visible thumbnails and asks native for h
     'selected'
   )
   await settle()
-  const newer = loadSmallPreview('small-newer', 1, undefined, signal)
+  const newer = loadSmallPreview('x3f-edit://localhost/newer?v=thumbnail', 1, undefined, signal)
   await settle()
-  finish.get('small-busy-0')!()
+  finishFor(finish, '/busy-0')
   await vi.waitFor(() => expect(generated()).toHaveLength(4))
   const request = new URL(String(generatedUrls()[3]))
   expect(request.pathname).toBe('/selected')
   expect(request.searchParams.get('priority')).toBe('high')
-  finish.get('small-busy-1')!()
+  finishFor(finish, '/busy-1')
   await vi.waitFor(() => expect(generated()).toHaveLength(5))
-  expect(generatedUrls()[4]).toBe('small-newer')
+  expect(new URL(String(generatedUrls()[4])).pathname).toBe('/newer')
   finish.forEach((done) => done())
   await vi.waitFor(() => expect(generated()).toHaveLength(6))
   expect(new URL(String(generatedUrls()[5])).searchParams.get('priority')).toBe('normal')
   finish.forEach((done) => done())
   await Promise.all([...first, visible, selected, newer])
+})
+
+it('runs original and edited misses in separate lanes, even behind abandoned embedded extraction', async () => {
+  const finish = holdPreviews()
+  const signal = new AbortController().signal
+  const edited = (name: string): string => `x3f-edit://localhost/${name}?v=thumbnail`
+  const embedded = (name: string): string => `x3f-preview://localhost/${name}?v=preview`
+  // Abandoned embedded extraction cannot cancel; it keeps every original slot.
+  const controllers = [0, 1, 2].map(() => new AbortController())
+  const abandoned = controllers.map((controller, i) =>
+    loadSmallPreview(embedded(`lane-held-${i}`), 1, undefined, controller.signal).catch(
+      (error) => error.name
+    )
+  )
+  await vi.waitFor(() => expect(generated()).toHaveLength(3))
+  controllers.forEach((controller) => controller.abort())
+  expect(await Promise.all(abandoned)).toEqual(['AbortError', 'AbortError', 'AbortError'])
+  const waitingOriginal = loadSmallPreview(embedded('lane-waiting'), 1, undefined, signal)
+  const editedMisses = [0, 1, 2].map((i) =>
+    loadSmallPreview(edited(`lane-${i}`), 1, undefined, signal)
+  )
+  await vi.waitFor(() => expect(generated()).toHaveLength(6))
+  const waitingEdited = loadSmallPreview(edited('lane-waiting'), 1, undefined, signal)
+  await settle()
+  // Both lanes are full: each waiting miss stays queued.
+  expect(generated()).toHaveLength(6)
+  // A free original slot starts only the original miss.
+  finishFor(finish, '/lane-held-0')
+  await vi.waitFor(() => expect(generated()).toHaveLength(7))
+  expect(generatedUrls()[6]).toBe(embedded('lane-waiting'))
+  // A free edited slot starts only the edited miss.
+  finishFor(finish, '/lane-0?')
+  await vi.waitFor(() => expect(generated()).toHaveLength(8))
+  expect(new URL(String(generatedUrls()[7])).pathname).toBe('/lane-waiting')
+  finish.forEach((done) => done())
+  await Promise.all([waitingOriginal, waitingEdited, ...editedMisses])
+  await vi.waitFor(() => expect(thumbnailsIdle()).toBe(true))
+})
+
+it('looks up stored thumbnails without generation and keeps them for loadSmallPreview', async () => {
+  const finish = holdPreviews()
+  const signal = new AbortController().signal
+  const busy = [0, 1, 2].map((i) =>
+    loadSmallPreview(`x3f-preview://localhost/lookup-busy-${i}`, 1, undefined, signal)
+  )
+  await vi.waitFor(() => expect(generated()).toHaveLength(3))
+  const url = 'x3f-edit://localhost/lookup-hit?v=thumbnail'
+  stored.set(url, 10)
+  const canvas = await lookupSmallPreview(url, 6, 2, signal)
+  expect([canvas?.width, canvas?.height]).toEqual([320, 640])
+  expect(cachedSmallPreview(url, 6, 2)).toBe(canvas)
+  // A memory hit makes no request.
+  const lookups = lookedUp().length
+  expect(await lookupSmallPreview(url, 6, 2, signal)).toBe(canvas)
+  expect(lookedUp()).toHaveLength(lookups)
+  expect(await loadSmallPreview(url, 6, 2, signal)).toBe(canvas)
+  // Another orientation of the same URL is another thumbnail.
+  expect(cachedSmallPreview(url, 1, undefined)).toBeUndefined()
+  expect(generated()).toHaveLength(3)
+  expect(invoke.mock.calls.some(([channel]) => channel === 'editor:beginImageRequest')).toBe(false)
+  finish.forEach((done) => done())
+  await Promise.all(busy)
+})
+
+it('resolves a thumbnail lookup miss as undefined without generation or a memory entry', async () => {
+  const url = 'x3f-edit://localhost/lookup-miss?v=thumbnail'
+  expect(await lookupSmallPreview(url, 1, undefined, new AbortController().signal)).toBeUndefined()
+  expect(lookedUp()).toEqual([url])
+  expect(generated()).toHaveLength(0)
+  expect(cachedSmallPreview(url)).toBeUndefined()
+  expect(thumbnailsIdle()).toBe(true)
+})
+
+it('rejects aborted thumbnail lookups and keeps no pixels', async () => {
+  const url = 'x3f-preview://localhost/lookup-abort?v=preview'
+  stored.set(url, 10)
+  const before = new AbortController()
+  before.abort()
+  await expect(lookupSmallPreview(url, 1, undefined, before.signal)).rejects.toThrow('Cancelled')
+  expect(lookedUp()).toHaveLength(0)
+  vi.mocked(fetch).mockImplementationOnce(
+    (_, options) =>
+      new Promise((_, reject) =>
+        options?.signal?.addEventListener('abort', () =>
+          reject(new DOMException('Cancelled', 'AbortError'))
+        )
+      )
+  )
+  const during = new AbortController()
+  const result = lookupSmallPreview(url, 1, undefined, during.signal).catch((error) => error.name)
+  await vi.waitFor(() => expect(lookedUp()).toEqual([url]))
+  during.abort()
+  expect(await result).toBe('AbortError')
+  expect(cachedSmallPreview(url)).toBeUndefined()
+  expect(createImageBitmap).not.toHaveBeenCalled()
+  expect(generated()).toHaveLength(0)
+})
+
+it('keeps no thumbnail lookup result that started before cache:cleared', async () => {
+  const url = 'x3f-preview://localhost/lookup-clear?v=preview'
+  const signal = new AbortController().signal
+  stored.set(url, 10)
+  const before = await lookupSmallPreview(url, 1, undefined, signal)
+  expect(cachedSmallPreview(url)).toBe(before)
+  let respond!: () => void
+  vi.mocked(fetch).mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        respond = () => resolve(response() as unknown as Response)
+      })
+  )
+  const late = 'x3f-preview://localhost/lookup-clear-late?v=preview'
+  const result = lookupSmallPreview(late, 1, undefined, signal)
+  await vi.waitFor(() => expect(respond).toBeDefined())
+  listeners.get('cache:cleared')!(null)
+  expect(cachedSmallPreview(url)).toBeUndefined()
+  respond()
+  // The caller gets the pixels, but memory keeps no result of earlier work.
+  expect(await result).toBeDefined()
+  await settle()
+  expect(cachedSmallPreview(late)).toBeUndefined()
+  // A new lookup after the Clear stays in memory again.
+  const again = await lookupSmallPreview(url, 1, undefined, signal)
+  expect(again).not.toBe(before)
+  expect(cachedSmallPreview(url)).toBe(again)
 })
 
 it('shows a stored full JPEG at once while an extraction that cannot cancel holds the slot', async () => {

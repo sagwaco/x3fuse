@@ -1,13 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Skeleton } from '@radix-ui/themes/components/skeleton'
-import '@radix-ui/themes/src/components/skeleton.css'
 import type { X3FFileDTO } from '@shared/types'
 import { displayPreviewUrl, isRenderedPreview } from '@shared/preview'
-import { t, useLanguage } from '../lib/strings'
 import { subscribeFitPreview } from '../lib/fitPreviews'
 import { subscribeFullPreview } from '../lib/previewImages'
 import { cn } from '../lib/cn'
-import { useDelayedLoading } from '../hooks/useDelayedLoading'
 import { OrientedImage } from './OrientedImage'
 
 interface Props {
@@ -19,77 +15,19 @@ interface Props {
   className?: string
 }
 
-/** Keep the decoded Fit canvas in place throughout every full-resolution upgrade. */
+/** Milliseconds that the first Fit image fades in over its thumbnail. */
+const FADE_MS = 180
+
+/**
+ * Keep the decoded Fit canvas in place throughout every full-resolution upgrade.
+ * Edits, a first save and a reset of the same photo keep its previous pixels.
+ */
 export function FilmstripImage(props: Props): React.JSX.Element {
-  // A parent can cache this element, so this renders again for a new language.
-  useLanguage()
-  const Content = isRenderedPreview(props.file) ? RenderedContent : ImageContent
-  return <Content key={JSON.stringify([props.file.id, props.file.path])} {...props} />
+  const { id, path, previewRevision } = props.file
+  return <Content key={JSON.stringify([id, path, previewRevision])} {...props} />
 }
 
-/** Editor frames share the decoded Fit cache and keep their previous pixels during upgrades. */
-function RenderedContent({
-  file,
-  onDimensions,
-  containerClassName,
-  className
-}: Props): React.JSX.Element {
-  const url = displayPreviewUrl(file, 'full')
-  const canvas = useRef<HTMLCanvasElement>(null)
-  const dimensions = useRef(onDimensions)
-  dimensions.current = onDimensions
-  const [ready, setReady] = useState(false)
-  const [failedUrl, setFailedUrl] = useState<string>()
-  const failed = failedUrl === url
-  const showSkeleton = useDelayedLoading(!ready && !failed, url, 500)
-  useLayoutEffect(() => {
-    setFailedUrl(undefined)
-    return subscribeFitPreview(
-      url,
-      (preview) => {
-        const element = canvas.current
-        const context = element?.getContext('2d')
-        if (!element || !context) return
-        element.width = preview.image.width
-        element.height = preview.image.height
-        context.drawImage(preview.image, 0, 0)
-        element.dataset.previewUrl = url
-        dimensions.current?.({ width: preview.width, height: preview.height }, url)
-        setReady(true)
-        setFailedUrl(undefined)
-      },
-      () => setFailedUrl(url)
-    )
-  }, [url])
-  return (
-    <div
-      className={cn(
-        'relative flex items-center justify-center overflow-hidden',
-        containerClassName
-      )}
-      aria-busy={!ready && !failed}
-    >
-      <canvas
-        ref={canvas}
-        data-fit-preview
-        data-rendered-preview
-        role="img"
-        aria-label={file.fileName}
-        aria-hidden={!ready || undefined}
-        className={cn('max-h-full max-w-full', ready ? 'opacity-100' : 'opacity-0', className)}
-      />
-      {showSkeleton ? (
-        <Skeleton className="preview-skeleton absolute inset-0 h-full w-full" />
-      ) : failed && !ready ? (
-        <span role="alert" className="absolute text-xs text-tone-500">
-          {t('inspector.no_preview')}
-        </span>
-      ) : null}
-    </div>
-  )
-}
-
-function ImageContent({
+function Content({
   file,
   fullResolution = false,
   onDimensions,
@@ -97,17 +35,27 @@ function ImageContent({
   className
 }: Props): React.JSX.Element {
   const url = displayPreviewUrl(file, 'full')
+  const edited = isRenderedPreview(file)
+  // Until its import resolves, a row can be an edited photo; do not show its original.
+  const pending = !!file.pending && !edited
+  const overlay = fullResolution && !edited && !pending
   const canvas = useRef<HTMLCanvasElement>(null)
+  const fallback = useRef<HTMLDivElement>(null)
   const image = useRef<HTMLImageElement>(null)
   const dimensions = useRef(onDimensions)
   dimensions.current = onDimensions
-  const [fitReady, setFitReady] = useState(false)
+  const fallbackShown = useRef(false)
+  const settleFade = useRef<() => void>()
+  /** The URL of the Fit pixels on the canvas. */
+  const [shown, setShown] = useState<string>()
+  const [failed, setFailed] = useState<string>()
+  const [fadingIn, setFadingIn] = useState(false)
   const [source, setSource] = useState<string>()
   const [fullReady, setFullReady] = useState<{ source: string; element: HTMLImageElement }>()
-  // Until its import resolves, a row can be an edited photo; do not show its original.
-  const pending = !!file.pending
+  useEffect(() => () => settleFade.current?.(), [])
 
   // A decoded cache hit copies immediately, before this file's first paint.
+  // Only the Fit image gives geometry; the small fallback has other dimensions.
   useLayoutEffect(
     () =>
       pending
@@ -118,19 +66,45 @@ function ImageContent({
               const element = canvas.current
               const context = element?.getContext('2d')
               if (!element || !context) return
+              settleFade.current?.()
+              const still = !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+              const replacing = element.dataset.previewUrl !== undefined
               element.width = preview.image.width
               element.height = preview.image.height
               context.drawImage(preview.image, 0, 0)
+              element.dataset.previewUrl = url
               dimensions.current?.({ width: preview.width, height: preview.height }, url)
-              setFitReady(true)
+              setShown(url)
+              // Live edit frames stay opaque; only the first thumbnail handoff fades.
+              const outgoing =
+                !replacing && !still && fallbackShown.current ? fallback.current : null
+              if (!outgoing) return
+              setFadingIn(true)
+              const animations = [
+                element.animate?.([{ opacity: 0 }, { opacity: 1 }], FADE_MS),
+                outgoing.animate?.([{ opacity: 1 }, { opacity: 0 }], {
+                  duration: FADE_MS,
+                  fill: 'forwards'
+                })
+              ]
+              // A timer ends the fade also in a hidden window, where animations can stop.
+              const timer = setTimeout(() => settleFade.current?.(), FADE_MS)
+              settleFade.current = () => {
+                settleFade.current = undefined
+                clearTimeout(timer)
+                outgoing.style.opacity = '0'
+                for (const animation of animations) animation?.cancel()
+                setFadingIn(false)
+              }
             },
-            () => {}
+            // Keep the previous pixels or the fallback, and end the busy state.
+            () => setFailed(url)
           ),
     [url, pending]
   )
 
   useEffect(() => {
-    if (!fullResolution || pending) return
+    if (!overlay) return
     return subscribeFullPreview(
       url,
       (next) => {
@@ -138,12 +112,12 @@ function ImageContent({
       },
       () => setFullReady(undefined)
     )
-  }, [url, fullResolution, pending])
+  }, [url, overlay])
 
   // load/complete alone do not guarantee decoded pixels when decoding is async.
   // The medium canvas stays underneath even after the overlay is revealed.
   useEffect(() => {
-    if (!fullResolution || !source) return
+    if (!overlay || !source) return
     const element = image.current
     if (!element) return
     let cancelled = false
@@ -161,34 +135,48 @@ function ImageContent({
     return () => {
       cancelled = true
     }
-  }, [source, fullResolution])
+  }, [source, overlay])
 
+  const fitReady = shown !== undefined
   return (
     <div
       className={cn(
         'relative flex items-center justify-center overflow-hidden',
         containerClassName
       )}
-      aria-busy={!fitReady}
+      aria-busy={shown !== url && failed !== url}
     >
-      {!fitReady && (
-        <OrientedImage
-          file={file}
-          loading="eager"
-          loadingDelay={500}
-          containerClassName="absolute inset-0"
-          className={className}
-        />
+      {(!fitReady || fadingIn) && (
+        // An edit shows only its stored thumbnail, else the original. It does not
+        // render a small edit that competes with the Fit render.
+        <div ref={fallback} className="absolute inset-0">
+          <OrientedImage
+            file={file}
+            loading="eager"
+            loadingDelay={500}
+            render={false}
+            onReady={() => {
+              fallbackShown.current = true
+            }}
+            containerClassName="h-full w-full"
+            className={className}
+          />
+        </div>
       )}
       <canvas
         ref={canvas}
         data-fit-preview
+        data-rendered-preview={edited || undefined}
         role="img"
         aria-label={file.fileName}
         aria-hidden={!fitReady || undefined}
-        className={cn('max-h-full max-w-full', fitReady ? 'opacity-100' : 'opacity-0', className)}
+        className={cn(
+          'relative max-h-full max-w-full',
+          fitReady ? 'opacity-100' : 'opacity-0',
+          className
+        )}
       />
-      {fullResolution && source && (
+      {overlay && source && (
         <img
           ref={image}
           data-full-preview
