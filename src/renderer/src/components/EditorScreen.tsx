@@ -20,6 +20,7 @@ import {
   capabilitiesOf,
   hasWhiteBalance,
   negativePrint,
+  supportedRecipe,
   type EditRecipe,
   type PreviewRegion
 } from '@shared/editor'
@@ -343,6 +344,10 @@ export function EditorScreen(): React.JSX.Element {
   const previewFile =
     displayFile ?? (x3iPending && file?.path === currentFile?.path ? file : undefined)
   const placeholderDoc = currentFile && editor.documents[currentFile.path]
+  const savedSourceMatches =
+    !placeholderDoc?.sourceRevision ||
+    !currentFile?.edit?.sourceRevision ||
+    currentFile.edit.sourceRevision === placeholderDoc.sourceRevision
   // The photo's saved previews show its current edit.
   const savedMatches =
     !!currentFile &&
@@ -353,7 +358,9 @@ export function EditorScreen(): React.JSX.Element {
         (currentFile.edit
           ? currentFile.edit.revision === placeholderDoc.revision &&
             currentFile.edit.sourceRevision === placeholderDoc.sourceRevision &&
-            JSON.stringify(currentFile.edit.recipe) === JSON.stringify(placeholderDoc.recipe)
+            JSON.stringify(
+              supportedRecipe(currentFile.edit.recipe, capabilitiesOf(currentFile))
+            ) === JSON.stringify(placeholderDoc.recipe)
           : placeholderDoc.storage === 'none')))
   const loadingFile = !previewFile && currentFile && !currentFile.pending ? currentFile : undefined
   // The placeholder stays over the first preview while its cloud condenses.
@@ -1060,8 +1067,12 @@ export function EditorScreen(): React.JSX.Element {
               )}
               {cloudFile && (
                 <DevelopingPreview
-                  key={`developing:${cloudFile.id}:${savedMatches && !editor.cropping}`}
-                  file={cloudFile}
+                  key={`developing:${cloudFile.id}:${editor.cropping}:${savedSourceMatches}`}
+                  file={
+                    editor.cropping || !savedSourceMatches
+                      ? { ...cloudFile, edit: undefined, displayPreviewUrl: undefined }
+                      : cloudFile
+                  }
                   matching={savedMatches && !editor.cropping}
                   developing={editor.loading || editor.rendering}
                   ready={previewShown && painted}

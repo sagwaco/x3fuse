@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { X3FFileDTO } from '@shared/types'
 import { displayPreviewUrl, isRenderedPreview } from '@shared/preview'
-import { cachedSmallPreview, loadSmallPreview } from '../lib/previewImages'
+import { cachedSmallPreview, loadSmallPreview, lookupSmallPreview } from '../lib/previewImages'
 import { cachedFitPreview } from '../lib/fitPreviews'
 import { FilmstripImage } from './FilmstripImage'
 import { OrientedImage } from './OrientedImage'
@@ -322,13 +322,16 @@ const embedded = (file: X3FFileDTO): X3FFileDTO => ({
 /**
  * The placeholder while a RAW develops. A decoded high-resolution preview of
  * the current edit shows at once. Otherwise a glowing particle cloud,
- * colored by the cached rendered thumbnail or the embedded JPEG, appears.
+ * colored by the cached edited thumbnail or the embedded JPEG, appears.
+ * The cache can derive the thumbnail from a stored full edited preview.
+ * Edited cache lookups do not render pixels.
  * When the preview is ready, the cloud fades into it, and the component
  * calls `onDone`. Reduced motion, a missing WebGL 2
  * and a lost context show the still thumbnail.
  *
- * `matching` tells that the photo's saved previews show the current edit.
- * Remount the component when it changes.
+ * `matching` permits a finished cached preview only when it shows the current
+ * edit. The cloud can use a saved thumbnail as an approximate color source.
+ * Remount for a new photo or crop view, not when the session loads.
  *
  * With `from`, the URL of the preview on screen, the cloud starts as that
  * preview over it and then rises. Reduced motion then shows no placeholder.
@@ -350,15 +353,15 @@ export function DevelopingPreview({
 }): React.JSX.Element | null {
   // Decide once per photo, so the placeholder does not change while it shows.
   const [morph] = useState(!!from)
-  const [image] = useState(
+  const [cachedImage] = useState(
     () => !morph && matching && !!cachedFitPreview(displayPreviewUrl(file, 'full'))
   )
-  const [thumbnail] = useState(() =>
-    from
-      ? { ...embedded(file), displayPreviewUrl: from }
-      : matching && file.edit && cachedSmallPreview(displayPreviewUrl(file))
-        ? file
-        : embedded(file)
+  const image = cachedImage && matching
+  const [candidate] = useState(() => (from ? { ...embedded(file), displayPreviewUrl: from } : file))
+  const [thumbnail, setThumbnail] = useState(() =>
+    morph || !isRenderedPreview(candidate) || cachedSmallPreview(displayPreviewUrl(candidate))
+      ? candidate
+      : undefined
   )
   const [still, setStill] = useState(
     () =>
@@ -373,20 +376,37 @@ export function DevelopingPreview({
   state.current = { developing, ready, onDone }
   const wake = useRef<() => void>()
   const cloud = !image && !still
-  const url = displayPreviewUrl(thumbnail)
-  const orientation = isRenderedPreview(thumbnail) ? 1 : (thumbnail.orientation ?? 1)
-  const aspectRatio = isRenderedPreview(thumbnail) ? undefined : thumbnail.aspectRatio
-
   useEffect(() => {
-    if (!cloud) return
+    if (image) return
     const controller = new AbortController()
-    loadSmallPreview(url, orientation, aspectRatio, controller.signal, 'selected')
-      .then(setSource)
-      .catch(() => {
-        if (!controller.signal.aborted) setStill(true)
-      })
+    const { signal } = controller
+    async function load(): Promise<void> {
+      let selected = candidate
+      let cached: HTMLCanvasElement | undefined
+      if (!morph && isRenderedPreview(candidate)) {
+        const url = displayPreviewUrl(candidate)
+        if (url) cached = await lookupSmallPreview(url, 1, undefined, signal)
+        if (!cached) selected = embedded(candidate)
+      }
+      if (signal.aborted) return
+      setThumbnail(selected)
+      if (!cloud) return
+      const source =
+        cached ??
+        (await loadSmallPreview(
+          displayPreviewUrl(selected),
+          isRenderedPreview(selected) ? 1 : (selected.orientation ?? 1),
+          isRenderedPreview(selected) ? undefined : selected.aspectRatio,
+          signal,
+          'selected'
+        ))
+      if (!signal.aborted) setSource(source)
+    }
+    void load().catch(() => {
+      if (!signal.aborted) setStill(true)
+    })
     return () => controller.abort()
-  }, [cloud, url, orientation, aspectRatio])
+  }, [cloud, image, candidate, morph])
 
   // Without a cloud, the preview replaces the placeholder at once.
   useEffect(() => {
@@ -514,7 +534,7 @@ export function DevelopingPreview({
       </div>
     )
   if (still)
-    return morph ? null : (
+    return morph || !thumbnail ? null : (
       <OrientedImage
         file={thumbnail}
         loading="eager"

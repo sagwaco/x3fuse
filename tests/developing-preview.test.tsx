@@ -5,12 +5,19 @@ import type { X3FFileDTO } from '@shared/types'
 import { displayPreviewUrl, previewUrl } from '@shared/preview'
 import { DevelopingPreview } from '../src/renderer/src/components/DevelopingPreview'
 
-const { loadSmallPreview, cachedSmallPreview, cachedFitPreview } = vi.hoisted(() => ({
-  loadSmallPreview: vi.fn(),
-  cachedSmallPreview: vi.fn(),
-  cachedFitPreview: vi.fn()
+const { loadSmallPreview, cachedSmallPreview, lookupSmallPreview, cachedFitPreview } = vi.hoisted(
+  () => ({
+    loadSmallPreview: vi.fn(),
+    cachedSmallPreview: vi.fn(),
+    lookupSmallPreview: vi.fn(),
+    cachedFitPreview: vi.fn()
+  })
+)
+vi.mock('../src/renderer/src/lib/previewImages', () => ({
+  loadSmallPreview,
+  cachedSmallPreview,
+  lookupSmallPreview
 }))
-vi.mock('../src/renderer/src/lib/previewImages', () => ({ loadSmallPreview, cachedSmallPreview }))
 vi.mock('../src/renderer/src/lib/fitPreviews', () => ({ cachedFitPreview }))
 vi.mock('../src/renderer/src/components/FilmstripImage', () => ({
   FilmstripImage: ({ file }: { file: X3FFileDTO }) => (
@@ -74,6 +81,7 @@ beforeEach(() => {
   thumbnail = { width: 64, height: 48 }
   loadSmallPreview.mockReset().mockResolvedValue(thumbnail)
   cachedSmallPreview.mockReset().mockReturnValue(undefined)
+  lookupSmallPreview.mockReset().mockImplementation(async (url: string) => cachedSmallPreview(url))
   cachedFitPreview.mockReset().mockReturnValue(undefined)
   let id = 0
   vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
@@ -265,15 +273,15 @@ it('shows a decoded high-resolution preview of the current edit instead of a clo
   expect(document.querySelector('canvas[data-developing-preview]')).not.toBeNull()
 })
 
-it('colors the cloud from a cached rendered thumbnail of the current edit, else the embedded JPEG', async () => {
-  const thumbnail = displayPreviewUrl(edited)
+it('prefers cached edited colors even for an approximate match, else the embedded JPEG', async () => {
   for (const [matching, cached, url] of [
-    [true, true, thumbnail],
+    [true, true, displayPreviewUrl(edited)],
     [true, false, embedded],
-    [false, true, embedded]
+    [false, true, displayPreviewUrl(edited)]
   ] as const) {
+    loadSmallPreview.mockClear()
     cachedSmallPreview.mockImplementation((key: string) =>
-      cached && key === thumbnail ? {} : undefined
+      cached && key === url ? thumbnail : undefined
     )
     render(
       <DevelopingPreview
@@ -285,9 +293,158 @@ it('colors the cloud from a cached rendered thumbnail of the current edit, else 
       />
     )
     await loaded()
-    expect(loadSmallPreview.mock.lastCall?.[0]).toBe(url)
+    if (cached) {
+      expect(loadSmallPreview).not.toHaveBeenCalled()
+      expect(called('texImage2D').some((args) => args.includes(thumbnail))).toBe(true)
+    } else expect(loadSmallPreview.mock.lastCall?.[0]).toBe(url)
     cleanup()
   }
+})
+
+it('uses a matching edited thumbnail cached only on disk', async () => {
+  const url = displayPreviewUrl(edited)
+  const cached = { width: 320, height: 240 }
+  lookupSmallPreview.mockImplementation(async (key: string) => (key === url ? cached : undefined))
+  render(<DevelopingPreview file={edited} matching developing ready={false} onDone={() => {}} />)
+  await loaded()
+  expect(lookupSmallPreview).toHaveBeenCalledWith(url, 1, undefined, expect.any(AbortSignal))
+  expect(loadSmallPreview).not.toHaveBeenCalled()
+  expect(called('texImage2D').some((args) => args.includes(cached))).toBe(true)
+})
+
+it('uses edited particles if session loading invalidates a finished cached preview', async () => {
+  cachedFitPreview.mockReturnValue({ width: 6000, height: 4000 })
+  lookupSmallPreview.mockResolvedValue(thumbnail)
+  const view = render(
+    <DevelopingPreview file={edited} matching developing ready={false} onDone={() => {}} />
+  )
+  expect(view.container.querySelector('[data-high-res]')).not.toBeNull()
+  view.rerender(
+    <DevelopingPreview file={edited} matching={false} developing ready={false} onDone={() => {}} />
+  )
+  await loaded()
+  expect(view.container.querySelector('[data-high-res]')).toBeNull()
+  expect(called('texImage2D').some((args) => args.includes(thumbnail))).toBe(true)
+  expect(loadSmallPreview).not.toHaveBeenCalled()
+})
+
+it('keeps the edited cloud when session loading changes whether saved pixels match', async () => {
+  lookupSmallPreview.mockResolvedValue(thumbnail)
+  const done = vi.fn()
+  const view = render(
+    <DevelopingPreview file={edited} matching developing ready={false} onDone={done} />
+  )
+  await loaded()
+  advance(500)
+  const canvas = view.container.querySelector('canvas')
+  const uploads = called('texImage2D').length
+  view.rerender(
+    <DevelopingPreview file={edited} matching={false} developing ready={false} onDone={() => {}} />
+  )
+  await loaded()
+  expect(view.container.querySelector('canvas')).toBe(canvas)
+  expect(lookupSmallPreview).toHaveBeenCalledOnce()
+  expect(called('texImage2D')).toHaveLength(uploads)
+  expect(loadSmallPreview).not.toHaveBeenCalled()
+})
+
+it('uses a cached edited thumbnail as approximate colors when the recipe differs', async () => {
+  lookupSmallPreview.mockResolvedValue(thumbnail)
+  render(
+    <DevelopingPreview file={edited} matching={false} developing ready={false} onDone={() => {}} />
+  )
+  await loaded()
+  expect(lookupSmallPreview).toHaveBeenCalledWith(
+    displayPreviewUrl(edited),
+    1,
+    undefined,
+    expect.any(AbortSignal)
+  )
+  expect(called('texImage2D').some((args) => args.includes(thumbnail))).toBe(true)
+  expect(loadSmallPreview).not.toHaveBeenCalled()
+})
+
+it('uses an oriented original when the edited cache lookup misses', async () => {
+  render(
+    <DevelopingPreview
+      file={{ ...edited, orientation: 6, aspectRatio: 1.5 }}
+      matching
+      developing
+      ready={false}
+      onDone={() => {}}
+    />
+  )
+  await loaded()
+  expect(lookupSmallPreview).toHaveBeenCalledOnce()
+  expect(loadSmallPreview).toHaveBeenCalledWith(
+    embedded,
+    6,
+    1.5,
+    expect.any(AbortSignal),
+    'selected'
+  )
+})
+
+it('uses the embedded preview without a cache request when the edit has no preview URL', async () => {
+  const missing = { ...edited, edit: { ...edited.edit!, previewUrl: undefined } }
+  render(
+    <DevelopingPreview file={missing} matching={false} developing ready={false} onDone={() => {}} />
+  )
+  await loaded()
+  expect(lookupSmallPreview).not.toHaveBeenCalled()
+  expect(loadSmallPreview.mock.lastCall?.[0]).toBe(embedded)
+})
+
+it('cancels a pending edited cache lookup when the selected image leaves', async () => {
+  let resolve!: (value: HTMLCanvasElement | undefined) => void
+  lookupSmallPreview.mockImplementationOnce(
+    () =>
+      new Promise((done) => {
+        resolve = done
+      })
+  )
+  const view = render(
+    <DevelopingPreview file={edited} matching developing ready={false} onDone={() => {}} />
+  )
+  const signal = lookupSmallPreview.mock.calls[0][3] as AbortSignal
+  view.unmount()
+  expect(signal.aborted).toBe(true)
+  await act(async () => resolve({ width: 64, height: 48 } as HTMLCanvasElement))
+  expect(loadSmallPreview).not.toHaveBeenCalled()
+  expect(frames.size).toBe(0)
+})
+
+it('uses the cached edited thumbnail for reduced motion too', async () => {
+  vi.stubGlobal('matchMedia', () => ({ matches: true }))
+  const url = displayPreviewUrl(edited)
+  lookupSmallPreview.mockImplementation(async (key: string) =>
+    key === url ? thumbnail : undefined
+  )
+  const view = render(
+    <DevelopingPreview file={edited} matching developing ready={false} onDone={() => {}} />
+  )
+  await loaded()
+  expect(view.container.querySelector('[data-still]')?.getAttribute('data-still')).toBe(url)
+  expect(loadSmallPreview).not.toHaveBeenCalled()
+})
+
+it('waits for the edited disk lookup before showing a reduced-motion still', async () => {
+  vi.stubGlobal('matchMedia', () => ({ matches: true }))
+  let resolve!: (value: object) => void
+  lookupSmallPreview.mockImplementationOnce(
+    () =>
+      new Promise((done) => {
+        resolve = done
+      })
+  )
+  const view = render(
+    <DevelopingPreview file={edited} matching developing ready={false} onDone={() => {}} />
+  )
+  expect(view.container.querySelector('[data-still]')).toBeNull()
+  await act(async () => resolve(thumbnail))
+  expect(view.container.querySelector('[data-still]')?.getAttribute('data-still')).toBe(
+    displayPreviewUrl(edited)
+  )
 })
 
 it('shows the still thumbnail without motion or WebGL 2 and leaves as soon as the preview is ready', async () => {

@@ -2,7 +2,14 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import type { ReactNode } from 'react'
-import { DEFAULT_FILM, defaultRecipe, negativePrint, type PreviewRegion } from '@shared/editor'
+import {
+  DEFAULT_FILM,
+  capabilitiesOf,
+  defaultRecipe,
+  negativePrint,
+  supportedRecipe,
+  type PreviewRegion
+} from '@shared/editor'
 import { displayPreviewUrl, previewUrl } from '@shared/preview'
 import { DEFAULT_SETTINGS, type X3FFileDTO } from '@shared/types'
 import { EditorScreen } from '../src/renderer/src/components/EditorScreen'
@@ -538,7 +545,7 @@ it('replaces the old session immediately on selection and uses embedded pixels o
   ).toBe(true)
 })
 
-it('develops every photo, but trusts saved pixels only when they show the current edit', () => {
+it('keeps the cloud mounted as saved preview matching changes, but resets for crop view', () => {
   editor.setState({
     session,
     documents: { [file.path]: { ...doc, recipe: { ...recipe, exposure: 2 } } }
@@ -546,7 +553,7 @@ it('develops every photo, but trusts saved pixels only when they show the curren
   const view = render(<EditorScreen />)
   const matching = (): string | null | undefined =>
     view.container.querySelector('[data-placeholder]')?.getAttribute('data-matching')
-  // A placeholder decides its pixels once, so a new answer mounts a new one.
+  // Session loading must keep the chosen particle source and animation.
   const mount = (): string | null | undefined =>
     view.container.querySelector('[data-placeholder]')?.getAttribute('data-mount')
   expect(matching()).toBe('false')
@@ -558,15 +565,75 @@ it('develops every photo, but trusts saved pixels only when they show the curren
   expect(mount()).toBe(first)
   act(() => editor.setState({ documents: { [file.path]: doc } }))
   expect(matching()).toBe('true')
-  expect(mount()).not.toBe(first)
+  expect(mount()).toBe(first)
   // Crop mode shows the uncropped photo, which saved pixels do not.
   act(() => editor.setState({ cropping: true }))
   expect(matching()).toBe('false')
+  expect(mount()).not.toBe(first)
+  expect(screen.getByRole('img').getAttribute('src')).toBe(
+    previewUrl(file.path, 'preview', file.id)
+  )
   act(() => editor.setState({ cropping: false }))
   act(() =>
     queue.setState({ files: [{ ...file, edit: { ...file.edit!, previewUrl: undefined } }] })
   )
   expect(matching()).toBe('false')
+})
+
+it('does not restart the edited cloud when session loading finds a different recipe', () => {
+  const view = render(<EditorScreen />)
+  const cloud = view.container.querySelector('[data-placeholder]')!
+  expect(cloud.getAttribute('data-matching')).toBe('true')
+  expect(cloud.getAttribute('src')).toBe(displayPreviewUrl(file))
+  act(() =>
+    editor.setState({
+      session,
+      loading: false,
+      documents: { [file.path]: { ...doc, recipe: { ...recipe, exposure: 2 } } }
+    })
+  )
+  expect(view.container.querySelector('[data-placeholder]')).toBe(cloud)
+  expect(cloud.getAttribute('data-matching')).toBe('false')
+  expect(cloud.getAttribute('src')).toBe(displayPreviewUrl(file))
+})
+
+it('matches a DNG recipe after session normalization changes its field order', () => {
+  const { film, seed, ...settings } = recipe
+  const dng: X3FFileDTO = {
+    ...file,
+    path: '/photos/a.dng',
+    sourceKind: 'dng',
+    capabilities: { foveon: false, whiteBalance: true, renderedOnly: true, bayer: true },
+    edit: { ...file.edit!, recipe: { ...settings, dngDemosaic: 'default', film, seed } }
+  }
+  queue.setState({ files: [dng] })
+  const normalized = supportedRecipe(dng.edit!.recipe, capabilitiesOf(dng))
+  expect(JSON.stringify(dng.edit!.recipe)).not.toBe(JSON.stringify(normalized))
+  editor.setState({ documents: { [dng.path]: { ...doc, recipe: normalized } } })
+  const view = render(<EditorScreen />)
+  expect(view.container.querySelector('[data-placeholder]')?.getAttribute('data-matching')).toBe(
+    'true'
+  )
+})
+
+it('discards saved particle colors when session loading detects different source content', () => {
+  const view = render(<EditorScreen />)
+  act(() =>
+    editor.setState({ documents: { [file.path]: { ...doc, sourceRevision: 'changed-source' } } })
+  )
+  expect(view.container.querySelector('[data-placeholder]')?.getAttribute('src')).toBe(
+    previewUrl(file.path, 'preview', file.id)
+  )
+})
+
+it('keeps the edited cloud when an older edit has no source revision', () => {
+  const older = { ...file, edit: { ...file.edit!, sourceRevision: undefined } }
+  queue.setState({ files: [older] })
+  const view = render(<EditorScreen />)
+  const cloud = view.container.querySelector('[data-placeholder]')
+  act(() => editor.setState({ session, loading: false, documents: { [file.path]: doc } }))
+  expect(view.container.querySelector('[data-placeholder]')).toBe(cloud)
+  expect(cloud?.getAttribute('src')).toBe(displayPreviewUrl(older))
 })
 
 it('swaps the toolbar for crop actions and cancels back to the geometry crop mode began with', () => {
