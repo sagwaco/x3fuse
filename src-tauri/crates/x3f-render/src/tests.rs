@@ -808,7 +808,7 @@ fn native_stock_baselines_and_zero_effects_are_preserved() {
         [[0.; 4]; PARAMETER_SLOTS],
         Some((&settings, &spatial, &grain.spatial_for(3500., &settings))),
         false,
-        0.,
+        Detail::default(),
     );
     assert!(passes
         .iter()
@@ -1758,7 +1758,7 @@ fn halation_sigmas_follow_each_channel() {
         [[0.; 4]; PARAMETER_SLOTS],
         Some((&film, &colour, &grain)),
         false,
-        0.,
+        Detail::default(),
     );
     for sigma in [
         colour.scatter_core,
@@ -1809,7 +1809,7 @@ fn spektrafilm_license_ships_unmodified() {
     for (shader, expected) in [
         (
             include_bytes!("render.wgsl").as_slice(),
-            "1c9a54cd5351de9e7487ea7156529d656c78d4530d4070cec7b5534050c87413",
+            "04e224877021689bd81cce5979ed8bba2b568d2a07ad7dc37ad8c2eff888528b",
         ),
         (
             include_bytes!("gamut.wgsl").as_slice(),
@@ -2112,6 +2112,114 @@ fn fill_light_map_follows_sigma_photo_pro() {
     }
     .validate()
     .is_err());
+}
+
+/// The detail bands of the texture and clarity spec: gratings, a flat
+/// gradient, and identity at zero.
+fn gpu_detail_bands(renderer: &Renderer) {
+    let cancel = AtomicBool::new(false);
+    let (width, height) = (512u32, 4u32);
+    let scene = |value: &dyn Fn(f32) -> f32| SceneLinearImage {
+        data: (0..width * height)
+            .flat_map(|i| [value((i % width) as f32 + 0.5); 3])
+            .collect(),
+        ..image(width, height)
+    };
+    let render = |source: &SceneLinearImage, texture: f32, clarity: f32| {
+        let recipe = EditRecipe {
+            film: None,
+            texture,
+            clarity,
+            ..Default::default()
+        };
+        let rendered = renderer
+            .render(source, &recipe, RenderOptions::default(), &cancel)
+            .unwrap();
+        // The green channel of the middle columns, away from the frame edges.
+        let row = &rendered.data[width as usize * 3..][..width as usize * 3];
+        row.as_chunks::<3>().0[128..384]
+            .iter()
+            .map(|p| p[1] as f32)
+            .collect::<Vec<_>>()
+    };
+    let amplitude = |values: &[f32]| {
+        values.iter().copied().fold(f32::MIN, f32::max)
+            - values.iter().copied().fold(f32::MAX, f32::min)
+    };
+    let gain = |period: f32, texture: f32, clarity: f32| {
+        let grating = scene(&|x| {
+            0.18 * 2f32.powf(0.25 * (std::f32::consts::TAU * x / period).sin())
+        });
+        amplitude(&render(&grating, texture, clarity)) / amplitude(&render(&grating, 0., 0.))
+    };
+    let texture: Vec<_> = [2., 16., 128.].map(|p| gain(p, 100., 0.)).into();
+    assert!(
+        texture[1] > texture[0] + 0.2 && texture[1] > texture[2] + 0.2,
+        "texture gain by period 2, 16, 128: {texture:?}"
+    );
+    let smooth = [2., 16.].map(|p| gain(p, -100., 0.));
+    assert!(smooth[0] > 0.9 && smooth[1] < 0.7, "texture -100: {smooth:?}");
+    let clarity = gain(128., 0., 100.);
+    assert!(clarity > texture[2] + 0.2, "clarity at 128 px: {clarity}");
+    let ramp = scene(&|x| 0.02 + 0.5 * x / width as f32);
+    let flat = render(&ramp, 0., 0.);
+    for (texture, clarity) in [(100., 0.), (-100., 0.), (0., 100.), (0., -100.)] {
+        let changed = render(&ramp, texture, clarity);
+        let delta = flat
+            .iter()
+            .zip(&changed)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0., f32::max);
+        assert!(delta <= 64., "gradient changed by {delta} at {texture}/{clarity}");
+    }
+    // Detail that varies at every pixel crosses the tile borders; every band
+    // must fit in the halo.
+    let stripes = scene(&|x| 0.18 * 2f32.powf(2. * (0.7 * x).sin() + (0.05 * x).sin()));
+    for recipe in [
+        // Alone, so clarity's wide halo cannot cover a short texture margin.
+        EditRecipe {
+            texture: 100.,
+            film: None,
+            ..Default::default()
+        },
+        EditRecipe {
+            sharpen: 100.,
+            texture: 100.,
+            clarity: -100.,
+            film: None,
+            ..Default::default()
+        },
+        EditRecipe {
+            texture: -100.,
+            clarity: 100.,
+            ..Default::default()
+        },
+    ] {
+        let tiled = |tiling| {
+            renderer
+                .render_tiled(&stripes, &recipe, RenderOptions::default(), &cancel, tiling)
+                .unwrap()
+                .data
+        };
+        assert_eq!(tiled((512, 0)), tiled((128, 0)), "detail bands seam tiles");
+    }
+    let image = image(96, 64);
+    let base = EditRecipe::default();
+    let zero = EditRecipe {
+        texture: -0.,
+        clarity: 0.,
+        ..base.clone()
+    };
+    assert_eq!(
+        renderer
+            .render(&image, &base, RenderOptions::default(), &cancel)
+            .unwrap()
+            .data,
+        renderer
+            .render(&image, &zero, RenderOptions::default(), &cancel)
+            .unwrap()
+            .data
+    );
 }
 
 fn gpu_fill_light(renderer: &Renderer) {
@@ -2549,7 +2657,7 @@ fn gpu_grain_blur_tiles(renderer: &Renderer) {
         [[0.; 4]; PARAMETER_SLOTS],
         Some((&film, &spatial, &grain)),
         false,
-        0.,
+        Detail::default(),
     );
     assert!(passes
         .iter()
@@ -3119,6 +3227,7 @@ fn gpu_pipeline() {
     gpu_grain_blur_tiles(&renderer);
     gpu_film_scanner_levels(&renderer);
     gpu_fill_light(&renderer);
+    gpu_detail_bands(&renderer);
     let img = image(96, 64);
     let cancel = AtomicBool::new(false);
     let recipe = EditRecipe {
@@ -3548,7 +3657,7 @@ fn effects_without_film_add_halation_and_grain_between_start_and_finish() {
     // `plan_source` reserves a coupler margin only while couplers are on.
     assert_eq!(reference.couplers, 0.);
     let names = |film, effects_only| {
-        let (passes, _) = build_passes([[0.; 4]; PARAMETER_SLOTS], film, effects_only, 0.);
+        let (passes, _) = build_passes([[0.; 4]; PARAMETER_SLOTS], film, effects_only, Detail::default());
         passes.iter().map(|p| p.entry).collect::<Vec<_>>()
     };
     let with = names(Some((&reference, &spatial, &grain)), true);
@@ -3565,13 +3674,28 @@ fn effects_without_film_add_halation_and_grain_between_start_and_finish() {
     assert!(position("adjust") < position("halation_finish"));
     assert!(position("halation_finish") < position("grain_to_density"));
     assert!(position("grain_from_density") < position("finish"));
+    let detail = Detail::new(
+        &EditRecipe {
+            sharpen: 100.,
+            texture: -100.,
+            clarity: 100.,
+            ..EditRecipe::default()
+        },
+        1.,
+    );
     let (passes, _) = build_passes(
         [[0.; 4]; PARAMETER_SLOTS],
         Some((&reference, &spatial, &grain)),
         true,
-        1.,
+        detail,
     );
     assert!(passes.len() < MAX_DISPATCHES as usize);
+    // Sharpen, texture and clarity run on the scene-linear RAW, before effects.
+    let entries: Vec<_> = passes.iter().map(|p| p.entry).collect();
+    assert_eq!(entries.iter().filter(|e| **e == "detail_apply").count(), 3);
+    let last = entries.iter().rposition(|e| *e == "detail_apply").unwrap();
+    assert!(entries.iter().position(|e| *e == "adjust").unwrap() < last);
+    assert!(last < entries.iter().position(|e| *e == "halation_finish").unwrap());
     for pass in &passes {
         assert_ne!(pass.buffers[0], pass.buffers[2]);
         assert_ne!(pass.buffers[1], pass.buffers[2]);
@@ -3585,6 +3709,7 @@ fn effects_passes_keep_the_fill_light_gain_in_alpha() {
     let shaders = [include_str!("render.wgsl"), include_str!("grain.wgsl")].join("\n");
     for entry in [
         "blur",
+        "detail_apply",
         "scatter_mix",
         "combine",
         "halation_finish",

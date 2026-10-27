@@ -73,7 +73,7 @@ compression. Zero Warmth keeps neutral output.
 
 - `assets/camera-tone-deltas.json`: 2ee2bea81844b572b08d4b5eb1e21f0905798ac571aef66038eaa33482d19144
 
-- `src/render.wgsl`: 1c9a54cd5351de9e7487ea7156529d656c78d4530d4070cec7b5534050c87413
+- `src/render.wgsl`: 04e224877021689bd81cce5979ed8bba2b568d2a07ad7dc37ad8c2eff888528b
 - `licenses/SPEKTRAFILM_LICENSE.txt`: 76d629501783ae52e8d63aee1e054c1e1a9713b9fe7d36fb306e25b1d14b24e9
 - `assets/irradiance_xy_tc.npy`: 52f90c724811f5fab80769f8548bf24d08a521eb09e65ab6e016893258d2a783
 - `assets/neutral_print_filters.json`: 22ae6cca433cfbeab87df7f17cd58a2f65e88cab845818819195e6f1a80db67c

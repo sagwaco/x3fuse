@@ -177,7 +177,7 @@ export const EDITOR_SECTIONS = {
           }
         : {}
   },
-  detail: { take: (from) => pick(from, ['sharpen', 'denoise', 'denoiseOptions']) },
+  detail: { take: (from) => pick(from, ['sharpen', 'texture', 'clarity', 'denoise', 'denoiseOptions']) },
   darkroom: {
     // A paper prints only film of its own model, black-and-white or color.
     take: (from, to) =>

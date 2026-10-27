@@ -177,7 +177,7 @@ describe('DNG sources', () => {
     const detail = { ...target, sharpen: 30 }
     expect(
       pasteSection(EDITOR_SECTIONS.detail, 'detail', detail, foveonRecipe(), COLOR, FOVEON)
-    ).toEqual({ sharpen: 30 })
+    ).toEqual({ sharpen: 30, texture: 0, clarity: 0 })
     expect(
       pasteSection(
         EDITOR_SECTIONS.light,

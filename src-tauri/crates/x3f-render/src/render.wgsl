@@ -310,6 +310,38 @@ fn blur(@builtin(global_invocation_id) id:vec3<u32>) {
     for(var k=-radius;k<=radius;k++) {let w=exp(f32(k*k)*falloff);sum+=w*load_at(vec2<i32>(pos)+axis*k);weight+=w;}
     destination.v[index(pos)]=vec4<f32>(sum/weight,source.v[index(pos)].w);
 }
+// Sharpen, texture and clarity work on log ratios of the scene-linear image,
+// so they act the same at every exposure and keep highlight headroom. The
+// floor keeps deep shadow noise from dominating the ratio.
+const DETAIL_FLOOR: f32 = 0.005;
+const DETAIL_LUMA: vec3<f32> = vec3<f32>(0.2126,0.7152,0.0722);
+// The band between two blurs: per-channel log ratios in rgb, the luminance
+// log ratio in w.
+@compute @workgroup_size(16,8)
+fn detail_band(@builtin(global_invocation_id) id:vec3<u32>) {
+    let pos=id.xy;if !in_bounds(pos) {return;}let i=index(pos);
+    let fine=max(source.v[i].rgb,vec3<f32>(0));let coarse=max(auxiliary.v[i].rgb,vec3<f32>(0));
+    destination.v[i]=vec4<f32>(log(fine+DETAIL_FLOOR)-log(coarse+DETAIL_FLOOR),
+        log(dot(fine,DETAIL_LUMA)+DETAIL_FLOOR)-log(dot(coarse,DETAIL_LUMA)+DETAIL_FLOOR));
+}
+// Scales the band of `auxiliary` in `source`. p.v[21]: x gain (negative
+// values smooth), y chroma mix (0 is luminance only), z soft limit of the
+// band, which bounds halos at strong edges, and w midtone weighting.
+@compute @workgroup_size(16,8)
+fn detail_apply(@builtin(global_invocation_id) id:vec3<u32>) {
+    let pos=id.xy;if !in_bounds(pos) {return;}let i=index(pos);
+    let c=source.v[i];let q=p.v[21];
+    let band=mix(vec3<f32>(auxiliary.v[i].w),auxiliary.v[i].rgb,q.y);
+    // tanh is 1 to float precision past 10; larger arguments can overflow.
+    var d=q.z*tanh(clamp(band/q.z,vec3<f32>(-10.0),vec3<f32>(10.0)));
+    if q.w>0.5 {
+        // ponytail: fixed 0.18 mid-gray with a 3-stop bell; use the metered gray
+        // if clarity reaches too far into shadows on dark camera looks.
+        let stops=log2((max(dot(c.rgb,DETAIL_LUMA),0.0)+1e-6)/0.18);
+        d*=exp(-stops*stops/18.0);
+    }
+    destination.v[i]=vec4<f32>(c.rgb*exp(q.x*d),source.v[i].w);
+}
 fn rgb_to_hsv(c:vec3<f32>)->vec3<f32> {
     let mx=max(c.x,max(c.y,c.z));let mn=min(c.x,min(c.y,c.z));let d=mx-mn;
     var h=0.0;if d>1e-7 {if mx==c.x {h=(c.y-c.z)/d;}else if mx==c.y {h=2.0+(c.z-c.x)/d;}else {h=4.0+(c.x-c.y)/d;}h=fract(h/6.0+1.0);}
@@ -422,11 +454,10 @@ fn output_primaries(c:vec3<f32>)->vec3<f32> {
 @compute @workgroup_size(16,8)
 fn output(@builtin(global_invocation_id) id:vec3<u32>) {
     let pos=id.xy;if !in_bounds(pos) {return;}let i=index(pos);var c=source.v[i].rgb;
-    if p.v[4].x>0.0 {let y=dot(c,vec3<f32>(0.2126,0.7152,0.0722));let by=dot(auxiliary.v[i].rgb,vec3<f32>(0.2126,0.7152,0.0722));c+=vec3<f32>((y-by)*p.v[4].x*2.0);}
     // Whites and blacks move the white and black points, as levels do, after
     // every other control so none can undo the ceiling or the floor. A raised
-    // floor or lowered ceiling also catches what contrast or sharpening
-    // clipped. Only luminance is clamped, which keeps wide-gamut colours.
+    // floor or lowered ceiling also catches what contrast clipped. Only
+    // luminance is clamped, which keeps wide-gamut colours.
     let y=dot(c,vec3<f32>(0.2126,0.7152,0.0722));var clamped=y;
     if p.v[3].y>0.0 {clamped=max(clamped,0.0);}
     if p.v[3].x<0.0 {clamped=min(clamped,1.0);}

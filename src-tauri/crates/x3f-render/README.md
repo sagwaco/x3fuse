@@ -50,8 +50,10 @@ preview, with an optional recipe or sidecar. It reports signed raw-layer and
 matrix-output statistics without changing the input. Output PNGs must be new files.
 
 Processing is geometric sampling → white balance/exposure → optional sensor-layer
-monochrome → highlights/shadows → optional spectral film → contrast/saturation/vibrance/HSL/color wheels/curves
-→ luminance sharpening → whites/blacks → output primaries/transfer curve. An
+monochrome → highlights/shadows → sharpening/texture/clarity → optional spectral film
+→ contrast/saturation/vibrance/HSL/color wheels/curves → whites/blacks → output
+primaries/transfer curve. Sharpening, texture and clarity scale log-ratio frequency
+bands of the scene-linear image, with band sizes in source pixels. An
 explicit Merrill or dp Quattro camera profile renders through Sigma's native
 Color Mode from x3f-sys: the scene goes back to camera BMT and on to native
 counts, then takes Merrill ColorDQ, the mode's tone curve per channel and its

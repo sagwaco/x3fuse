@@ -137,6 +137,9 @@ export interface EditRecipe {
   denoise: number
   denoiseOptions: DenoiseOptions
   sharpen: number
+  /** Mid-frequency and broad local contrast, -100..100. Missing values mean zero. */
+  texture?: number
+  clarity?: number
   crop: { x: number; y: number; width: number; height: number } | null
   rotation: number
   straighten: number
@@ -412,7 +415,9 @@ export function defaultRecipe(): EditRecipe {
     wheels: structuredClone(DEFAULT_WHEELS),
     denoise: 10,
     denoiseOptions: defaultDenoiseOptions(),
-    sharpen: 0,
+    sharpen: 50,
+    texture: 0,
+    clarity: 0,
     crop: null,
     rotation: 0,
     straighten: 0,

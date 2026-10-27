@@ -741,7 +741,15 @@ export const EditorControls = memo(function EditorControls({
                 <Curves recipe={recipe} />
               </Section>
               <Section id="detail" name={t('editor.detail')}>
-                {control('sharpen', { min: 0, max: 100 })}
+                {control('sharpen', { min: 0, max: 100, help: t('editor.sharpenHelp') })}
+                {control('texture', {
+                  value: recipe.texture ?? 0,
+                  help: t('editor.textureHelp')
+                })}
+                {control('clarity', {
+                  value: recipe.clarity ?? 0,
+                  help: t('editor.clarityHelp')
+                })}
                 {foveon && control('denoise', { min: 0, max: 10, help: t('editor.denoiseHelp') })}
                 {foveon && recipe.denoise > 0 && (
                   <DenoiseControls

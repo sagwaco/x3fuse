@@ -41,7 +41,17 @@ pub struct EditRecipe {
     /// Bayer DNG preparation. None keeps the saved LibRaw rendering.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dng_demosaic: Option<DngDemosaic>,
+    /// Fine-detail sharpening of the scene-linear RAW (0..100), before film.
+    /// The default here is 0; a photo's camera defaults use 50.
     pub sharpen: f32,
+    /// Mid-frequency local contrast (-100..100). Negative values smooth. The
+    /// default is not written.
+    #[serde(skip_serializing_if = "is_default")]
+    pub texture: f32,
+    /// Broad, midtone-weighted local contrast (-100..100). The default is not
+    /// written.
+    #[serde(skip_serializing_if = "is_default")]
+    pub clarity: f32,
     /// Rectangle in the EXIF-oriented full image, before user rotation/straighten.
     pub crop: Option<Crop>,
     pub rotation: u32,
@@ -99,6 +109,8 @@ impl Default for EditRecipe {
             denoise_options: x3f_core::DenoiseOptions::default(),
             dng_demosaic: None,
             sharpen: 0.,
+            texture: 0.,
+            clarity: 0.,
             crop: None,
             rotation: 0,
             straighten: 0.,
@@ -561,6 +573,8 @@ impl EditRecipe {
             ("saturation", self.saturation),
             ("vibrance", self.vibrance),
             ("warmth", self.warmth),
+            ("texture", self.texture),
+            ("clarity", self.clarity),
         ] {
             range(n, v, -100., 100.)?;
         }

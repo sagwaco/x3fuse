@@ -2213,6 +2213,8 @@ fn as_shot_recipe(crop: Option<Crop>, profile: &str, source_revision: &str) -> E
         film: None,
         monochrome: (profile == "Monochrome").then(x3f_render::MonochromeSettings::default),
         crop,
+        // `defaultRecipe` in the renderer uses the same value.
+        sharpen: 50.,
         seed: source_revision
             .get(..8)
             .and_then(|value| u32::from_str_radix(value, 16).ok())
@@ -2220,7 +2222,6 @@ fn as_shot_recipe(crop: Option<Crop>, profile: &str, source_revision: &str) -> E
         ..Default::default()
     }
 }
-
 /// True when only the fields that defaults set differ from `EditRecipe::default()`.
 fn near_default(recipe: &EditRecipe) -> bool {
     let base = EditRecipe::default();
@@ -2232,6 +2233,7 @@ fn near_default(recipe: &EditRecipe) -> bool {
         dng_demosaic: base.dng_demosaic,
         crop: base.crop,
         seed: base.seed,
+        sharpen: base.sharpen,
         ..recipe.pixels()
     };
     probe == base

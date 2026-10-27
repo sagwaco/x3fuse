@@ -92,7 +92,7 @@ describe('editor sections', () => {
     curves: ['curves'],
     whiteBalance: ['temperature', 'tint', 'whiteBalanceGains'],
     channels: [],
-    detail: ['denoise', 'denoiseOptions', 'sharpen'],
+    detail: ['clarity', 'denoise', 'denoiseOptions', 'sharpen', 'texture'],
     darkroom: film(DARKROOM),
     grain: film(GRAIN),
     halation: film(HALATION),

@@ -42,7 +42,8 @@ pub use stocks::STOCKS_JSON;
 /// Version 16 corrects DNG highlight clipping.
 /// Version 17 adds selectable Bayer DNG demosaicing.
 /// Version 18 adds a linear base curve for full spectrum color.
-pub const RENDER_VERSION: u32 = 18;
+/// Version 19 sharpens the scene-linear RAW and adds texture and clarity.
+pub const RENDER_VERSION: u32 = 19;
 
 use image::ImageEncoder;
 use serde::{Deserialize, Serialize};
@@ -331,7 +332,8 @@ struct GpuSource {
 const PARAMETER_SLOTS: usize = 63;
 type Parameters = [[f32; 4]; PARAMETER_SLOTS];
 const PARAMETER_BYTES: u64 = std::mem::size_of::<Parameters>() as u64;
-const MAX_DISPATCHES: u64 = 80;
+/// The film chain plus up to 18 sharpen, texture and clarity dispatches.
+const MAX_DISPATCHES: u64 = 100;
 /// Blurs below this radius are indistinguishable from a copy; skipping them
 /// keeps sub-pixel spektrafilm stages off the pass list entirely.
 const MIN_SIGMA: f32 = 0.3;
@@ -446,6 +448,32 @@ impl Chain {
         let dst = self.emit("blur", mid, mid, q);
         self.release(mid);
         dst
+    }
+    /// Local contrast in one frequency band of the scene-linear image. The
+    /// band is the log ratio of a blur at `near` to a blur at `far`. `shape`
+    /// is the `detail_apply` parameters: gain, chroma mix, limit and midtone
+    /// weighting. A band that rounds away returns `src` unchanged.
+    fn detail(&mut self, src: usize, near: f32, far: f32, shape: [f32; 4]) -> usize {
+        let fine = self.blur(src, [near; 3]);
+        // Gaussians add in quadrature, so the coarse blur reuses the fine one.
+        let coarse = self.blur(fine, [(far * far - near * near).max(0.).sqrt(); 3]);
+        if coarse == fine {
+            if fine != src {
+                self.release(fine);
+            }
+            return src;
+        }
+        let band = self.two("detail_band", fine, coarse);
+        if fine != src {
+            self.release(fine);
+        }
+        self.release(coarse);
+        let mut q = self.base;
+        q[21] = shape;
+        let out = self.emit("detail_apply", src, band, q);
+        self.release(band);
+        self.release(src);
+        out
     }
     fn scaled(&mut self, src: usize, aux: usize, a: f32, b: f32) -> usize {
         let mut q = self.base;
@@ -753,16 +781,60 @@ fn choose_tiling(
     })
 }
 
+/// The detail controls of one render, in output pixels. Each band is
+/// `(near sigma, far sigma, detail_apply parameters)`.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct Detail {
+    bands: [Option<(f32, f32, [f32; 4])>; 3],
+}
+impl Detail {
+    /// Band sigmas in source pixels, so a preview renders the same adjustment
+    /// as the full-size export. Texture spans features of about 8 to 32
+    /// pixels and keeps pixel-level noise. Clarity reaches into broad tonal
+    /// areas, mixes in chroma and is weighted toward midtones.
+    fn new(recipe: &EditRecipe, scale: f32) -> Self {
+        let band = |value: f32, near: f32, far: f32, gain: f32, chroma: f32, limit: f32, midtone: bool| {
+            (value != 0.).then_some((
+                near / scale,
+                far / scale,
+                [gain * value / 100., chroma, limit, f32::from(midtone)],
+            ))
+        };
+        Self {
+            bands: [
+                band(recipe.sharpen, 0., 1., 2., 0., 0.25, false),
+                band(recipe.texture, 1.5, 6., 1., 0., 0.5, false),
+                band(recipe.clarity, 0., 25., 1., 0.5, 0.6, true),
+            ],
+        }
+    }
+    /// The halo that the detail bands need on each side of a tile: the tap
+    /// radius of both blurs in each band's cascade, as `Chain::detail` runs them.
+    fn margin(&self) -> f32 {
+        self.bands
+            .iter()
+            .flatten()
+            .map(|&(near, far, _)| {
+                (3. * near).ceil() + (3. * (far * far - near * near).max(0.).sqrt()).ceil()
+            })
+            .sum()
+    }
+}
+
 /// Builds the pass list of one tile. Slot 0 of `base` must be set per tile.
 /// Returns the passes and the buffer that holds the output.
 fn build_passes(
     base: Parameters,
     film: Option<(&FilmSettings, &film::Spatial, &film::grain::Spatial)>,
     effects_only: bool,
-    sharpen: f32,
+    detail: Detail,
 ) -> (Vec<Pass>, usize) {
     let mut chain = Chain::new(base);
     let mut current = chain.start();
+    // Sharpen, texture and clarity act on the scene-linear RAW, before film.
+    for (near, far, shape) in detail.bands.into_iter().flatten() {
+        current = chain.detail(current, near, far, shape);
+    }
     if let (Some((settings, spatial, grain)), true) = (film, effects_only) {
         // Generic effects run on the scene-linear image, before `finish`. Every
         // pass keeps the source alpha, which carries the Fill Light gain.
@@ -833,12 +905,7 @@ fn build_passes(
     }
     let finished = chain.one("finish", current);
     chain.release(current);
-    let sharp = if sharpen > 0. {
-        chain.blur(finished, [sharpen; 3])
-    } else {
-        finished
-    };
-    let output = chain.two("output", finished, sharp);
+    let output = chain.one("output", finished);
     let passes = chain
         .passes
         .into_iter()
@@ -1001,6 +1068,8 @@ impl Renderer {
             "print_develop",
             "scan",
             "blur",
+            "detail_band",
+            "detail_apply",
             "finish",
             "output",
             "pack",
@@ -1367,15 +1436,11 @@ impl Renderer {
             .zip(grain_spatial.as_ref())
             .filter(|(f, _)| f.grain_active())
             .map_or(0., |(_, grain)| grain.margin());
-        let sharpen_sigma = if recipe.sharpen > 0. {
-            1.0 / geom.scale
-        } else {
-            0.
-        };
+        let detail = Detail::new(recipe, geom.scale);
         let margin = ((3. * coupler_sigma).ceil()
             + (3. * halation_sigma).ceil()
             + grain_margin
-            + (3. * sharpen_sigma).ceil()) as u32;
+            + detail.margin()) as u32;
         let mut base = self.parameters(
             image,
             recipe,
@@ -1466,7 +1531,7 @@ impl Renderer {
                 .zip(grain_spatial.as_ref())
                 .map(|((settings, spatial), grain)| (settings, spatial, grain)),
             recipe.film.is_none(),
-            sharpen_sigma,
+            detail,
         );
         let candidates = match tiling {
             Some(tiling) => vec![tiling],
@@ -1715,7 +1780,6 @@ impl Renderer {
             if neutral { 0. } else { r.saturation / 100. },
             if neutral { 0. } else { r.vibrance / 100. },
         ];
-        p[4][0] = r.sharpen / 100.;
         if r.dng_demosaic == Some(DngDemosaic::Mono) {
             p[4][1..].copy_from_slice(&[0., 1., 0.]);
         }
@@ -2202,7 +2266,15 @@ mod coupler_chain_tests {
                     [[0.; 4]; PARAMETER_SLOTS],
                     Some((&settings, &spatial, &grain)),
                     false,
-                    1.,
+                    Detail::new(
+                        &EditRecipe {
+                            sharpen: 100.,
+                            texture: 100.,
+                            clarity: 100.,
+                            ..EditRecipe::default()
+                        },
+                        1.,
+                    ),
                 );
                 assert!(passes.len() < MAX_DISPATCHES as usize);
                 for pass in &passes {
