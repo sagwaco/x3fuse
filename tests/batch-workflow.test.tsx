@@ -198,16 +198,42 @@ describe('batch workflow', () => {
     })
   })
 
-  it.each(['review', 'preset'])(
-    'disables hidden recovery for non-Merrill DNGs in a %s export',
-    async (workflow) => {
+  it.each(['SIGMA dp2 Quattro', 'SIGMA sd Quattro', 'SIGMA sd Quattro H'])(
+    'keeps recovery off for %s when the user disables it',
+    async (model) => {
+      store.setState({ files: files.map((file) => ({ ...file, cameraModel: model })) })
+      useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, dngHighlightRecovery: false } })
+      store.getState().openExport()
+      await store.getState().commitExport()
+      const captured = store.getState().draft!.settings
+      expect(captured.dngHighlightRecovery).toBe(false)
+      expect(invoke).toHaveBeenCalledWith(
+        'convert:start',
+        expect.objectContaining({
+          settings: captured,
+          files: ['a', 'b'].map((id) => ({ id, path: `/photos/${id}.X3F` }))
+        })
+      )
+    }
+  )
+
+  it.each(
+    ['review', 'preset'].flatMap((workflow) =>
+      ['SIGMA dp2 Quattro', 'SIGMA sd Quattro', 'SIGMA sd Quattro H'].map((model) => ({
+        workflow,
+        model
+      }))
+    )
+  )(
+    'keeps Merrill and $model recovery and filters unknown cameras in a $workflow export',
+    async ({ workflow, model }) => {
       store.setState({
         files: files.map((file) => ({
           ...file,
           exif:
             file.id === 'c'
               ? []
-              : [{ label: 'Camera', value: file.id === 'a' ? 'SIGMA SD1' : 'SIGMA dp2 Quattro' }]
+              : [{ label: 'Camera', value: file.id === 'a' ? 'SIGMA SD1' : model }]
         })),
         selectedIds: new Set(['a', 'b', 'c'])
       })
@@ -224,7 +250,7 @@ describe('batch workflow', () => {
       const captured = store.getState().draft!.settings
       const expected = [
         { id: 'a', path: '/photos/a.X3F' },
-        { id: 'b', path: '/photos/b.X3F', settings: { ...captured, dngHighlightRecovery: false } },
+        { id: 'b', path: '/photos/b.X3F' },
         { id: 'c', path: '/photos/c.X3F', settings: { ...captured, dngHighlightRecovery: false } }
       ]
       expect(invoke).toHaveBeenCalledWith('queue:existingOutputs', {

@@ -103,7 +103,7 @@ export interface ConversionSettings {
   denoiseIntensity: number
   denoiseOptions: DenoiseOptions
   colorProfile: ColorProfile
-  /** Merrill-generation DNG highlight recovery. */
+  /** DNG highlight recovery for Merrill and Quattro cameras. */
   dngHighlightRecovery: boolean
   /** Cineon-style flat tone curve for TIFF. */
   cineon: boolean
@@ -257,7 +257,10 @@ export const shouldShowDngHighlightRecoveryOption = (
   f: OutputFormat,
   cameraModels: readonly (string | undefined)[]
 ): boolean =>
-  f === 'dng' && cameraModels.some((model) => /\b(?:merrill|sd1|dp[123]m)\b/i.test(model ?? ''))
+  f === 'dng' &&
+  cameraModels.some((model) =>
+    /\b(?:merrill|sd1|dp[123]m|(?:dp[0-3]|sd)\s+quattro)\b/i.test(model ?? '')
+  )
 
 export const cameraModel = (file: Pick<X3FFileDTO, 'cameraModel' | 'exif'>): string | undefined =>
   file.cameraModel ?? file.exif?.find((row) => row.label === 'Camera')?.value

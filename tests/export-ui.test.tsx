@@ -422,16 +422,24 @@ it.each([
   ['DP3M', true],
   ['SIGMA SD1', true],
   ['SD1 Merrill', true],
-  ['SIGMA dp2 Quattro', false],
+  ['SIGMA dp0 Quattro', true],
+  ['SIGMA dp1 Quattro', true],
+  ['SIGMA dp2 Quattro', true],
+  ['SIGMA dp3 Quattro', true],
+  ['SIGMA sd Quattro', true],
+  ['SIGMA sd Quattro H', true],
+  ['SD QUATTRO H', true],
+  ['SIGMA dp4 Quattro', false],
+  ['Quattro', false],
   ['SIGMA SD15', false],
   ['SIGMA DP2', false],
   [undefined, false]
-])('limits highlight recovery to Merrill models: %s', (model, supported) => {
+])('limits highlight recovery to supported models: %s', (model, supported) => {
   expect(shouldShowDngHighlightRecoveryOption('dng', [model])).toBe(supported)
   expect(shouldShowDngHighlightRecoveryOption('tiff', [model])).toBe(false)
 })
 
-it('shows the union of options and explains partial applicability for Merrill and SFD Quattro', async () => {
+it('shows the union of options and explains partial applicability for SD15 and SFD Quattro', async () => {
   const draft = useQueueStore.getState().draft!
   useQueueStore.setState({
     draft: {
@@ -440,7 +448,7 @@ it('shows the union of options and explains partial applicability for Merrill an
         ...file,
         ...(file.id === 'b' ? { path: '/photos/b.X3I', fileName: 'b.X3I', frames: 7 } : {}),
         exif: [
-          { label: 'Camera', value: file.id === 'a' ? 'SIGMA SD1 Merrill' : 'SIGMA dp2 Quattro' }
+          { label: 'Camera', value: file.id === 'a' ? 'SIGMA SD15' : 'SIGMA dp2 Quattro' }
         ]
       }))
     }
@@ -483,11 +491,11 @@ it('shows the union of options and explains partial applicability for Merrill an
     expect(exportSettings(useQueueStore.getState().draft!, id).dngHighlightRecovery).toBe(true)
   expect(screen.queryByRole('dialog')).toBeNull()
   act(() => useQueueStore.getState().setSelection(new Set(['a']), 'a'))
-  expect(toggle()).toBeTruthy()
+  expect(toggle()).toBeNull()
   expect(sfd()).toBeNull()
   expect(warnings()).toHaveLength(0)
   act(() => useQueueStore.getState().setSelection(new Set(['b']), 'b'))
-  expect(toggle()).toBeNull()
+  expect(toggle()).toBeTruthy()
   expect(sfd()).toBeTruthy()
   expect(warnings()).toHaveLength(0)
   act(() => useQueueStore.getState().setSelection(new Set(['a', 'b']), 'b'))
@@ -498,7 +506,7 @@ it('shows the union of options and explains partial applicability for Merrill an
   expect(shouldShowDngHighlightRecoveryOption('dng', [])).toBe(false)
 })
 
-it.each(['Merrill', 'X3I', 'unknown'])(
+it.each(['Merrill', 'dp Quattro', 'sd Quattro', 'sd Quattro H', 'X3I', 'unknown'])(
   'shows no applicability warning when all selected images are %s',
   (kind) => {
     const draft = useQueueStore.getState().draft!
@@ -508,7 +516,12 @@ it.each(['Merrill', 'X3I', 'unknown'])(
         files: draft.files.map((file) => ({
           ...file,
           ...(kind === 'X3I' ? { path: `/photos/${file.id}.X3I` } : {}),
-          cameraModel: kind === 'Merrill' ? 'SIGMA SD1 Merrill' : undefined
+          cameraModel:
+            kind === 'Merrill'
+              ? 'SIGMA SD1 Merrill'
+              : kind.includes('Quattro')
+                ? `SIGMA ${kind === 'dp Quattro' ? 'dp2 Quattro' : kind}`
+                : undefined
         }))
       }
     })
@@ -516,7 +529,7 @@ it.each(['Merrill', 'X3I', 'unknown'])(
     expect(document.querySelectorAll('button.text-yellow-400')).toHaveLength(0)
     expect(
       screen.queryByRole('switch', { name: t('settings.dng_highlight_recovery') }) !== null
-    ).toBe(kind === 'Merrill')
+    ).toBe(kind === 'Merrill' || kind.includes('Quattro'))
     expect(screen.queryByText('SFD RAW', { selector: 'summary' }) !== null).toBe(kind === 'X3I')
   }
 )

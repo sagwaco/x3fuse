@@ -128,7 +128,8 @@ The conversion settings also include:
   applies a Sigma camera color mode, or the mode recorded in the file, to Merrill
   and dp Quattro files. Sunset Red, Forest Green, FOV Classic Yellow, Cinema, and
   Teal and Orange are dp Quattro only. The look is applied to the TIFF pixels.
-- **Merrill highlight recovery**, for DNG output: enables highlight recovery during conversion.
+- **Highlight recovery (Merrill / Quattro)**, for DNG output: enables highlight recovery
+  during conversion for Merrill, dp Quattro, sd Quattro, and sd Quattro H cameras.
 
 ### Converting a classic-camera library
 
@@ -162,8 +163,8 @@ rounded decimal MB. Results depend on the image and settings.
 Noise reduction is saved in the output pixels. Stronger settings can remove fine detail.
 For future noise-reduction work, retain the X3F and compare an undenoised DNG with a denoised
 copy. X3Fuse uses its own NLM or BM3D processing; it does not reproduce Sigma Photo Pro's
-noise reduction or saved edits. Leave Merrill highlight recovery off when starting with
-classic files. No classic-camera flat-field opcode files are bundled.
+noise reduction or saved edits. Highlight recovery is available only for Merrill and
+Quattro cameras. No classic-camera flat-field opcode files are bundled.
 
 Convert a small batch first. Check color, highlights, fine detail, metadata, and file size in
 your destination editor before converting the library. The editor compatibility results
@@ -171,7 +172,7 @@ below apply to Merrill and Quattro files; classic DNGs still need checks in each
 
 ## DNG Compatibility
 
-X3Fuse creates DNGs that are designed to work across common RAW decoding engines, not only Adobe Camera Raw. Merrill and Quattro files, including DNGs created with **RAW compression** and/or **Merrill highlight recovery** enabled, have been tested successfully in:
+X3Fuse creates DNGs that are designed to work across common RAW decoding engines, not only Adobe Camera Raw. Merrill and Quattro files, including DNGs created with **RAW compression** and/or **Highlight recovery (Merrill / Quattro)** enabled, have been tested successfully in:
 
 - Adobe Lightroom and Adobe Photoshop
 - Darktable
