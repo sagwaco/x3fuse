@@ -4,7 +4,7 @@ import { t } from '../lib/strings'
 import { Button } from './ui/button'
 import { Select } from './ui/select'
 import { Slider } from './ui/slider'
-import { Row, ToggleRow } from './ui/settingsLayout'
+import { FIELD_LABEL, Row, ToggleRow } from './ui/settingsLayout'
 import { AdvancedDetails } from './ui/advancedDetails'
 
 /** The same sensor controls are used for conversion and editor preparation. */
@@ -90,7 +90,7 @@ export function DenoiseControls({
         <p className="text-tone-500">{t('denoise.channelsHelp')}</p>
         <div className="space-y-2">
           {/* The label of a Row, so that it looks the same in the editor and in export. */}
-          <span className="font-sans text-[13px] text-tone-300">
+          <span className={FIELD_LABEL}>
             {t('denoise.strength')} ({value.strength.toFixed(1)}×)
           </span>
           <Slider

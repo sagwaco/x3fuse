@@ -16,7 +16,7 @@ import { t } from '../lib/strings'
 import { EDITOR_SECTIONS, resetSection } from '@shared/editorSections'
 import { Button } from './ui/button'
 import { AdvancedDetails } from './ui/advancedDetails'
-import { HelpTooltip } from './ui/settingsLayout'
+import { FIELD_LABEL, HelpTooltip } from './ui/settingsLayout'
 import { Switch } from './ui/switch'
 import { Adjustment, Section } from './EditorControls'
 
@@ -75,15 +75,16 @@ export function EffectsSection({ recipe }: { recipe: EditRecipe }): React.JSX.El
       <Section id={effect} name={t(`editor.${effect}`)}>
         {/* The help of halation follows its label; grain needs none. */}
         <div className="flex items-center justify-between gap-3">
-          <span className="flex min-w-0 items-center gap-1.5 font-sans text-[13px] text-tone-300">
-            {label}
-            {effect === 'halation' && (
-              <HelpTooltip
-                label={label}
-                text={t(film ? 'editor.halationHelp' : 'editor.halationLookHelp')}
-              />
-            )}
-          </span>
+          {effect === 'halation' ? (
+            <HelpTooltip
+              label={label}
+              text={t(film ? 'editor.halationHelp' : 'editor.halationLookHelp')}
+            >
+              <span className={FIELD_LABEL}>{label}</span>
+            </HelpTooltip>
+          ) : (
+            <span className={FIELD_LABEL}>{label}</span>
+          )}
           <Switch
             aria-label={label}
             checked={fx[effect]}

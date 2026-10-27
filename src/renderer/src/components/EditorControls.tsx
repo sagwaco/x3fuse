@@ -38,6 +38,7 @@ import { cn } from '../lib/cn'
 import { blurOnClick, blurOnEnter } from '../lib/commitFocus'
 import { GlassGroup } from './ui/glassGroup'
 import { Slider } from './ui/slider'
+import { HelpOnHover } from './ui/helpOnHover'
 import { HelpTooltip, Row, ToggleRow } from './ui/settingsLayout'
 import { Select } from './ui/select'
 import { LookPicker } from './LookPicker'
@@ -89,7 +90,7 @@ const positiveFilm = (film: FilmSettings | null): boolean => !!filmStock(film)?.
 export const HIDE_WHILE_RESETTING = 'group-has-[[data-resetting]]/reset:invisible'
 /** Slider labels use the system font, without the caption case and letter spacing. */
 export const SLIDER_LABEL =
-  'font-sans text-[12px] normal-case leading-tight tracking-normal text-tone-300'
+  'font-sans text-[11px] font-medium normal-case leading-tight tracking-normal text-tone-400'
 
 export function ResetLabel({
   label,
@@ -312,17 +313,19 @@ export function Adjustment({
       </div>
     )
   }
+  const name = (
+    <ResetLabel label={unit ? `${label} (${unit})` : label} disabled={disabled} reset={reset} />
+  )
   return (
     <div className="adjustment space-y-px py-0.5" {...hold}>
       <div className="group/reset flex items-center justify-between gap-2">
-        <span className="flex min-w-0 items-center gap-1.5">
-          <ResetLabel
-            label={unit ? `${label} (${unit})` : label}
-            disabled={disabled}
-            reset={reset}
-          />
-          {help && <HelpTooltip label={label} text={help} className={HIDE_WHILE_RESETTING} />}
-        </span>
+        {help ? (
+          <HelpTooltip label={label} text={help} className={HIDE_WHILE_RESETTING}>
+            {name}
+          </HelpTooltip>
+        ) : (
+          <span className="flex min-w-0">{name}</span>
+        )}
         {input}
       </div>
       {slider}
@@ -655,7 +658,7 @@ export const EditorControls = memo(function EditorControls({
     />
   )
   return (
-    <>
+    <HelpOnHover.Provider value>
       {/* Tabs that share the width, as in the settings header. The selected icon has
           the select color. The gray select color is below 3:1 on the gray surface, so
           there the selected icon keeps the label color. */}
@@ -876,7 +879,7 @@ export const EditorControls = memo(function EditorControls({
           )}
         </div>
       </div>
-    </>
+    </HelpOnHover.Provider>
   )
 })
 

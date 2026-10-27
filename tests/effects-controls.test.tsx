@@ -125,11 +125,11 @@ it('puts each switch in its section, also while the effect is off, with halation
       expect(section.contains(toggle(effect))).toBe(true)
     }
     const label = screen.getByText(t('editor.enableHalation'), { selector: 'span' })
-    expect(label.querySelector('button')!.getAttribute('aria-label')).toBe(
-      t('editor.enableHalation')
-    )
+    expect(label.nextElementSibling!.getAttribute('aria-label')).toBe(t('editor.enableHalation'))
     expect(
-      screen.getByText(t('editor.enableGrain'), { selector: 'span' }).querySelector('button')
+      screen
+        .getByText(t('editor.enableGrain'), { selector: 'span' })
+        .parentElement!.querySelector('button:not([role="switch"])')
     ).toBeNull()
     view.unmount()
   }

@@ -1,3 +1,5 @@
+import { useContext, useId } from 'react'
+import { HelpOnHover } from './helpOnHover'
 import { Tooltip } from './tooltip'
 import { cn } from '../../lib/cn'
 import { t } from '../../lib/strings'
@@ -8,6 +10,9 @@ import { Switch } from './switch'
  * Shared layout primitives for settings forms, used by both the Settings window
  * and the Export screen's settings sidebar so the two surfaces stay in sync.
  */
+
+/** The text of a field label. It has less contrast than the value. */
+export const FIELD_LABEL = 'font-sans text-[12px] font-medium text-tone-400'
 
 export function Section({
   title,
@@ -38,12 +43,20 @@ export function Row({
   help?: string
   warning?: string
 }): React.JSX.Element {
+  const hoverHelp = useContext(HelpOnHover) && !!help
+  const name = <span className={FIELD_LABEL}>{label}</span>
   return (
     <div className="flex items-center justify-between gap-3">
-      <span className="font-sans text-[13px] text-tone-300">{label}</span>
+      {hoverHelp ? (
+        <HelpTooltip label={label} text={help!}>
+          {name}
+        </HelpTooltip>
+      ) : (
+        name
+      )}
       <div className="flex shrink-0 items-center gap-2">
         {warning && <HelpTooltip label={label} text={warning} warning />}
-        {help && <HelpTooltip label={label} text={help} />}
+        {help && !hoverHelp && <HelpTooltip label={label} text={help} />}
         {children}
       </div>
     </div>
@@ -76,34 +89,58 @@ export function HelpTooltip({
   label,
   text,
   className,
-  warning = false
+  warning = false,
+  children
 }: {
   label: string
   text: string
   className?: string
   warning?: boolean
+  /**
+   * The field label. With a label, the help shows on label hover too, and the
+   * icon shows only on label hover or focus.
+   */
+  children?: React.ReactNode
 }): React.JSX.Element {
   const Icon = warning ? TriangleAlert : Info
+  const id = useId()
+  const button = (
+    <button
+      type="button"
+      aria-label={warning ? t('settings.warning_label', { setting: label }) : label}
+      // The tooltip opens on the label, so the button keeps its own description.
+      aria-describedby={children ? id : undefined}
+      // The icon only shows help, so it keeps the default pointer.
+      className={cn(
+        'cursor-default rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/50',
+        warning
+          ? 'text-yellow-400 [[data-theme=light]_&]:text-yellow-700 [[data-theme=gray]_&]:text-yellow-950'
+          : 'text-tone-400 hover:text-tone-100',
+        children &&
+          'opacity-0 transition-opacity group-hover/help:opacity-100 group-focus-within/help:opacity-100',
+        className
+      )}
+    >
+      <Icon className="h-3.5 w-3.5" aria-hidden="true" />
+    </button>
+  )
   return (
     <Tooltip
       text={text}
       side="top"
       className="export-help-tooltip max-w-[min(18rem,var(--radix-tooltip-content-available-width))]"
     >
-      <button
-        type="button"
-        aria-label={warning ? t('settings.warning_label', { setting: label }) : label}
-        // The icon only shows help, so it keeps the default pointer.
-        className={cn(
-          'cursor-default rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/50',
-          warning
-            ? 'text-yellow-400 [[data-theme=light]_&]:text-yellow-700 [[data-theme=gray]_&]:text-yellow-950'
-            : 'text-tone-400 hover:text-tone-100',
-          className
-        )}
-      >
-        <Icon className="h-3.5 w-3.5" aria-hidden="true" />
-      </button>
+      {children ? (
+        <span className="group/help flex min-w-0 items-center gap-1.5">
+          {children}
+          {button}
+          <span id={id} hidden>
+            {text}
+          </span>
+        </span>
+      ) : (
+        button
+      )}
     </Tooltip>
   )
 }
