@@ -443,7 +443,7 @@
   "export.resize.method.bicubic": "Bicúbico",
   "export.resize.method.lanczos3": "Lanczos (predeterminado)",
   "editor.crop": "Recortar",
-  "editor.cropCanvas": "Arrastra las esquinas para cambiar el tamaño o el interior del marco para moverlo. Arrastra justo fuera del marco para girar; mantén pulsada Mayús para ajustar en pasos de 15°. Las flechas desplazan el marco; Intro aplica el recorte; Esc cancela.",
+  "editor.cropCanvas": "Arrastra las esquinas para cambiar el tamaño o el interior del marco para moverlo. Arrastra justo fuera del marco para girar; mantén pulsada Mayús para ajustar en pasos de 15°. Las flechas desplazan el marco; Intro aplica el recorte; Esc cancela. Mantén pulsada Alt (Opción en macOS) para cambiar el tamaño desde el centro.",
   "editor.exportEmbeddedJpeg": "Exportar JPEG incrustado",
   "editor.filmHelp": "Simula la exposición de la foto en una película real y su impresión en papel.",
   "editor.monochrome": "Monocromo",

@@ -209,11 +209,12 @@ export function CropPreview({
     dx: number,
     dy: number,
     save: boolean,
-    fresh = false
+    fresh = false,
+    symmetric = false
   ): void => {
     const crop = fitDrag(
       (x, y) => {
-        const next = dragFrame(start, handle, x, y, ratio)
+        const next = dragFrame(start, handle, x, y, ratio, symmetric)
         return fresh || (next.width >= smallest && next.height >= smallest)
           ? frameToCrop(next, angle, W, H, quad)
           : null
@@ -306,7 +307,15 @@ export function CropPreview({
         const start = drag.current
         if (!start) return setHover(handleAt(p))
         if (start.handle.startsWith('rotate')) return rotate(p, event.shiftKey)
-        apply(start.frame, start.handle, p.x - start.x, p.y - start.y, false, start.fresh)
+        apply(
+          start.frame,
+          start.handle,
+          p.x - start.x,
+          p.y - start.y,
+          false,
+          start.fresh,
+          event.altKey
+        )
       }}
       onPointerUp={end}
       onPointerCancel={end}

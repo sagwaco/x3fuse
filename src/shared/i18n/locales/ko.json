@@ -443,7 +443,7 @@
   "export.resize.method.bicubic": "쌍입방",
   "export.resize.method.lanczos3": "Lanczos(기본값)",
   "editor.crop": "자르기",
-  "editor.cropCanvas": "모서리를 드래그하여 크기를 조정하고, 프레임 안쪽을 드래그하여 이동합니다. 프레임 바로 바깥을 드래그하면 회전하며, Shift 키를 누르면 15° 단위로 맞춰집니다. 화살표 키로 미세 조정하고 Return으로 적용하며 Escape로 취소합니다.",
+  "editor.cropCanvas": "모서리를 드래그하여 크기를 조정하고, 프레임 안쪽을 드래그하여 이동합니다. 프레임 바로 바깥을 드래그하면 회전하며, Shift 키를 누르면 15° 단위로 맞춰집니다. 화살표 키로 미세 조정하고 Return으로 적용하며 Escape로 취소합니다. Alt(macOS에서는 Option) 키를 누른 채 드래그하면 중심을 고정하여 크기를 조정합니다.",
   "editor.exportEmbeddedJpeg": "내장 JPEG 내보내기",
   "editor.filmHelp": "사진을 실제 필름에 노출하고 인화지에 인화하는 과정을 재현합니다.",
   "editor.monochrome": "모노크롬",

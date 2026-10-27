@@ -443,7 +443,7 @@
   "export.resize.method.bicubic": "バイキュービック",
   "export.resize.method.lanczos3": "Lanczos（デフォルト）",
   "editor.crop": "切り抜き",
-  "editor.cropCanvas": "角をドラッグしてサイズ変更、枠の内側をドラッグして移動します。枠のすぐ外側をドラッグすると回転し、Shiftキーで15°ごとにスナップします。矢印キーで微調整、Returnで適用、Escapeでキャンセルします。",
+  "editor.cropCanvas": "角をドラッグしてサイズ変更、枠の内側をドラッグして移動します。枠のすぐ外側をドラッグすると回転し、Shiftキーで15°ごとにスナップします。矢印キーで微調整、Returnで適用、Escapeでキャンセルします。 Alt（macOSではOption）キーを押しながらドラッグすると、中心を固定してサイズを変更できます。",
   "editor.exportEmbeddedJpeg": "埋め込み JPEG を書き出す",
   "editor.filmHelp": "写真を実際のフィルムに露光し、印画紙にプリントする工程を再現します。",
   "editor.monochrome": "モノクロ",

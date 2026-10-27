@@ -91,10 +91,21 @@ export function frameToCrop(
 /**
  * Move the frame (`move`) or drag its edges (any of n/s/e/w). A locked
  * `ratio` (width / height) keeps the opposite corner fixed, or the other axis
- * centered for a side handle.
+ * centered for a side handle. `symmetric` keeps the frame center fixed.
  */
-export function dragFrame(s: Frame, handle: string, dx: number, dy: number, ratio?: number): Frame {
+export function dragFrame(
+  s: Frame,
+  handle: string,
+  dx: number,
+  dy: number,
+  ratio?: number,
+  symmetric = false
+): Frame {
   if (handle === 'move') return { ...s, x: s.x + dx, y: s.y + dy }
+  if (symmetric) {
+    dx *= 2
+    dy *= 2
+  }
   let l = s.x
   let t = s.y
   let r = s.x + s.width
@@ -119,7 +130,14 @@ export function dragFrame(s: Frame, handle: string, dx: number, dy: number, rati
     else if (handle.includes('n')) t = b - sy * h
     else b = t + sy * h
   }
-  return { x: Math.min(l, r), y: Math.min(t, b), width: Math.abs(r - l), height: Math.abs(b - t) }
+  const width = Math.abs(r - l)
+  const height = Math.abs(b - t)
+  return {
+    x: symmetric ? s.x + (s.width - width) / 2 : Math.min(l, r),
+    y: symmetric ? s.y + (s.height - height) / 2 : Math.min(t, b),
+    width,
+    height
+  }
 }
 
 /**

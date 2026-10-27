@@ -443,7 +443,7 @@
   "export.resize.method.bicubic": "Bicubic",
   "export.resize.method.lanczos3": "Lanczos (default)",
   "editor.crop": "Crop",
-  "editor.cropCanvas": "Drag the corners to resize, or inside the frame to move it. Drag just outside the frame to rotate; hold Shift to snap to 15°. Arrow keys nudge; Return applies; Escape cancels.",
+  "editor.cropCanvas": "Drag the corners to resize, or inside the frame to move it. Drag just outside the frame to rotate; hold Shift to snap to 15°. Arrow keys nudge; Return applies; Escape cancels. Hold Alt (Option on macOS) to resize from the center.",
   "editor.exportEmbeddedJpeg": "Export embedded JPEG",
   "editor.filmHelp": "Simulates exposing the photo onto real film and printing it on paper.",
   "editor.monochrome": "Monochrome",

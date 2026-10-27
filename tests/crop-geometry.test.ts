@@ -50,6 +50,24 @@ it('slides a dragged frame along the image edge and keeps locked ratios', () => 
   expect(side.y + side.height / 2).toBeCloseTo(start.y + start.height / 2)
 })
 
+it.each([undefined, 1.5])('resizes all handles about the center with ratio %s', (ratio) => {
+  const start = { x: 300, y: 200, width: 600, height: 400 }
+  for (const handle of ['n', 'ne', 'e', 'se', 's', 'sw', 'w', 'nw']) {
+    const dx = handle.includes('w') ? -60 : handle.includes('e') ? 60 : 0
+    const dy = handle.includes('n') ? -40 : handle.includes('s') ? 40 : 0
+    const next = dragFrame(start, handle, dx, dy, ratio, true)
+    expect(next.x + next.width / 2).toBe(600)
+    expect(next.y + next.height / 2).toBe(400)
+    expect(next.width).toBe(ratio || dx ? 720 : 600)
+    expect(next.height).toBe(ratio || dy ? 480 : 400)
+  }
+  expect(dragFrame(start, 'move', 60, 40, ratio, true)).toEqual({
+    ...start,
+    x: 360,
+    y: 240
+  })
+})
+
 it.each([undefined, 1.5])('fits crops drawn from a point with ratio %s', (ratio) => {
   const start = { x: W / 2, y: H / 2, width: 0, height: 0 }
   const crop = (dx: number, dy: number): Rect | null =>

@@ -112,15 +112,70 @@ function canvas(props: Parameters<typeof Canvas>[0] = {}): SVGSVGElement {
   return svg
 }
 
-function pointer(svg: SVGSVGElement, type: 'Down' | 'Move' | 'Up', x: number, y: number) {
+function pointer(
+  svg: SVGSVGElement,
+  type: 'Down' | 'Move' | 'Up',
+  x: number,
+  y: number,
+  altKey = false
+) {
   const [clientX, clientY] = [
     [x, y],
     [H - y, x],
     [W - x, H - y],
     [y, W - x]
   ][recipe.rotation]
-  fireEvent[`pointer${type}`](svg, { clientX, clientY, button: 0, buttons: type === 'Up' ? 0 : 1 })
+  fireEvent[`pointer${type}`](svg, {
+    clientX,
+    clientY,
+    button: 0,
+    buttons: type === 'Up' ? 0 : 1,
+    altKey
+  })
 }
+
+it.each([0, 1, 2, 3])('uses Alt during a resize at quarter turn %s', (rotation) => {
+  const svg = canvas({ rotation })
+  pointer(svg, 'Down', 900, 600)
+  pointer(svg, 'Move', 960, 640, true)
+  expect(recipe.crop).toEqual({ x: 0.2, y: 0.2, width: 0.6, height: 0.6 })
+  pointer(svg, 'Move', 960, 640)
+  expect(recipe.crop).toEqual({ x: 0.25, y: 0.25, width: 0.55, height: 0.55 })
+  pointer(svg, 'Move', W * 2, H * 2, true)
+  expect(recipe.crop!.x).toBeCloseTo(0)
+  expect(recipe.crop!.y).toBeCloseTo(0)
+  expect(recipe.crop!.width).toBeCloseTo(1)
+  expect(recipe.crop!.height).toBeCloseTo(1)
+  pointer(svg, 'Up', W * 2, H * 2, true)
+  expect(store.commit).toHaveBeenCalledOnce()
+})
+
+it('keeps the locked ratio and center when Alt-dragging a side handle', () => {
+  const svg = canvas({ locked: true })
+  pointer(svg, 'Down', 300, 400, true)
+  pointer(svg, 'Move', 240, 400, true)
+  expect(recipe.crop).toEqual({ x: 0.2, y: 0.2, width: 0.6, height: 0.6 })
+  pointer(svg, 'Up', 240, 400, true)
+  expect(store.commit).toHaveBeenCalledOnce()
+})
+
+it('keeps the opposite corner fixed when Control is held', () => {
+  const svg = canvas()
+  pointer(svg, 'Down', 900, 600)
+  fireEvent.pointerMove(svg, { clientX: 960, clientY: 640, buttons: 1, ctrlKey: true })
+  expect(recipe.crop).toEqual({ x: 0.25, y: 0.25, width: 0.55, height: 0.55 })
+  pointer(svg, 'Up', 960, 640)
+  expect(store.commit).toHaveBeenCalledOnce()
+})
+
+it.each([false, true])('draws a crop about the pointer with Alt and lock %s', (locked) => {
+  const svg = canvas({ initialCrop: null, locked })
+  pointer(svg, 'Down', 600, 400, true)
+  pointer(svg, 'Move', 900, 600, true)
+  expect(recipe.crop).toEqual(crop)
+  pointer(svg, 'Up', 900, 600, true)
+  expect(store.commit).toHaveBeenCalledOnce()
+})
 
 it('draws a free crop inside a full frame and stops at the image bounds', () => {
   const svg = canvas({ initialCrop: null })

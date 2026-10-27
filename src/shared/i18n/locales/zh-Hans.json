@@ -443,7 +443,7 @@
   "export.resize.method.bicubic": "双三次",
   "export.resize.method.lanczos3": "Lanczos（默认）",
   "editor.crop": "裁剪",
-  "editor.cropCanvas": "拖动角落调整大小，拖动框内进行移动。拖动框外附近可旋转，按住 Shift 以 15° 为步进对齐。方向键微调，按 Return 应用，按 Escape 取消。",
+  "editor.cropCanvas": "拖动角落调整大小，拖动框内进行移动。拖动框外附近可旋转，按住 Shift 以 15° 为步进对齐。方向键微调，按 Return 应用，按 Escape 取消。 按住 Alt（macOS 上为 Option） 拖动可从中心对称调整大小。",
   "editor.exportEmbeddedJpeg": "导出内嵌 JPEG",
   "editor.filmHelp": "模拟将照片曝光到真实胶片并印放到相纸上的过程。",
   "editor.monochrome": "单色",
