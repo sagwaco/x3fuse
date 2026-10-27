@@ -7,6 +7,7 @@ mod film;
 mod geometry;
 mod preview;
 mod recipe;
+mod region;
 mod stocks;
 pub use camera::{read_camera_profiles, CameraProfile, CameraProfiles};
 pub use color::{
@@ -15,6 +16,7 @@ pub use color::{
 };
 pub use export::{ExportResize, ResamplingMethod};
 pub use preview::raw_preview;
+pub use region::jpeg_region;
 pub use recipe::{
     BaseCurve, ColorWheels, Crop, Curves, DngDemosaic, EditRecipe, EffectsSettings, FilmSettings,
     GrainParams, HalationParams, HslBand, MonochromeFilter, MonochromeSettings, Point, RawColor,

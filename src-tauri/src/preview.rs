@@ -69,15 +69,17 @@ fn read_metadata(store: &Store, key: &str) -> Option<DisplayMeta> {
 }
 
 /// A disk lookup for `get`. The full JPEG falls back to the preview when the
-/// photo has none. Outer None: no entry.
-fn read_preview(store: &Store, key: &str, full: bool) -> Option<Vec<u8>> {
+/// photo has none. The bool identifies an embedded full JPEG. None means no entry.
+fn read_preview(store: &Store, key: &str, full: bool) -> Option<(Vec<u8>, bool)> {
     if full {
         let bytes = read_jpeg(store, key, "full.jpg")?;
         if !bytes.is_empty() {
-            return Some(bytes);
+            return Some((bytes, true));
         }
+        // Keep the missing-full marker even if its small preview is not stored yet.
+        return Some((read_jpeg(store, key, "jpg").unwrap_or_default(), false));
     }
-    read_jpeg(store, key, "jpg")
+    read_jpeg(store, key, "jpg").map(|bytes| (bytes, false))
 }
 
 pub struct Previews {
@@ -86,6 +88,7 @@ pub struct Previews {
     slots: Semaphore,
     thumbnail_slots: Semaphore,
     raw_slot: Semaphore,
+    region_slot: Arc<Semaphore>,
     exif: Arc<ExifTool>,
     pub store: Arc<Store>,
 }
@@ -98,6 +101,7 @@ impl Previews {
             slots: Semaphore::new(4),
             thumbnail_slots: Semaphore::new(3),
             raw_slot: Semaphore::new(1),
+            region_slot: Arc::new(Semaphore::new(1)),
             exif,
             store,
         }
@@ -235,12 +239,17 @@ impl Previews {
                 tauri::async_runtime::spawn_blocking(move || read_preview(&store, &disk_key, full))
                     .await
                     .map_err(|e| e.to_string())?;
-            let Some(bytes) = hit else {
+            let Some((bytes, embedded)) = hit else {
                 Stats::add(&self.store.stats.misses);
                 return Ok(None);
             };
+            if bytes.is_empty() {
+                return Ok(None);
+            }
             let image = Arc::new(bytes);
-            self.store_memory(&memory_key, &Some(image.clone()), generation);
+            if !full || embedded {
+                self.store_memory(&memory_key, &Some(image.clone()), generation);
+            }
             return Ok(Some(image));
         }
         let flight = self
@@ -254,8 +263,165 @@ impl Previews {
         let result = self
             .generate(path, full, ticket, &memory_key, &flight)
             .await;
-        self.flights.lock().await.remove(&memory_key);
+        let mut flights = self.flights.lock().await;
+        if Arc::strong_count(&flight) == 2 {
+            flights.remove(&memory_key);
+        }
         result
+    }
+
+    /// Checks for an embedded full JPEG without substituting the small fallback.
+    /// None means that a cache-only lookup cannot determine the result.
+    /// DNG native views use RAW because embedded previews can have a smaller size.
+    pub async fn has_embedded_full(
+        &self,
+        path: &Path,
+        cache_only: bool,
+    ) -> Result<Option<bool>, String> {
+        source_path(path)?;
+        if crate::source::Kind::of(path) == crate::source::Kind::Dng {
+            return Ok(Some(false));
+        }
+        let source = path.to_owned();
+        let store = self.store.clone();
+        let ticket = tauri::async_runtime::spawn_blocking(move || Ticket::new(&store, &source))
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or("Preview source unavailable")?;
+        let memory_key = Self::memory_key(&ticket.key, true);
+        // Full memory entries contain only embedded JPEGs, never small fallbacks.
+        if self.cached(&memory_key).is_some() {
+            return Ok(Some(true));
+        }
+        if cache_only {
+            return self
+                .inspect_embedded_full(path, ticket, &memory_key, true)
+                .await;
+        }
+        let flight = self
+            .flights
+            .lock()
+            .await
+            .entry(memory_key.clone())
+            .or_insert_with(|| Arc::new(AsyncMutex::new(())))
+            .clone();
+        let result = {
+            let _guard = flight.lock().await;
+            self.inspect_embedded_full(path, ticket, &memory_key, false)
+                .await
+        };
+        let mut flights = self.flights.lock().await;
+        if Arc::strong_count(&flight) == 2 {
+            flights.remove(&memory_key);
+        }
+        result
+    }
+
+    async fn inspect_embedded_full(
+        &self,
+        path: &Path,
+        ticket: Ticket,
+        memory_key: &str,
+        cache_only: bool,
+    ) -> Result<Option<bool>, String> {
+        if self.cached(memory_key).is_some() {
+            return Ok(Some(true));
+        }
+        let store = self.store.clone();
+        let disk_key = ticket.key.clone();
+        let hit =
+            tauri::async_runtime::spawn_blocking(move || read_jpeg(&store, &disk_key, "full.jpg"))
+                .await
+                .map_err(|e| e.to_string())?;
+        if let Some(bytes) = hit {
+            let embedded = !bytes.is_empty();
+            if embedded {
+                self.store_memory(memory_key, &Some(Arc::new(bytes)), ticket.generation);
+            }
+            return Ok(Some(embedded));
+        }
+        if cache_only {
+            return Ok(None);
+        }
+        let _slot = self.slots.acquire().await.map_err(|e| e.to_string())?;
+        let bytes = self.exif.preview(path, true).await?;
+        let embedded = bytes.is_some();
+        let store = self.store.clone();
+        let source = path.to_owned();
+        let generation = ticket.generation;
+        let bytes = tauri::async_runtime::spawn_blocking(move || {
+            if source_key(&source).as_ref() != Some(&ticket.key) {
+                return Err("Preview source changed".into());
+            }
+            ticket.store(
+                &store,
+                &source,
+                "full.jpg",
+                bytes.as_deref().unwrap_or_default(),
+            );
+            Ok::<_, String>(bytes.map(Arc::new))
+        })
+        .await
+        .map_err(|e| e.to_string())??;
+        self.store_memory(memory_key, &bytes, generation);
+        Ok(Some(embedded))
+    }
+
+    /// Returns an upright region of the full JPEG. Cache-only requests never decode.
+    pub async fn get_region(
+        &self,
+        path: &Path,
+        region: x3f_render::Crop,
+        cache_only: bool,
+    ) -> Result<Image, String> {
+        source_path(path)?;
+        let source = path.to_owned();
+        let generation = self.store.generation();
+        let key = tauri::async_runtime::spawn_blocking(move || source_key(&source))
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or("Preview source unavailable")?;
+        let memory_key = format!("original:{key}:region:{region:?}");
+        if let Some(hit) = self.cached(&memory_key) {
+            return Ok(Some(hit));
+        }
+        if cache_only {
+            return Ok(None);
+        }
+        let slot = self
+            .region_slot
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|e| e.to_string())?;
+        if let Some(hit) = self.cached(&memory_key) {
+            return Ok(Some(hit));
+        }
+        let Some(bytes) = self.get(path, true, false).await? else {
+            return Ok(None);
+        };
+        let source = path.to_owned();
+        let image = tauri::async_runtime::spawn_blocking(move || {
+            // Keep the slot until the decoder stops, even if the request is cancelled.
+            let _slot = slot;
+            let x = f64::from(region.x);
+            let y = f64::from(region.y);
+            let rectangle = [
+                x,
+                y,
+                f64::from(region.width).min(1.0 - x),
+                f64::from(region.height).min(1.0 - y),
+            ];
+            let bytes = x3f_render::jpeg_region(&bytes, rectangle).map_err(|e| e.to_string())?;
+            if source_key(&source).as_ref() != Some(&key) {
+                return Err("Preview source changed".into());
+            }
+            Ok::<_, String>(Some(Arc::new(bytes)))
+        })
+        .await
+        .map_err(|e| e.to_string())??;
+        self.store_memory(&memory_key, &image, generation);
+        Ok(image)
     }
 
     async fn generate(
@@ -277,9 +443,14 @@ impl Previews {
             tauri::async_runtime::spawn_blocking(move || read_preview(&store, &disk_key, full))
                 .await
                 .unwrap_or(None);
-        if let Some(bytes) = hit {
+        if let Some((bytes, embedded)) = hit {
+            if bytes.is_empty() {
+                return Box::pin(self.get(path, false, false)).await;
+            }
             let image = Some(Arc::new(bytes));
-            self.store_memory(memory_key, &image, ticket.generation);
+            if !full || embedded {
+                self.store_memory(memory_key, &image, ticket.generation);
+            }
             return Ok(image);
         }
         Stats::add(&self.store.stats.misses);
@@ -310,7 +481,9 @@ impl Previews {
                 let (store, source, marker) = (self.store.clone(), path.to_owned(), ticket.clone());
                 tauri::async_runtime::spawn_blocking(move || {
                     marker.store(&store, &source, "full.jpg", &[])
-                });
+                })
+                .await
+                .map_err(|e| e.to_string())?;
                 kind = "";
                 Box::pin(self.get(path, false, false)).await
             } else {
@@ -336,13 +509,18 @@ impl Previews {
         }
         if let (Ok(Some(bytes)), false) = (&result, kind.is_empty()) {
             let (store, source, bytes) = (self.store.clone(), path.to_owned(), bytes.clone());
-            // The response does not wait for the disk.
-            tauri::async_runtime::spawn_blocking(move || {
+            let write = tauri::async_runtime::spawn_blocking(move || {
                 ticket.store(&store, &source, kind, &bytes)
             });
+            // Finish full entries before releasing the shared extraction flight.
+            if full {
+                write.await.map_err(|e| e.to_string())?;
+            }
         }
         if let Ok(image) = &result {
-            self.store_memory(memory_key, image, generation);
+            if !full || !kind.is_empty() {
+                self.store_memory(memory_key, image, generation);
+            }
         }
         result
     }
@@ -356,6 +534,16 @@ impl Previews {
                 self.store.current(generation)
             });
         }
+    }
+}
+
+pub(crate) fn content_type(bytes: &[u8]) -> &'static str {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        "image/png"
+    } else if is_jpeg(bytes) {
+        "image/jpeg"
+    } else {
+        "application/octet-stream"
     }
 }
 
@@ -373,7 +561,7 @@ pub fn cache_control(uri: &str, status: u16) -> &'static str {
     }
 }
 
-/// The source path, whether the request is for the full JPEG, and whether it
+/// The source path, whether the request uses full size (`full` or `native`), and whether it
 /// is cache-only (`cacheOnly=1`).
 pub fn protocol_path(uri: &str) -> Result<(std::path::PathBuf, bool, bool), String> {
     let url = url::Url::parse(uri).map_err(|e| e.to_string())?;
@@ -389,9 +577,12 @@ pub fn protocol_path(uri: &str) -> Result<(std::path::PathBuf, bool, bool), Stri
         .map(|(_, v)| v.as_ref())
     {
         None | Some("preview") => false,
-        Some("full") => true,
+        Some("full" | "native") => true,
         _ => return Err("Invalid preview variant".into()),
     };
+    if !full && protocol_region(&url)?.is_some() {
+        return Err("Preview region requires full variant".into());
+    }
     let cache_only = cache_only(&url)?;
     let path = std::path::PathBuf::from(path.as_ref());
     source_path(&path)?;
@@ -407,6 +598,46 @@ pub fn cache_only(url: &url::Url) -> Result<bool, String> {
     }
 }
 
+/// Parses a normalized rectangle in upright image coordinates.
+pub(crate) fn protocol_region(url: &url::Url) -> Result<Option<x3f_render::Crop>, String> {
+    let mut values = url.query_pairs().filter(|(key, _)| key == "region");
+    let Some((_, value)) = values.next() else {
+        return Ok(None);
+    };
+    if values.next().is_some() {
+        return Err("Invalid preview region".into());
+    }
+    let numbers = value
+        .split(',')
+        .map(str::parse::<f64>)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| "Invalid preview region")?;
+    let region: [f64; 4] = numbers.try_into().map_err(|_| "Invalid preview region")?;
+    let [x, y, width, height] = region;
+    if !region.iter().all(|v| v.is_finite())
+        || x < 0.0
+        || y < 0.0
+        || x >= 1.0
+        || y >= 1.0
+        || width <= 0.0
+        || height <= 0.0
+        || x + width > 1.0
+        || y + height > 1.0
+    {
+        return Err("Invalid preview region".into());
+    }
+    let crop = x3f_render::Crop {
+        x: x as f32,
+        y: y as f32,
+        width: width as f32,
+        height: height as f32,
+    };
+    if crop.x >= 1.0 || crop.y >= 1.0 || crop.width <= 0.0 || crop.height <= 0.0 {
+        return Err("Invalid preview region".into());
+    }
+    Ok(Some(crop))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -414,6 +645,158 @@ mod tests {
     use std::{fs, future::Future, task::Poll, time::Duration};
 
     const JPEG: &[u8] = &[0xff, 0xd8, 0xff, 0xd9];
+
+    #[test]
+    fn original_content_type_matches_transport_bytes() {
+        assert_eq!(content_type(JPEG), "image/jpeg");
+        assert_eq!(content_type(b"\x89PNG\r\n\x1a\n"), "image/png");
+        assert_eq!(content_type(b"X3F8\0\0\0\0"), "application/octet-stream");
+        assert_eq!(content_type(b""), "application/octet-stream");
+    }
+
+    #[test]
+    fn native_variant_uses_full_path_and_accepts_regions() {
+        let dir = tempfile::tempdir().unwrap();
+        let expected = source(dir.path(), "image.X3F", b"raw");
+        let encoded = percent_encoding::utf8_percent_encode(
+            expected.to_str().unwrap(),
+            percent_encoding::NON_ALPHANUMERIC,
+        );
+        let base = format!("x3f-preview://localhost/{encoded}");
+        let uri = format!("{base}?v=native&region=0,0,0.5,1&cacheOnly=1");
+        let (path, full, cache_only) = protocol_path(&uri).unwrap();
+        assert_eq!(path, expected);
+        assert!(full && cache_only);
+        let (_, full, cache_only) = protocol_path(&format!("{base}?v=full")).unwrap();
+        assert!(full && !cache_only);
+    }
+
+    #[tokio::test]
+    async fn native_detection_reads_markers_without_extraction_or_fallback() {
+        let dir = tempfile::tempdir().unwrap();
+        let previews = previews(dir.path(), dir.path().join("missing-exiftool"), 1 << 20);
+        let embedded = source(dir.path(), "embedded.X3F", b"raw");
+        let no_jpeg = source(dir.path(), "sd9.X3F", b"raw");
+        let unknown = source(dir.path(), "unknown.X3F", b"raw");
+        let dng = source(dir.path(), "image.DNG", b"raw");
+        for (path, bytes) in [(&embedded, JPEG), (&no_jpeg, &[][..]), (&dng, JPEG)] {
+            Ticket::new(&previews.store, path).unwrap().store(
+                &previews.store,
+                path,
+                "full.jpg",
+                bytes,
+            );
+        }
+        // A cached fallback stays in preview memory and cannot imply a full JPEG.
+        previews.store_memory(
+            &Previews::memory_key(&key(&unknown), false),
+            &Some(Arc::new(JPEG.to_vec())),
+            previews.store.generation(),
+        );
+        let _slots = previews.slots.acquire_many(4).await.unwrap();
+        for (path, expected) in [
+            (&embedded, Some(true)),
+            (&no_jpeg, Some(false)),
+            (&unknown, None),
+            (&dng, Some(false)),
+        ] {
+            assert_eq!(
+                tokio::time::timeout(
+                    Duration::from_secs(5),
+                    previews.has_embedded_full(path, true)
+                )
+                .await
+                .unwrap()
+                .unwrap(),
+                expected
+            );
+        }
+        assert_eq!(
+            previews.has_embedded_full(&dng, false).await.unwrap(),
+            Some(false)
+        );
+        assert_eq!(
+            previews.has_embedded_full(&embedded, false).await.unwrap(),
+            Some(true)
+        );
+        assert_eq!(
+            previews.has_embedded_full(&no_jpeg, false).await.unwrap(),
+            Some(false)
+        );
+        drop(_slots);
+        assert!(previews.has_embedded_full(&unknown, false).await.is_err());
+        assert!(read_jpeg(&previews.store, &key(&unknown), "full.jpg").is_none());
+        assert_eq!(fs::read(no_jpeg).unwrap(), b"raw");
+    }
+
+    #[test]
+    fn region_query_requires_one_finite_normalized_rectangle() {
+        let uri = "x3f-preview://localhost/%2Fimage.X3F?v=full";
+        let parse = |uri: &str| protocol_region(&url::Url::parse(uri).unwrap());
+        assert_eq!(parse(uri).unwrap(), None);
+        assert_eq!(
+            parse(&format!("{uri}&region=0,0.25,1,0.5")).unwrap(),
+            Some(x3f_render::Crop {
+                x: 0.0,
+                y: 0.25,
+                width: 1.0,
+                height: 0.5
+            })
+        );
+        for value in [
+            "",
+            "0,0,1",
+            "0,0,1,1,1",
+            "NaN,0,1,1",
+            "0,0,inf,1",
+            "-0.1,0,1,1",
+            "0,0,0,1",
+            "0.5,0,0.6,1",
+            "0,1,1,0.1",
+        ] {
+            assert!(parse(&format!("{uri}&region={value}")).is_err(), "{value}");
+        }
+        assert!(parse(&format!("{uri}&region=0,0,1,1&region=0,0,1,1")).is_err());
+        assert!(
+            protocol_path("x3f-preview://localhost/%2Fimage.X3F?v=preview&region=0,0,1,1").is_err()
+        );
+        assert!(
+            parse("x3f-edit://localhost/%2Fimage.X3F?v=region&region=0,0,1,1")
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[tokio::test]
+    async fn region_cache_only_never_waits_or_decodes_full_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = source(dir.path(), "region.X3F", b"raw");
+        let previews = previews(dir.path(), dir.path().into(), 1 << 20);
+        let region = x3f_render::Crop {
+            x: 0.0,
+            y: 0.0,
+            width: 0.5,
+            height: 0.5,
+        };
+        let generation = previews.store.generation();
+        previews.store_memory(
+            &Previews::memory_key(&key(&path), true),
+            &Some(Arc::new(JPEG.to_vec())),
+            generation,
+        );
+        let _slot = previews.region_slot.acquire().await.unwrap();
+        let read = || {
+            tokio::time::timeout(
+                Duration::from_secs(5),
+                previews.get_region(&path, region, true),
+            )
+        };
+        assert!(read().await.unwrap().unwrap().is_none());
+        let region_key = format!("original:{}:region:{region:?}", key(&path));
+        previews.store_memory(&region_key, &Some(Arc::new(JPEG.to_vec())), generation);
+        assert_eq!(read().await.unwrap().unwrap().unwrap().as_slice(), JPEG);
+        assert_eq!(fs::read(&path).unwrap(), b"raw");
+    }
 
     fn store(dir: &Path, limit: u64) -> Arc<Store> {
         let logs = Arc::new(Logs::new(dir.join("logs")));
@@ -624,18 +1007,106 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
+    async fn native_and_fit_share_full_extraction_and_prefer_memory() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("exiftool"),
+            r#"
+            if (grep { $_ eq "-JpgFromRaw" } @ARGV) {
+                open(my $calls, ">>", "$ARGV[-1].calls") or die $!;
+                print $calls "full\n";
+                close($calls);
+                select(undef, undef, undef, 0.02);
+                print pack("C*", 255, 216, 255, 217);
+            }
+        "#,
+        )
+        .unwrap();
+        for native_first in [false, true] {
+            let path = source(dir.path(), &format!("embedded-{native_first}.X3F"), b"raw");
+            let previews = previews(dir.path(), dir.path().into(), 1 << 20);
+            let native = previews.has_embedded_full(&path, false);
+            let fit = previews.get(&path, true, false);
+            let (native, fit) = if native_first {
+                tokio::join!(native, fit)
+            } else {
+                let (fit, native) = tokio::join!(fit, native);
+                (native, fit)
+            };
+            assert_eq!(native.unwrap(), Some(true));
+            assert_eq!(fit.unwrap().unwrap().as_slice(), JPEG);
+            assert_eq!(
+                fs::read_to_string(format!("{}.calls", path.display())).unwrap(),
+                "full\n"
+            );
+            assert!(previews.flights.lock().await.is_empty());
+            fs::remove_file(
+                dir.path()
+                    .join("cache")
+                    .join(crate::cache::DIRECTORY)
+                    .join(&key(&path)[..2])
+                    .join(name(&key(&path), "full.jpg")),
+            )
+            .unwrap();
+            // With no disk entry and every slot held, the memory hit still answers.
+            let _slots = previews.slots.acquire_many(4).await.unwrap();
+            for cache_only in [false, true] {
+                assert_eq!(
+                    tokio::time::timeout(
+                        Duration::from_secs(5),
+                        previews.has_embedded_full(&path, cache_only)
+                    )
+                    .await
+                    .unwrap()
+                    .unwrap(),
+                    Some(true)
+                );
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
     async fn missing_full_jpeg_reuses_thumbnail_and_is_remembered() {
         let dir = tempfile::tempdir().unwrap();
-        fs::write(dir.path().join("exiftool"), r#"if (grep { $_ eq "-PreviewImage" } @ARGV) { print pack("C*", 255, 216, 255, 217); }"#).unwrap();
+        fs::write(
+            dir.path().join("exiftool"),
+            r#"
+            if (grep { $_ eq "-JpgFromRaw" } @ARGV) {
+                open(my $calls, ">>", "$ARGV[-1].calls") or die $!;
+                print $calls "full\n";
+            }
+            if (grep { $_ eq "-PreviewImage" } @ARGV) {
+                print pack("C*", 255, 216, 255, 217);
+            }
+        "#,
+        )
+        .unwrap();
         let path = source(dir.path(), "no-jpeg.X3F", b"raw");
         let previews = previews(dir.path(), dir.path().into(), 1 << 20);
         let occupied = previews.slots.acquire_many(3).await.unwrap();
-        let image = tokio::time::timeout(Duration::from_secs(5), previews.get(&path, true, false))
-            .await
-            .unwrap()
-            .unwrap()
-            .unwrap();
+        let (native, image) = tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::join!(
+                previews.has_embedded_full(&path, false),
+                previews.get(&path, true, false)
+            )
+        })
+        .await
+        .unwrap();
+        assert_eq!(native.unwrap(), Some(false));
+        let image = image.unwrap().unwrap();
+        assert_eq!(
+            fs::read_to_string(format!("{}.calls", path.display())).unwrap(),
+            "full\n"
+        );
         assert_eq!(image.as_slice(), JPEG);
+        assert!(previews
+            .cached(&Previews::memory_key(&key(&path), true))
+            .is_none());
+        assert_eq!(
+            previews.has_embedded_full(&path, true).await.unwrap(),
+            Some(false)
+        );
         assert!(previews.flights.lock().await.is_empty());
         drop(occupied);
         // Disk writes run after the response.
@@ -651,6 +1122,9 @@ mod tests {
         let fresh = self::previews(dir.path(), dir.path().join("missing"), 1 << 20);
         let full = fresh.get(&path, true, true).await.unwrap().unwrap();
         assert_eq!(full.as_slice(), JPEG);
+        assert!(fresh
+            .cached(&Previews::memory_key(&key(&path), true))
+            .is_none());
     }
 
     #[cfg(unix)]

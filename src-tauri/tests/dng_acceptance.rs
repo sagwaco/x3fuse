@@ -450,3 +450,142 @@ fn dng_default_preview_and_export_use_the_resolved_method() {
     .unwrap();
     assert_eq!(warmed["draft"], false);
 }
+
+#[test]
+#[ignore = "requires X3FUSE_TEST_DNG and a supported GPU"]
+fn dng_original_native_region_framing_cache_and_source_protection() {
+    use std::time::Instant;
+    let input = PathBuf::from(std::env::var_os("X3FUSE_TEST_DNG").expect("Set X3FUSE_TEST_DNG"));
+    assert!(input.is_absolute() && input.is_file());
+    let original_hash = Sha256::digest(fs::read(&input).unwrap());
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("native.dng");
+    fs::copy(&input, &path).unwrap();
+    let cancel = AtomicBool::new(false);
+    let info = x3f_dng::inspect(&path, &cancel).unwrap();
+    let dto = basic_metadata(path.clone()).unwrap();
+    assert!(dto.edit_error.is_none(), "{:?}", dto.edit_error);
+    let active = if (5..=8).contains(&info.orientation) {
+        [info.height, info.width]
+    } else {
+        [info.width, info.height]
+    };
+    assert_eq!(dto.native_dimensions, Some(active));
+    assert_eq!(dto.as_shot_crop, info.as_shot_crop);
+    let [_, _, cw, ch] = info.as_shot_crop.unwrap_or([0., 0., 1., 1.]);
+    let width = (active[0] as f32 * cw).round().max(1.) as u32;
+    let height = (active[1] as f32 * ch).round().max(1.) as u32;
+    // Region previews cap their longest edge at 4096 without upsampling.
+    let factor = (4096. / (width.max(height) as f32 * 0.25)).min(1.);
+    let fw = (width as f32 * factor).round() as u32;
+    let fh = (height as f32 * factor).round() as u32;
+    let x = (fw as f32 * 0.25).floor() as u32;
+    let y = (fh as f32 * 0.25).floor() as u32;
+    let rw = (fw as f32 * 0.5).ceil() as u32 - x;
+    let rh = (fh as f32 * 0.5).ceil() as u32 - y;
+    let expected_region = [
+        x as f32 / fw as f32,
+        y as f32 / fh as f32,
+        rw as f32 / fw as f32,
+        rh as f32 / fh as f32,
+    ];
+    let logs = Arc::new(Logs::new(directory.path().join("logs")));
+    let cache = directory.path().join("previews");
+    let store = Store::open(cache.clone(), vec![], true, 256 * 1024 * 1024, logs.clone());
+    let memory = Arc::new(Memory::new(128 * 1024 * 1024));
+    let edits = directory.path().join("edits");
+    let editor = Editor::with_cache(edits.clone(), store.clone(), memory.clone());
+    let uri = "x3f-preview://localhost/original?v=native";
+    let region_uri = format!("{uri}&region=0.25,0.25,0.25,0.25&format=rgba8");
+    assert!(editor
+        .original_native(&path, &format!("{uri}&cacheOnly=1"))
+        .unwrap()
+        .is_none());
+    let started = Instant::now();
+    let region = editor.original_native(&path, &region_uri).unwrap().unwrap();
+    let region_time = started.elapsed();
+    assert_eq!(&region[..4], b"X3F8");
+    let word = |at| u32::from_le_bytes(region[at..at + 4].try_into().unwrap());
+    assert_eq!((word(4), word(8), word(12)), (rw, rh, 1));
+    let pixels_end = 16 + rw as usize * rh as usize * 4;
+    assert_eq!(region.len(), pixels_end + 16);
+    for (index, expected) in expected_region.into_iter().enumerate() {
+        let at = pixels_end + index * 4;
+        let actual = f32::from_le_bytes(region[at..at + 4].try_into().unwrap());
+        assert!(
+            (actual - expected).abs() < 1e-6,
+            "region {index}: {actual} != {expected}"
+        );
+    }
+    assert!(
+        !editor.needs_close_flush(),
+        "Original preview must not open an editor session"
+    );
+    let started = Instant::now();
+    let native = editor.original_native(&path, uri).unwrap().unwrap();
+    let native_time = started.elapsed();
+    assert!(native.starts_with(&[0xff, 0xd8]) && native.ends_with(&[0xff, 0xd9]));
+    // Read the JPEG SOF dimensions without decoding its full pixel buffer.
+    let jpeg_dimensions = |bytes: &[u8]| {
+        let mut at = 2;
+        loop {
+            assert_eq!(bytes[at], 0xff);
+            let marker = bytes[at + 1];
+            if matches!(marker, 0xc0 | 0xc2) {
+                let h = u16::from_be_bytes(bytes[at + 5..at + 7].try_into().unwrap());
+                let w = u16::from_be_bytes(bytes[at + 7..at + 9].try_into().unwrap());
+                break (u32::from(w), u32::from(h));
+            }
+            assert_ne!(marker, 0xda, "JPEG must have dimensions before its scan");
+            at += 2 + usize::from(u16::from_be_bytes(
+                bytes[at + 2..at + 4].try_into().unwrap(),
+            ));
+        }
+    };
+    assert_eq!(jpeg_dimensions(&native), (width, height));
+    let fit = x3f_dng::preview(&path, &cancel).unwrap();
+    let (mut fit_width, mut fit_height) = jpeg_dimensions(&fit);
+    if (5..=8).contains(&info.orientation) {
+        std::mem::swap(&mut fit_width, &mut fit_height);
+    }
+    // Thumbnail rounding can change either edge by one pixel.
+    assert!((fit_width as f64 - fit_height as f64 * width as f64 / height as f64).abs() <= 2.);
+    eprintln!(
+        "DNG active {active:?}, native {width}x{height}, region {rw}x{rh}, Fit {fit_width}x{fit_height}: cold region {region_time:?}, whole native after region {native_time:?}"
+    );
+    editor.persist_previews();
+    assert!(editor.load(&path).unwrap().is_none());
+    assert!(!editor.needs_close_flush());
+    drop(editor);
+    drop(memory);
+    drop(store);
+    let store = Store::open(cache, vec![], true, 256 * 1024 * 1024, logs);
+    let memory = Arc::new(Memory::new(128 * 1024 * 1024));
+    let reopened = Editor::with_cache(edits, store.clone(), memory.clone());
+    reopened
+        .paused
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let cached_uri = format!("{uri}&cacheOnly=1");
+    assert_eq!(
+        *reopened
+            .original_native(&path, &cached_uri)
+            .unwrap()
+            .unwrap(),
+        *native
+    );
+    store.clear().unwrap();
+    memory.clear();
+    reopened.cache_cleared();
+    assert!(reopened
+        .original_native(&path, &cached_uri)
+        .unwrap()
+        .is_none());
+    assert!(!reopened.needs_close_flush());
+    assert!(
+        reopened.edits.load(&path).unwrap().is_none(),
+        "No sidecar or backup edits"
+    );
+    assert!(!directory.path().join("native.dng.x3fuse.json").exists());
+    assert_eq!(Sha256::digest(fs::read(&path).unwrap()), original_hash);
+    assert_eq!(Sha256::digest(fs::read(&input).unwrap()), original_hash);
+}

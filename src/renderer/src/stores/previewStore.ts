@@ -13,6 +13,7 @@ export interface PreviewMap {
 
 interface PreviewControls {
   fileId: string
+  /** Zoom values use display pixels per image pixel. Null selects Fit. */
   zoom: number | null
   scale: number
   minZoom: number

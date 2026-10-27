@@ -1,4 +1,5 @@
 import { ipc } from './ipc'
+import type { PreviewRegion } from '@shared/editor'
 
 /** Pixels ready to draw. Call release() after drawing. */
 export interface Frame {
@@ -6,6 +7,7 @@ export interface Frame {
   width: number
   height: number
   release(): void
+  region?: PreviewRegion
 }
 
 export type ImageRequest = {
@@ -23,9 +25,11 @@ const EMBEDDED = /^(x3f-preview:\/\/|https?:\/\/x3f-preview\.localhost([/:]|$))/
 
 export const isEditedFrame = (url: string): boolean => EDITED.test(url)
 export const isEmbeddedPreview = (url: string): boolean => EMBEDDED.test(url)
+const nativeOriginal = (url: string): boolean =>
+  isEmbeddedPreview(url) && new URL(url).searchParams.get('v') === 'native'
 /** Thumbnails stay PNG; only full and region frames load as raw RGBA8. */
 const isRaw = (url: string): boolean =>
-  isEditedFrame(url) && new URL(url).searchParams.get('v') !== 'thumbnail'
+  (isEditedFrame(url) || nativeOriginal(url)) && new URL(url).searchParams.get('v') !== 'thumbnail'
 const cancelled = (): DOMException => new DOMException('Cancelled', 'AbortError')
 const stopped = (request: ImageRequest): boolean =>
   !!request.cancelled || request.controller.signal.aborted
@@ -102,7 +106,7 @@ export async function fetchPreview(
   format?: string
 ): Promise<Response> {
   let url = source
-  if (isEditedFrame(url)) {
+  if (isEditedFrame(url) || nativeOriginal(url)) {
     if (!request.end) {
       const { requestId } = await ipc.invoke('editor:beginImageRequest')
       let ending: Promise<void> | undefined
@@ -121,7 +125,7 @@ export async function fetchPreview(
 
 export function cancelPreview(source: string, request: ImageRequest): void {
   // Embedded JPEG extraction cannot be cancelled; keep its native concurrency bounded.
-  if (isEmbeddedPreview(source)) return
+  if (isEmbeddedPreview(source) && !nativeOriginal(source)) return
   request.cancelled = true
   if (request.end) {
     // Wait for native cancellation acknowledgement before freeing a transport slot.
@@ -135,20 +139,29 @@ export function cancelPreview(source: string, request: ImageRequest): void {
 const PNG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
 
 /**
- * Read a raw `X3F8` body: magic, then width, height and 0 as little-endian u32, then RGBA8.
- * A frame that exists only as a PNG on disk can come back as that PNG; return it to decode.
+ * Read an X3F8 header and RGBA8 pixels. Flag 1 adds four trailing f32 region bounds.
+ * A stored PNG or native JPEG can come back encoded; return it to decode.
  */
 export function parseFrame(body: ArrayBuffer): ImageData | Blob | undefined {
   const start = new Uint8Array(body, 0, Math.min(8, body.byteLength))
   if (PNG.every((byte, i) => start[i] === byte)) return new Blob([body], { type: 'image/png' })
+  if (start[0] === 0xff && start[1] === 0xd8 && start[2] === 0xff)
+    return new Blob([body], { type: 'image/jpeg' })
   if (body.byteLength < 16) return undefined
   const header = new DataView(body, 0, 16)
   const magic = String.fromCharCode(...new Uint8Array(body, 0, 4))
   const width = header.getUint32(4, true)
   const height = header.getUint32(8, true)
-  if (magic !== 'X3F8' || !width || !height || body.byteLength !== 16 + width * height * 4)
+  const flag = header.getUint32(12, true)
+  if (
+    magic !== 'X3F8' ||
+    !width ||
+    !height ||
+    flag > 1 ||
+    body.byteLength !== 16 + width * height * 4 + flag * 16
+  )
     return undefined
-  return new ImageData(new Uint8ClampedArray(body, 16), width, height)
+  return new ImageData(new Uint8ClampedArray(body, 16, width * height * 4), width, height)
 }
 
 /** A frame that owns its bitmap and closes it on release. */
@@ -227,9 +240,29 @@ export async function openFrame(url: string, request: ImageRequest): Promise<Fra
   const body = await response.arrayBuffer()
   if (stopped(request)) throw cancelled()
   let image: ImageBitmap
+  let region: PreviewRegion | undefined
   try {
     const pixels = parseFrame(body)
     if (!pixels) throw new Error('Not a frame')
+    if (!(pixels instanceof Blob) && new DataView(body).getUint32(12, true) === 1) {
+      const bounds = new DataView(body, body.byteLength - 16)
+      region = {
+        x: bounds.getFloat32(0, true),
+        y: bounds.getFloat32(4, true),
+        width: bounds.getFloat32(8, true),
+        height: bounds.getFloat32(12, true)
+      }
+      if (
+        !Object.values(region).every(Number.isFinite) ||
+        region.x < 0 ||
+        region.y < 0 ||
+        region.width <= 0 ||
+        region.height <= 0 ||
+        region.x + region.width > 1.000001 ||
+        region.y + region.height > 1.000001
+      )
+        region = undefined
+    }
     image = await (pixels instanceof Blob ? createImageBitmap(pixels) : bitmap(pixels))
   } catch (error) {
     if (stopped(request)) throw error
@@ -239,7 +272,7 @@ export async function openFrame(url: string, request: ImageRequest): Promise<Fra
     image.close()
     throw cancelled()
   }
-  return ownedFrame(image)
+  return { ...ownedFrame(image), ...(region ? { region } : {}) }
 }
 
 /** Edited-preview URLs load as raw RGBA8; other URLs decode. */

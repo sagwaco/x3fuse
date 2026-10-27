@@ -19,7 +19,9 @@ vi.mock('../src/renderer/src/components/Thumbnail', () => ({
   )
 }))
 vi.mock('../src/renderer/src/components/ZoomablePreview', () => ({
-  ZoomablePreview: ({ file }: { file: { id: string } }) => <div data-active={file.id} />
+  ZoomablePreview: ({ file, nativePreview }: { file: { id: string }; nativePreview?: boolean }) => (
+    <div data-active={file.id} data-native-preview={nativePreview} />
+  )
 }))
 afterEach(() => {
   cleanup()
@@ -131,7 +133,9 @@ it('keeps a thousand-file strip bounded, follows the cursor, and preserves previ
   const strip = view.container.querySelector('[data-filmstrip]')!
   act(() => useQueueStore.getState().setSelection(new Set(['998']), '998'))
   await waitFor(() => expect(strip.scrollLeft).toBeGreaterThan(80000))
-  expect(view.container.querySelector('[data-active="998"]')).toBeTruthy()
+  expect(
+    view.container.querySelector('[data-active="998"]')!.getAttribute('data-native-preview')
+  ).toBe('true')
   act(() => useQueueStore.getState().setSelection(new Set(['997', '998']), '998'))
   await act(async () => {
     fireEvent.contextMenu(view.container.querySelector('[data-active="998"]')!)

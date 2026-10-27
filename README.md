@@ -553,9 +553,13 @@ and log directories under the same identifier.
 
 The backend validates RAW inputs, caches prepared data, serializes GPU work, and
 renders bounded overlapping tiles. Interactive previews refine after input stops.
-Zoomed requests render the viewport at native detail, capped at 4096 pixels.
+In the editor, zoomed requests render the viewport at native detail, capped at 4096 pixels.
 Returning to Fit refreshes the full image. Scopes show the visible region.
-Original previews, edited thumbnails, and edited large previews share one disk
+In browsing preview mode, zooming past Fit loads detail for the visible area first,
+with the same 4096-pixel limit, then caches the full-size preview at lower priority. DNG files and RAW files
+without a full-size embedded JPEG render detail from RAW. Full-size previews stay
+in the cache for later use, including after a restart.
+Original previews, edited thumbnails, edited large previews, and full-size previews share one disk
 cache under `app_cache_dir()/previews-v2`. Settings > Cache controls the total
 limit and usage. The default is 20 GB. The old 1 GB default upgrades to 20 GB;
 other saved limits are kept. The cache reuses compatible files from earlier

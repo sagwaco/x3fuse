@@ -22,6 +22,55 @@ fn flips_map_to_exif_orientations() {
     assert_eq!(orient_rect([0.1, 0.2, 0.5, 1.0], 6), [0.0, 0.1, 0.8, 0.4]);
 }
 
+#[test]
+fn preview_crop_undoes_each_orientation_at_full_and_half_size() {
+    for orientation in 1..=8 {
+        let info = DngInfo {
+            width: 56,
+            height: 40,
+            orientation,
+            as_shot_crop: Some(orient_rect(
+                [4. / 56., 6. / 40., 40. / 56., 26. / 40.],
+                orientation,
+            )),
+            monochrome: false,
+            bayer: true,
+            iso: None,
+        };
+        assert_eq!(preview_crop(info, 56, 40), [4, 6, 36, 20]);
+        assert_eq!(preview_crop(info, 28, 20), [2, 3, 18, 10]);
+        assert_eq!(
+            preview_crop(
+                DngInfo {
+                    as_shot_crop: None,
+                    ..info
+                },
+                56,
+                40
+            ),
+            [0, 0, 56, 40]
+        );
+    }
+}
+
+#[test]
+fn bayer_preview_uses_default_crop_before_resampling() {
+    let cancel = AtomicBool::new(false);
+    for orientation in 1..=8 {
+        let mut fixture = bayer();
+        fixture
+            .extra
+            .iter_mut()
+            .find(|(tag, _)| *tag == 274)
+            .unwrap()
+            .1 = Value::Short(vec![orientation]);
+        let file = fixture.write();
+        let jpeg = preview(&file.0, &cancel).unwrap();
+        let preview = image::load_from_memory(&jpeg).unwrap();
+        assert_eq!((preview.width(), preview.height()), (1600, 1108));
+    }
+}
+
 // A minimal little-endian DNG writer for synthetic fixtures.
 
 #[derive(Clone)]

@@ -419,6 +419,12 @@ pub struct FileDto {
     pub orientation: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub aspect_ratio: Option<f64>,
+    /// Oriented active-area dimensions, before recipe crop.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub native_dimensions: Option<[u32; 2]>,
+    /// Default crop in the oriented active area, used without a saved recipe.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub as_shot_crop: Option<[f32; 4]>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exif: Option<Vec<ExifPair>>,
     #[serde(skip_serializing_if = "Option::is_none")]

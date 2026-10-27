@@ -145,6 +145,7 @@ export function FileFilmstrip({
               <ZoomablePreview
                 key={active.id}
                 file={active}
+                nativePreview
                 digitZoom={!!draft}
                 onPaint={(url, { width, height }) =>
                   setPainted({

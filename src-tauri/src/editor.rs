@@ -150,6 +150,22 @@ struct Assets {
     /// IDs that rendered as drafts. Their pixels are not persisted.
     drafts: HashSet<String>,
 }
+impl Assets {
+    fn insert(&mut self, id: String, asset: Asset) {
+        if self.recipes.contains_key(&id) {
+            return;
+        }
+        self.recipes.insert(id.clone(), asset);
+        self.recipe_order.push_back(id);
+        // shortcut: snapshots expire at this limit, renew URLs through editor:preview.
+        while self.recipes.len() > 16384 {
+            if let Some(old) = self.recipe_order.pop_front() {
+                self.recipes.remove(&old);
+                self.drafts.remove(&old);
+            }
+        }
+    }
+}
 /// A final frame whose large preview and thumbnail are not yet on disk.
 struct Persist {
     id: String,
@@ -169,6 +185,12 @@ impl Persist {
 }
 /// The edge of a browsing thumbnail, derived from a final preview.
 const THUMBNAIL_EDGE: u32 = 640;
+/// Marks a full-size preview. GPU work still uses tiles.
+const NATIVE_EDGE: u32 = u32::MAX;
+
+fn native_id(id: &str) -> String {
+    format!("{:x}", Sha256::digest(format!("native:{id}")))
+}
 
 fn frame_key(id: &str) -> String {
     format!("edit-frame:{id}")
@@ -183,6 +205,9 @@ fn thumbnail_key(id: &str) -> String {
 fn medium_name(id: &str) -> String {
     format!("{id}.png")
 }
+fn native_name(id: &str) -> String {
+    format!("{id}.native.jpg")
+}
 /// The disk name of the thumbnail derived from the final preview `id`. Direct
 /// 640-pixel renders have other IDs and are not persisted.
 fn thumbnail_name(id: &str) -> String {
@@ -196,9 +221,14 @@ fn legacy_medium(id: &str) -> Vec<String> {
 fn png_valid(bytes: &[u8]) -> bool {
     bytes.starts_with(PNG_SIGNATURE) && bytes.ends_with(b"\0\0\0\0IEND\xaeB`\x82")
 }
+fn jpeg_valid(bytes: &[u8]) -> bool {
+    crate::metadata::is_jpeg(bytes) && bytes.ends_with(&[0xff, 0xd9])
+}
 /// A decoded `x3f-edit` URL.
 struct ImageQuery {
     id: String,
+    native_of: Option<String>,
+    region: Option<Crop>,
     thumbnail: bool,
     raw: bool,
     cache_only: bool,
@@ -963,6 +993,58 @@ impl Editor {
         self.register(path, &actual, recipe, 2048, None)
     }
 
+    /// Renders original RAW detail without opening a session or writing edits.
+    pub fn original_native(&self, path: &Path, uri: &str) -> Result<Option<Arc<Vec<u8>>>, String> {
+        source_path(path)?;
+        let key = crate::cache::source_key(path).ok_or("Preview source unavailable")?;
+        // Change this cache version when camera defaults change.
+        let base = format!(
+            "{:x}",
+            Sha256::digest(format!(
+                "original-native-v1:{key}:{}",
+                x3f_render::RENDER_VERSION
+            ))
+        );
+        let original = url::Url::parse(uri).map_err(|e| e.to_string())?;
+        let region = crate::preview::protocol_region(&original)?;
+        let mut url = url::Url::parse(&asset_url(&base)).map_err(|e| e.to_string())?;
+        for (name, value) in original.query_pairs().filter(|(name, _)| name != "v") {
+            url.query_pairs_mut().append_pair(&name, &value);
+        }
+        url.query_pairs_mut()
+            .append_pair("v", if region.is_some() { "region" } else { "native" });
+        let query = parse_image_uri(url.as_str())?;
+        if query.cache_only {
+            return Ok(self.lookup(&query.id, false, query.raw));
+        }
+        if self.lookup(&query.id, false, query.raw).is_none()
+            && !self
+                .assets
+                .lock()
+                .map_err(|_| "Preview cache unavailable")?
+                .recipes
+                .contains_key(&base)
+        {
+            let source_revision = self.edits.source_revision(path)?;
+            let recipe = self.default_recipe(path, &source_revision, &AtomicBool::new(false))?;
+            let registered = self.register(path, &source_revision, &recipe, 2048, None)?;
+            if crate::cache::source_key(path).as_ref() != Some(&key) {
+                return Err("Preview source changed".into());
+            }
+            let mut assets = self
+                .assets
+                .lock()
+                .map_err(|_| "Preview cache unavailable")?;
+            let asset = assets
+                .recipes
+                .get(&protocol_id(&registered)?)
+                .cloned()
+                .ok_or("Preview expired")?;
+            assets.insert(base, asset);
+        }
+        self.image_query(url.as_str(), &query).map(Some)
+    }
+
     /// Returns camera defaults without writing a sidecar or backup.
     pub fn default_recipe(
         &self,
@@ -1026,26 +1108,16 @@ impl Editor {
             .assets
             .lock()
             .map_err(|_| "Preview cache unavailable")?;
-        if !assets.recipes.contains_key(&id) {
-            assets.recipes.insert(
-                id.clone(),
-                Asset {
-                    path: canonical,
-                    source_revision: source_revision.into(),
-                    recipe: recipe.clone(),
-                    max_edge,
-                    region,
-                },
-            );
-            assets.recipe_order.push_back(id.clone());
-            // ponytail: bounded snapshot registry; renew expired URLs through editor:preview.
-            while assets.recipes.len() > 16384 {
-                if let Some(old) = assets.recipe_order.pop_front() {
-                    assets.recipes.remove(&old);
-                    assets.drafts.remove(&old);
-                }
-            }
-        }
+        assets.insert(
+            id.clone(),
+            Asset {
+                path: canonical,
+                source_revision: source_revision.into(),
+                recipe,
+                max_edge,
+                region,
+            },
+        );
         Ok(asset_url(&id))
     }
 
@@ -1495,7 +1567,7 @@ impl Editor {
     }
 
     /// Serves an `x3f-edit` request: an edited preview as an RGBA8 frame or a
-    /// PNG. A cache-only request (`cacheOnly=1`) gets 204 on a miss.
+    /// PNG or native JPEG. A cache-only request (`cacheOnly=1`) gets 204 on a miss.
     pub fn respond(&self, uri: &str) -> Body {
         let octets = "application/octet-stream";
         let result = match parse_image_uri(uri) {
@@ -1509,7 +1581,13 @@ impl Editor {
                 let png = bytes.starts_with(PNG_SIGNATURE);
                 Body {
                     status: 200,
-                    content_type: if png { "image/png" } else { octets },
+                    content_type: if png {
+                        "image/png"
+                    } else if crate::metadata::is_jpeg(&bytes) {
+                        "image/jpeg"
+                    } else {
+                        octets
+                    },
                     bytes,
                 }
             }
@@ -1553,6 +1631,37 @@ impl Editor {
                 Ok((id.into_owned(), cancel))
             })
             .transpose()?;
+        if let Some(base) = &query.native_of {
+            // Stored native pixels do not need a live snapshot or the GPU.
+            if let Some(image) = self.lookup(&query.id, false, query.raw) {
+                if let Some((_, cancel)) = &request {
+                    check_cancel(cancel)?;
+                }
+                return Ok(image);
+            }
+            let mut assets = self
+                .assets
+                .lock()
+                .map_err(|_| "Preview cache unavailable")?;
+            if !assets.recipes.contains_key(&query.id) {
+                let mut asset = assets
+                    .recipes
+                    .get(base)
+                    .cloned()
+                    .ok_or("Preview expired; reopen the photo")?;
+                if asset.max_edge != 2048 || asset.region.is_some() {
+                    return Err("Native previews require a whole-image snapshot".into());
+                }
+                // Use the same region limit as the edit canvas until the native image is ready.
+                asset.max_edge = if query.region.is_some() {
+                    4096
+                } else {
+                    NATIVE_EDGE
+                };
+                asset.region = query.region;
+                assets.insert(query.id.clone(), asset);
+            }
+        }
         self.image_request(
             &query.id,
             query.thumbnail,
@@ -1626,11 +1735,12 @@ impl Editor {
         }
     }
 
-    /// The PNG of a final preview on disk.
+    /// The encoded medium or native preview on disk.
     fn disk_medium(&self, id: &str, generation: u64) -> Option<Arc<Vec<u8>>> {
         let bytes = Arc::new(
             self.store
-                .get(&medium_name(id), &legacy_medium(id), png_valid)?,
+                .get(&medium_name(id), &legacy_medium(id), png_valid)
+                .or_else(|| self.store.get(&native_name(id), &[], jpeg_valid))?,
         );
         self.memory.put_if(png_key(id), bytes.clone(), || {
             self.store.current(generation)
@@ -1669,6 +1779,23 @@ impl Editor {
             }
         }
         Some(png)
+    }
+
+    fn cache_native(
+        &self,
+        id: &str,
+        asset: &Asset,
+        rendered: x3f_render::RenderedImage,
+        generation: u64,
+    ) -> Result<Arc<Vec<u8>>, String> {
+        // JPEG keeps full-size film grain within the preview cache entry budget.
+        let jpeg = Arc::new(rendered.jpeg(92).map_err(|error| error.to_string())?);
+        self.memory
+            .put_if(png_key(id), jpeg.clone(), || self.store.current(generation));
+        if self.edits.source_revision(&asset.path).ok().as_deref() == Some(&asset.source_revision) {
+            self.store.put(generation, &native_name(id), &jpeg);
+        }
+        Ok(jpeg)
     }
 
     pub fn image(&self, id: &str) -> Result<Arc<Vec<u8>>, String> {
@@ -1822,6 +1949,9 @@ impl Editor {
             };
             Stats::add(&self.store.stats.renders);
             let rendered_at = std::time::Instant::now();
+            if asset.max_edge == NATIVE_EDGE {
+                return self.cache_native(id, &asset, rendered, generation);
+            }
             let frame = Arc::new(frame_body(rendered)?);
             let image = if thumbnail {
                 self.publish_frame(id, &frame, generation, Some(&asset), None);
@@ -2140,10 +2270,10 @@ const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
 
 fn preview_options(asset: &Asset) -> RenderOptions {
     RenderOptions {
-        max_dimension: Some(asset.max_edge),
+        max_dimension: (asset.max_edge != NATIVE_EDGE).then_some(asset.max_edge),
         region: asset.region,
         color_profile: x3f_render::ColorProfile::Srgb,
-        rgba8: true,
+        rgba8: asset.max_edge != NATIVE_EDGE,
     }
 }
 
@@ -2157,10 +2287,18 @@ fn oriented_size(image: &SceneLinearImage) -> (u32, u32) {
 }
 
 /// The frame body of an RGBA8 render. The renderer already wrote the `X3F8`
-/// header (width, height and 0 as little-endian u32) in front of the rows.
+/// header before the rows. Flag 1 adds the snapped region as four trailing f32 values.
 fn frame_body(rendered: x3f_render::RenderedImage) -> Result<Vec<u8>, String> {
     match rendered.data {
-        x3f_render::Pixels::Rgba8(frame) => Ok(frame),
+        x3f_render::Pixels::Rgba8(mut frame) => {
+            if let Some(region) = rendered.region {
+                frame[12..16].copy_from_slice(&1u32.to_le_bytes());
+                for value in [region.x, region.y, region.width, region.height] {
+                    frame.extend_from_slice(&value.to_le_bytes());
+                }
+            }
+            Ok(frame)
+        }
         x3f_render::Pixels::Rgb16(_) => Err("Previews must render RGBA8".into()),
     }
 }
@@ -2172,13 +2310,21 @@ fn frame_image(frame: &[u8]) -> Result<x3f_render::RenderedImage, String> {
         return Err("Invalid preview frame".into());
     }
     let (width, height) = (word(4), word(8));
-    if frame.len() - 16 != width as usize * height as usize * 4 {
+    let pixels_end = 16 + width as usize * height as usize * 4;
+    let trailer = match word(12) {
+        0 => 0,
+        1 => 16,
+        _ => return Err("Invalid preview frame".into()),
+    };
+    if frame.len() != pixels_end + trailer {
         return Err("Invalid preview frame".into());
     }
+    let mut pixels = frame[..pixels_end].to_vec();
+    pixels[12..16].fill(0);
     Ok(x3f_render::RenderedImage {
         width,
         height,
-        data: x3f_render::Pixels::Rgba8(frame.to_vec()),
+        data: x3f_render::Pixels::Rgba8(pixels),
         color_profile: x3f_render::ColorProfile::Srgb,
         full_width: width,
         full_height: height,
@@ -2194,7 +2340,7 @@ fn asset_url(id: &str) -> String {
     }
 }
 
-/// Whether the pixels of `asset` persist: a 2048-pixel preview of the whole image.
+/// Whether the frame of `asset` persists: a final medium whole image.
 fn persistable(asset: &Asset) -> bool {
     asset.max_edge == 2048 && asset.region.is_none()
 }
@@ -2226,7 +2372,7 @@ fn asset_id(
     Ok(format!("{:x}", Sha256::digest(key)))
 }
 
-/// Decodes an `x3f-edit` URL: `v=thumbnail`, `format=rgba8`, `cacheOnly=1`
+/// Decodes an `x3f-edit` URL: `v=thumbnail|native|region`, `format=rgba8`, `cacheOnly=1`
 /// and `priority=high|normal|low`.
 fn parse_image_uri(uri: &str) -> Result<ImageQuery, String> {
     let id = protocol_id(uri)?;
@@ -2236,11 +2382,17 @@ fn parse_image_uri(uri: &str) -> Result<ImageQuery, String> {
             .find(|(key, _)| key == name)
             .map(|(_, value)| value.into_owned())
     };
-    let thumbnail = match value("v").as_deref() {
-        None => false,
-        Some("thumbnail") => true,
+    let variant = value("v");
+    let (thumbnail, native) = match variant.as_deref() {
+        None => (false, false),
+        Some("thumbnail") => (true, false),
+        Some("native" | "region") => (false, true),
         _ => return Err("Invalid rendered preview variant".into()),
     };
+    let region = crate::preview::protocol_region(&url)?;
+    if (variant.as_deref() == Some("region")) != region.is_some() {
+        return Err("Region previews require a region and v=region".into());
+    }
     let raw = match value("format").as_deref() {
         None => false,
         Some("rgba8") => true,
@@ -2253,7 +2405,21 @@ fn parse_image_uri(uri: &str) -> Result<ImageQuery, String> {
         _ => return Err("Invalid rendered preview priority".into()),
     };
     Ok(ImageQuery {
-        id,
+        id: if let Some(region) = region {
+            format!(
+                "{:x}",
+                Sha256::digest(format!(
+                    "region:{id}:{}",
+                    serde_json::to_string(&region).map_err(|e| e.to_string())?
+                ))
+            )
+        } else if native {
+            native_id(&id)
+        } else {
+            id.clone()
+        },
+        native_of: native.then_some(id),
+        region,
         thumbnail,
         raw,
         cache_only: crate::preview::cache_only(&url)?,
@@ -2280,6 +2446,7 @@ mod tests {
     fn bayer_source() -> crate::source::Info {
         crate::source::Info {
             kind: crate::source::Kind::Dng,
+            native_dimensions: None,
             capabilities: crate::source::Capabilities {
                 bayer: true,
                 ..crate::source::Capabilities::for_kind(crate::source::Kind::Dng, false)
@@ -2991,9 +3158,175 @@ mod tests {
         let query = parse_image_uri(&format!("{url}?format=rgba8")).unwrap();
         assert!(query.raw && !query.cache_only && !query.thumbnail);
         assert_eq!(query.priority, PRIORITY_NORMAL);
-        for bad in ["v=small", "format=jpeg", "cacheOnly=0", "priority=urgent"] {
+        let query = parse_image_uri(&format!("{url}?v=native&cacheOnly=1")).unwrap();
+        assert_eq!(query.native_of.as_deref(), Some(id.as_str()));
+        assert_eq!(query.id, native_id(&id));
+        assert!(!query.thumbnail && query.cache_only);
+        let query = parse_image_uri(&format!(
+            "{url}?v=region&region=0.2,0.3,0.25,0.4&format=rgba8"
+        ))
+        .unwrap();
+        assert_eq!(query.native_of.as_deref(), Some(id.as_str()));
+        assert_ne!(query.id, native_id(&id));
+        assert_eq!(query.region.unwrap().width, 0.25);
+        for bad in [
+            "v=region",
+            "region=0,0,1,1",
+            "v=native&region=0,0,1,1",
+            "v=small",
+            "format=jpeg",
+            "cacheOnly=0",
+            "priority=urgent",
+        ] {
             assert!(parse_image_uri(&format!("{url}?{bad}")).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn region_previews_clone_the_snapshot_and_keep_native_renders_separate() {
+        let temporary = tempfile::tempdir().unwrap();
+        let path = temporary.path().join("photo.X3F");
+        fs::write(&path, b"source").unwrap();
+        let editor = Editor::new(temporary.path().join("edits"));
+        let source = editor.edits.source_revision(&path).unwrap();
+        let recipe = EditRecipe::default();
+        let url = editor
+            .register(&path, &source, &recipe, 2048, None)
+            .unwrap();
+        let uri = format!("{url}?v=region&region=0.2,0.3,0.25,0.4&format=rgba8");
+        let query = parse_image_uri(&uri).unwrap();
+        assert_eq!(editor.respond(&format!("{uri}&cacheOnly=1")).status, 204);
+        editor.paused.store(true, Ordering::SeqCst);
+        assert!(editor
+            .image_uri(&uri)
+            .unwrap_err()
+            .contains("pauses during export"));
+        let asset = editor.assets.lock().unwrap().recipes[&query.id].clone();
+        assert_eq!(asset.recipe, recipe);
+        assert_eq!(asset.max_edge, 4096);
+        assert_eq!(asset.region, query.region);
+        assert!(preview_options(&asset).rgba8);
+        assert!(!persistable(&asset));
+        assert_ne!(
+            query.id,
+            parse_image_uri(&format!("{url}?v=native")).unwrap().id
+        );
+        assert_ne!(
+            query.id,
+            parse_image_uri(&format!("{url}?v=region&region=0,0,0.25,0.4"))
+                .unwrap()
+                .id
+        );
+        // Region pixels use the same bounded memory cache as editor tiles.
+        editor.memory.put_if(
+            frame_key(&query.id),
+            Arc::new(b"region frame".to_vec()),
+            || true,
+        );
+        assert_eq!(editor.respond(&format!("{uri}&cacheOnly=1")).status, 200);
+        assert!(
+            editor.assets.lock().unwrap().recipes[&protocol_id(&url).unwrap()]
+                .region
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn native_previews_use_full_size_and_survive_restart_separately_from_fit() {
+        let temporary = tempfile::tempdir().unwrap();
+        let path = temporary.path().join("photo.X3F");
+        fs::write(&path, b"source").unwrap();
+        let directory = temporary.path().join("edits");
+        let editor = Editor::new(directory.clone());
+        let source = editor.edits.source_revision(&path).unwrap();
+        let recipe = EditRecipe::default();
+        let url = editor
+            .register(&path, &source, &recipe, 2048, None)
+            .unwrap();
+        let uri = format!("{url}?v=native");
+        let id = native_id(&protocol_id(&url).unwrap());
+        assert_eq!(editor.respond(&format!("{uri}&cacheOnly=1")).status, 204);
+        editor.paused.store(true, Ordering::SeqCst);
+        assert!(editor
+            .image_uri(&uri)
+            .unwrap_err()
+            .contains("pauses during export"));
+        let asset = editor.assets.lock().unwrap().recipes[&id].clone();
+        assert_eq!(asset.max_edge, NATIVE_EDGE);
+        assert!(preview_options(&asset).max_dimension.is_none());
+        assert!(asset.region.is_none());
+        assert!(!preview_options(&asset).rgba8);
+        assert_eq!(asset.source_revision, source);
+
+        let rendered = || x3f_render::RenderedImage {
+            width: 5000,
+            height: 1,
+            data: x3f_render::Pixels::Rgb16(vec![32768; 5000 * 3]),
+            color_profile: x3f_render::ColorProfile::Srgb,
+            full_width: 5000,
+            full_height: 1,
+            region: None,
+        };
+        let expected = editor
+            .cache_native(&id, &asset, rendered(), editor.store.generation())
+            .unwrap();
+        assert!(editor.pending.lock().unwrap().is_empty());
+        assert!(editor.memory.get(&frame_key(&id)).is_none());
+        drop(editor);
+
+        let reopened = Editor::new(directory);
+        reopened.paused.store(true, Ordering::SeqCst);
+        let cached = reopened.respond(&format!("{uri}&cacheOnly=1"));
+        assert_eq!(cached.status, 200);
+        assert_eq!(cached.content_type, "image/jpeg");
+        assert_eq!(cached.bytes, *expected);
+        assert_eq!(*reopened.image_uri(&uri).unwrap(), cached.bytes);
+        assert_eq!(reopened.respond(&format!("{url}?cacheOnly=1")).status, 204);
+        let changed = EditRecipe {
+            exposure: 1.,
+            ..recipe
+        };
+        let changed_url = reopened
+            .register(&path, &source, &changed, 2048, None)
+            .unwrap();
+        assert_eq!(
+            reopened
+                .respond(&format!("{changed_url}?v=native&cacheOnly=1"))
+                .status,
+            204
+        );
+        assert!(reopened.worker.lock().unwrap().renderer.is_none());
+        reopened.store.clear().unwrap();
+        reopened.memory.clear();
+        assert_eq!(reopened.respond(&format!("{uri}&cacheOnly=1")).status, 204);
+        let before_clear = reopened.store.generation();
+        reopened.store.clear().unwrap();
+        reopened
+            .cache_native(&id, &asset, rendered(), before_clear)
+            .unwrap();
+        assert!(reopened
+            .store
+            .get(&native_name(&id), &[], jpeg_valid)
+            .is_none());
+        reopened.store.configure(false, crate::cache::DEFAULT_LIMIT);
+        reopened
+            .cache_native(&id, &asset, rendered(), reopened.store.generation())
+            .unwrap();
+        reopened.store.configure(true, crate::cache::DEFAULT_LIMIT);
+        assert!(reopened
+            .store
+            .get(&native_name(&id), &[], jpeg_valid)
+            .is_none());
+        fs::write(&path, b"changed source").unwrap();
+        reopened
+            .cache_native(&id, &asset, rendered(), reopened.store.generation())
+            .unwrap();
+        assert!(reopened
+            .store
+            .get(&native_name(&id), &[], jpeg_valid)
+            .is_none());
+        assert!(jpeg_valid(&expected));
+        assert!(!jpeg_valid(&expected[..expected.len() - 2]));
     }
 
     /// A final 2048-pixel PNG, as a render stores it.
@@ -3218,6 +3551,34 @@ mod tests {
                 .contains("pauses during export"));
         }
         assert!(reopened.worker.lock().unwrap().renderer.is_none());
+    }
+
+    #[test]
+    fn raw_region_frames_keep_snapped_bounds_and_encode_without_the_trailer() {
+        let region = Crop {
+            x: 0.125,
+            y: 0.25,
+            width: 0.5,
+            height: 0.5,
+        };
+        let mut pixels = b"X3F8\x02\0\0\0\x01\0\0\0\0\0\0\0".to_vec();
+        pixels.extend([10, 20, 30, 255].repeat(2));
+        let rendered = x3f_render::RenderedImage {
+            width: 2,
+            height: 1,
+            full_width: 4,
+            full_height: 2,
+            data: x3f_render::Pixels::Rgba8(pixels),
+            color_profile: x3f_render::ColorProfile::Srgb,
+            region: Some(region),
+        };
+        let frame = frame_body(rendered).unwrap();
+        assert_eq!(u32::from_le_bytes(frame[12..16].try_into().unwrap()), 1);
+        assert_eq!(frame.len(), 16 + 8 + 16);
+        let image = frame_image(&frame).unwrap();
+        assert_eq!(image.rgb8(), [10, 20, 30].repeat(2));
+        assert!(image.png().unwrap().starts_with(PNG_SIGNATURE));
+        assert!(frame_image(&frame[..frame.len() - 1]).is_err());
     }
 
     #[test]

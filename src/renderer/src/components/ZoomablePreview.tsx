@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { X3FFileDTO } from '@shared/types'
+import { displayPreviewUrl } from '@shared/preview'
 import { t } from '../lib/strings'
 import { FilmstripImage } from './FilmstripImage'
 import { usePreviewStore } from '../stores/previewStore'
@@ -40,7 +41,7 @@ function markerRegion({ x, y, width, height }: PreviewRegion): PreviewRegion {
   }
 }
 
-/** Zoom is relative to the oriented JPEG's natural dimensions; null follows Fit. */
+/** Zoom uses display pixels per image pixel; null follows Fit. */
 export function ZoomablePreview({
   file,
   onImagePoint,
@@ -57,7 +58,8 @@ export function ZoomablePreview({
   onPaint,
   onSelectionCancel,
   onContextMenu,
-  digitZoom = true
+  digitZoom = true,
+  nativePreview = false
 }: {
   file: X3FFileDTO
   /** Gets a clicked point, 0 to 1 of the image. */
@@ -93,6 +95,8 @@ export function ZoomablePreview({
   onContextMenu?: (point: { x: number; y: number } | null, x: number, y: number) => void
   /** False leaves 0 and 1 for other shortcuts, such as star ratings. */
   digitZoom?: boolean
+  /** Load full-size saved renders when the library preview is zoomed. */
+  nativePreview?: boolean
 }): React.JSX.Element {
   const viewportRef = useRef<HTMLDivElement>(null)
   const mediaRef = useRef<HTMLDivElement>(null)
@@ -106,20 +110,92 @@ export function ZoomablePreview({
   // A selection by keys: its center and its size, 0 to 1 of the image.
   const [marker, setMarker] = useState<PreviewRegion | null>(null)
   const [size, setSize] = useState({ width: 0, height: 0 })
+  const [pixelRatio, setPixelRatio] = useState(() => window.devicePixelRatio || 1)
   const [loaded, setLoaded] = useState({ width: 0, height: 0 })
   // Known dimensions apply in the same render as the picture they belong to.
   const naturalWidth = naturalSize?.width ?? 0
   const naturalHeight = naturalSize?.height ?? 0
-  const image = useMemo(
-    () => (naturalWidth && naturalHeight ? { width: naturalWidth, height: naturalHeight } : loaded),
-    [naturalWidth, naturalHeight, loaded]
-  )
+  const image = useMemo(() => {
+    if (naturalWidth && naturalHeight) return { width: naturalWidth, height: naturalHeight }
+    // Explicit editor frames use their own geometry. Library previews use source metadata.
+    if (!file.displayPreviewUrl) {
+      let [width, height] =
+        file.nativeDimensions ??
+        (file.exif?.find((row) => row.label === 'Dimensions')?.value ?? '').split(' × ').map(Number)
+      if (Number.isSafeInteger(width) && width > 0 && Number.isSafeInteger(height) && height > 0) {
+        if (!file.nativeDimensions && (file.orientation ?? 1) >= 5 && (file.orientation ?? 1) <= 8)
+          [width, height] = [height, width]
+        const recipe = file.edit?.recipe
+        const crop = recipe
+          ? recipe.crop
+          : file.asShotCrop && { width: file.asShotCrop[2], height: file.asShotCrop[3] }
+        if (crop) {
+          width = Math.max(1, Math.round(width * crop.width))
+          height = Math.max(1, Math.round(height * crop.height))
+        }
+        if (recipe && recipe.rotation % 2 === 1) [width, height] = [height, width]
+        // shortcut: unknown framing fits preview aspect inside source pixels; use native metadata when available.
+        if (
+          !file.nativeDimensions &&
+          loaded.width &&
+          loaded.height &&
+          Math.abs(width / height / (loaded.width / loaded.height) - 1) > 0.01
+        ) {
+          const scale = Math.min(width / loaded.width, height / loaded.height)
+          return { width: loaded.width * scale, height: loaded.height * scale }
+        }
+        return { width, height }
+      }
+    }
+    return loaded
+  }, [
+    naturalWidth,
+    naturalHeight,
+    file.exif,
+    file.nativeDimensions,
+    file.asShotCrop,
+    file.orientation,
+    file.edit,
+    file.displayPreviewUrl,
+    loaded
+  ])
   const [view, setView] = useState<View>(FIT)
   const latestView = useRef<View>(FIT)
   const frame = useRef<number | null>(null)
   const ready = image.width > 0 && image.height > 0 && size.width > 0 && size.height > 0
-  const fit = ready ? Math.min(1, size.width / image.width, size.height / image.height) : 1
+  const fit = ready
+    ? Math.min(
+        1,
+        (size.width * pixelRatio) / image.width,
+        (size.height * pixelRatio) / image.height
+      )
+    : 1
   const minZoom = Math.min(0.1, fit)
+
+  useEffect(() => {
+    const updateRatio = (): void => {
+      const next = window.devicePixelRatio || 1
+      if (next === pixelRatio) return
+      animateZoom.current = false
+      const view = latestView.current
+      if (view.zoom !== null) {
+        latestView.current = {
+          ...view,
+          x: (view.x * pixelRatio) / next,
+          y: (view.y * pixelRatio) / next
+        }
+        setView(latestView.current)
+      }
+      setPixelRatio(next)
+    }
+    const display = window.matchMedia?.(`(resolution: ${pixelRatio}dppx)`)
+    display?.addEventListener?.('change', updateRatio)
+    window.addEventListener('resize', updateRatio)
+    return () => {
+      display?.removeEventListener?.('change', updateRatio)
+      window.removeEventListener('resize', updateRatio)
+    }
+  }, [pixelRatio])
 
   useEffect(() => {
     const viewport = viewportRef.current!
@@ -136,14 +212,14 @@ export function ZoomablePreview({
 
   const constrain = useCallback(
     (next: View): View => {
-      const scale = next.zoom ?? fit
+      const scale = (next.zoom ?? fit) / pixelRatio
       const maxX = Math.max(0, (image.width * scale - size.width) / 2)
       const maxY = Math.max(0, (image.height * scale - size.height) / 2)
       const x = Math.max(-maxX, Math.min(maxX, next.x))
       const y = Math.max(-maxY, Math.min(maxY, next.y))
       return x === next.x && y === next.y ? next : { ...next, x, y }
     },
-    [fit, image, size]
+    [fit, image, size, pixelRatio]
   )
 
   const flushView = useCallback((): void => {
@@ -175,8 +251,8 @@ export function ZoomablePreview({
     const media = mediaRef.current
     if (!media || media.getAnimations().length === 0) return null
     const matrix = new DOMMatrixReadOnly(getComputedStyle(media).transform)
-    return { zoom: matrix.a, x: matrix.e, y: matrix.f }
-  }, [])
+    return { zoom: matrix.a * pixelRatio, x: matrix.e, y: matrix.f }
+  }, [pixelRatio])
 
   const zoomTo = useCallback(
     (
@@ -254,13 +330,16 @@ export function ZoomablePreview({
   }, [pan, zoomTo, size.height])
 
   const current = constrain(view)
-  const scale = current.zoom ?? fit
-  const canPan = ready && scale > fit
+  const zoom = current.zoom ?? fit
+  const scale = zoom / pixelRatio
+  const canPan = ready && zoom > fit
+  const fullResolution =
+    ready && (canPan || (zoom >= 1 && Math.max(image.width, image.height) > 2048))
   const panTo = useCallback(
     (centerX: number, centerY: number): void => {
       const presented = interruptZoom()
       const current = constrain(presented ?? latestView.current)
-      const scale = current.zoom ?? fit
+      const scale = (current.zoom ?? fit) / pixelRatio
       updateView(
         constrain({
           ...current,
@@ -269,11 +348,11 @@ export function ZoomablePreview({
         })
       )
     },
-    [constrain, image, fit, interruptZoom, updateView]
+    [constrain, image, fit, pixelRatio, interruptZoom, updateView]
   )
 
   const visibleRegion = useMemo(() => {
-    if (!canPan) return null
+    if (!fullResolution) return null
     const width = Math.min(1, size.width / (image.width * scale))
     const height = Math.min(1, size.height / (image.height * scale))
     return {
@@ -282,40 +361,47 @@ export function ZoomablePreview({
       width,
       height
     }
-  }, [canPan, image, size, scale, current.x, current.y])
+  }, [fullResolution, image, size, scale, current.x, current.y])
 
   // A new picture gets its viewport before paint. A moving view sends it when
   // the view rests: a render for each gesture frame keeps the GPU busy, and the
   // compositor then skips frames.
+  const librarySource = nativePreview ? displayPreviewUrl(file, 'full') : ''
+  const [libraryViewport, setLibraryViewport] = useState<{
+    source: string
+    region: PreviewRegion | null
+  }>()
   const published = useRef<string | null | undefined>(null)
   const move = useRef(onViewportMove)
   move.current = onViewportMove
   useLayoutEffect(() => {
+    const publish = (): void => {
+      if (nativePreview) setLibraryViewport({ source: librarySource, region: visibleRegion })
+      onViewportChange?.(visibleRegion)
+    }
     if (published.current !== file.displayPreviewUrl) {
       published.current = file.displayPreviewUrl
-      onViewportChange?.(visibleRegion)
+      publish()
       return
     }
     move.current?.()
-    const timer = setTimeout(
-      () => onViewportChange?.(visibleRegion),
-      animateZoom.current ? EASED_REST : REST
-    )
+    const timer = setTimeout(publish, animateZoom.current ? EASED_REST : REST)
     return () => clearTimeout(timer)
-  }, [onViewportChange, visibleRegion, file.displayPreviewUrl])
+  }, [onViewportChange, visibleRegion, file.displayPreviewUrl, nativePreview, librarySource])
 
   useEffect(() => {
     usePreviewStore.setState({
-      minimap: visibleRegion
-        ? {
-            fileId: file.id,
-            aspectRatio: image.width / image.height,
-            ...visibleRegion,
-            panTo
-          }
-        : null
+      minimap:
+        canPan && visibleRegion
+          ? {
+              fileId: file.id,
+              aspectRatio: image.width / image.height,
+              ...visibleRegion,
+              panTo
+            }
+          : null
     })
-  }, [visibleRegion, file.id, image, panTo])
+  }, [canPan, visibleRegion, file.id, image, panTo])
 
   useEffect(() => {
     usePreviewStore.setState({
@@ -323,14 +409,14 @@ export function ZoomablePreview({
         ? {
             fileId: file.id,
             zoom: current.zoom,
-            scale,
+            scale: zoom,
             minZoom,
             maxZoom: MAX_ZOOM,
             zoomTo
           }
         : null
     })
-  }, [ready, file.id, current.zoom, scale, minZoom, zoomTo])
+  }, [ready, file.id, current.zoom, zoom, minZoom, zoomTo])
 
   useLayoutEffect(() => {
     usePreviewStore.setState({ activeFileId: file.id })
@@ -392,7 +478,6 @@ export function ZoomablePreview({
     },
     [onDimensions]
   )
-  const fullResolution = ready && scale > fit
   // The rectangle being dragged or moved by keys, else the given one, in image pixels.
   // A point shows as a square of 8 screen pixels.
   const shown = band ?? (marker && markerRegion(marker)) ?? outline
@@ -404,17 +489,21 @@ export function ZoomablePreview({
     height: shown.height * image.height || 2 * dot,
     fill: 'none'
   }
+  const libraryRegion = libraryViewport?.source === librarySource ? libraryViewport.region : null
+  const detailEnabled = fullResolution && (!nativePreview || !!libraryRegion)
   const content = useMemo(
     () => (
       <FilmstripImage
         file={file}
-        fullResolution={fullResolution}
+        fullResolution={detailEnabled}
+        nativePreview={nativePreview}
+        region={nativePreview ? libraryRegion : undefined}
         containerClassName="h-full w-full"
         className="h-full w-full object-contain"
         onDimensions={painted}
       />
     ),
-    [file, fullResolution, painted]
+    [file, detailEnabled, nativePreview, libraryRegion, painted]
   )
 
   return (
@@ -432,7 +521,7 @@ export function ZoomablePreview({
               ? 'grabbing'
               : canPan
                 ? 'grab'
-                : ready
+                : ready && fit < 1
                   ? 'zoom-in'
                   : 'default',
           touchAction: 'none'

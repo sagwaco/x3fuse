@@ -364,7 +364,36 @@ pub fn run() {
                 let (result, cache_only) = match preview::protocol_path(&request.uri().to_string())
                 {
                     Ok((path, full, cache_only)) => (
-                        state.previews.get(&path, full, cache_only).await,
+                        async {
+                            let uri = request.uri().to_string();
+                            let url = url::Url::parse(&uri).map_err(|e| e.to_string())?;
+                            let region = preview::protocol_region(&url)?;
+                            let native = url
+                                .query_pairs()
+                                .find(|(key, _)| key == "v")
+                                .is_some_and(|(_, value)| value == "native");
+                            if native {
+                                match state.previews.has_embedded_full(&path, cache_only).await? {
+                                    Some(true) => {}
+                                    Some(false) => {
+                                        let state = state.inner().clone();
+                                        return tauri::async_runtime::spawn_blocking(move || {
+                                            state.editor.original_native(&path, &uri)
+                                        })
+                                        .await
+                                        .map_err(|e| e.to_string())?;
+                                    }
+                                    None => return Ok(None),
+                                }
+                            }
+                            match region {
+                                Some(region) => {
+                                    state.previews.get_region(&path, region, cache_only).await
+                                }
+                                None => state.previews.get(&path, full, cache_only).await,
+                            }
+                        }
+                        .await,
                         cache_only,
                     ),
                     Err(e) => (Err(e), false),
@@ -397,7 +426,7 @@ pub fn run() {
                     .header(
                         "Content-Type",
                         if status == 200 {
-                            "image/jpeg"
+                            preview::content_type(&bytes)
                         } else {
                             "text/plain"
                         },

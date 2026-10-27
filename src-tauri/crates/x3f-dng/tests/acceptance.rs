@@ -41,7 +41,11 @@ fn real_dngs_inspect_prepare_and_preview() {
         assert_eq!(preview.color(), image::ColorType::Rgb8);
         assert!(preview.width().max(preview.height()) <= x3f_dng::PREVIEW_MAX_EDGE);
         let (pw, ph) = (preview.width() as f32, preview.height() as f32);
-        let ratio = (pw / ph) / (info.width as f32 / info.height as f32);
+        let [_, _, mut cw, mut ch] = info.as_shot_crop.unwrap_or([0., 0., 1., 1.]);
+        if (5..=8).contains(&info.orientation) {
+            std::mem::swap(&mut cw, &mut ch);
+        }
+        let ratio = (pw / ph) / (info.width as f32 * cw / (info.height as f32 * ch));
         assert!((ratio - 1.).abs() < 0.01, "preview aspect {ratio}");
         println!(
             "{}: {info:?} prepare {elapsed:.2?} mean {mean:.4} p1 {:.4} p50 {:.4} p99 {:.4} max {:.4} wb {:?} preview {pw}x{ph}",

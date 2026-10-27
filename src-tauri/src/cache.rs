@@ -23,8 +23,15 @@ pub const LEGACY_THUMBNAILS: &str = "thumbnails-v1";
 pub const LEGACY_MEDIUMS: &str = "mediums-v1";
 /// The default disk limit in bytes, as the Settings window shows sizes.
 pub const DEFAULT_LIMIT: u64 = 20_000_000_000;
-/// The largest entry that the disk store writes or reads.
+/// The usual maximum entry size. Full-size JPEGs can use a larger bounded entry.
 const ENTRY_LIMIT: u64 = 32 * 1024 * 1024;
+fn entry_limit(name: &str) -> u64 {
+    if name.ends_with(".native.jpg") {
+        128 * 1024 * 1024
+    } else {
+        ENTRY_LIMIT
+    }
+}
 const INDEX: &str = "index-v1.tsv";
 const INDEX_LIMIT: u64 = 256 * 1024 * 1024;
 const TRASH: &str = ".trash-";
@@ -407,7 +414,7 @@ impl Store {
         let Some(path) = self.path(name).filter(|_| !name.contains('/')) else {
             return false;
         };
-        if bytes.len() as u64 > ENTRY_LIMIT {
+        if bytes.len() as u64 > entry_limit(name) {
             return false;
         }
         {
@@ -758,11 +765,15 @@ fn name_valid(name: &str) -> bool {
 }
 
 fn read_bounded(path: &Path) -> std::io::Result<Vec<u8>> {
+    let limit = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map_or(ENTRY_LIMIT, entry_limit);
     let mut bytes = Vec::new();
     fs::File::open(path)?
-        .take(ENTRY_LIMIT + 1)
+        .take(limit + 1)
         .read_to_end(&mut bytes)?;
-    if bytes.len() as u64 > ENTRY_LIMIT {
+    if bytes.len() as u64 > limit {
         return Err(std::io::Error::other("Preview cache entry is too large"));
     }
     Ok(bytes)
@@ -998,6 +1009,19 @@ mod tests {
 
     fn any(_: &[u8]) -> bool {
         true
+    }
+
+    #[test]
+    fn native_jpegs_can_exceed_the_normal_entry_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = store(dir.path(), DEFAULT_LIMIT);
+        let bytes = vec![0; ENTRY_LIMIT as usize + 1];
+        assert!(!cache.put(cache.generation(), &name(1, "png"), &bytes));
+        let native = name(1, "native.jpg");
+        assert!(cache.put(cache.generation(), &native, &bytes));
+        assert_eq!(cache.get(&native, &[], any).unwrap().len(), bytes.len());
+        cache.clear().unwrap();
+        assert!(cache.get(&native, &[], any).is_none());
     }
 
     #[test]

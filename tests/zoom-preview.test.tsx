@@ -56,12 +56,14 @@ vi.mock('../src/renderer/src/components/FilmstripImage', async () => {
     FilmstripImage: function MockFilmstripImage({
       file,
       fullResolution = false,
+      region,
       onDimensions,
       containerClassName,
       className
     }: {
       file: X3FFileDTO
       fullResolution?: boolean
+      region?: { x: number; y: number; width: number; height: number } | null
       onDimensions?: (dimensions: { width: number; height: number }, url: string) => void
       containerClassName?: string
       className?: string
@@ -75,6 +77,7 @@ vi.mock('../src/renderer/src/components/FilmstripImage', async () => {
             aria-hidden={!ready}
             className={className}
             data-full-resolution={fullResolution}
+            data-detail-region={region ? JSON.stringify(region) : undefined}
             onLoad={(event) => {
               setReady(true)
               onDimensions?.(
@@ -216,15 +219,263 @@ async function chooseZoom(value: string): Promise<void> {
 }
 
 describe('filmstrip zoom preview', () => {
+  it.each([1, 2])(
+    'uses full image dimensions with a smaller preview on a %sx display',
+    (pixelRatio) => {
+      vi.stubGlobal('devicePixelRatio', pixelRatio)
+      render(
+        <PreviewWithControls
+          file={{ ...file, exif: [{ label: 'Dimensions', value: '6000 × 4000' }] }}
+        />
+      )
+      const media = document.querySelector<HTMLElement>('.preview-image')!
+      expect(media.style.width).toBe('6000px')
+      expect(usePreviewStore.getState().controls!.scale).toBeCloseTo((800 * pixelRatio) / 6000)
+      act(() => {
+        runCommand('zoomActual')
+      })
+      loadImage(1200, 800)
+      expect(media.style.width).toBe('6000px')
+      expect(media.style.height).toBe('4000px')
+      expect(media.style.transform).toBe(`translate(0px, 0px) scale(${1 / pixelRatio})`)
+      expect(screen.getByRole('button', { name: 'Zoom level' }).textContent).toBe('100%')
+      loadImage(2400, 1600)
+      expect(media.style.width).toBe('6000px')
+      expect(usePreviewStore.getState().controls!.scale).toBe(1)
+    }
+  )
+
+  it.each([1, 5, 6, 7, 8])(
+    'orients full image dimensions for EXIF orientation %s',
+    (orientation) => {
+      render(
+        <PreviewWithControls
+          file={{ ...file, orientation, exif: [{ label: 'Dimensions', value: '6000 × 4000' }] }}
+        />
+      )
+      loadImage(orientation >= 5 ? 800 : 1200, orientation >= 5 ? 1200 : 800)
+      const media = document.querySelector<HTMLElement>('.preview-image')!
+      expect(media.style.width).toBe(orientation >= 5 ? '4000px' : '6000px')
+      expect(media.style.height).toBe(orientation >= 5 ? '6000px' : '4000px')
+    }
+  )
+
+  it('applies saved crop and rotation to full image dimensions', () => {
+    const recipe = {
+      ...defaultRecipe(),
+      rotation: 1,
+      crop: { x: 0, y: 0, width: 0.5, height: 0.75 }
+    }
+    render(
+      <PreviewWithControls
+        file={{
+          ...file,
+          orientation: 6,
+          exif: [{ label: 'Dimensions', value: '6000 × 4000' }],
+          edit: { recipe, revision: 1, previewUrl: 'x3f-edit://localhost/saved' }
+        }}
+      />
+    )
+    loadImage(1024, 455)
+    const media = document.querySelector<HTMLElement>('.preview-image')!
+    expect(media.style.width).toBe('4500px')
+    expect(media.style.height).toBe('2000px')
+  })
+
+  it('keeps source pixel scale and preview aspect when framing is unknown', () => {
+    render(
+      <PreviewWithControls
+        file={{ ...file, exif: [{ label: 'Dimensions', value: '6000 × 4000' }] }}
+      />
+    )
+    loadImage(1600, 900)
+    const media = document.querySelector<HTMLElement>('.preview-image')!
+    expect(media.style.width).toBe('6000px')
+    expect(media.style.height).toBe('3375px')
+  })
+
+  it.each([false, true])('uses the DNG active area and default crop once, saved=%s', (saved) => {
+    const crop = { x: 0, y: 0, width: 7488 / 7504, height: 4992 / 5008 }
+    render(
+      <PreviewWithControls
+        file={{
+          ...file,
+          sourceKind: 'dng',
+          nativeDimensions: [7504, 5008],
+          asShotCrop: [crop.x, crop.y, crop.width, crop.height],
+          exif: [{ label: 'Dimensions', value: '7792 × 5008' }],
+          edit: saved
+            ? { recipe: { ...defaultRecipe(), crop }, revision: 1, previewUrl: 'saved' }
+            : undefined
+        }}
+      />
+    )
+    loadImage(1620, 1080)
+    const media = document.querySelector<HTMLElement>('.preview-image')!
+    expect(media.style.width).toBe('7488px')
+    expect(media.style.height).toBe('4992px')
+  })
+
+  it('keeps the full DNG active area when the saved recipe removes its default crop', () => {
+    render(
+      <PreviewWithControls
+        file={{
+          ...file,
+          nativeDimensions: [7504, 5008],
+          asShotCrop: [0, 0, 7488 / 7504, 4992 / 5008],
+          edit: { recipe: defaultRecipe(), revision: 1, previewUrl: 'uncropped' }
+        }}
+      />
+    )
+    loadImage(1600, 1068)
+    const media = document.querySelector<HTMLElement>('.preview-image')!
+    expect(media.style.width).toBe('7504px')
+    expect(media.style.height).toBe('5008px')
+  })
+
+  it('uses an oriented DNG active area with a saved crop and rotation', () => {
+    render(
+      <PreviewWithControls
+        file={{
+          ...file,
+          orientation: 1,
+          nativeDimensions: [5008, 7504],
+          asShotCrop: [0, 0, 4992 / 5008, 7488 / 7504],
+          edit: {
+            recipe: {
+              ...defaultRecipe(),
+              rotation: 1,
+              crop: { x: 0, y: 0, width: 0.5, height: 0.75 }
+            },
+            revision: 1,
+            previewUrl: 'saved'
+          }
+        }}
+      />
+    )
+    loadImage(1688, 751)
+    const media = document.querySelector<HTMLElement>('.preview-image')!
+    expect(media.style.width).toBe('5628px')
+    expect(media.style.height).toBe('2504px')
+  })
+
+  it.each(['', 'invalid', '0 × 4000', '-1 × 4000', 'Infinity × 4000'])(
+    'falls back to preview dimensions for invalid full dimensions %s',
+    (value) => {
+      render(<PreviewWithControls file={{ ...file, exif: [{ label: 'Dimensions', value }] }} />)
+      expect(usePreviewStore.getState().controls).toBeNull()
+      loadImage(1600, 1200)
+      expect(document.querySelector<HTMLElement>('.preview-image')!.style.width).toBe('1600px')
+    }
+  )
+
+  it.each([1, 1.5, 2])('maps 100%% to display pixels at %sx display scale', async (pixelRatio) => {
+    vi.stubGlobal('devicePixelRatio', pixelRatio)
+    const { surface, media } = setup(4000, 3000)
+    const dropdown = screen.getByRole('button', { name: 'Zoom level' })
+    expect(Number(media.style.transform.match(/scale\(([^)]+)\)/)![1])).toBeCloseTo(0.2)
+    fireEvent.click(surface)
+    expect(dropdown.textContent).toBe('100%')
+    expect(media.style.transform).toContain(`scale(${1 / pixelRatio})`)
+    expect(usePreviewStore.getState().minimap!.width).toBeCloseTo(0.2 * pixelRatio)
+    await chooseZoom('200')
+    expect(media.style.transform).toContain(`scale(${2 / pixelRatio})`)
+    fireEvent.keyDown(surface, { key: '1' })
+    expect(media.style.transform).toContain(`scale(${1 / pixelRatio})`)
+    act(() => {
+      runCommand('zoomActual')
+    })
+    expect(usePreviewStore.getState().controls!.scale).toBe(1)
+  })
+
+  it('caps Fit at one display pixel per image pixel', () => {
+    vi.stubGlobal('devicePixelRatio', 2)
+    const { surface, media } = setup(400, 300)
+    expect(media.style.transform).toContain('scale(0.5)')
+    expect(usePreviewStore.getState().controls!.scale).toBe(1)
+    expect(media.querySelector('img')!.dataset.fullResolution).toBe('false')
+    expect(usePreviewStore.getState().minimap).toBeNull()
+    fireEvent.click(surface)
+    expect(screen.getByRole('button', { name: 'Zoom level' }).textContent).toBe('Fit')
+  })
+
+  it('requests native pixels at Fit when the medium preview is smaller than physical 100%', () => {
+    vi.stubGlobal('devicePixelRatio', 2)
+    const onViewportChange = vi.fn()
+    render(
+      <ZoomablePreview
+        file={file}
+        naturalSize={{ width: 3000, height: 2000 }}
+        onViewportChange={onViewportChange}
+      />
+    )
+    loadImage(2048, 1365)
+    act(() => resize(1600, 1200))
+    const media = document.querySelector<HTMLElement>('.preview-image')!
+    expect(media.style.width).toBe('3000px')
+    expect(media.style.transform).toContain('scale(0.5)')
+    expect(media.querySelector('img')!.dataset.fullResolution).toBe('true')
+    expect(usePreviewStore.getState().minimap).toBeNull()
+    expect(usePreviewStore.getState().controls!.scale).toBe(1)
+  })
+
+  it('keeps zoom percentages and updates geometry when display scaling changes', () => {
+    const displays: EventTarget[] = []
+    const matchMedia = vi.fn(() => {
+      const display = new EventTarget()
+      displays.push(display)
+      return display
+    })
+    vi.stubGlobal('matchMedia', matchMedia)
+    const { surface, media, unmount } = setup(4000, 3000)
+    fireEvent.keyDown(surface, { key: '1' })
+    wheel(surface, { deltaX: 200, deltaY: 100 })
+    vi.stubGlobal('devicePixelRatio', 2)
+    act(() => {
+      displays[0].dispatchEvent(new Event('change'))
+    })
+    expect(matchMedia).toHaveBeenLastCalledWith('(resolution: 2dppx)')
+    expect(media.style.transform).toBe('translate(-100px, -50px) scale(0.5)')
+    expect(media.dataset.zoomAnimated).toBe('false')
+    expect(screen.getByRole('button', { name: 'Zoom level' }).textContent).toBe('100%')
+    expect(usePreviewStore.getState().minimap).toMatchObject({ width: 0.4, height: 0.4 })
+    vi.stubGlobal('devicePixelRatio', 1.5)
+    fireEvent(window, new Event('resize'))
+    expect(media.style.transform).toContain(`scale(${1 / 1.5})`)
+    fireEvent.keyDown(surface, { key: '0' })
+    expect(Number(media.style.transform.match(/scale\(([^)]+)\)/)![1])).toBeCloseTo(0.2)
+    const remove = vi.spyOn(displays.at(-1)!, 'removeEventListener')
+    unmount()
+    expect(remove).toHaveBeenCalledWith('change', expect.any(Function))
+  })
+
+  it('anchors gestures and clamps panning in CSS pixels on a Retina display', () => {
+    vi.stubGlobal('devicePixelRatio', 2)
+    const { surface, media } = setup(4000, 3000)
+    wheel(surface, { ctrlKey: true, deltaY: -Math.log(2) / 0.01, clientX: 600, clientY: 450 })
+    expect(media.style.transform).toBe('translate(-200px, -150px) scale(0.4)')
+    expect(usePreviewStore.getState().controls!.scale).toBe(0.8)
+    wheel(surface, { deltaX: 10000, deltaY: 10000 })
+    expect(media.style.transform).toBe('translate(-400px, -300px) scale(0.4)')
+    expect(usePreviewStore.getState().minimap).toMatchObject({ x: 0.5, y: 0.5, width: 0.5 })
+    act(() => usePreviewStore.getState().minimap!.panTo(0.25, 0.25))
+    expect(media.style.transform).toBe('translate(400px, 300px) scale(0.4)')
+  })
+
   it('reports a paint only after the image draws, not for known dimensions', () => {
     const onPaint = vi.fn()
     render(
-      <ZoomablePreview file={file} naturalSize={{ width: 6000, height: 4000 }} onPaint={onPaint} />
+      <ZoomablePreview
+        file={{ ...file, exif: [{ label: 'Dimensions', value: '8000 × 6000' }] }}
+        naturalSize={{ width: 6000, height: 4000 }}
+        onPaint={onPaint}
+      />
     )
     expect(onPaint).not.toHaveBeenCalled()
     loadImage()
     expect(onPaint).toHaveBeenCalledOnce()
     expect(onPaint).toHaveBeenCalledWith(displayPreviewUrl(file, 'full'), expect.any(Object))
+    expect(document.querySelector<HTMLElement>('.preview-image')!.style.width).toBe('6000px')
   })
 
   it('uses the saved edited thumbnail for the Info navigator before and during zoom', () => {
@@ -379,8 +630,9 @@ describe('filmstrip zoom preview', () => {
     expect(media.style.transform).toContain('scale(0.4)')
   })
 
-  it('continues panning from the displayed position when interrupting an eased zoom', () => {
-    const { surface, media } = setup()
+  it.each([1, 2])('continues panning from an eased zoom at %sx display scale', (pixelRatio) => {
+    vi.stubGlobal('devicePixelRatio', pixelRatio)
+    const { surface, media } = setup(4000, 3000)
     fireEvent.click(surface)
     vi.mocked(media.getAnimations).mockReturnValueOnce([{} as Animation])
     vi.spyOn(window, 'getComputedStyle').mockReturnValue({
@@ -392,7 +644,7 @@ describe('filmstrip zoom preview', () => {
     expect(matrix).toHaveBeenCalledWith('matrix(0.75, 0, 0, 0.75, 40, 20)')
     expect(media.style.transform).toBe('translate(30px, 15px) scale(0.75)')
     expect(media.dataset.zoomAnimated).toBe('false')
-    expect(usePreviewStore.getState().controls!.scale).toBe(0.75)
+    expect(usePreviewStore.getState().controls!.scale).toBe(0.75 * pixelRatio)
   })
 
   it('steps from below Fit to Fit to 100%, and returns any zoom above Fit to Fit', async () => {
@@ -1282,4 +1534,20 @@ describe('editor viewport tiles', () => {
     await act(async () => pending.slice(1, 5).forEach(({ finish }) => finish()))
     expect(pending.map(({ url }) => url).slice(5)).toEqual(['block-7'])
   })
+})
+
+it('publishes library detail only after the zoom and pan settle', () => {
+  vi.useFakeTimers()
+  render(<ZoomablePreview file={{ ...file, nativeDimensions: [6000, 4000] }} nativePreview />)
+  const image = loadImage(1200, 800)
+  act(() => usePreviewStore.getState().controls!.zoomTo(1))
+  expect(image.dataset.fullResolution).toBe('false')
+  act(() => vi.advanceTimersByTime(260))
+  expect(image.dataset.fullResolution).toBe('true')
+  const settled = image.dataset.detailRegion
+  const surface = screen.getByRole('region', { name: 'Image preview' })
+  wheel(surface, { deltaX: 40, deltaY: 0 })
+  expect(image.dataset.detailRegion).toBe(settled)
+  act(() => vi.advanceTimersByTime(120))
+  expect(image.dataset.detailRegion).not.toBe(settled)
 })

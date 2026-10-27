@@ -41,7 +41,7 @@ use mozjpeg_sys as _;
 
 /// The bundled decoder and the adapter revision. Change the revision when a
 /// change can alter decoded pixels or metadata.
-pub const DECODER_VERSION: &str = "LibRaw 0.22.2, librtprocess 9a85827, x3f-dng 3";
+pub const DECODER_VERSION: &str = "LibRaw 0.22.2, librtprocess 9a85827, x3f-dng 4";
 /// The largest active area, in pixels. A color image of this size needs
 /// about 23 bytes per pixel while it is prepared.
 pub const MAX_PIXELS: u64 = 160_000_000;
@@ -1270,10 +1270,29 @@ fn srgb(v: f32) -> u16 {
     (e * 65535.).round() as u16
 }
 
+/// Map the upright default crop back to the unrotated decoded pixels.
+fn preview_crop(info: DngInfo, width: u32, height: u32) -> [u32; 4] {
+    let Some([x, y, w, h]) = info.as_shot_crop else {
+        return [0, 0, width, height];
+    };
+    let inverse = match info.orientation {
+        6 => 8,
+        8 => 6,
+        other => other,
+    };
+    let [x, y, w, h] = orient_rect([x, y, x + w, y + h], inverse);
+    let x = (x * width as f32).round().clamp(0., (width - 1) as f32) as u32;
+    let y = (y * height as f32).round().clamp(0., (height - 1) as f32) as u32;
+    let w = (w * width as f32).round().max(1.) as u32;
+    let h = (h * height as f32).round().max(1.) as u32;
+    [x, y, w.min(width - x), h.min(height - y)]
+}
+
 /// An unrotated sRGB JPEG with an sRGB ICC profile, at most
-/// `PREVIEW_MAX_EDGE` pixels on its long edge. Always three channels.
+/// `PREVIEW_MAX_EDGE` pixels on its long edge, with the default crop. Always three channels.
 pub fn preview(path: &Path, cancel: &AtomicBool) -> Result<Vec<u8>, String> {
     use image::ImageEncoder;
+    let info = inspect(path, cancel)?;
     let (image, cal, _) = decode(path, cancel, true, None)?;
     let (width, height) = (image.width as u32, image.height as u32);
     let data = to_scene(image, &cal)?;
@@ -1284,7 +1303,9 @@ pub fn preview(path: &Path, cancel: &AtomicBool) -> Result<Vec<u8>, String> {
         data.into_iter().map(srgb).collect(),
     )
     .ok_or("Invalid DNG preview dimensions")?;
+    let [x, y, w, h] = preview_crop(info, width, height);
     let preview = image::DynamicImage::ImageRgb16(rgb)
+        .crop_imm(x, y, w, h)
         .thumbnail(PREVIEW_MAX_EDGE, PREVIEW_MAX_EDGE)
         .into_rgb8();
     let mut bytes = Vec::new();

@@ -1,14 +1,19 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { X3FFileDTO } from '@shared/types'
+import type { PreviewRegion } from '@shared/editor'
 import { displayPreviewUrl, isRenderedPreview } from '@shared/preview'
 import { subscribeFitPreview } from '../lib/fitPreviews'
-import { subscribeFullPreview } from '../lib/previewImages'
+import { cachedFullPreview, subscribeFullPreview } from '../lib/previewImages'
+import { loadFrame } from '../lib/frames'
 import { cn } from '../lib/cn'
 import { OrientedImage } from './OrientedImage'
 
 interface Props {
   file: X3FFileDTO
   fullResolution?: boolean
+  region?: PreviewRegion | null
+  /** Allow full-size saved renders in the library. Live editor frames use tiles. */
+  nativePreview?: boolean
   /** Gets the size and the url of each picture when its pixels are on the canvas. */
   onDimensions?: (dimensions: { width: number; height: number }, url: string) => void
   containerClassName?: string
@@ -30,6 +35,8 @@ export function FilmstripImage(props: Props): React.JSX.Element {
 function Content({
   file,
   fullResolution = false,
+  region,
+  nativePreview = false,
   onDimensions,
   containerClassName,
   className
@@ -38,7 +45,23 @@ function Content({
   const edited = isRenderedPreview(file)
   // Until its import resolves, a row can be an edited photo; do not show its original.
   const pending = !!file.pending && !edited
-  const overlay = fullResolution && !edited && !pending
+  const fullUrl = useMemo(() => {
+    if (!nativePreview || file.displayPreviewUrl || !url) return url
+    const native = new URL(url)
+    native.searchParams.set('v', 'native')
+    return native.toString()
+  }, [nativePreview, file.displayPreviewUrl, url])
+  const overlay =
+    fullResolution && (!edited || nativePreview) && !file.displayPreviewUrl && !pending && !!fullUrl
+  const regionUrl = useMemo(() => {
+    if (!overlay || !nativePreview || !region) return undefined
+    const uri = new URL(fullUrl)
+    if (edited) uri.searchParams.set('v', 'region')
+    uri.searchParams.set('region', [region.x, region.y, region.width, region.height].join(','))
+    return uri.toString()
+  }, [overlay, nativePreview, region, fullUrl, edited])
+  const detail = useRef<HTMLCanvasElement>(null)
+  const [detailReady, setDetailReady] = useState<string>()
   const canvas = useRef<HTMLCanvasElement>(null)
   const fallback = useRef<HTMLDivElement>(null)
   const image = useRef<HTMLImageElement>(null)
@@ -50,7 +73,8 @@ function Content({
   const [shown, setShown] = useState<string>()
   const [failed, setFailed] = useState<string>()
   const [fadingIn, setFadingIn] = useState(false)
-  const [source, setSource] = useState<string>()
+  const [fullSource, setFullSource] = useState<{ url: string; source: string }>()
+  const source = fullSource?.url === fullUrl ? fullSource.source : undefined
   const [fullReady, setFullReady] = useState<{ source: string; element: HTMLImageElement }>()
   useEffect(() => () => settleFade.current?.(), [])
 
@@ -104,15 +128,61 @@ function Content({
   )
 
   useEffect(() => {
-    if (!overlay) return
-    return subscribeFullPreview(
-      url,
-      (next) => {
-        setSource(next)
-      },
-      () => setFullReady(undefined)
-    )
-  }, [url, overlay])
+    if (!regionUrl || !region) return
+    // A stored whole image needs no new region render.
+    if (cachedFullPreview(fullUrl)) {
+      setDetailReady(regionUrl)
+      return
+    }
+    const controller = new AbortController()
+    void loadFrame(regionUrl, controller.signal, 'high')
+      .then((frame) => {
+        try {
+          const element = detail.current
+          const context = element?.getContext('2d')
+          if (controller.signal.aborted || !element || !context) return
+          element.width = frame.width
+          element.height = frame.height
+          context.drawImage(frame.image, 0, 0)
+          const bounds = frame.region ?? region
+          Object.assign(element.style, {
+            left: `${bounds.x * 100}%`,
+            top: `${bounds.y * 100}%`,
+            width: `${bounds.width * 100}%`,
+            height: `${bounds.height * 100}%`
+          })
+          element.dataset.previewUrl = regionUrl
+          setDetailReady(regionUrl)
+        } finally {
+          frame.release()
+        }
+      })
+      .catch(() => {
+        // A failed region falls back to the whole preview.
+        if (!controller.signal.aborted) setDetailReady(regionUrl)
+      })
+    return () => controller.abort()
+  }, [regionUrl, region, fullUrl])
+
+  useEffect(() => {
+    if (!overlay || (regionUrl && detailReady !== regionUrl)) return
+    let release: (() => void) | undefined
+    const start = (): void => {
+      release = subscribeFullPreview(
+        fullUrl,
+        (next) => setFullSource({ url: fullUrl, source: next }),
+        () => setFullReady(undefined),
+        regionUrl ? 'background' : 'foreground'
+      )
+    }
+    // Give navigation a quiet interval before starting a whole RAW render.
+    if (!regionUrl || cachedFullPreview(fullUrl)) start()
+    const timer = release ? undefined : setTimeout(start, 1000)
+    return () => {
+      clearTimeout(timer)
+      release?.()
+    }
+  }, [fullUrl, overlay, regionUrl, detailReady])
 
   // load/complete alone do not guarantee decoded pixels when decoding is async.
   // The medium canvas stays underneath even after the overlay is revealed.
@@ -176,6 +246,15 @@ function Content({
           className
         )}
       />
+      {regionUrl && (
+        <canvas
+          key={fullUrl}
+          ref={detail}
+          data-preview-region
+          aria-hidden="true"
+          className="absolute"
+        />
+      )}
       {overlay && source && (
         <img
           ref={image}
@@ -190,7 +269,9 @@ function Content({
             fullReady?.source === source && fullReady.element === image.current
               ? 'opacity-100'
               : 'opacity-0',
-            className
+            className,
+            // The image bounds set the aspect ratio. WebKit can squash large JPEGs with contain.
+            'object-fill'
           )}
           onError={() => setFullReady(undefined)}
         />

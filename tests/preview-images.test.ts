@@ -201,6 +201,23 @@ it('releases a full preview subscription only once so repeated cancellation cann
   releaseNext()
 })
 
+it('reuses a native edited preview from cache after its viewer leaves', async () => {
+  const source = `x3f-edit://localhost/native-${serial++}?v=native`
+  const ready = vi.fn()
+  const release = subscribeFullPreview(source, ready, vi.fn())
+  await vi.waitFor(() => expect(ready).toHaveBeenCalledOnce())
+  const url = ready.mock.calls[0][0]
+  expect(generated()).toHaveLength(1)
+  release()
+  await settle()
+  const revisit = vi.fn()
+  const stop = subscribeFullPreview(source, revisit, vi.fn())
+  expect(revisit).toHaveBeenCalledWith(url)
+  expect(generated()).toHaveLength(1)
+  expect(new URL(String(generated()[0][0])).searchParams.get('v')).toBe('native')
+  stop()
+})
+
 it('deduplicates small decoding and does not cancel another consumer when one leaves', async () => {
   const first = new AbortController()
   const second = new AbortController()

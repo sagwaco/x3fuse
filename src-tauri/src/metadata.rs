@@ -506,6 +506,8 @@ pub fn basic_metadata(path: PathBuf) -> Result<FileDto, String> {
         |info| info.capabilities,
     );
     let orientation = source.as_ref().ok().and_then(|info| info.orientation);
+    let native_dimensions = source.as_ref().ok().and_then(|info| info.native_dimensions);
+    let as_shot_crop = source.as_ref().ok().and_then(|info| info.crop);
     let edit_error = source.err();
     crate::source::remember(&path)?;
     let frames = crate::x3i::frames(&path);
@@ -528,6 +530,8 @@ pub fn basic_metadata(path: PathBuf) -> Result<FileDto, String> {
         captured_date,
         orientation,
         aspect_ratio: None,
+        native_dimensions,
+        as_shot_crop,
         exif: None,
         edit: None,
         edit_error,

@@ -236,6 +236,10 @@ export interface X3FFileDTO {
    * use the preview as-is.
    */
   aspectRatio?: number
+  /** Active-area dimensions after EXIF orientation, before recipe crop. */
+  nativeDimensions?: [number, number]
+  /** Default crop in the oriented active area, used without a saved recipe. */
+  asShotCrop?: [number, number, number, number]
   /** Culling state from the backend. Absent on placeholders (unflagged, unrated). */
   flag?: Flag
   /** Star rating: 0 = unrated ... 5. */

@@ -1331,6 +1331,41 @@ it('keeps a qualified point square through an undo and a redo before the frames 
   expect(square.height * 1024).toBeCloseTo(0.02 * 1024)
 })
 
+it.each([1, 1.5, 2])('shows the edit canvas at physical 100%% on a %sx display', (pixelRatio) => {
+  real.preview = true
+  vi.stubGlobal('devicePixelRatio', pixelRatio)
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      constructor(private callback: ResizeObserverCallback) {}
+      observe(target: Element): void {
+        if (target.getAttribute('aria-label') !== 'Image preview') return
+        this.callback(
+          [{ target, contentRect: { width: 800, height: 600 } } as ResizeObserverEntry],
+          this as unknown as ResizeObserver
+        )
+      }
+      unobserve(): void {}
+      disconnect(): void {}
+    }
+  )
+  editor.setState({
+    session,
+    documents: { [file.path]: doc },
+    loading: false,
+    preview: { ...frame, fullWidth: 6000, fullHeight: 4000 }
+  })
+  const view = render(<EditorScreen />)
+  act(() => {
+    expect(runCommand('zoomActual')).toBe(true)
+  })
+  const media = view.container.querySelector<HTMLElement>('.preview-image')!
+  expect(media.querySelector('canvas')).not.toBeNull()
+  expect(media.style.width).toBe('6000px')
+  expect(media.style.height).toBe('4000px')
+  expect(media.style.transform).toBe(`translate(0px, 0px) scale(${1 / pixelRatio})`)
+})
+
 it('drops a drag that began on a frame of other geometry when the next frame paints', () => {
   // The real preview and image, with frames that decode when the test says so.
   real.preview = true

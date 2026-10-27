@@ -4,15 +4,21 @@ import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react
 import { FilmstripImage } from '../src/renderer/src/components/FilmstripImage'
 import { ZoomablePreview } from '../src/renderer/src/components/ZoomablePreview'
 import type { X3FFileDTO } from '@shared/types'
+import { defaultRecipe } from '@shared/editor'
 import { displayPreviewUrl } from '@shared/preview'
 
-const { fitSubscribe, fullSubscribe, smallReady } = vi.hoisted(() => ({
+const { fitSubscribe, fullSubscribe, regionLoad, smallReady } = vi.hoisted(() => ({
   fitSubscribe: vi.fn(),
+  regionLoad: vi.fn(),
   fullSubscribe: vi.fn(),
   smallReady: { current: undefined as (() => void) | undefined }
 }))
 vi.mock('../src/renderer/src/lib/fitPreviews', () => ({ subscribeFitPreview: fitSubscribe }))
-vi.mock('../src/renderer/src/lib/previewImages', () => ({ subscribeFullPreview: fullSubscribe }))
+vi.mock('../src/renderer/src/lib/previewImages', () => ({
+  subscribeFullPreview: fullSubscribe,
+  cachedFullPreview: () => undefined
+}))
+vi.mock('../src/renderer/src/lib/frames', () => ({ loadFrame: regionLoad }))
 vi.mock('../src/renderer/src/components/OrientedImage', () => ({
   OrientedImage: ({
     loadingDelay,
@@ -34,6 +40,7 @@ const drawImage = vi.fn()
 let complete: Array<() => void>
 beforeEach(() => {
   complete = []
+  regionLoad.mockReset()
   fitSubscribe.mockReset().mockImplementation((_url, ready) => {
     ready(fit)
     return () => {}
@@ -338,6 +345,96 @@ it('retains the medium image through failed full decode and transport delays', a
   expect(medium.classList.contains('opacity-100')).toBe(true)
 })
 
+it('loads a saved edit at native resolution only after zooming past Fit', async () => {
+  const edited = {
+    ...file,
+    edit: { recipe: defaultRecipe(), revision: 1, previewUrl: 'x3f-edit://localhost/saved-a' }
+  }
+  const view = render(<FilmstripImage file={edited} nativePreview />)
+  const medium = view.container.querySelector('canvas')!
+  expect(fullSubscribe).not.toHaveBeenCalled()
+  view.rerender(<FilmstripImage file={edited} nativePreview fullResolution />)
+  expect(fullSubscribe).toHaveBeenCalledWith(
+    'x3f-edit://localhost/saved-a?v=native',
+    expect.any(Function),
+    expect.any(Function),
+    'foreground'
+  )
+  const full = view.container.querySelector('img')!
+  expect(full.classList.contains('opacity-0')).toBe(true)
+  expect(view.container.querySelector('canvas')).toBe(medium)
+  await act(async () => complete[0]())
+  expect(full.classList.contains('opacity-100')).toBe(true)
+  view.rerender(<FilmstripImage file={edited} nativePreview />)
+  expect(view.container.querySelector('img')).toBeNull()
+})
+
+it('does not show a previous full render while the saved recipe changes', async () => {
+  const pending = new Map<string, (url: string) => void>()
+  fullSubscribe.mockImplementation((url, ready) => {
+    pending.set(url, ready)
+    return () => {}
+  })
+  const edited = {
+    ...file,
+    edit: { recipe: defaultRecipe(), revision: 1, previewUrl: 'x3f-edit://localhost/saved-a' }
+  }
+  const view = render(<FilmstripImage file={edited} nativePreview fullResolution />)
+  act(() => pending.get('x3f-edit://localhost/saved-a?v=native')!('blob:a'))
+  await act(async () => complete[0]())
+  expect(view.container.querySelector('img')!.classList.contains('opacity-100')).toBe(true)
+  view.rerender(
+    <FilmstripImage
+      file={{
+        ...edited,
+        edit: { ...edited.edit, revision: 2, previewUrl: 'x3f-edit://localhost/saved-b' }
+      }}
+      nativePreview
+      fullResolution
+    />
+  )
+  expect(view.container.querySelector('img')).toBeNull()
+  act(() => pending.get('x3f-edit://localhost/saved-b?v=native')!('blob:b'))
+  await act(async () => complete[1]())
+  expect(view.container.querySelector('img')!.src).toBe('blob:b')
+})
+
+it('leaves explicit editor frames to the viewport tile renderer', () => {
+  const view = render(
+    <FilmstripImage
+      file={{ ...file, displayPreviewUrl: 'x3f-edit://localhost/live-a' }}
+      fullResolution
+    />
+  )
+  expect(fullSubscribe).not.toHaveBeenCalled()
+  expect(view.container.querySelector('img')).toBeNull()
+})
+
+it('does not start native renders for a saved file shown in the editor before its first render', () => {
+  const edited = {
+    ...file,
+    edit: {
+      recipe: defaultRecipe(),
+      revision: 1,
+      previewUrl: 'x3f-edit://localhost/awaiting-merge'
+    }
+  }
+  const view = render(<FilmstripImage file={edited} fullResolution />)
+  expect(fullSubscribe).not.toHaveBeenCalled()
+  expect(view.container.querySelector('img')).toBeNull()
+})
+
+it('does not fetch an empty preview URL for a saved edit', () => {
+  render(
+    <FilmstripImage
+      file={{ ...file, edit: { recipe: defaultRecipe(), revision: 1 } }}
+      fullResolution
+      nativePreview
+    />
+  )
+  expect(fullSubscribe).not.toHaveBeenCalled()
+})
+
 it('ignores a previous file’s completed decode and preserves geometry when import metadata arrives', async () => {
   const dimensions = vi.fn()
   const view = render(<FilmstripImage file={file} fullResolution onDimensions={dimensions} />)
@@ -391,4 +488,139 @@ it('tells the zoomable editor preview which frame painted, only after the frame 
   act(() => decoding[1](fit))
   expect(canvas.dataset.previewUrl).toBe(landscape.displayPreviewUrl)
   expect(onPaint).toHaveBeenLastCalledWith(landscape.displayPreviewUrl, expect.any(Object))
+})
+
+it.each([false, true])(
+  'loads the visible region before the whole preview (edited=%s)',
+  async (edited) => {
+    vi.useFakeTimers()
+    const region = { x: 0.2, y: 0.3, width: 0.25, height: 0.4 }
+    const photo = edited
+      ? {
+          ...file,
+          edit: {
+            recipe: defaultRecipe(),
+            revision: 1,
+            previewUrl: 'x3f-edit://localhost/saved-region'
+          }
+        }
+      : file
+    let finish!: (frame: {
+      image: ImageBitmap
+      width: number
+      height: number
+      release: () => void
+    }) => void
+    regionLoad.mockReturnValue(
+      new Promise((resolve) => {
+        finish = resolve
+      })
+    )
+    const view = render(
+      <FilmstripImage file={photo} nativePreview fullResolution region={region} />
+    )
+    expect(fullSubscribe).not.toHaveBeenCalled()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(120)
+    })
+    const [url, signal, priority] = regionLoad.mock.calls[0]
+    expect(new URL(url).searchParams.get('region')).toBe('0.2,0.3,0.25,0.4')
+    expect(new URL(url).searchParams.get('v')).toBe(edited ? 'region' : 'native')
+    expect(priority).toBe('high')
+    expect(signal.aborted).toBe(false)
+    expect(fullSubscribe).not.toHaveBeenCalled()
+    const release = vi.fn()
+    await act(async () => {
+      finish({ image: fit.image as ImageBitmap, width: 1500, height: 1600, release })
+    })
+    expect(release).toHaveBeenCalledOnce()
+    const tile = view.container.querySelector<HTMLCanvasElement>('[data-preview-region]')!
+    expect(tile.width).toBe(1500)
+    expect(tile.style.left).toBe('20%')
+    expect(tile.style.height).toBe('40%')
+    expect(fullSubscribe).not.toHaveBeenCalled()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000)
+    })
+    expect(fullSubscribe.mock.calls[0][3]).toBe('background')
+    expect(view.container.querySelector('[data-fit-preview]')).not.toBeNull()
+  }
+)
+
+it('cancels a moving region and rejects its late pixels', async () => {
+  vi.useFakeTimers()
+  let finish!: (frame: {
+    image: ImageBitmap
+    width: number
+    height: number
+    release: () => void
+  }) => void
+  regionLoad.mockReturnValue(new Promise(() => {})).mockReturnValueOnce(
+    new Promise((resolve) => {
+      finish = resolve
+    })
+  )
+  const region = { x: 0, y: 0, width: 0.2, height: 0.2 }
+  const view = render(<FilmstripImage file={file} nativePreview fullResolution region={region} />)
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(120)
+  })
+  const signal = regionLoad.mock.calls[0][1] as AbortSignal
+  view.rerender(
+    <FilmstripImage file={file} nativePreview fullResolution region={{ ...region, x: 0.5 }} />
+  )
+  expect(signal.aborted).toBe(true)
+  const release = vi.fn()
+  await act(async () => {
+    finish({ image: fit.image as ImageBitmap, width: 1200, height: 800, release })
+  })
+  expect(release).toHaveBeenCalledOnce()
+  expect(fullSubscribe).not.toHaveBeenCalled()
+  expect(
+    view.container.querySelector<HTMLCanvasElement>('[data-preview-region]')!.dataset.previewUrl
+  ).toBeUndefined()
+})
+
+it('falls back to the whole preview when a region fails', async () => {
+  vi.useFakeTimers()
+  regionLoad.mockRejectedValue(new Error('Region unavailable'))
+  render(
+    <FilmstripImage
+      file={file}
+      nativePreview
+      fullResolution
+      region={{ x: 0, y: 0, width: 0.5, height: 0.5 }}
+    />
+  )
+  await act(async () => {})
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1000)
+  })
+  expect(fullSubscribe).toHaveBeenCalledOnce()
+})
+
+it('places RAW detail at its returned pixel bounds', async () => {
+  vi.useFakeTimers()
+  regionLoad.mockResolvedValue({
+    image: fit.image,
+    width: 100,
+    height: 100,
+    region: { x: 0.125, y: 0.25, width: 0.5, height: 0.5 },
+    release: vi.fn()
+  })
+  const view = render(
+    <FilmstripImage
+      file={file}
+      nativePreview
+      fullResolution
+      region={{ x: 0.12, y: 0.24, width: 0.49, height: 0.49 }}
+    />
+  )
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(120)
+  })
+  const detail = view.container.querySelector<HTMLCanvasElement>('[data-preview-region]')!
+  expect(detail.style.left).toBe('12.5%')
+  expect(detail.style.top).toBe('25%')
+  expect(detail.style.width).toBe('50%')
 })

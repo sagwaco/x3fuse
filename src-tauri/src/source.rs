@@ -66,6 +66,9 @@ pub struct Info {
     pub kind: Kind,
     pub capabilities: Capabilities,
     pub crop: Option<[f32; 4]>,
+    /// Active-area dimensions after EXIF orientation, before recipe crop.
+    #[serde(default)]
+    pub native_dimensions: Option<[u32; 2]>,
     pub orientation: Option<u8>,
     pub iso: Option<f32>,
 }
@@ -183,6 +186,7 @@ impl Info {
                 kind,
                 capabilities: Capabilities::for_kind(kind, false),
                 crop: None,
+                native_dimensions: None,
                 orientation: None,
                 iso: None,
             });
@@ -233,7 +237,7 @@ impl Info {
     }
 
     /// Metadata that `inspect` can give: orientation 1 to 8, a positive ISO,
-    /// and a normalized crop in the image.
+    /// a normalized crop in the image, and positive native dimensions.
     fn valid_dng(self) -> bool {
         let crop = self.crop.is_none_or(|[x, y, w, h]| {
             [x, y, w, h].iter().all(|v| v.is_finite())
@@ -252,6 +256,7 @@ impl Info {
                 }
             && self.orientation.is_some_and(|o| (1..=8).contains(&o))
             && self.iso.is_none_or(|iso| iso.is_finite() && iso > 0.)
+            && self.native_dimensions.is_some_and(|[w, h]| w > 0 && h > 0)
             && crop
     }
 
@@ -312,6 +317,11 @@ fn inspect(path: &Path, cancel: &AtomicBool) -> Result<Info, String> {
             ..Capabilities::for_kind(Kind::Dng, dng.monochrome)
         },
         crop: dng.as_shot_crop,
+        native_dimensions: Some(if (5..=8).contains(&dng.orientation) {
+            [dng.height, dng.width]
+        } else {
+            [dng.width, dng.height]
+        }),
         orientation: Some(dng.orientation as u8),
         iso: dng.iso,
     })
@@ -397,6 +407,7 @@ mod tests {
             kind: Kind::Dng,
             capabilities: Capabilities::for_kind(Kind::Dng, false),
             crop: None,
+            native_dimensions: None,
             orientation: Some(1),
             iso: None,
         };
@@ -431,6 +442,7 @@ mod tests {
                 ..Capabilities::for_kind(Kind::Dng, false)
             },
             crop: None,
+            native_dimensions: None,
             orientation: Some(1),
             iso: None,
         };
@@ -480,6 +492,7 @@ mod tests {
                 ..Capabilities::for_kind(Kind::Dng, false)
             },
             crop: Some([0.1, 0.1, 0.8, 0.8]),
+            native_dimensions: Some([4000, 6000]),
             orientation: Some(6),
             iso: Some(200.),
         }
@@ -596,6 +609,24 @@ mod tests {
             },
         ] {
             tampered.push(persisted(&canonical, &stamp, decoder, info));
+        }
+        let mut legacy = serde_json::from_slice::<serde_json::Value>(&valid).unwrap();
+        legacy["info"]
+            .as_object_mut()
+            .unwrap()
+            .remove("nativeDimensions");
+        // Older entries deserialize, then refresh to add the native dimensions.
+        tampered.push(serde_json::to_vec(&legacy).unwrap());
+        for dimensions in [None, Some([0, 6000]), Some([4000, 0])] {
+            tampered.push(persisted(
+                &canonical,
+                &stamp,
+                decoder,
+                Info {
+                    native_dimensions: dimensions,
+                    ..fake()
+                },
+            ));
         }
         let mut with_field = serde_json::from_slice::<serde_json::Value>(&valid).unwrap();
         with_field["extra"] = true.into();

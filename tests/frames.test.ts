@@ -71,6 +71,8 @@ it('parses only complete X3F8 bodies as a view of the pixels after the header', 
   const png = frames.parseFrame(PNG_BODY.slice().buffer) as Blob
   expect([png instanceof Blob, png.type, png.size]).toEqual([true, 'image/png', 11])
   expect(frames.parseFrame(PNG_BODY.slice(0, 7).buffer)).toBeUndefined()
+  const jpeg = frames.parseFrame(new Uint8Array([0xff, 0xd8, 0xff, 0xd9]).buffer) as Blob
+  expect([jpeg.type, jpeg.size]).toEqual(['image/jpeg', 4])
 })
 
 it('loads edited previews as raw RGBA8 under one native request', async () => {
@@ -279,4 +281,35 @@ it('keeps at most four stored-image lookups in flight when a new caller arrives 
   }
   expect(await Promise.all(lookups)).toEqual(Array(17).fill(undefined))
   expect(peak).toBe(4)
+})
+
+it('reads the snapped region before transferring its raw pixels', async () => {
+  const buffer = body(2, 1, 'X3F8', 16)
+  const header = new DataView(buffer)
+  header.setUint32(12, 1, true)
+  const bounds = new DataView(buffer, buffer.byteLength - 16)
+  ;[0.125, 0.25, 0.5, 0.75].forEach((value, i) => bounds.setFloat32(i * 4, value, true))
+  const parsed = frames.parseFrame(buffer) as ImageData
+  expect(parsed.data.length).toBe(8)
+  vi.mocked(fetch).mockResolvedValueOnce(raw(buffer))
+  const frame = await frames.loadFrame('x3f-edit://localhost/abc?v=region&region=0.1,0.2,0.5,0.7')
+  expect(frame.region).toEqual({ x: 0.125, y: 0.25, width: 0.5, height: 0.75 })
+  expect(frames.parseFrame(buffer.slice(0, -1))).toBeUndefined()
+  header.setUint32(12, 2, true)
+  expect(frames.parseFrame(buffer)).toBeUndefined()
+})
+
+it('registers native original RAW detail for priority and cancellation', async () => {
+  vi.mocked(fetch).mockResolvedValueOnce(raw(body(2, 1)))
+  const frame = await frames.loadFrame(
+    'x3f-preview://localhost/photo.dng?v=native',
+    undefined,
+    'high'
+  )
+  const uri = new URL(String(vi.mocked(fetch).mock.calls[0][0]))
+  expect(uri.searchParams.get('format')).toBe('rgba8')
+  expect(uri.searchParams.get('requestId')).toBe('request-0')
+  expect(uri.searchParams.get('priority')).toBe('high')
+  expect(frame.width).toBe(2)
+  expect(invoke).toHaveBeenLastCalledWith('editor:endImageRequest', { requestId: 'request-0' })
 })
