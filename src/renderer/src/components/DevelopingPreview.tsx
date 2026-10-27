@@ -380,7 +380,7 @@ export function DevelopingPreview({
   useEffect(() => {
     if (!cloud) return
     const controller = new AbortController()
-    loadSmallPreview(url, orientation, aspectRatio, controller.signal)
+    loadSmallPreview(url, orientation, aspectRatio, controller.signal, 'selected')
       .then(setSource)
       .catch(() => {
         if (!controller.signal.aborted) setStill(true)

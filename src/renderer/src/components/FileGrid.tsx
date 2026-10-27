@@ -3,7 +3,7 @@ import type { X3FFileDTO } from '@shared/types'
 import { useQueueStore, type ExportDraft } from '../stores/queueStore'
 import { useFileDrop } from '../hooks/useFileDrop'
 import { useQueueSelection, type QueueSelection } from '../hooks/useQueueSelection'
-import { useScrollToActive } from '../hooks/useScrollToActive'
+import { useScrollToActive, useShownRows } from '../hooks/useScrollToActive'
 import { useVirtualGrid } from '../hooks/useVirtualGrid'
 import { useMarquee, type Box } from '../hooks/useMarquee'
 import { MarqueeBox } from './ui/marqueeBox'
@@ -43,6 +43,7 @@ export function FileGrid({ draft }: { draft?: ExportDraft }): React.JSX.Element 
   useEffect(() => parentRef.current?.focus(), [])
 
   useScrollToActive(virtualizer, sorted, activeId, columns)
+  useShownRows(virtualizer, sorted, columns)
 
   const marquee = useMarquee(parentRef, ({ left, top, right, bottom }: Box) => {
     // Cells fill the padded width in equal columns. Each row is a cell and its label.

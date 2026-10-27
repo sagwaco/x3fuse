@@ -46,6 +46,10 @@ let bitmaps: { width: number; height: number; close: ReturnType<typeof vi.fn> }[
 let preview: string
 let previewId = 0
 
+/** Requests that generate an image; stored-image lookups come first and miss here. */
+const generated = () =>
+  vi.mocked(fetch).mock.calls.filter(([url]) => !String(url).includes('cacheOnly=1'))
+
 beforeEach(() => {
   preview = `preview:${++previewId}`
   bitmaps = []
@@ -157,12 +161,12 @@ describe('scope preview', () => {
       view.rerender(<ColorScope url={preview} orientation={6} aspectRatio={2} mode={mode} />)
       expect(await screen.findByRole('img')).toBe(canvas)
     }
-    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(generated()).toHaveLength(1)
     expect(createImageBitmap).toHaveBeenCalledTimes(1)
     expect(bitmaps[0].close).toHaveBeenCalledTimes(1)
     view.rerender(<ColorScope url={preview} orientation={1} aspectRatio={2} mode="waveform" />)
     await screen.findByRole('img')
-    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(generated()).toHaveLength(2)
   })
 
   it.each(['rgbParade', 'waveform', 'vectorscope'] as const)(
@@ -216,7 +220,7 @@ describe('scope preview', () => {
     expect(context.getImageData).toHaveBeenCalledTimes(reads)
     view.rerender(<ColorScope url={preview} fileId="a" mode="waveform" />)
     await waitFor(() => expect(context.getImageData).toHaveBeenLastCalledWith(0, 0, 640, 480))
-    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(generated()).toHaveLength(1)
     // A withheld, stale source keeps the last paint as pending and reads no pixels.
     const held = context.getImageData.mock.calls.length
     view.rerender(<ColorScope url={undefined} fileId="a" mode="waveform" region={half} pending />)
@@ -297,7 +301,7 @@ describe('scope preview', () => {
 
     render(<ColorScope url={preview} mode="waveform" />)
     expect((screen.getByRole('img') as HTMLCanvasElement).width).toBe(274)
-    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(generated()).toHaveLength(2)
     expect(createImageBitmap).toHaveBeenCalledTimes(2)
   })
 
@@ -312,7 +316,7 @@ describe('scope preview', () => {
     hook.rerender({ fileId: 'second-import' })
     expect(hook.result.current).toBe('loading')
     await waitFor(() => expect(hook.result.current).toEqual(image))
-    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(generated()).toHaveLength(2)
   })
 
   it('does not redraw for unchanged window dimensions but refreshes the backing pixel ratio', async () => {

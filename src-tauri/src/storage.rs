@@ -62,6 +62,8 @@ pub fn write_bytes_atomic(path: &Path, bytes: &[u8], durable: bool) -> Result<()
     Ok(())
 }
 
+const OLD_PREVIEW_CACHE_DEFAULT: u64 = 1_000_000_000;
+
 pub struct Preferences {
     path: PathBuf,
     value: Mutex<Settings>,
@@ -73,7 +75,15 @@ impl Preferences {
         if let Ok(bytes) = fs::read(&path) {
             if let Ok(Value::Object(saved)) = serde_json::from_slice::<Value>(&bytes) {
                 // Recover valid fields individually; one bad preference must not erase the rest.
-                for (key, field) in saved {
+                // The old preview cache default held embedded previews only. The
+                // shared cache holds all previews, so that default moves to the
+                // new one, once. Other saved limits stay.
+                let migrate = saved.get("previewCacheUnified") != Some(&Value::Bool(true))
+                    && saved.get("previewCacheLimit") == Some(&OLD_PREVIEW_CACHE_DEFAULT.into());
+                for (key, mut field) in saved {
+                    if key == "previewCacheLimit" && migrate {
+                        field = crate::cache::DEFAULT_LIMIT.into();
+                    }
                     let mut candidate = value.clone();
                     if candidate.get(&key).is_none() {
                         continue;
@@ -233,7 +243,7 @@ mod tests {
         .unwrap();
         let store = Preferences::load(path.clone());
         assert!(!store.get().preview_cache_enabled);
-        assert_eq!(store.get().preview_cache_limit, 1_000_000_000);
+        assert_eq!(store.get().preview_cache_limit, 20_000_000_000);
         assert!(store
             .set(serde_json::json!({"previewCacheLimit": -1}))
             .is_err());
@@ -246,6 +256,37 @@ mod tests {
         assert_eq!(
             Preferences::load(path).get().preview_cache_limit,
             2_000_000_000
+        );
+    }
+
+    #[test]
+    fn the_old_default_preview_cache_limit_moves_to_the_shared_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        for (saved, loaded) in [
+            (1_000_000_000_u64, crate::cache::DEFAULT_LIMIT),
+            (2_000_000_000, 2_000_000_000),
+            (500_000_000, 500_000_000),
+            (crate::cache::DEFAULT_LIMIT, crate::cache::DEFAULT_LIMIT),
+        ] {
+            fs::write(
+                &path,
+                serde_json::to_vec(&serde_json::json!({"previewCacheLimit": saved})).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                Preferences::load(path.clone()).get().preview_cache_limit,
+                loaded
+            );
+        }
+        // A user can still choose 1 GB after the migration, and keeps it.
+        let store = Preferences::load(path.clone());
+        store
+            .set(serde_json::json!({"previewCacheLimit": 1_000_000_000u64}))
+            .unwrap();
+        assert_eq!(
+            Preferences::load(path).get().preview_cache_limit,
+            1_000_000_000
         );
     }
 

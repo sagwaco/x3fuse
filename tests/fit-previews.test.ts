@@ -2,12 +2,30 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FitPreview } from '../src/renderer/src/lib/fitPreviews'
 
-const { transport, loadFrame } = vi.hoisted(() => ({ transport: vi.fn(), loadFrame: vi.fn() }))
-vi.mock('../src/renderer/src/lib/previewImages', () => ({ subscribeFullPreviewBlob: transport }))
+const { transport, loadFrame, cachedFrame, thumbnails } = vi.hoisted(() => ({
+  transport: vi.fn(),
+  loadFrame: vi.fn(),
+  cachedFrame: vi.fn(),
+  thumbnails: { idle: true, wake: new Set<() => void>() }
+}))
+vi.mock('../src/renderer/src/lib/previewImages', () => ({
+  subscribeFullPreviewBlob: transport,
+  forgetFullPreview: vi.fn(),
+  thumbnailsIdle: () => thumbnails.idle,
+  whenThumbnailsIdle: (listener: () => void) => {
+    thumbnails.wake.add(listener)
+    return () => thumbnails.wake.delete(listener)
+  }
+}))
 vi.mock('../src/renderer/src/lib/frames', async (original) => ({
   ...(await original<typeof import('../src/renderer/src/lib/frames')>()),
-  loadFrame
+  loadFrame,
+  cachedFrame
 }))
+const MiB = 1024 * 1024
+/** This window's half of the total image-memory budget. */
+let budget = 64 * MiB
+let cleared: (() => void) | undefined
 let service: typeof import('../src/renderer/src/lib/fitPreviews')
 const workers: FakeWorker[] = []
 class FakeWorker {
@@ -55,6 +73,18 @@ async function load(source: string, result = output()) {
 beforeEach(async () => {
   vi.resetModules()
   workers.length = 0
+  budget = 64 * MiB
+  thumbnails.idle = true
+  thumbnails.wake.clear()
+  cachedFrame.mockReset().mockResolvedValue(undefined)
+  loadFrame.mockReset()
+  ;(window as unknown as { x3f: unknown }).x3f = {
+    invoke: async (channel: string) => (channel === 'cache:memoryBudget' ? budget * 2 : undefined),
+    on: (channel: string, listener: () => void) => {
+      if (channel === 'cache:cleared') cleared = listener
+      return () => {}
+    }
+  }
   vi.stubGlobal('Worker', FakeWorker)
   transport.mockReset().mockImplementation((_source, ready) => {
     ready(new Blob(['full'], { type: 'image/jpeg' }))
@@ -69,7 +99,8 @@ afterEach(() => {
 })
 
 describe('fit previews', () => {
-  it('warms edited frames without the worker and releases them on eviction', async () => {
+  it('warms edited frames at low priority without the worker, within the budget', async () => {
+    budget = 128 * MiB
     const frames: Array<{ image: ImageBitmap; release: () => void }> = []
     loadFrame.mockImplementation(async () => {
       const image = { width: 4096, height: 4096, close: vi.fn() } as unknown as ImageBitmap
@@ -84,19 +115,27 @@ describe('fit previews', () => {
     ]
     const stop = service.prefetchFitPreviews(sources)
     await vi.waitFor(() => expect(service.cachedFitPreview(sources[2])).toBeDefined())
-    expect(loadFrame.mock.calls.map(([source]) => source)).toEqual(sources)
+    await settle()
+    expect(loadFrame.mock.calls.map(([source, , priority]) => [source, priority])).toEqual(
+      sources.map((source) => [source, 'low'])
+    )
     expect(transport).not.toHaveBeenCalled()
     expect(workers).toHaveLength(0)
+    // Three 64 MiB warm frames: the oldest goes so that the cache keeps its budget.
+    expect(frames[0].release).toHaveBeenCalledOnce()
+    expect(service.cachedFitPreview(sources[0])).toBeUndefined()
     const ready = vi.fn()
-    const release = service.subscribeFitPreview(sources[0], ready, vi.fn())
-    expect(ready.mock.calls[0][0]).toMatchObject({ image: frames[0].image, width: 4096 })
+    const release = service.subscribeFitPreview(sources[2], ready, vi.fn())
+    expect(ready.mock.calls[0][0]).toMatchObject({ image: frames[2].image, width: 4096 })
     stop()
-    // 64 MB each: only the frame in use stays once the prefetch set is gone.
-    expect(frames[0].release).not.toHaveBeenCalled()
+    // A new prefetch set evicts the idle frame, not the frame in use.
+    const stopNext = service.prefetchFitPreviews(['x3f-edit://localhost/edited-d'])
+    await vi.waitFor(() => expect(loadFrame).toHaveBeenCalledTimes(4))
+    await settle()
     expect(frames[1].release).toHaveBeenCalledOnce()
-    expect(frames[2].release).toHaveBeenCalledOnce()
+    expect(frames[2].release).not.toHaveBeenCalled()
     release()
-    expect(frames[0].release).not.toHaveBeenCalled()
+    stopNext()
   })
 
   it('cancels an edited frame load when its viewer leaves and releases late pixels', async () => {
@@ -152,13 +191,15 @@ describe('fit previews', () => {
       release = service.subscribeFitPreview(`rapid-${i}`, ready, error)
     }
     await settle()
-    expect(transport).toHaveBeenCalledOnce()
+    // The latest selection fetches at once and waits only for the one decode slot.
+    expect(transport.mock.calls.map(([source]) => source)).toEqual(['rapid-0', 'rapid-20'])
+    expect(workers[0].postMessage).toHaveBeenCalledOnce()
     const stale = output()
     workers[0].reply(stale)
     await settle()
     expect(stale.image.close).toHaveBeenCalledOnce()
     expect(ready).not.toHaveBeenCalled()
-    expect(transport.mock.calls.map(([source]) => source)).toEqual(['rapid-0', 'rapid-20'])
+    expect(workers[0].postMessage).toHaveBeenCalledTimes(2)
     workers[0].reply(output())
     await settle()
     expect(ready).toHaveBeenCalledOnce()
@@ -166,7 +207,7 @@ describe('fit previews', () => {
     release()
   })
 
-  it('supersedes background transport with foreground and cancels abandoned prefetch targets', async () => {
+  it('keeps background transport while the selection loads and cancels abandoned prefetch targets', async () => {
     const deliveries: Array<{
       source: string
       ready: (blob: Blob) => void
@@ -183,10 +224,12 @@ describe('fit previews', () => {
     const ready = vi.fn()
     const release = service.subscribeFitPreview('foreground', ready, vi.fn())
     await settle()
-    expect(deliveries[0].release).toHaveBeenCalled()
     expect(transport.mock.calls.map(([source]) => source)).toEqual(['background-a', 'foreground'])
     expect(transport.mock.calls[1][3]).toBe('foreground')
+    // The transport preempts generation itself; a stored image keeps useful background work.
+    expect(deliveries[0].release).not.toHaveBeenCalled()
     stop()
+    expect(deliveries[0].release).toHaveBeenCalled()
     deliveries[0].ready(new Blob(['obsolete']))
     deliveries[1].ready(new Blob(['current']))
     await settle()
@@ -198,7 +241,36 @@ describe('fit previews', () => {
     release()
   })
 
+  it('returns preempted background work to the front of the targets but does not retry a failure', async () => {
+    let preempted = false
+    transport.mockImplementation((source, ready, error) => {
+      if (source === 'broken') queueMicrotask(() => error())
+      else if (source === 'preempted' && !preempted) {
+        preempted = true
+        queueMicrotask(() => error(true))
+      } else ready(new Blob(['full']))
+      return vi.fn()
+    })
+    const stop = service.prefetchFitPreviews(['preempted', 'broken', 'later'])
+    await settle()
+    expect(transport.mock.calls.map(([source]) => source)).toEqual(['preempted', 'preempted'])
+    workers[0].reply(output())
+    await settle()
+    expect(transport.mock.calls.map(([source]) => source)).toEqual([
+      'preempted',
+      'preempted',
+      'broken',
+      'later'
+    ])
+    workers[0].reply(output())
+    await settle()
+    expect(transport).toHaveBeenCalledTimes(4)
+    stop()
+  })
+
   it('keeps active images pinned within decoded LRU eviction and re-decodes encoded hits without native extraction', async () => {
+    // Five 16 MiB decoded images and their small mediums.
+    budget = 64 * MiB + 1024
     const pinned = await load('pinned')
     const old = await load('old')
     old.release()
@@ -223,31 +295,49 @@ describe('fit previews', () => {
     release()
   })
 
-  it('caps both caches and does not regenerate completed queue entries after eviction', async () => {
+  it('keeps one budget for both caches and does not regenerate prepared entries beyond the warm set', async () => {
+    budget = 128 * MiB
     const sources = Array.from({ length: 5 }, (_, i) => `queue-${i}`)
-    const results = sources.map(() => output(48 * 1024 * 1024))
+    const results = sources.map(() => output(48 * MiB))
     for (let i = 0; i < sources.length; i++) (await load(sources[i], results[i])).release()
     await settle()
     expect(transport).toHaveBeenCalledTimes(5)
+    // Each photo keeps 48 MiB encoded and 16 MiB decoded: two photos fit.
     expect(results[0].image.close).toHaveBeenCalledOnce()
+    expect(results[2].image.close).toHaveBeenCalledOnce()
     expect(service.cachedFitPreview(sources[0])).toBeUndefined()
-    // Existing decoded entries are the warm neighbors; the evicted entry is only background.
-    const stopAgain = service.prefetchFitPreviews([...sources.slice(1), sources[0]])
+    expect(service.cachedFitPreview(sources[4])).toBeDefined()
+    const stop = service.prefetchFitPreviews([
+      sources[4],
+      sources[3],
+      sources[0],
+      sources[1],
+      sources[2]
+    ])
     await settle()
-    expect(transport).toHaveBeenCalledTimes(5)
+    for (let i = 0; i < 2; i++) {
+      workers[0].reply(output(48 * MiB))
+      await settle()
+    }
+    // The evicted warm photos come back; the prepared photo beyond them does not.
+    expect(transport.mock.calls.slice(5).map(([source]) => source)).toEqual([
+      sources[0],
+      sources[1]
+    ])
     const ready = vi.fn()
-    const release = service.subscribeFitPreview(sources[0], ready, vi.fn())
+    const release = service.subscribeFitPreview(sources[2], ready, vi.fn())
     await settle()
-    // The 128 MiB encoded cache only retains two of these 48 MiB test entries.
-    expect(transport).toHaveBeenCalledTimes(6)
+    expect(transport).toHaveBeenCalledTimes(8)
     workers[0].reply(output())
     await settle()
     expect(ready).toHaveBeenCalledOnce()
     release()
-    stopAgain()
+    stop()
   })
 
   it('keeps nearby decoded previews warm during a long scan and rehydrates newly nearby encoded previews', async () => {
+    // Four 16 MiB decoded images and nine small mediums.
+    budget = 64 * MiB + 1024
     const sources = Array.from({ length: 9 }, (_, i) => `warm-${i}`)
     const stop = service.prefetchFitPreviews(sources)
     await settle()
@@ -398,5 +488,98 @@ describe('fit previews', () => {
     expect(loadFrame.mock.calls.map(([source]) => source)).toEqual(rendered.slice(0, 4))
     expect(transport.mock.calls[0][0]).toBe('x3f-preview://localhost/embedded')
     stop()
+  })
+
+  it('shows a stored edited frame without waiting for a background render, and a miss preempts it', async () => {
+    const frame = () => ({
+      image: { width: 8, height: 8, close: vi.fn() },
+      width: 8,
+      height: 8,
+      release: vi.fn()
+    })
+    loadFrame.mockImplementation(
+      (source: string, signal: AbortSignal) =>
+        new Promise((resolve, reject) => {
+          if (!source.endsWith('/bg')) return resolve(frame())
+          signal.addEventListener('abort', () =>
+            reject(new DOMException('Cancelled', 'AbortError'))
+          )
+        })
+    )
+    const stop = service.prefetchFitPreviews(['x3f-edit://localhost/bg'])
+    await settle()
+    expect(loadFrame).toHaveBeenCalledOnce()
+    const backgroundSignal = loadFrame.mock.calls[0][1] as AbortSignal
+    cachedFrame.mockImplementation(async (source: string) =>
+      source.endsWith('/stored') ? frame() : undefined
+    )
+    const stored = vi.fn()
+    const offStored = service.subscribeFitPreview('x3f-edit://localhost/stored', stored, vi.fn())
+    await settle()
+    expect(stored).toHaveBeenCalledOnce()
+    expect(backgroundSignal.aborted).toBe(false)
+    expect(loadFrame).toHaveBeenCalledOnce()
+    const missed = vi.fn()
+    const offMissed = service.subscribeFitPreview('x3f-edit://localhost/miss', missed, vi.fn())
+    await settle()
+    expect(backgroundSignal.aborted).toBe(true)
+    await vi.waitFor(() => expect(missed).toHaveBeenCalledOnce())
+    expect(loadFrame.mock.calls[1]).toEqual([
+      'x3f-edit://localhost/miss',
+      expect.any(AbortSignal),
+      'high'
+    ])
+    // The background render comes back after the selection.
+    await vi.waitFor(() => expect(loadFrame).toHaveBeenCalledTimes(3))
+    expect(loadFrame.mock.calls[2][0]).toBe('x3f-edit://localhost/bg')
+    stop()
+    offStored()
+    offMissed()
+  })
+
+  it('starts background preparation only after the visible thumbnails, but loads the selection at once', async () => {
+    thumbnails.idle = false
+    const stop = service.prefetchFitPreviews(['idle-a'])
+    await settle()
+    expect(transport).not.toHaveBeenCalled()
+    const ready = vi.fn()
+    const release = service.subscribeFitPreview('selected-now', ready, vi.fn())
+    await settle()
+    workers[0].reply(output())
+    await settle()
+    expect(ready).toHaveBeenCalledOnce()
+    expect(transport.mock.calls.map(([source]) => source)).toEqual(['selected-now'])
+    thumbnails.idle = true
+    thumbnails.wake.forEach((wake) => wake())
+    await settle()
+    expect(transport.mock.calls.map(([source]) => source)).toEqual(['selected-now', 'idle-a'])
+    stop()
+    release()
+  })
+
+  it('drops idle images on cache:cleared, keeps the displayed image, and prepares again', async () => {
+    const shown = await load('clear-shown')
+    const idle = await load('clear-idle')
+    idle.release()
+    await settle()
+    cleared!()
+    expect(idle.result.image.close).toHaveBeenCalledOnce()
+    expect(shown.result.image.close).not.toHaveBeenCalled()
+    expect(service.cachedFitPreview('clear-shown')).toBeDefined()
+    const warm = ['w-0', 'w-1', 'w-2', 'w-3']
+    const stop = service.prefetchFitPreviews([...warm, 'clear-idle'])
+    await settle()
+    for (let i = 0; i < warm.length; i++) {
+      workers[0].reply(output())
+      await settle()
+    }
+    expect(transport.mock.calls.slice(-5).map(([source]) => source)).toEqual([
+      ...warm,
+      'clear-idle'
+    ])
+    stop()
+    shown.release()
+    await settle()
+    expect(shown.result.image.close).toHaveBeenCalledOnce()
   })
 })

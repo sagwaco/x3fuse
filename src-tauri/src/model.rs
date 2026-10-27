@@ -191,12 +191,16 @@ pub struct Settings {
     pub light_theme: String,
     #[serde(default = "default_dark_theme")]
     pub dark_theme: String,
-    /// The disk cache of embedded previews and import metadata.
+    /// The disk cache of original and edited previews and source metadata.
     #[serde(default = "default_true")]
     pub preview_cache_enabled: bool,
     /// The size limit of the preview cache in bytes.
     #[serde(default = "default_preview_cache_limit")]
     pub preview_cache_limit: u64,
+    /// The limit applies to the shared preview cache. Settings files without
+    /// it can hold the old 1 GB default of the embedded preview cache.
+    #[serde(default = "default_true")]
+    pub preview_cache_unified: bool,
     /// The interface language: "auto" follows the system, or a locale name.
     #[serde(default = "default_language")]
     pub language: String,
@@ -206,7 +210,7 @@ pub struct Settings {
 const PREVIEW_CACHE_LIMITS: std::ops::RangeInclusive<u64> = 100_000_000..=1_000_000_000_000;
 
 fn default_preview_cache_limit() -> u64 {
-    1_000_000_000
+    crate::cache::DEFAULT_LIMIT
 }
 
 fn default_language() -> String {
@@ -253,6 +257,7 @@ impl Default for Settings {
             dark_theme: default_dark_theme(),
             preview_cache_enabled: true,
             preview_cache_limit: default_preview_cache_limit(),
+            preview_cache_unified: true,
             language: default_language(),
         }
     }
@@ -404,6 +409,10 @@ pub struct FileDto {
     pub path: PathBuf,
     pub file_name: String,
     pub file_size: u64,
+    /// The stable identity of the source for original preview URLs: see
+    /// `cache::source_key`. It is not the content fingerprint `sourceRevision`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preview_revision: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub captured_date: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -580,7 +589,7 @@ mod tests {
         fields.remove("previewCacheLimit");
         let mut settings: Settings = serde_json::from_value(wire).unwrap();
         assert!(settings.preview_cache_enabled);
-        assert_eq!(settings.preview_cache_limit, 1_000_000_000);
+        assert_eq!(settings.preview_cache_limit, 20_000_000_000);
         assert!(settings.validate().is_ok());
         for limit in [0, 99_999_999, 1_000_000_000_001] {
             settings.preview_cache_limit = limit;

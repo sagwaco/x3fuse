@@ -170,6 +170,28 @@ impl RenderedImage {
     pub fn png(&self) -> Result<Vec<u8>, RenderError> {
         self.png_preview(self.width.max(self.height))
     }
+    /// Decodes a preview PNG as an 8-bit sRGB frame, so that a smaller
+    /// preview can come from it without a render.
+    pub fn from_png(bytes: &[u8]) -> Result<Self, RenderError> {
+        let rgba =
+            image::load_from_memory_with_format(bytes, image::ImageFormat::Png)?.into_rgba8();
+        let (width, height) = rgba.dimensions();
+        let mut frame = Vec::with_capacity(FRAME_HEADER + rgba.len());
+        frame.extend_from_slice(b"X3F8");
+        for value in [width, height, 0] {
+            frame.extend_from_slice(&value.to_le_bytes());
+        }
+        frame.extend_from_slice(rgba.as_raw());
+        Ok(Self {
+            width,
+            height,
+            data: Pixels::Rgba8(frame),
+            color_profile: ColorProfile::Srgb,
+            full_width: width,
+            full_height: height,
+            region: None,
+        })
+    }
     /// Reuse a completed editor frame for a small preview without preparing RAW again.
     pub fn png_preview(&self, max_edge: u32) -> Result<Vec<u8>, RenderError> {
         if max_edge == 0 {

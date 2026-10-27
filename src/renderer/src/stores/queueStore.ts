@@ -24,6 +24,18 @@ import { useEditorStore } from './editorStore'
 import { t } from '../lib/strings'
 
 const newPlaceholderId = (): string => crypto.randomUUID()
+/** Concurrent `queue:add` calls, and the photos in each batch after the active ones. */
+const IMPORT_LANES = 3
+const IMPORT_BATCH = 8
+/** Shown rows go in smaller batches, so that they show soon. */
+const SHOWN_BATCH = 4
+/** Pending rows that each virtualized view renders now. Import loads them after the active photo. */
+const shownRows = new Map<object, string[]>()
+
+export function setShownRows(view: object, ids: string[] | null): void {
+  if (ids?.length) shownRows.set(view, ids)
+  else shownRows.delete(view)
+}
 
 export interface ExportDraft {
   files: X3FFileDTO[]
@@ -438,24 +450,33 @@ export const useQueueStore = create<QueueState>((set, get) => {
         if (screen !== 'queue') pin = null
       })
 
-      // Re-evaluate priorities between batches: rapid browsing can move far ahead of import.
+      // Re-evaluate priorities before each batch: rapid browsing can move far ahead of import.
+      // The active photo and its neighbors go alone in a small batch, then the rows that the
+      // views show. A few batches run at once, so that a slow file does not hold the photos
+      // that the backend has cached.
       const remaining = new Set(placeholders.map((file) => file.id))
-      while (remaining.size) {
+      const nextChunk = (): X3FFileDTO[] => {
         const current = get()
         const { sortField, sortAscending } = useSettingsStore.getState().settings
         const ordered = sortFiles(current.files, sortField, sortAscending)
         const active = ordered.findIndex((file) => file.id === current.activeId)
         const nearby = active < 0 ? [] : [ordered[active], ordered[active + 1], ordered[active - 1]]
-        const priority = new Set(nearby.filter(Boolean).map((file) => file.id))
-        const chunk = [
-          ...ordered.filter((file) => priority.has(file.id) && remaining.has(file.id)),
-          ...ordered.filter((file) => !priority.has(file.id) && remaining.has(file.id))
-        ].slice(0, 8)
-        // Keep the active item first even when sorting places its neighbor before it.
-        const index = chunk.findIndex((file) => file.id === current.activeId)
-        if (index > 0) chunk.unshift(...chunk.splice(index, 1))
-        if (!chunk.length) break
+        const priority = nearby.filter((file) => file && remaining.has(file.id))
+        const shown = new Set([...shownRows.values()].flat())
+        const waiting = ordered.filter((file) => remaining.has(file.id))
+        const visible = waiting.filter((file) => shown.has(file.id)).slice(0, SHOWN_BATCH)
+        const chunk = priority.length
+          ? priority
+          : visible.length
+            ? visible
+            : waiting.slice(0, IMPORT_BATCH)
         for (const file of chunk) remaining.delete(file.id)
+        return chunk
+      }
+      const importLane = async (): Promise<void> => {
+        for (let chunk = nextChunk(); chunk.length; chunk = nextChunk()) await importChunk(chunk)
+      }
+      const importChunk = async (chunk: X3FFileDTO[]): Promise<void> => {
         let added: X3FFileDTO[] = []
         try {
           added = await ipc.invoke('queue:add', { paths: chunk.map((file) => file.path) })
@@ -487,6 +508,7 @@ export const useQueueStore = create<QueueState>((set, get) => {
                 ...f,
                 fileSize: dto.fileSize,
                 sourceRevision: dto.sourceRevision,
+                previewRevision: dto.previewRevision,
                 capturedDate: dto.capturedDate,
                 orientation: dto.orientation,
                 aspectRatio: dto.aspectRatio,
@@ -520,6 +542,7 @@ export const useQueueStore = create<QueueState>((set, get) => {
           }
         })
       }
+      await Promise.all(Array.from({ length: IMPORT_LANES }, importLane))
       leave()
     },
 

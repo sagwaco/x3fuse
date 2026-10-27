@@ -138,7 +138,7 @@ export interface ConversionSettings {
   lightTheme: ThemeName
   /** Theme used while the appearance is dark. */
   darkTheme: ThemeName
-  /** Keep embedded previews and photo details on disk. */
+  /** Keep original and edited previews and photo details on disk. */
   previewCacheEnabled: boolean
   /** Size limit of the preview cache in bytes (decimal units, as shown). */
   previewCacheLimit: number
@@ -179,7 +179,7 @@ export const DEFAULT_SETTINGS: ConversionSettings = {
   lightTheme: 'light',
   darkTheme: 'dark',
   previewCacheEnabled: true,
-  previewCacheLimit: 1_000_000_000,
+  previewCacheLimit: 20_000_000_000,
   language: 'auto'
 }
 
@@ -188,7 +188,10 @@ export const DEFAULT_SETTINGS: ConversionSettings = {
  * Conversion results belong to a batch, not to these browsing records.
  */
 export interface X3FFileDTO {
+  /** Content fingerprint for rendered exports and edits. */
   sourceRevision?: string
+  /** Stable revision of the original preview URLs; it changes when the source changes. */
+  previewRevision?: string
   edit?: EditRecord
   editError?: string
   /** Immutable render override for editor and export-review snapshots. */

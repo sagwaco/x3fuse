@@ -16,12 +16,16 @@ import { DevelopingPreview } from '../components/DevelopingPreview'
 declare global {
   interface Window {
     __x3fRunNativeSmoke?: (input: string, editor?: boolean) => Promise<Record<string, unknown>>
+    __x3fRunPreviewCacheSmoke?: (
+      paths: string[],
+      warmup: boolean
+    ) => Promise<Record<string, unknown>>
     __x3fSmokeProgress?: string
   }
 }
 
 const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
-const painted = (): Promise<void> =>
+export const painted = (): Promise<void> =>
   new Promise((resolve, reject) => {
     const timer = setTimeout(
       () =>
@@ -632,6 +636,8 @@ async function run(input: string): Promise<Record<string, unknown>> {
 /** Included only by an explicit VITE_NATIVE_SMOKE=1 build; Rust invokes it only in Debug. */
 export function installNativeSmoke(): void {
   window.__x3fRunNativeSmoke = (input, editor = false) => (editor ? runEditor(input) : run(input))
+  window.__x3fRunPreviewCacheSmoke = async (paths, warmup) =>
+    (await import('./previewCacheSmoke')).runPreviewCacheSmoke(paths, warmup)
 }
 
 /** The launcher copies the RAW to a temporary folder before enabling this test. */

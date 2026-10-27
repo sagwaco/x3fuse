@@ -10,6 +10,10 @@ let serial = 0
 let file: X3FFileDTO
 const context = { setTransform: vi.fn(), drawImage: vi.fn() }
 let reveal: () => void
+/** Requests that generate an image; stored-image lookups come first and miss here. */
+const generated = () =>
+  vi.mocked(fetch).mock.calls.filter(([url]) => !String(url).includes('cacheOnly=1'))
+
 beforeEach(() => {
   file = { id: `image-${serial++}`, path: '/photos/a.X3F', fileName: 'a.X3F' }
   vi.stubGlobal(
@@ -79,12 +83,34 @@ it('shares completed oriented pixels before paint on revisit and reloads reimpor
     </StrictMode>
   )
   expect(view.container.firstElementChild?.getAttribute('aria-busy')).toBe('false')
-  expect(fetch).toHaveBeenCalledTimes(1)
+  expect(generated()).toHaveLength(1)
   view.rerender(<OrientedImage file={{ ...oriented, id: 'reimport-image' }} loading="eager" />)
-  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2))
+  await waitFor(() => expect(generated()).toHaveLength(2))
   await waitFor(() =>
     expect(view.container.firstElementChild?.getAttribute('aria-busy')).toBe('false')
   )
+})
+
+it('reuses pixels after a reimport of the same source and loads a changed source again', async () => {
+  const stamped = { ...file, previewRevision: 'stamp-a' }
+  const view = render(<OrientedImage file={stamped} loading="eager" />)
+  await waitFor(() =>
+    expect(view.container.firstElementChild?.getAttribute('aria-busy')).toBe('false')
+  )
+  expect(generated().map(([url]) => url)).toEqual([previewUrl(file.path, 'preview', 'stamp-a')])
+  // A new queue row of the same source uses the same URL, so its pixels are in memory.
+  view.rerender(<OrientedImage file={{ ...stamped, id: 'reimport-same' }} loading="eager" />)
+  expect(view.container.firstElementChild?.getAttribute('aria-busy')).toBe('false')
+  expect(generated()).toHaveLength(1)
+  const changed = { ...stamped, id: 'reimport-changed', previewRevision: 'stamp-b' }
+  view.rerender(<OrientedImage file={changed} loading="eager" />)
+  await waitFor(() => expect(generated()).toHaveLength(2))
+  expect(generated()[1][0]).toBe(previewUrl(file.path, 'preview', 'stamp-b'))
+  // The content fingerprint does not change the preview URL.
+  view.rerender(
+    <OrientedImage file={{ ...changed, id: 'other-row', sourceRevision: 'sha' }} loading="eager" />
+  )
+  expect(generated()).toHaveLength(2)
 })
 
 it('reports unavailable previews without leaking a failed bitmap', async () => {

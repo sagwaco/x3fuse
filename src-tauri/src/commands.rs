@@ -62,8 +62,7 @@ async fn write_settings(
             .debug
             .store(next.debug_logging_enabled, Ordering::Relaxed);
         state
-            .previews
-            .disk
+            .cache
             .configure(next.preview_cache_enabled, next.preview_cache_limit);
         if crate::menu::set_language(&next.language) {
             if let Err(error) = crate::menu::refresh(&app) {
@@ -523,20 +522,33 @@ pub async fn logs_sizes(state: State<'_, Arc<AppState>>) -> Result<Value, String
         .await
         .map_err(|e| e.to_string())
 }
-/// The bytes in the preview disk cache.
+/// The bytes in the preview disk cache, for all preview types.
 #[tauri::command]
 pub async fn cache_size(state: State<'_, Arc<AppState>>) -> Result<u64, String> {
-    let state = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || state.previews.disk.size())
-        .await
-        .map_err(|e| e.to_string())
+    Ok(state.cache.size())
 }
+/// Removes all disposable previews, then emits `cache:cleared` (null payload),
+/// so that the renderer drops idle images and work that started before.
 #[tauri::command]
-pub async fn cache_clear(state: State<'_, Arc<AppState>>) -> Result<(), String> {
+pub async fn cache_clear(app: AppHandle, state: State<'_, Arc<AppState>>) -> Result<(), String> {
     let state = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || state.previews.disk.clear())
-        .await
-        .map_err(|e| e.to_string())?
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let result = state.cache.clear();
+        state.memory.clear();
+        state.editor.cache_cleared();
+        result
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    // A partial Clear still invalidates earlier work.
+    let _ = app.emit("cache:cleared", ());
+    result
+}
+/// The total memory budget in bytes for retained images. The backend and the
+/// renderer each use half of it.
+#[tauri::command]
+pub fn cache_memory_budget() -> u64 {
+    crate::cache::memory_budget()
 }
 #[tauri::command]
 pub async fn cache_sfd_size(state: State<'_, Arc<AppState>>) -> Result<u64, String> {

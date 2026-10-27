@@ -6,11 +6,12 @@ use std::{
     sync::{atomic::AtomicBool, Arc},
 };
 use x3fuse_app::{
+    cache::{Memory, Store},
     conversion::validate_batch,
     editor::{Editor, RenderRequest},
     metadata::{basic_metadata, ExifTool},
     model::{BatchSettings, ConvertFile, OutputFormat, Rendering},
-    preview::{DiskCache, Previews},
+    preview::Previews,
     source::Kind,
     storage::Logs,
 };
@@ -87,15 +88,17 @@ async fn dng_previews_have_orientation_and_survive_cache_reload() {
         logs.clone(),
     ));
     exif.check().await.unwrap();
-    let disk = Arc::new(DiskCache::new(
+    let disk = Store::open(
         directory.path().join("previews"),
+        vec![],
         true,
         64 * 1024 * 1024,
         logs,
-    ));
-    let previews = Previews::new(exif.clone(), disk.clone());
-    let small = previews.get(&path, false).await.unwrap().unwrap();
-    let full = previews.get(&path, true).await.unwrap().unwrap();
+    );
+    let memory = || Arc::new(Memory::new(64 * 1024 * 1024));
+    let previews = Previews::new(exif.clone(), disk.clone(), memory());
+    let small = previews.get(&path, false, false).await.unwrap().unwrap();
+    let full = previews.get(&path, true, false).await.unwrap().unwrap();
     for bytes in [&small, &full] {
         let orientation = x3f_sys::jpeg_exif::parse_jpeg_exif(bytes)
             .and_then(|exif| exif.orientation)
@@ -113,8 +116,22 @@ async fn dng_previews_have_orientation_and_survive_cache_reload() {
             Some(info.orientation)
         );
     }
-    let reloaded = Previews::new(exif, disk);
-    assert_eq!(reloaded.get(&path, false).await.unwrap().unwrap(), small);
+    // Disk writes follow the responses. Then a cache-only request hits both.
+    let reloaded = Previews::new(exif, disk, memory());
+    for _ in 0..200 {
+        if reloaded.get(&path, true, true).await.unwrap().is_some() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert_eq!(
+        reloaded.get(&path, false, true).await.unwrap().unwrap(),
+        small
+    );
+    assert_eq!(
+        reloaded.get(&path, true, true).await.unwrap().unwrap(),
+        full
+    );
 }
 
 #[test]

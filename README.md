@@ -417,6 +417,34 @@ and exits within 100 seconds after building. Reports go to
 `artifacts/native-smoke-<platform>.json`; use `X3FUSE_SMOKE_REPORT` to override it.
 Repeat with Merrill and Quattro files.
 
+The preview cache benchmark uses temporary copies of every RAW and saved edit in
+a folder. It uses isolated application storage with the old 1 GB setting to check
+its upgrade, and runs twice: first to populate the cache, then in a new process
+to measure restart behavior.
+
+```sh
+X3FUSE_CACHE_SMOKE_DIRECTORY=/absolute/path/photos npm run test:preview-cache -- --build
+```
+
+Run `npm run sync:resources` before the first build. The benchmark reports import,
+first visible grid, thumbnail, and large-preview times in
+`artifacts/preview-cache-<platform>.json`. `X3FUSE_SMOKE_REPORT` selects another
+report path. `X3FUSE_CACHE_SMOKE_LIMIT` limits the number of input files for a short
+check. Each process has a 30-minute deadline. The report lists performance targets
+separately from functional failures. The operating system disk cache is not cleared.
+An unlocked, visible desktop is required. The benchmark checks that the window
+can paint before it imports photos.
+
+The backend check uses two fresh processes and temporary photo copies to verify
+all cached previews and their exact bytes after restart. It needs a supported GPU
+but no visible desktop, and writes `artifacts/preview-cache-backend.json`.
+
+```sh
+X3FUSE_CACHE_SMOKE_DIRECTORY=/absolute/path/photos \
+cargo test --manifest-path src-tauri/Cargo.toml --locked --test preview_cache_acceptance \
+  -- --ignored --exact folder_previews_survive_restart_as_cache_hits --nocapture
+```
+
 Run each extracted artifact outside the repository on its target OS. Check native
 import and drops, list/grid/filmstrip views, portrait and cropped previews, scopes,
 pinch and keyboard zoom, Settings, native menu selection and dismissal, output
@@ -527,10 +555,19 @@ The backend validates RAW inputs, caches prepared data, serializes GPU work, and
 renders bounded overlapping tiles. Interactive previews refine after input stops.
 Zoomed requests render the viewport at native detail, capped at 4096 pixels.
 Returning to Fit refreshes the full image. Scopes show the visible region.
-Saved edits use bounded persistent thumbnail and medium-preview caches under
-`edits/thumbnails-v1` and `edits/mediums-v1`. Initial uncached preparation can take
-time. Rendering pauses during export. Driver/device failures are reported as
-errors; they do not silently bypass film rendering.
+Original previews, edited thumbnails, and edited large previews share one disk
+cache under `app_cache_dir()/previews-v2`. Settings > Cache controls the total
+limit and usage. The default is 20 GB. The old 1 GB default upgrades to 20 GB;
+other saved limits are kept. The cache reuses compatible files from earlier
+preview directories. Clear removes preview
+files, but keeps saved edits, ratings, and stored SFD RAWs.
+
+Image memory uses 10% of system RAM, between 512 MiB and 4 GiB, shared between the
+backend and the webview. Cached image requests do not wait for RAW preparation or
+GPU rendering. Edited thumbnails use the final large preview, so one render can
+serve both views. Initial uncached preparation can take time. Rendering pauses
+during export. Driver/device failures are reported as errors; they do not
+silently bypass film rendering.
 
 GPU correctness and real-photo acceptance checks:
 

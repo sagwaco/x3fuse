@@ -326,9 +326,9 @@ function SettingsTitlebar({
 }
 
 /** Decimal sizes, as `formatBytes` shows them. */
-const CACHE_LIMITS = [256e6, 512e6, 1e9, 2e9, 5e9]
+const CACHE_LIMITS = [5e9, 10e9, 20e9, 50e9, 100e9]
 
-/** The disk cache of embedded previews and photo details. Edited photos have their own. */
+/** The one disk cache of original and edited previews and photo details. */
 function CachePage(): React.JSX.Element {
   const settings = useSettingsStore((s) => s.settings)
   const update = useSettingsStore((s) => s.update)
@@ -356,10 +356,13 @@ function CachePage(): React.JSX.Element {
         <Select
           aria-label={t('settings.cache.limit')}
           value={String(settings.previewCacheLimit)}
-          options={CACHE_LIMITS.map((bytes) => ({
-            value: String(bytes),
-            label: formatBytes(bytes)
-          }))}
+          // A saved limit from an older version stays shown and selected.
+          options={[...new Set([...CACHE_LIMITS, settings.previewCacheLimit])]
+            .sort((a, b) => a - b)
+            .map((bytes) => ({
+              value: String(bytes),
+              label: formatBytes(bytes)
+            }))}
           onValueChange={(v) => void update({ previewCacheLimit: Number(v) }).then(refresh)}
         />
       </Row>

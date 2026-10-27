@@ -90,7 +90,9 @@ function ImageContent({
   useEffect(() => {
     if (pending || mediaReady.current || (!visible && loading !== 'eager')) return
     const controller = new AbortController()
-    void loadSmallPreview(url, orientation, aspectRatio, controller.signal)
+    // An eager image shows the selected photo; lazy images are visible thumbnails.
+    const priority = loading === 'eager' ? 'selected' : 'visible'
+    void loadSmallPreview(url, orientation, aspectRatio, controller.signal, priority)
       .then((cached) => {
         if (controller.signal.aborted || !canvasRef.current) return
         copyPreview(canvasRef.current, cached, maxEdge)

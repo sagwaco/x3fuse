@@ -104,29 +104,33 @@ function ImageContent({
   const [fitReady, setFitReady] = useState(false)
   const [source, setSource] = useState<string>()
   const [fullReady, setFullReady] = useState<{ source: string; element: HTMLImageElement }>()
+  // Until its import resolves, a row can be an edited photo; do not show its original.
+  const pending = !!file.pending
 
   // A decoded cache hit copies immediately, before this file's first paint.
   useLayoutEffect(
     () =>
-      subscribeFitPreview(
-        url,
-        (preview) => {
-          const element = canvas.current
-          const context = element?.getContext('2d')
-          if (!element || !context) return
-          element.width = preview.image.width
-          element.height = preview.image.height
-          context.drawImage(preview.image, 0, 0)
-          dimensions.current?.({ width: preview.width, height: preview.height }, url)
-          setFitReady(true)
-        },
-        () => {}
-      ),
-    [url]
+      pending
+        ? undefined
+        : subscribeFitPreview(
+            url,
+            (preview) => {
+              const element = canvas.current
+              const context = element?.getContext('2d')
+              if (!element || !context) return
+              element.width = preview.image.width
+              element.height = preview.image.height
+              context.drawImage(preview.image, 0, 0)
+              dimensions.current?.({ width: preview.width, height: preview.height }, url)
+              setFitReady(true)
+            },
+            () => {}
+          ),
+    [url, pending]
   )
 
   useEffect(() => {
-    if (!fullResolution) return
+    if (!fullResolution || pending) return
     return subscribeFullPreview(
       url,
       (next) => {
@@ -134,7 +138,7 @@ function ImageContent({
       },
       () => setFullReady(undefined)
     )
-  }, [url, fullResolution])
+  }, [url, fullResolution, pending])
 
   // load/complete alone do not guarantee decoded pixels when decoding is async.
   // The medium canvas stays underneath even after the overlay is revealed.

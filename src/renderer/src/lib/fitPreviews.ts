@@ -1,5 +1,19 @@
-import { subscribeFullPreviewBlob } from './previewImages'
-import { isEditedFrame, loadFrame, type Frame } from './frames'
+import {
+  forgetFullPreview,
+  subscribeFullPreviewBlob,
+  thumbnailsIdle,
+  whenThumbnailsIdle
+} from './previewImages'
+import { cachedFrame, isEditedFrame, loadFrame, type Frame } from './frames'
+import {
+  getHeld,
+  hold,
+  keepWarm,
+  memoryEpoch,
+  onMemoryClear,
+  unhold,
+  type Held
+} from './memoryCache'
 
 export type FitPreview = {
   image: ImageBitmap | HTMLCanvasElement
@@ -7,61 +21,74 @@ export type FitPreview = {
   width: number
   height: number
 }
-type Encoded = { blob: Blob; width: number; height: number; users: number }
-type Decoded = FitPreview & { users: number; release: () => void }
+type Encoded = { blob: Blob; width: number; height: number }
+type Decoded = FitPreview & { release: () => void }
 type Result = FitPreview & { blob: Blob }
-type Consumer = { ready: (preview: Decoded) => void; error: () => void }
+type Consumer = { ready: (preview: Held<Decoded>) => void; error: () => void }
 type Job = {
   source: string
   consumers: Set<Consumer>
   priority: 'foreground' | 'background'
   cancelled: boolean
+  /** The Clear count when the job started. */
+  epoch: number
   cancelWaiting?: () => void
   promote?: () => void
 }
-const decoded = new Map<string, Decoded>()
-const encoded = new Map<string, Encoded>()
+const decodedKey = (source: string): string => `fit:${source}`
+const encodedKey = (source: string): string => `medium:${source}`
+/** Jobs by source: the foreground jobs and at most one background job. */
+const jobs = new Map<string, Job>()
 const prepared = new Set<string>()
-let decodedBytes = 0
-let encodedBytes = 0
-let running: Job | undefined
-let pending: Job | undefined
+let background: Job | undefined
 let targets: string[] = []
 let prefetchSources = new Set<string>()
 let warm = new Set<string>()
+let waitForThumbnails: (() => void) | undefined
 let worker: Worker | undefined
 let workerDisabled = false
 let workerId = 0
 let waiting: { id: number; resolve: (result: Result) => void; reject: () => void } | undefined
+
+// Prepare again what the Clear removed.
+onMemoryClear(() => prepared.clear())
+
+/** A few slots; foreground waiters go before background waiters. */
+function slots(limit: number): (foreground: boolean) => Promise<() => void> {
+  let busy = 0
+  const queue: Array<{ foreground: boolean; start: () => void }> = []
+  const next = (): void => {
+    if (busy < limit) queue.shift()?.start()
+  }
+  return (foreground) =>
+    new Promise((resolve) => {
+      const start = (): void => {
+        busy++
+        let done = false
+        resolve(() => {
+          if (done) return
+          done = true
+          busy--
+          next()
+        })
+      }
+      const index = foreground ? queue.findIndex((other) => !other.foreground) : -1
+      queue.splice(index < 0 ? queue.length : index, 0, { foreground, start })
+      next()
+    })
+}
+/** The worker decodes one image at a time. */
+const decodeSlot = slots(1)
+/** Native renders are serialized; one waits here so that the selection can go first. */
+const renderSlot = slots(1)
 
 function releaseImage(image: FitPreview['image']): void {
   if ('close' in image) image.close()
   else image.width = image.height = 0
 }
 
-function trim(): void {
-  for (const [source, entry] of decoded) {
-    if (decodedBytes <= 64 * 1024 * 1024) break
-    if (entry.users || warm.has(source)) continue
-    decoded.delete(source)
-    decodedBytes -= entry.image.width * entry.image.height * 4
-    entry.release()
-  }
-  for (const [source, entry] of encoded) {
-    if (encodedBytes <= 128 * 1024 * 1024) break
-    if (entry.users || warm.has(source)) continue
-    encoded.delete(source)
-    encodedBytes -= entry.blob.size
-  }
-}
-
 export function cachedFitPreview(source: string): FitPreview | undefined {
-  const entry = decoded.get(source)
-  if (entry) {
-    decoded.delete(source)
-    decoded.set(source, entry)
-  }
-  return entry
+  return getHeld<Decoded>(decodedKey(source))?.value
 }
 
 function disableWorker(): void {
@@ -169,45 +196,75 @@ function cancel(job: Job): void {
   job.cancelWaiting?.()
 }
 
+/** Selection work that needs generation stops background preparation, which comes back later. */
+function yieldBackground(job: Job): void {
+  if (job.priority === 'foreground' && background && !background.consumers.size) cancel(background)
+}
+
 /** Native editor frames are already sized and color-managed; draw their pixels as they are. */
 async function renderedFrame(job: Job): Promise<Frame> {
   const controller = new AbortController()
   job.cancelWaiting = () => controller.abort()
   try {
-    return await loadFrame(job.source, controller.signal)
+    const stored = await cachedFrame(job.source, controller.signal)
+    if (stored) return stored
+    if (job.cancelled) throw new Error('Cancelled')
+    yieldBackground(job)
+    const done = await renderSlot(job.priority === 'foreground')
+    try {
+      if (job.cancelled) throw new Error('Cancelled')
+      return await loadFrame(
+        job.source,
+        controller.signal,
+        job.priority === 'foreground' ? 'high' : 'low'
+      )
+    } finally {
+      done()
+    }
   } finally {
     job.cancelWaiting = undefined
   }
 }
 
 async function decodeSource(job: Job): Promise<Decoded> {
-  const saved = encoded.get(job.source)
-  if (saved) {
-    encoded.delete(job.source)
-    encoded.set(job.source, saved)
-  }
-  const blob = saved?.blob ?? (await sourceBlob(job))
-  if (!blob || job.cancelled) throw new Error('Cancelled or unavailable')
-  let result: Result
-  if (!workerDisabled && typeof Worker !== 'undefined') {
+  const saved = getHeld<Encoded>(encodedKey(job.source))
+  // The decode reads the saved medium; keep it while the job uses it.
+  if (saved) saved.users++
+  try {
+    const blob = saved?.value.blob ?? (await sourceBlob(job))
+    if (!blob || job.cancelled) throw new Error('Cancelled or unavailable')
+    const done = await decodeSlot(job.priority === 'foreground')
+    let result: Result
     try {
-      result = await renderWorker(blob, saved)
-    } catch {
       if (job.cancelled) throw new Error('Cancelled')
-      result = await renderFallback(blob, saved, job)
+      if (!workerDisabled && typeof Worker !== 'undefined') {
+        try {
+          result = await renderWorker(blob, saved?.value)
+        } catch {
+          if (job.cancelled) throw new Error('Cancelled')
+          result = await renderFallback(blob, saved?.value, job)
+        }
+      } else result = await renderFallback(blob, saved?.value, job)
+    } finally {
+      done()
     }
-  } else result = await renderFallback(blob, saved, job)
-  if (!saved && !job.cancelled) {
-    encoded.set(job.source, {
-      blob: result.blob,
-      width: result.width,
-      height: result.height,
-      users: 0
-    })
-    encodedBytes += result.blob.size
+    if (!saved && !job.cancelled) {
+      const { blob: medium, width, height } = result
+      hold(
+        encodedKey(job.source),
+        { blob: medium, width, height },
+        medium.size,
+        undefined,
+        job.epoch
+      )
+      // The medium replaces the full JPEG that background work fetched.
+      if (job.priority === 'background') forgetFullPreview(job.source)
+    }
+    const { image, width, height } = result
+    return { image, width, height, release: () => releaseImage(image) }
+  } finally {
+    if (saved) unhold(saved)
   }
-  const { image, width, height } = result
-  return { image, width, height, users: 0, release: () => releaseImage(image) }
 }
 
 async function sourceBlob(job: Job): Promise<Blob | undefined> {
@@ -223,8 +280,10 @@ async function sourceBlob(job: Job): Promise<Blob | undefined> {
             settled = true
             resolve(blob)
           },
-          () => {
+          (retry) => {
             settled = true
+            // Background work that the selection replaced comes back later.
+            if (retry && job.priority === 'background' && !job.consumers.size) cancel(job)
             resolve(undefined)
           },
           job.priority
@@ -245,109 +304,133 @@ async function sourceBlob(job: Job): Promise<Blob | undefined> {
   }
 }
 
-function pump(): void {
-  if (running) return
-  let job = pending
-  pending = undefined
-  while (!job && targets.length) {
-    const source = targets.shift()!
-    if (
-      !decoded.has(source) &&
-      (warm.has(source) || (!prepared.has(source) && !encoded.has(source)))
-    ) {
-      job = { source, consumers: new Set(), priority: 'background', cancelled: false }
-    }
-  }
-  if (!job) return
-  const current = job
-  running = current
+function run(job: Job): void {
   void (async () => {
     try {
       let entry: Decoded
-      if (isEditedFrame(current.source)) {
-        const frame = await renderedFrame(current)
-        entry = { ...frame, users: 0 }
-      } else entry = await decodeSource(current)
-      if (current.cancelled) {
+      if (isEditedFrame(job.source)) entry = { ...(await renderedFrame(job)) }
+      else entry = await decodeSource(job)
+      if (job.cancelled) {
         entry.release()
         return
       }
-      decoded.set(current.source, entry)
-      decodedBytes += entry.image.width * entry.image.height * 4
-      prepared.add(current.source)
-      for (const consumer of current.consumers) consumer.ready(entry)
-      trim()
+      if (job.epoch === memoryEpoch()) prepared.add(job.source)
+      // Beyond the nearest photos, background preparation keeps only the compact medium.
+      if (!job.consumers.size && !warm.has(job.source) && !isEditedFrame(job.source)) {
+        entry.release()
+        return
+      }
+      const { width, height } = entry.image
+      const held = hold(decodedKey(job.source), entry, width * height * 4, entry.release, job.epoch)
+      // The compact medium goes after its decoded image in the LRU, so that it stays longer.
+      getHeld(encodedKey(job.source))
+      for (const consumer of job.consumers) consumer.ready(held)
     } catch {
-      if (!current.cancelled) for (const consumer of current.consumers) consumer.error()
+      if (!job.cancelled) for (const consumer of job.consumers) consumer.error()
     } finally {
-      running = undefined
-      if (
-        current.cancelled &&
-        prefetchSources.has(current.source) &&
-        !targets.includes(current.source)
-      )
-        targets.push(current.source)
+      if (jobs.get(job.source) === job) jobs.delete(job.source)
+      if (background === job) background = undefined
+      if (job.cancelled && prefetchSources.has(job.source) && !targets.includes(job.source))
+        targets.unshift(job.source)
       pump()
     }
   })()
 }
 
-/** Active consumers pin their decoded image and encoded medium across viewer handoffs. */
+const needed = (source: string): boolean =>
+  !jobs.has(source) &&
+  !getHeld(decodedKey(source)) &&
+  (warm.has(source) || (!prepared.has(source) && !getHeld(encodedKey(source))))
+
+/**
+ * One background job at a time, after the selection and the visible thumbnails.
+ * Foreground jobs start at once and do not wait here.
+ */
+function pump(): void {
+  if (background || [...jobs.values()].some((job) => job.priority === 'foreground')) return
+  if (!thumbnailsIdle()) {
+    waitForThumbnails ??= whenThumbnailsIdle(() => {
+      waitForThumbnails = undefined
+      pump()
+    })
+    return
+  }
+  while (targets.length) {
+    const source = targets.shift()!
+    if (!needed(source)) continue
+    const job: Job = {
+      source,
+      consumers: new Set(),
+      priority: 'background',
+      cancelled: false,
+      epoch: memoryEpoch()
+    }
+    background = job
+    jobs.set(source, job)
+    return run(job)
+  }
+}
+
+/**
+ * Stored mediums and frames load at once; generation for the selection preempts
+ * background preparation. Active consumers pin their decoded image and encoded
+ * medium across viewer handoffs.
+ */
 export function subscribeFitPreview(
   source: string,
   ready: (preview: FitPreview) => void,
   error: () => void
 ): () => void {
-  let held: Decoded | undefined
-  let compressed: Encoded | undefined
+  let held: Held<Decoded> | undefined
+  let compressed: Held<Encoded> | undefined
   let released = false
   const consumer: Consumer = {
     ready(entry) {
       held = entry
       entry.users++
-      compressed = encoded.get(source)
+      compressed = getHeld<Encoded>(encodedKey(source))
       if (compressed) compressed.users++
-      ready(entry)
+      ready(entry.value)
     },
     error
   }
   let job: Job | undefined
-  const cached = cachedFitPreview(source) as Decoded | undefined
+  const cached = getHeld<Decoded>(decodedKey(source))
   if (cached) consumer.ready(cached)
   else {
-    job =
-      running?.source === source && !running.cancelled
-        ? running
-        : pending?.source === source
-          ? pending
-          : undefined
+    job = jobs.get(source)
+    if (job?.cancelled) job = undefined
     if (!job) {
-      if (pending) {
-        cancel(pending)
-        for (const previous of pending.consumers) previous.error()
+      const created: Job = {
+        source,
+        consumers: new Set(),
+        priority: 'foreground',
+        cancelled: false,
+        epoch: memoryEpoch()
       }
-      job = { source, consumers: new Set(), priority: 'foreground', cancelled: false }
-      pending = job
-      if (running && !running.consumers.size) cancel(running)
-    }
-    job.consumers.add(consumer)
-    if (job.priority === 'background') {
+      job = created
+      jobs.set(source, created)
+      // A synchronous handoff or rapid selection can release the job first.
+      queueMicrotask(() => {
+        if (created.cancelled) {
+          if (jobs.get(source) === created) jobs.delete(source)
+          pump()
+        } else run(created)
+      })
+    } else if (job.priority === 'background') {
       job.priority = 'foreground'
+      if (background === job) background = undefined
       job.promote?.()
     }
-    queueMicrotask(pump)
+    job.consumers.add(consumer)
   }
   return () => {
     if (released) return
     released = true
     job?.consumers.delete(consumer)
-    if (job && !job.consumers.size) {
-      if (pending === job) pending = undefined
-      cancel(job)
-    }
-    if (held) held.users--
-    if (compressed) compressed.users--
-    queueMicrotask(trim)
+    if (job && !job.consumers.size) cancel(job)
+    if (held) unhold(held)
+    if (compressed) unhold(compressed)
   }
 }
 
@@ -357,20 +440,22 @@ export function prefetchFitPreviews(sources: string[]): () => void {
   const current = new Set(candidates)
   prefetchSources = current
   warm = new Set(candidates.slice(0, 4))
-  trim()
+  keepWarm([...warm].flatMap((source) => [decodedKey(source), encodedKey(source)]))
   for (const source of prepared) if (!current.has(source)) prepared.delete(source)
   // Rendered frames keep no compact copy; beyond the warm set the decoded cache would drop them.
   const queue = candidates.filter((source) => warm.has(source) || !isEditedFrame(source))
   targets = queue
-  if (running?.priority === 'background' && !running.consumers.size && !current.has(running.source))
-    cancel(running)
+  if (background && !background.consumers.size && !current.has(background.source))
+    cancel(background)
   queueMicrotask(pump)
   return () => {
     if (targets !== queue) return
     targets = []
     prefetchSources = new Set()
     warm = new Set()
-    trim()
-    if (running?.priority === 'background' && !running.consumers.size) cancel(running)
+    keepWarm([])
+    waitForThumbnails?.()
+    waitForThumbnails = undefined
+    if (background && !background.consumers.size) cancel(background)
   }
 }

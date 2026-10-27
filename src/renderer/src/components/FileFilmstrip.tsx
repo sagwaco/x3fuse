@@ -9,7 +9,7 @@ import {
   type ReactNode
 } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { useScrollToActive } from '../hooks/useScrollToActive'
+import { useScrollToActive, useShownRows } from '../hooks/useScrollToActive'
 import type { X3FFileDTO } from '@shared/types'
 import type { PreviewRegion } from '@shared/editor'
 import { displayPreviewUrl } from '@shared/preview'
@@ -216,6 +216,7 @@ export function FilmstripStrip({
     overscan: 4
   })
   useScrollToActive(virtualizer, files, active?.id ?? null)
+  useShownRows(virtualizer, files)
   return (
     <div
       ref={stripRef}

@@ -516,6 +516,7 @@ pub fn basic_metadata(path: PathBuf) -> Result<FileDto, String> {
             .ok()
             .map(|t| DateTime::<Utc>::from(t).to_rfc3339())
     });
+    let preview_revision = crate::cache::source_key(&path);
     Ok(FileDto {
         source_kind,
         capabilities,
@@ -523,6 +524,7 @@ pub fn basic_metadata(path: PathBuf) -> Result<FileDto, String> {
         file_name: path.file_name().unwrap().to_string_lossy().into_owned(),
         path,
         file_size: info.len(),
+        preview_revision,
         captured_date,
         orientation,
         aspect_ratio: None,

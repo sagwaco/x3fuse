@@ -259,20 +259,40 @@ describe('Cache tab', () => {
     expect(update).toHaveBeenCalledWith({ previewCacheEnabled: false })
 
     const select = screen.getByRole('button', { name: t('settings.cache.limit') })
-    expect(select.textContent).toBe('1 GB')
+    expect(select.textContent).toBe('20 GB')
     const before = sizeRequests()
-    invoke.mockResolvedValueOnce(String(256e6))
+    invoke.mockResolvedValueOnce(String(5e9))
     fireEvent.keyDown(select, { key: 'ArrowDown' })
     expect(invoke).toHaveBeenCalledWith(
       'menu:popup',
       expect.objectContaining({
-        items: ['256 MB', '512 MB', '1 GB', '2 GB', '5 GB'].map((label, index) =>
+        items: ['5 GB', '10 GB', '20 GB', '50 GB', '100 GB'].map((label, index) =>
           expect.objectContaining({ label, checked: index === 2 })
         )
       })
     )
-    await waitFor(() => expect(update).toHaveBeenCalledWith({ previewCacheLimit: 256e6 }))
+    await waitFor(() => expect(update).toHaveBeenCalledWith({ previewCacheLimit: 5e9 }))
     await waitFor(() => expect(sizeRequests()).toBe(before + 1))
+  })
+
+  it('keeps a saved limit from an older version shown and selected, without a write', () => {
+    act(() => {
+      useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, previewCacheLimit: 1e9 } })
+    })
+    const select = screen.getByRole('button', { name: t('settings.cache.limit') })
+    expect(select.textContent).toBe('1 GB')
+    fireEvent.keyDown(select, { key: 'ArrowDown' })
+    expect(invoke).toHaveBeenCalledWith(
+      'menu:popup',
+      expect.objectContaining({
+        items: ['1 GB', '5 GB', '10 GB', '20 GB', '50 GB', '100 GB'].map((label, index) =>
+          expect.objectContaining({ label, checked: index === 0 })
+        )
+      })
+    )
+    expect(update).not.toHaveBeenCalledWith(
+      expect.objectContaining({ previewCacheLimit: expect.anything() })
+    )
   })
 })
 
