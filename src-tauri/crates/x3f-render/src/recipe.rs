@@ -455,7 +455,7 @@ pub struct HalationParams {
 impl Default for HalationParams {
     fn default() -> Self {
         Self {
-            scatter_amount: 1.,
+            scatter_amount: 0.,
             scatter_spatial_scale: 1.,
             halation_amount: 1.,
             halation_spatial_scale: 1.,

@@ -826,9 +826,15 @@ fn gpu_native_film_controls() {
     let renderer = Renderer::new().unwrap();
     let cancel = AtomicBool::new(false);
     let source = split_scene(1024, 24);
+    // Scatter starts off by default; the base turns it on so each scatter
+    // control has an effect to change.
     let base = FilmSettings {
         halation: true,
         couplers: 0.,
+        halation_params: Some(HalationParams {
+            scatter_amount: 1.,
+            ..Default::default()
+        }),
         ..Default::default()
     };
     let render = |film: FilmSettings, tiling| {

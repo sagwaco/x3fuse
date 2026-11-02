@@ -338,7 +338,7 @@ export const DEFAULT_FILM: FilmSettings = {
   grainSaturation: 1,
   halation: false,
   halationParams: {
-    scatterAmount: 1,
+    scatterAmount: 0,
     scatterSpatialScale: 1,
     halationAmount: 1,
     halationSpatialScale: 1,

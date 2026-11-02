@@ -196,7 +196,7 @@ it('keeps scatter and halation amount and size independent', () => {
   fireEvent.click(toggle('halation'))
   adjust(t('editor.halationAmount'), 2)
   expect(film()?.halationParams).toEqual({
-    scatterAmount: 1,
+    scatterAmount: 0,
     scatterSpatialScale: 1,
     halationAmount: 2,
     halationSpatialScale: 1,

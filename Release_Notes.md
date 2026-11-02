@@ -11,6 +11,7 @@
 - Add Full spectrum editing with raw channel gains, a channel mixer, and swaps, plus an experimental Aerochrome-style look tuned on DP2 Merrill captures through a 550/660/850 nm filter. Use the neutral picker on a sunlit cloud.
 - The RAW editor's film simulation uses the spektrafilm model by Andrea Volpato (https://github.com/andreavolpato/spektrafilm, profiles and data CC BY-SA 4.0), ported from spektrafilm-rs (GPL-3.0). It replaces the previous film model.
 - Add a Cinestill 800T film stock: Kodak Vision3 500T without its antihalation backing, with strong red halation around highlights.
+- Halation starts without emulsion scattering, so enabling it no longer softens the whole photo. The Scatter amount slider restores the stock's physical scattering.
 - Existing saved film edits load unchanged, but render differently with the new model. The recipe format is unchanged; no re-save is required.
 - Add photo culling with pick/reject flags, star ratings, and queue filters.
 - Reorganize the menus, with new View and Photo menus and File > Add Folder, and show most menu text in the app language. Add right-click menus to photos, the editor preview, and the editor sections. Help > Keyboard Shortcuts lists the keyboard shortcuts.
