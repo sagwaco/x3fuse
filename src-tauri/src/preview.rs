@@ -850,10 +850,10 @@ mod tests {
             );
             assert_ne!(
                 dto.preview_revision,
-                Some(revision("LibRaw 0.22.2, librtprocess 9a85827, x3f-dng 4"))
+                Some(revision("LibRaw 0.22.2, librtprocess 9a85827, x3f-dng 5"))
             );
         }
-        assert!(x3f_dng::DECODER_VERSION.ends_with(", x3f-dng 5"));
+        assert!(x3f_dng::DECODER_VERSION.ends_with(", x3f-dng 6"));
         // X3F keys do not include a decoder, so they do not change.
         let canonical = x3f.canonicalize().unwrap();
         let stamp = crate::edits::SourceStamp::new(&fs::metadata(&canonical).unwrap()).unwrap();

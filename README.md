@@ -109,8 +109,9 @@ that LibRaw 0.22.2 does not know shows an error.
 
 Lens corrections follow the camera's own settings. X3Fuse applies a correction only
 when the camera recorded it as on and its parameters are valid. For Sony ARW files,
-this includes distortion, chromatic aberration, and vignetting. For Panasonic RW2
-files, it includes distortion only. A DNG carries its corrections as DNG opcodes, so
+this includes distortion and chromatic aberration. Vignetting correction is off,
+because Sony camera JPEGs do not show it. For Panasonic RW2 files, it includes
+distortion only. A DNG carries its corrections as DNG opcodes, so
 X3Fuse never applies vendor lens tags to a DNG.
 
 Previews of DNG, ARW, and RW2 files use the embedded camera JPEG when it fits.

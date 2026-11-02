@@ -32,6 +32,7 @@
 //! turns them into an OpcodeList3 GainMap for vignetting and a Warp for
 //! distortion and CA. They apply only when the camera recorded the correction
 //! as on. A DNG never gets them, because its opcodes carry its corrections.
+//! The vignetting GainMap is off by default (`VIGNETTING`).
 
 mod color;
 mod lens;
@@ -52,7 +53,11 @@ use mozjpeg_sys as _;
 
 /// The bundled decoder and the adapter revision. Change the revision when a
 /// change can alter decoded pixels or metadata.
-pub const DECODER_VERSION: &str = "LibRaw 0.22.2, librtprocess 9a85827, x3f-dng 5";
+pub const DECODER_VERSION: &str = "LibRaw 0.22.2, librtprocess 9a85827, x3f-dng 6";
+/// Apply the Sony vignetting GainMap in `prepare` and `preview`. It is off:
+/// the sample camera JPEGs show no shading compensation, and the gain made
+/// corners 14% to 49% brighter than the camera rendering.
+const VIGNETTING: bool = false;
 /// The largest active area, in pixels. A color image of this size needs
 /// about 23 bytes per pixel while it is prepared.
 pub const MAX_PIXELS: u64 = 160_000_000;
@@ -1300,7 +1305,8 @@ fn to_scene(image: Balanced, cal: &color::Calibration) -> Result<Vec<f32>, Strin
 
 /// Decode the full image as an unrotated, active-area scene for the editor.
 /// LibRaw demosaics a color filter array. A Sony or Panasonic file gets the
-/// lens corrections that its camera recorded as on; `preview` applies them too.
+/// lens corrections that its camera recorded as on, except vignetting
+/// (`VIGNETTING`); `preview` applies the same corrections.
 pub fn prepare(path: &Path, cancel: &AtomicBool) -> Result<x3f_core::SceneLinearImage, String> {
     prepare_with_method(path, None, cancel)
 }
@@ -1315,7 +1321,7 @@ pub fn prepare_with_method(
     method: Option<DemosaicMethod>,
     cancel: &AtomicBool,
 ) -> Result<x3f_core::SceneLinearImage, String> {
-    scene(path, cancel, false, method, true, true)
+    scene(path, cancel, false, method, true, VIGNETTING)
 }
 
 fn scene(
@@ -1401,7 +1407,7 @@ fn preview_crop(info: DngInfo, width: u32, height: u32) -> [u32; 4] {
 pub fn preview(path: &Path, cancel: &AtomicBool) -> Result<Vec<u8>, String> {
     use image::ImageEncoder;
     let info = inspect(path, cancel)?;
-    let (image, cal, _) = decode(path, cancel, true, None, true, true)?;
+    let (image, cal, _) = decode(path, cancel, true, None, true, VIGNETTING)?;
     let (width, height) = (image.width as u32, image.height as u32);
     let data = to_scene(image, &cal)?;
     check(cancel)?;

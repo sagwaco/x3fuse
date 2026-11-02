@@ -100,7 +100,9 @@ reuse the Debug probe executable. Release builds omit the probe.
   matrix. `x3f-dng/src/lens.rs` turns the camera's Sony (SubIFD 0x7031 to 0x7037:
   distortion, CA, vignetting) and Panasonic (RW2 tag 0x119: distortion) lens tags
   into OpcodeList3 opcodes, only when the camera flag says on and the parameters are
-  valid. A DNG never gets vendor lens corrections; its opcodes carry them.
+  valid. A DNG never gets vendor lens corrections; its opcodes carry them. The Sony
+  vignetting GainMap is off by default (`VIGNETTING` in `x3f-dng/src/lib.rs`): the
+  sample camera JPEGs show no shading compensation. Tests still cover the GainMap.
 - `Kind::Dng` previews use embedded JPEGs: the smallest with a long edge of 320 or
   more for thumbnails, the largest with 1024 or more for the fit view, black
   letterbox bands cropped, else a rendered RAW preview. The 1:1 view uses an embedded

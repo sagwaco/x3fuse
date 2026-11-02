@@ -5,7 +5,7 @@
 - Add a RAW editor with light, white balance, curves, HSL, crop, denoise, and sharpening controls, plus rendered JPEG and 16-bit TIFF export.
 - Add Resize to fit for developed JPEG and TIFF exports, with maximum pixel dimensions and a choice of resampling methods.
 - Open and edit Sony ARW and Panasonic RW2 photos, with edited JPEG and 16-bit TIFF export.
-- Apply the lens corrections that the camera recorded: distortion, chromatic aberration, and vignetting for Sony ARW, and distortion for Panasonic RW2.
+- Apply the lens corrections that the camera recorded: distortion and chromatic aberration for Sony ARW, and distortion for Panasonic RW2.
 - Show DNG, ARW, and RW2 previews faster with the camera's embedded JPEG. The 1:1 view uses it when it has the full image size.
 - Choose from ten demosaicing methods for Bayer DNG photos. Default selects AMaZE, LMMSE at ISO 1600 and above, or Mono for monochrome cameras. A Fast first preview appears while the selected algorithm loads. The choice is saved with the photo and used for edited exports.
 - Add Full spectrum editing with raw channel gains, a channel mixer, and swaps, plus an experimental Aerochrome-style look tuned on DP2 Merrill captures through a 550/660/850 nm filter. Use the neutral picker on a sunlit cloud.
