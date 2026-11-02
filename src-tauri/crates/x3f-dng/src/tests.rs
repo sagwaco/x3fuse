@@ -76,6 +76,7 @@ fn bayer_preview_uses_default_crop_before_resampling() {
 #[derive(Clone)]
 enum Value {
     Short(Vec<u16>),
+    SShort(Vec<i16>),
     Long(Vec<u32>),
     Byte(Vec<u8>),
     Ascii(&'static str),
@@ -246,6 +247,11 @@ impl Fixture {
                 Value::Ascii(s) => (2, s.len() as u32, s.as_bytes().to_vec()),
                 Value::Short(s) => (
                     3,
+                    s.len() as u32,
+                    s.iter().flat_map(|v| v.to_le_bytes()).collect(),
+                ),
+                Value::SShort(s) => (
+                    8,
                     s.len() as u32,
                     s.iter().flat_map(|v| v.to_le_bytes()).collect(),
                 ),
@@ -469,7 +475,7 @@ fn short_deflate_strips_are_corrupt() {
     fixture.stream = Stream::Short;
     let file = fixture.write();
     let err = prepare(&file.0, &AtomicBool::new(false)).unwrap_err();
-    assert!(err.starts_with("DNG decode failed"), "{err}");
+    assert!(err.starts_with("RAW decode failed"), "{err}");
 }
 
 #[test]
@@ -582,7 +588,7 @@ fn warm_clipped_highlights_render_white_in_full_and_half_size() {
         }
         let file = fixture.write();
         for half in [false, true] {
-            let (image, cal, _) = decode(&file.0, &cancel, half, None).unwrap();
+            let (image, cal, _) = decode(&file.0, &cancel, half, None, true, true).unwrap();
             let scene = to_scene(image, &cal).unwrap();
             for px in scene.as_chunks::<3>().0 {
                 assert!(px.iter().all(|v| *v > 1.), "half={half}: {px:?}");
@@ -717,7 +723,7 @@ fn oversized_deflate_streams_are_corrupt() {
     let mut fixture = linear(Some(1));
     fixture.stream = Stream::Long;
     let err = prepare(&fixture.write().0, &AtomicBool::new(false)).unwrap_err();
-    assert!(err.starts_with("DNG decode failed"), "{err}");
+    assert!(err.starts_with("RAW decode failed"), "{err}");
 }
 
 #[test]
@@ -1323,7 +1329,7 @@ fn non_finite_samples_are_errors() {
             &AtomicBool::new(false),
         )
         .err();
-        assert_eq!(err.as_deref(), Some("The DNG has non-finite samples"));
+        assert_eq!(err.as_deref(), Some("The RAW file has non-finite samples"));
     }
 }
 
@@ -1437,4 +1443,152 @@ fn native_kernel_timing() {
         assert_eq!((code, stopped), (0, 0));
         println!("{method:?} 12 MP: full {full:.2?}, stop latency after cancel {latency:.2?}");
     }
+}
+
+/// Sony lens tags in IFD0 of a little-endian DNG. CA has a rejected type
+/// (LONG); its parameters have one value above the maximum.
+fn with_sony_tags() -> TempFile {
+    let mut fixture = bayer();
+    let vignetting: Vec<i16> = (0..16).map(|i| i * 100 - 800).collect();
+    let vignetting = [16].into_iter().chain(vignetting).collect();
+    let distortion: Vec<i16> = (0..16).map(|i| -i - 1).collect();
+    fixture.extra.extend([
+        (0x7031, Value::Short(vec![257])),
+        (0x7032, Value::SShort(vignetting)),
+        (0x7034, Value::Long(vec![1])),
+        (0x7035, Value::SShort(vec![7; 34])),
+        (0x7036, Value::Short(vec![0xffef])),
+        (0x7037, Value::SShort(distortion)),
+    ]);
+    fixture.write()
+}
+
+#[test]
+fn sony_lens_tags_are_captured_from_a_dng_and_reset_on_the_next_open() {
+    let cancel = AtomicBool::new(false);
+    let tagged = with_sony_tags();
+    let plain = bayer().write();
+    let first = open(&tagged.0, &cancel).unwrap();
+    let l = first.info.lens;
+    assert_eq!((l.has_vignetting, l.vignetting), (1, 257));
+    assert_eq!(l.vignetting_count, 17);
+    assert_eq!(l.vignetting_params[..3], [16, -800, -700]);
+    assert_eq!(l.vignetting_params[16], 700);
+    assert_eq!((l.has_ca, l.ca_count), (0, 0), "LONG flag, 34 values");
+    // A SHORT keeps its bits: 0xffef reads as -17.
+    assert_eq!((l.has_distortion, l.distortion), (1, -17));
+    assert_eq!(l.distortion_count, 16);
+    let distortion: Vec<i16> = (0..16).map(|i| -i - 1).chain([0]).collect();
+    assert_eq!(l.distortion_params.to_vec(), distortion);
+    assert_eq!(l.has_panasonic, 0);
+    let second = reopen(first.handle, &plain.0, &cancel).unwrap();
+    // SAFETY: Lens is plain data.
+    assert_eq!(second.info.lens, unsafe { std::mem::zeroed() });
+    // The callback does not change the DNG route.
+    let scene = prepare(&tagged.0, &cancel).unwrap();
+    assert!(scene.data.iter().all(|v| v.is_finite()));
+}
+
+fn capture(lens: &mut ffi::Lens, tag: c_int, kind: c_int, count: u32, bytes: &[u8], order: u32) {
+    // SAFETY: each call gives the bytes of every value that the shim accepts.
+    unsafe { ffi::x3fdng_capture(lens, tag, kind, count, bytes.as_ptr(), order) }
+}
+
+#[test]
+fn lens_capture_reads_both_byte_orders_and_rejects_bad_tags() {
+    const II: u32 = 0x4949;
+    const MM: u32 = 0x4d4d;
+    // SAFETY: Lens is plain data.
+    let mut l: ffi::Lens = unsafe { std::mem::zeroed() };
+    let be = |v: &[i16]| v.iter().flat_map(|x| x.to_be_bytes()).collect::<Vec<u8>>();
+    let le = |v: &[i16]| v.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>();
+
+    // Big endian, negative values, the maximum counts, any IFD.
+    let ca: Vec<i16> = (0..33).map(|i| i - 16).collect();
+    capture(&mut l, 0x20_7035, 8, 33, &be(&ca), MM);
+    assert_eq!((l.ca_count, l.ca_params.to_vec()), (33, ca.clone()));
+    let distortion: Vec<i16> = (0..17).map(|i| -300 * i).collect();
+    capture(&mut l, 0x7037, 3, 17, &le(&distortion), II);
+    assert_eq!(l.distortion_params.to_vec(), distortion);
+    capture(&mut l, 0x7034, 3, 1, &be(&[1]), MM);
+    assert_eq!((l.has_ca, l.ca), (1, 1));
+
+    // Rejected: counts above the maximum, a flag count above 1, count 0,
+    // and other types. The earlier values stay.
+    let before = l;
+    capture(&mut l, 0x7035, 8, 34, &be(&[1; 34]), MM);
+    capture(&mut l, 0x7032, 8, 18, &le(&[1; 18]), II);
+    capture(&mut l, 0x7036, 3, 2, &le(&[1, 1]), II);
+    capture(&mut l, 0x7037, 8, 0, &[], II);
+    for kind in [1, 4, 7, 9] {
+        capture(&mut l, 0x7031, kind, 1, &[1, 1, 1, 1], II);
+        capture(&mut l, 0x7037, kind, 4, &[1; 8], II);
+    }
+    assert_eq!(l, before);
+
+    // Panasonic: exactly 32 bytes as UNDEFINED, SHORT, or SSHORT.
+    let pana: Vec<i16> = (0..16).map(|i| i * 1000 - 8000).collect();
+    capture(&mut l, 0x30119, 7, 32, &be(&pana), MM);
+    assert_eq!((l.has_panasonic, l.panasonic.to_vec()), (1, pana.clone()));
+    let mut fresh: ffi::Lens = unsafe { std::mem::zeroed() };
+    capture(&mut fresh, 0x30119, 3, 16, &le(&pana), II);
+    assert_eq!(fresh.panasonic.to_vec(), pana);
+    let empty = unsafe { std::mem::zeroed() };
+    for (tag, kind, count) in [
+        (0x30119, 7, 31),
+        (0x30119, 7, 33),
+        (0x30119, 3, 15),
+        (0x30119, 4, 8),
+        (0x30119, 1, 32),
+        // The raw IFD tag outside a Panasonic RW2.
+        (0x119, 7, 32),
+    ] {
+        let mut l: ffi::Lens = unsafe { std::mem::zeroed() };
+        capture(&mut l, tag, kind, count, &[0x55; 66], II);
+        assert_eq!(l, empty, "{tag:#x} type {kind} count {count}");
+    }
+}
+
+/// The A7 II sample tags: vignetting 257, CA 1, distortion 0 (off).
+fn a7_info() -> Box<ffi::Info> {
+    let mut info = info_with_cfa(&|r, c| [[0, 1], [3, 2]][r % 2][c % 2]);
+    (info.width, info.height) = (6024, 4024);
+    let l = &mut info.lens;
+    (l.has_vignetting, l.has_ca, l.has_distortion) = (1, 1, 1);
+    (l.vignetting, l.ca, l.distortion) = (257, 1, 0);
+    let vignetting = [
+        16, 0, 48, 176, 400, 688, 1056, 1504, 2016, 2608, 3312, 4080, 4880, 5680, 6496, 7280, 8096,
+    ];
+    let ca = [
+        32, -384, -384, -384, -384, -256, -256, -128, -128, -128, 0, 0, 128, 128, 256, 256, 384,
+        896, 896, 896, 896, 896, 896, 896, 896, 896, 768, 640, 512, 512, 384, 256, 256,
+    ];
+    let distortion = [
+        16, 0, 0, 0, 4, 7, 13, 22, 36, 54, 79, 111, 151, 198, 255, 323, 406,
+    ];
+    l.vignetting_params = vignetting;
+    l.ca_params = ca;
+    l.distortion_params = distortion;
+    (l.vignetting_count, l.ca_count, l.distortion_count) = (17, 33, 17);
+    info
+}
+
+#[test]
+fn one_sample_output_gets_no_vendor_ca_warp() {
+    let info = a7_info();
+    let kinds = |ops: &[Opcode]| {
+        ops.iter()
+            .map(|op| matches!(op, Opcode::Warp(_)))
+            .collect::<Vec<_>>()
+    };
+    // Color output: the GainMap, then the CA Warp.
+    let color = vendor_lens(&info, false);
+    assert_eq!(kinds(&color), [false, true]);
+    // Mono output: distortion is off, so only the GainMap stays.
+    let mono = vendor_lens(&info, true);
+    assert_eq!(kinds(&mono), [false]);
+    // A DNG never gets vendor opcodes.
+    let mut dng = a7_info();
+    dng.dng_version = 1;
+    assert!(vendor_lens(&dng, false).is_empty());
 }

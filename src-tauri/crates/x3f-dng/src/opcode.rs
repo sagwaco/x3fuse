@@ -22,10 +22,28 @@ pub(crate) struct GainMap {
 /// WarpRectilinear, DNG 1.7 opcode 1: radial and tangential lens distortion.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Warp {
-    /// Per plane: kr0 through kr3, then kt0 and kt1. One entry serves all planes.
-    pub coefficients: Vec<[f64; 6]>,
+    /// One entry per plane. The last entry serves the remaining planes.
+    pub planes: Vec<Plane>,
     /// Optical center, relative to the image width and height.
     pub center: [f64; 2],
+}
+
+/// The warp of one plane. The radius is 1 at the farthest corner.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum Plane {
+    /// DNG WarpRectilinear: kr0 through kr3, then kt0 and kt1.
+    Polynomial([f64; 6]),
+    /// Radial factors at radii `i / (len - 1)`, from 0 to 1. The source
+    /// radius is `r * f(r)`. Values between knots are linear; past 1 the
+    /// last value applies. Must have 2 or more values.
+    Radial(Vec<f64>),
+}
+
+/// The value of a `Plane::Radial` table at radius `r`.
+pub(crate) fn radial(table: &[f64], r: f64) -> f64 {
+    let f = (r * (table.len() - 1) as f64).clamp(0., (table.len() - 1) as f64);
+    let i = (f as usize).min(table.len() - 2);
+    table[i] + (table[i + 1] - table[i]) * (f - i as f64)
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -152,7 +170,7 @@ fn warp(p: &mut Reader<'_>) -> Result<Warp, String> {
         return Err("Invalid DNG WarpRectilinear".into());
     }
     Ok(Warp {
-        coefficients,
+        planes: coefficients.into_iter().map(Plane::Polynomial).collect(),
         center,
     })
 }
@@ -178,15 +196,29 @@ impl Opcode {
 
 impl Warp {
     /// The source position of a destination pixel center, in pixels.
-    fn source(&self, plane: usize, x: f64, y: f64, geometry: &[f64; 3]) -> (f64, f64) {
+    pub(crate) fn source(&self, plane: usize, x: f64, y: f64, geometry: &[f64; 3]) -> (f64, f64) {
         let [cx, cy, m] = *geometry;
-        let k = self.coefficients[plane.min(self.coefficients.len() - 1)];
         let (dx, dy) = ((x - cx) / m, (y - cy) / m);
         let r2 = dx * dx + dy * dy;
-        let f = k[0] + r2 * (k[1] + r2 * (k[2] + r2 * k[3]));
-        let tx = k[4] * 2. * dx * dy + k[5] * (r2 + 2. * dx * dx);
-        let ty = k[5] * 2. * dx * dy + k[4] * (r2 + 2. * dy * dy);
-        (cx + m * (f * dx + tx), cy + m * (f * dy + ty))
+        match &self.planes[plane.min(self.planes.len() - 1)] {
+            Plane::Polynomial(k) => {
+                let f = k[0] + r2 * (k[1] + r2 * (k[2] + r2 * k[3]));
+                let tx = k[4] * 2. * dx * dy + k[5] * (r2 + 2. * dx * dx);
+                let ty = k[5] * 2. * dx * dy + k[4] * (r2 + 2. * dy * dy);
+                (cx + m * (f * dx + tx), cy + m * (f * dy + ty))
+            }
+            Plane::Radial(table) => {
+                let f = radial(table, r2.sqrt());
+                (cx + m * f * dx, cy + m * f * dy)
+            }
+        }
+    }
+
+    /// The optical center and the unit distance, in pixels, for an image of
+    /// `width` by `height`. The unit is the distance to the farthest corner.
+    pub(crate) fn geometry(&self, width: f64, height: f64) -> [f64; 3] {
+        let (cx, cy) = (self.center[0] * width, self.center[1] * height);
+        [cx, cy, cx.max(width - cx).hypot(cy.max(height - cy))]
     }
 
     /// Resample each plane bilinearly; edges clamp. The mask follows the
@@ -200,10 +232,7 @@ impl Warp {
         samples: usize,
     ) {
         let (w, h) = (width as f64, height as f64);
-        let (cx, cy) = (self.center[0] * w, self.center[1] * h);
-        // The unit distance is from the center to the farthest corner.
-        let m = cx.max(w - cx).hypot(cy.max(h - cy));
-        let geometry = [cx, cy, m];
+        let geometry = self.geometry(w, h);
         let mut out = vec![0f32; data.len()];
         let mut out_mask = vec![0u8; mask.len()];
         let at = |x: f64, y: f64| {
@@ -367,6 +396,29 @@ mod tests {
         assert_eq!(image[7], 7.);
         // Warps belong to OpcodeList3 only.
         assert!(parse(&list(&[(1, 0, warp_params([1.; 6], [0.5; 2]))]), 2).is_err());
+    }
+
+    #[test]
+    fn radial_table_matches_the_polynomial() {
+        // A constant table of 2 is the same 2x zoom as kr0 = 2.
+        let poly = parse(
+            &list(&[(1, 0, warp_params([2., 0., 0., 0., 0., 0.], [0.5, 0.5]))]),
+            3,
+        )
+        .unwrap();
+        let table = Opcode::Warp(Warp {
+            planes: vec![Plane::Radial(vec![2., 2.])],
+            center: [0.5, 0.5],
+        });
+        let ramp: Vec<f32> = (0..48).map(|v| v as f32).collect();
+        let (mut a, mut b) = (ramp.clone(), ramp);
+        let (mut ma, mut mb) = (vec![0u8; 48], vec![0u8; 48]);
+        poly[0].apply(&mut a, &mut ma, 8, 6, 1, 1);
+        table.apply(&mut b, &mut mb, 8, 6, 1, 1);
+        assert_eq!(a, b);
+        // Linear between knots, the last value past the end.
+        assert_eq!(radial(&[1., 2., 4.], 0.75), 3.);
+        assert_eq!(radial(&[1., 2., 4.], 1.5), 4.);
     }
 
     fn gain_map(rect: [u32; 4], plane: u32, pitch: u32, gains: &[f32]) -> Vec<u8> {

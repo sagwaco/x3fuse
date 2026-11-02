@@ -16,7 +16,7 @@ pub use color::{
 };
 pub use export::{ExportResize, ResamplingMethod};
 pub use preview::raw_preview;
-pub use region::jpeg_region;
+pub use region::{jpeg_letterbox, jpeg_region};
 pub use recipe::{
     BaseCurve, ColorWheels, Crop, Curves, DngDemosaic, EditRecipe, EffectsSettings, FilmSettings,
     GrainParams, HalationParams, HslBand, MonochromeFilter, MonochromeSettings, Point, RawColor,

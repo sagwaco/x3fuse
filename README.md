@@ -1,6 +1,6 @@
 # X3Fuse
 
-A cross-platform app for converting and editing Sigma X3F RAW files and editing DNG files.
+A cross-platform app for converting and editing Sigma X3F RAW files and editing DNG, Sony ARW, and Panasonic RW2 files.
 
 ![X3Fuse logo and app screenshot](app-screenshot.png)
 
@@ -92,7 +92,7 @@ You do not need a separate ExifTool installation or a sibling core checkout.
 
 ## Usage
 
-1. Open X3Fuse. Drag X3F, X3I, or DNG files onto the window, or add files from the File menu.
+1. Open X3Fuse. Drag X3F, X3I, DNG, ARW, or RW2 files onto the window, or add files from the File menu.
 2. Browse the queue in list, grid, or filmstrip view. Use flags and ratings to cull photos.
 3. To edit a photo, select it and choose **Edit**. Adjustments save automatically.
 4. Choose **Export all** or **Export selected**. Review the output format, folder,
@@ -101,9 +101,24 @@ You do not need a separate ExifTool installation or a sibling core checkout.
 5. Click **Export** and monitor progress. Review any overwrite confirmation before
    replacing existing output files.
 
-DNG inputs use the bundled LibRaw decoder. They export edited JPEG or 16-bit TIFF
-only. A selection that includes DNG inputs offers these two formats. Original DNG,
-original TIFF, and Embedded JPG export remain available for X3F and X3I inputs.
+DNG, Sony ARW, and Panasonic RW2 inputs use the bundled LibRaw decoder. They export
+edited JPEG or 16-bit TIFF only. A selection that includes these inputs offers these
+two formats. Original DNG, original TIFF, and Embedded JPG export remain available for
+X3F and X3I inputs. ARW and RW2 color comes from the LibRaw camera matrix; a camera
+that LibRaw 0.22.2 does not know shows an error.
+
+Lens corrections follow the camera's own settings. X3Fuse applies a correction only
+when the camera recorded it as on and its parameters are valid. For Sony ARW files,
+this includes distortion, chromatic aberration, and vignetting. For Panasonic RW2
+files, it includes distortion only. A DNG carries its corrections as DNG opcodes, so
+X3Fuse never applies vendor lens tags to a DNG.
+
+Previews of DNG, ARW, and RW2 files use the embedded camera JPEG when it fits.
+Thumbnails use the smallest embedded JPEG with a long edge of 320 pixels or more.
+The fit view uses the largest one with a long edge of 1024 pixels or more. X3Fuse
+crops black letterbox bands. The 1:1 view uses an embedded JPEG only when it has the
+full RAW size, within 1%; otherwise it renders the RAW. A photo without a usable
+embedded JPEG gets a rendered RAW preview.
 An unsupported DNG shows an error beside the photo; other imports can continue.
 Support depends on the bundled decoder and DNG metadata. JPEG XL and VC-5 DNGs
 need the Adobe DNG SDK, which is not bundled. Four-color sensor arrays and

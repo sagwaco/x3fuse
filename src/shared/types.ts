@@ -49,8 +49,8 @@ export interface ExifPair {
   value: string
 }
 
-/** The paths that the queue imports: X3F, X3I, and DNG files. */
-export const RAW_PATH = /\.(?:x3[fi]|dng)$/i
+/** The paths that the queue imports: X3F, X3I, DNG, ARW, and RW2 files. */
+export const RAW_PATH = /\.(?:x3[fi]|dng|arw|rw2)$/i
 
 /** Output extensions; outputName preserves .X3F for JPEG/TIFF and removes it for DNG. */
 export const OUTPUT_EXTENSION: Record<OutputFormat, string> = {

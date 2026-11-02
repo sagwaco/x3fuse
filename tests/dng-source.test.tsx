@@ -65,7 +65,7 @@ describe('DNG sources', () => {
     expect(capabilitiesOf({ path: '/a/legacy.dng' })).toEqual(COLOR)
     expect(capabilitiesOf({ path: '/a/b.X3F' })).toEqual(FOVEON)
     expect(capabilitiesOf({ path: '/a/b.X3I' })).toEqual(FOVEON)
-    expect(['a.X3F', 'b.x3i', 'c.DNG', 'd.dng'].every((path) => RAW_PATH.test(path))).toBe(true)
+    expect(['a.X3F', 'b.x3i', 'c.DNG', 'd.dng', 'e.ARW', 'f.rw2'].every((path) => RAW_PATH.test(path))).toBe(true)
     expect(RAW_PATH.test('e.jpg')).toBe(false)
     // JPEG and TIFF names keep the .DNG extension, as they keep .X3F.
     const rendered = { ...batchSettings(DEFAULT_SETTINGS), rendering: 'rendered' as const }

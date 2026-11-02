@@ -55,6 +55,18 @@ without OpenMP. The adapter uses float input and output, and replaces the
 outer bands of DCB, IGV, and LMMSE with the library's border interpolation
 to correct edge artifacts. No integer quantization is used.
 
+darktable lens correction formulas
+----------------------------------
+
+Source: https://github.com/darktable-org/darktable
+Files: src/common/exif.cc (Sony and Panasonic lens tags) and
+src/iop/lens.cc (embedded metadata corrections, _init_coeffs_md_v2).
+License: GPL version 3 or later.
+
+src/lens.rs uses the darktable formulas for the Sony distortion, chromatic
+aberration, and vignetting knots and the Panasonic distortion model. It
+contains no darktable source code.
+
 RawTherapee EAHD
 ----------------
 

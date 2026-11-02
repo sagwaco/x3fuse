@@ -19,6 +19,21 @@ struct x3fdng_color {
   float forward_matrix[3][4];
 };
 
+// Vendor lens correction tags from the EXIF callback, as int16 values in
+// host order. A count is the number of values read; 0 means no tag.
+struct x3fdng_lens {
+  // Sony SubIFD tags 0x7031, 0x7034, and 0x7036 were read.
+  int has_vignetting, has_ca, has_distortion;
+  // Their values.
+  short vignetting, ca, distortion;
+  // Sony tags 0x7032, 0x7035, and 0x7037.
+  unsigned vignetting_count, ca_count, distortion_count;
+  short vignetting_params[17], ca_params[33], distortion_params[17];
+  // Panasonic raw IFD tag 0x119 was read, exactly 32 bytes.
+  int has_panasonic;
+  short panasonic[16];
+};
+
 struct x3fdng_info {
   int dng_version;
   int is_raw;
@@ -43,6 +58,7 @@ struct x3fdng_info {
   unsigned opcode_len[3];
   // Active-area color index of each CFA site, period 24 in both directions.
   unsigned char cfa[24][24];
+  struct x3fdng_lens lens;
 };
 
 struct x3fdng_raw {
@@ -60,6 +76,69 @@ struct x3fdng_image {
   const unsigned short (*data)[4];
   unsigned width, height;
 };
+
+// Store one lens tag whose value is `count` items at `bytes`, in TIFF byte
+// order `order`. Sony tags match `tag & 0xffff` in any IFD and must be SHORT
+// or SSHORT (3 or 8). A flag tag needs a count of 1. A parameter tag needs
+// 1 to 17 values (33 for CA). The Panasonic tag 0x30119 needs exactly
+// 32 bytes: UNDEFINED (7) with count 32, or SHORT or SSHORT with count 16.
+// The shim ignores every other tag. A later tag replaces an earlier one.
+void x3fdng_capture(x3fdng_lens *l, int tag, int type, unsigned count,
+                    const unsigned char *bytes, unsigned order) {
+  auto get = [&](unsigned i) {
+    const unsigned char *b = bytes + 2 * i;
+    return short((unsigned short)(order == 0x4949 ? b[0] | b[1] << 8
+                                                  : b[0] << 8 | b[1]));
+  };
+  if (tag == 0x30119) {
+    if ((type == 7 && count == 32) ||
+        ((type == 3 || type == 8) && count == 16)) {
+      for (unsigned i = 0; i < 16; i++)
+        l->panasonic[i] = get(i);
+      l->has_panasonic = 1;
+    }
+    return;
+  }
+  if ((type != 3 && type != 8) || count == 0)
+    return;
+  int *has = nullptr;
+  short *flag = nullptr;
+  unsigned *n = nullptr, max = 1;
+  short *params = nullptr;
+  switch (tag & 0xffff) {
+  case 0x7031:
+    has = &l->has_vignetting, flag = &l->vignetting;
+    break;
+  case 0x7034:
+    has = &l->has_ca, flag = &l->ca;
+    break;
+  case 0x7036:
+    has = &l->has_distortion, flag = &l->distortion;
+    break;
+  case 0x7032:
+    n = &l->vignetting_count, params = l->vignetting_params, max = 17;
+    break;
+  case 0x7035:
+    n = &l->ca_count, params = l->ca_params, max = 33;
+    break;
+  case 0x7037:
+    n = &l->distortion_count, params = l->distortion_params, max = 17;
+    break;
+  default:
+    return;
+  }
+  if (count > max)
+    return;
+  if (flag) {
+    *flag = get(0);
+    *has = 1;
+    return;
+  }
+  memset(params, 0, max * sizeof *params);
+  for (unsigned i = 0; i < count; i++)
+    params[i] = get(i);
+  *n = count;
+}
 }
 
 namespace {
@@ -94,7 +173,31 @@ public:
   }
 
   void int_deflate_load_raw();
+
+  // Lens tags of the open file. `x3fdng_open` clears them.
+  x3fdng_lens lens;
 };
+
+// LibRaw calls this for every TIFF tag while it opens a file. The value
+// starts at the current stream position; LibRaw restores the position.
+void exif_tag(void *context, int tag, int type, int len, unsigned order,
+              void *stream, INT64) {
+  try {
+    if (len <= 0 || (type != 3 && type != 7 && type != 8))
+      return;
+    // The largest accepted value is 33 SHORT values.
+    const unsigned bytes = type == 7 ? unsigned(len) : 2 * unsigned(len);
+    unsigned char data[66];
+    if (bytes > sizeof data)
+      return;
+    auto *in = static_cast<LibRaw_abstract_datastream *>(stream);
+    if (in->read(data, 1, int(bytes)) != int(bytes))
+      return;
+    x3fdng_capture(&static_cast<X3fRaw *>(context)->lens, tag, type,
+                   unsigned(len), data, order);
+  } catch (...) {
+  }
+}
 
 unsigned read4(LibRaw_abstract_datastream *in, short order) {
   unsigned char b[4] = {0, 0, 0, 0};
@@ -262,6 +365,7 @@ void *x3fdng_new(unsigned max_raw_memory_mb) {
     raw->imgdata.rawparams.max_raw_memory_mb = max_raw_memory_mb;
     // Keep floating-point samples. The Rust side owns all normalization.
     raw->imgdata.rawparams.options &= ~LIBRAW_RAWOPTIONS_CONVERTFLOAT_TO_INT;
+    raw->set_exifparser_handler(exif_tag, raw);
     return raw;
   } catch (...) {
     return nullptr;
@@ -284,11 +388,11 @@ void x3fdng_cancel(void *handle) {
 const char *x3fdng_strerror(int code) {
   switch (code) {
   case UNSUPPORTED:
-    return "Unsupported DNG layout";
+    return "Unsupported RAW layout";
   case NO_MEMORY:
-    return "Not enough memory to decode the DNG";
+    return "Not enough memory to decode the RAW file";
   case INTERNAL:
-    return "Internal DNG decoder error";
+    return "Internal RAW decoder error";
   default:
     return libraw_strerror(code);
   }
@@ -301,6 +405,7 @@ int x3fdng_open(void *handle, const char *path) {
 #endif
   return guard(
       [](X3fRaw *raw, void *arg) {
+        memset(&raw->lens, 0, sizeof raw->lens);
 #ifdef _WIN32
         int rc = raw->open_file(static_cast<const wchar_t *>(arg));
 #else
@@ -359,6 +464,15 @@ int x3fdng_read_info(void *handle, x3fdng_info *out) {
           memcpy(info->color[i].forward_matrix, c.forwardmatrix,
                  sizeof c.forwardmatrix);
         }
+        // A non-DNG file has no color tags. LibRaw's built-in Adobe matrix
+        // is XYZ D65 to camera, the layout of ColorMatrix1. An unknown
+        // camera keeps a zero matrix.
+        if (!d.idata.dng_version) {
+          info->color[0].illuminant = 21;
+          for (int r = 0; r < 3; r++)
+            for (int c = 0; c < 3; c++)
+              info->color[0].color_matrix[r][c] = d.color.cam_xyz[r][c];
+        }
         for (int i = 0; i < 3; i++) {
           info->opcodes[i] =
               static_cast<const unsigned char *>(l.rawopcodes[i].data);
@@ -368,6 +482,7 @@ int x3fdng_read_info(void *handle, x3fdng_info *out) {
           for (int r = 0; r < 24; r++)
             for (int c = 0; c < 24; c++)
               info->cfa[r][c] = (unsigned char)raw->COLOR(r, c);
+        info->lens = raw->lens;
         return 0;
       },
       static_cast<X3fRaw *>(handle), out);

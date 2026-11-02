@@ -446,16 +446,16 @@ pub struct ExifPair {
 
 pub fn validate_source_path(path: &Path) -> Result<(), String> {
     if !path.is_absolute() || !path.extension().is_some_and(is_source_extension) {
-        return Err("Expected an absolute X3F, X3I, or DNG path".into());
+        return Err("Expected an absolute X3F, X3I, DNG, ARW, or RW2 path".into());
     }
     Ok(())
 }
 
-/// Supported source filename extensions. DNG contents are checked by LibRaw.
+/// Supported source filename extensions. LibRaw checks DNG, ARW, and RW2 contents.
 pub fn is_source_extension(extension: &std::ffi::OsStr) -> bool {
-    extension.eq_ignore_ascii_case("x3f")
-        || extension.eq_ignore_ascii_case("x3i")
-        || extension.eq_ignore_ascii_case("dng")
+    ["x3f", "x3i", "dng", "arw", "rw2"]
+        .iter()
+        .any(|e| extension.eq_ignore_ascii_case(e))
 }
 
 pub fn source_path(path: &Path) -> Result<(), String> {

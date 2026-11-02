@@ -1,4 +1,5 @@
-//! DNG input for X3Fuse through bundled LibRaw 0.22.2.
+//! DNG, Sony ARW, and Panasonic RW2 input for X3Fuse through bundled
+//! LibRaw 0.22.2.
 //!
 //! LibRaw parses the file and decodes the samples. This crate owns the
 //! normalization and color: black and per-sample white levels, OpcodeList2
@@ -22,8 +23,18 @@
 //! Floating-point arrays are demosaiced at 16 bits relative to their peak. LibRaw reads
 //! BlackLevelDeltaH and BlackLevelDeltaV as their mean. AsShotWhiteXY is
 //! used through LibRaw's multipliers for color filter arrays only.
+//!
+//! A file that is not a DNG, such as ARW or RW2, has no DNG color tags. Its
+//! color matrix is LibRaw's built-in matrix for the camera, as ColorMatrix1
+//! with illuminant D65. A camera without one is an error. Its white balance
+//! comes from LibRaw's camera multipliers. The shim also records the Sony
+//! (0x7031 to 0x7037) and Panasonic (RW2 0x119) lens correction tags. `lens`
+//! turns them into an OpcodeList3 GainMap for vignetting and a Warp for
+//! distortion and CA. They apply only when the camera recorded the correction
+//! as on. A DNG never gets them, because its opcodes carry its corrections.
 
 mod color;
+mod lens;
 mod opcode;
 
 use std::{
@@ -41,7 +52,7 @@ use mozjpeg_sys as _;
 
 /// The bundled decoder and the adapter revision. Change the revision when a
 /// change can alter decoded pixels or metadata.
-pub const DECODER_VERSION: &str = "LibRaw 0.22.2, librtprocess 9a85827, x3f-dng 4";
+pub const DECODER_VERSION: &str = "LibRaw 0.22.2, librtprocess 9a85827, x3f-dng 5";
 /// The largest active area, in pixels. A color image of this size needs
 /// about 23 bytes per pixel while it is prepared.
 pub const MAX_PIXELS: u64 = 160_000_000;
@@ -150,6 +161,26 @@ mod ffi {
         pub forward_matrix: [[f32; 4]; 3],
     }
 
+    /// Vendor lens correction tags. See `x3fdng_lens` in `shim.cpp`.
+    #[repr(C)]
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    pub struct Lens {
+        pub has_vignetting: c_int,
+        pub has_ca: c_int,
+        pub has_distortion: c_int,
+        pub vignetting: i16,
+        pub ca: i16,
+        pub distortion: i16,
+        pub vignetting_count: u32,
+        pub ca_count: u32,
+        pub distortion_count: u32,
+        pub vignetting_params: [i16; 17],
+        pub ca_params: [i16; 33],
+        pub distortion_params: [i16; 17],
+        pub has_panasonic: c_int,
+        pub panasonic: [i16; 16],
+    }
+
     #[repr(C)]
     pub struct Info {
         pub dng_version: c_int,
@@ -177,6 +208,7 @@ mod ffi {
         pub opcodes: [*const u8; 3],
         pub opcode_len: [u32; 3],
         pub cfa: [[u8; 24]; 24],
+        pub lens: Lens,
     }
 
     #[repr(C)]
@@ -229,6 +261,15 @@ mod ffi {
         ) -> c_int;
         #[cfg(test)]
         pub fn x3fdng_sizes(which: c_int) -> usize;
+        #[cfg(test)]
+        pub fn x3fdng_capture(
+            lens: *mut Lens,
+            tag: c_int,
+            kind: c_int,
+            count: u32,
+            bytes: *const u8,
+            order: u32,
+        );
     }
 }
 
@@ -261,7 +302,7 @@ impl Handle {
         // SAFETY: plain constructor; null means allocation failure.
         NonNull::new(unsafe { ffi::x3fdng_new(MAX_RAW_MEMORY_MB) })
             .map(Self)
-            .ok_or_else(|| "Not enough memory to decode the DNG".into())
+            .ok_or_else(|| "Not enough memory to decode the RAW file".into())
     }
 
     /// Run one LibRaw call while a watcher forwards cancellation into it.
@@ -297,7 +338,7 @@ impl Handle {
         }
         // SAFETY: LibRaw and the shim return static strings.
         let message = unsafe { CStr::from_ptr(ffi::x3fdng_strerror(code)) };
-        Err(format!("DNG decode failed: {}", message.to_string_lossy()))
+        Err(format!("RAW decode failed: {}", message.to_string_lossy()))
     }
 }
 
@@ -315,7 +356,11 @@ struct Opened {
 }
 
 fn open(path: &Path, cancel: &AtomicBool) -> Result<Opened, String> {
-    let handle = Handle::new()?;
+    reopen(Handle::new()?, path, cancel)
+}
+
+/// `open` with a handle that may have opened another file before.
+fn reopen(handle: Handle, path: &Path, cancel: &AtomicBool) -> Result<Opened, String> {
     #[cfg(windows)]
     let encoded: Vec<u16> = {
         use std::os::windows::ffi::OsStrExt;
@@ -325,7 +370,7 @@ fn open(path: &Path, cancel: &AtomicBool) -> Result<Opened, String> {
     let encoded = {
         use std::os::unix::ffi::OsStrExt;
         std::ffi::CString::new(path.as_os_str().as_bytes())
-            .map_err(|_| "The DNG path contains a NUL character")?
+            .map_err(|_| "The RAW file path contains a NUL character")?
     };
     // SAFETY: the path outlives the call; LibRaw copies it.
     handle.call(cancel, |h| unsafe { ffi::x3fdng_open(h, encoded.as_ptr()) })?;
@@ -341,11 +386,8 @@ fn open(path: &Path, cancel: &AtomicBool) -> Result<Opened, String> {
 }
 
 fn layout(info: &ffi::Info) -> Result<Layout, String> {
-    if info.dng_version == 0 {
-        return Err("The file is not a DNG".into());
-    }
     if info.is_raw == 0 {
-        return Err("The DNG has no raw image".into());
+        return Err("The RAW file has no raw image".into());
     }
     if info.decoder_supported == 0 {
         return Err(
@@ -357,8 +399,8 @@ fn layout(info: &ffi::Info) -> Result<Layout, String> {
         (0, 1) => Layout::Mono,
         (0, 3) => Layout::Linear,
         (f, 3) if f != 0 => Layout::Cfa,
-        (f, 4) if f != 0 => return Err("Four-color filter array DNG is not supported".into()),
-        (_, colors) => return Err(format!("DNG with {colors} color channels is not supported")),
+        (f, 4) if f != 0 => return Err("Four-color filter arrays are not supported".into()),
+        (_, colors) => return Err(format!("RAW files with {colors} colors are not supported")),
     };
     let aspect = info.pixel_aspect;
     if !(0.1..=10.).contains(&aspect) {
@@ -368,14 +410,14 @@ fn layout(info: &ffi::Info) -> Result<Layout, String> {
     let pixels = u64::from(info.width).max(w as u64) * u64::from(info.height).max(h as u64);
     if info.width == 0 || info.height == 0 || pixels > MAX_PIXELS {
         return Err(format!(
-            "The DNG image size {}x{} is outside the supported limit of {MAX_PIXELS} pixels",
+            "The RAW image size {}x{} is outside the supported limit of {MAX_PIXELS} pixels",
             info.width, info.height
         ));
     }
     if info.left_margin + info.width > info.raw_width
         || info.top_margin + info.height > info.raw_height
     {
-        return Err("The DNG active area is outside the image".into());
+        return Err("The RAW active area is outside the image".into());
     }
     Ok(layout)
 }
@@ -443,8 +485,10 @@ fn as_shot_crop(info: &ffi::Info) -> Option<[f32; 4]> {
     Some(orient_rect([x0, y0, x1, y1], orientation(info.flip)))
 }
 
-/// Read metadata only. Fails for files that are not DNG, by content.
-/// It also rejects color and opcode metadata that `prepare` cannot use.
+/// Read metadata only. Accepts a DNG and other raw files that LibRaw opens,
+/// such as ARW and RW2. The file content decides, not the extension.
+/// It rejects color and opcode metadata that `prepare` cannot use, and a
+/// non-DNG camera without a LibRaw color matrix.
 pub fn inspect(path: &Path, cancel: &AtomicBool) -> Result<DngInfo, String> {
     let opened = open(path, cancel)?;
     let info = &opened.info;
@@ -493,18 +537,14 @@ fn native_cfa(opened: &Opened) -> Result<[[u8; 2]; 2], String> {
     let info = &opened.info;
     let mut p = match (opened.layout, bayer_pattern(info)) {
         (Layout::Cfa, Some(p)) => p,
-        _ => {
-            return Err(
-                "A native demosaic method needs a DNG with a 2x2 Bayer color filter array".into(),
-            )
-        }
+        _ => return Err("A native demosaic method needs a 2x2 Bayer color filter array".into()),
     };
     let (w, h) = (info.width, info.height);
     if w < MIN_NATIVE_EDGE || h < MIN_NATIVE_EDGE || u64::from(w) * u64::from(h) > MAX_NATIVE_PIXELS
     {
         return Err(format!(
             "A native demosaic method needs an image from {MIN_NATIVE_EDGE} pixels per edge to \
-             {MAX_NATIVE_PIXELS} pixels; this DNG is {w}x{h}"
+             {MAX_NATIVE_PIXELS} pixels; this RAW file is {w}x{h}"
         ));
     }
     let greens: Vec<(usize, usize)> = (0..4)
@@ -539,6 +579,10 @@ fn calibration(opened: &Opened) -> Result<color::Calibration, String> {
     let m3 = |rows: &dyn Fn(usize, usize) -> f32| -> color::M3 {
         std::array::from_fn(|i| f64::from(rows(i / 3, i % 3)))
     };
+    let mut matrix = info.color[0].color_matrix[..3].iter().flatten();
+    if info.dng_version == 0 && matrix.all(|v| *v == 0.) {
+        return Err("This camera has no color matrix in LibRaw 0.22.2".into());
+    }
     let neutral = info.as_shot_neutral[..3].iter().map(|v| f64::from(*v));
     let neutral: [f64; 3] = std::array::from_fn(|i| neutral.clone().nth(i).unwrap());
     let as_shot_neutral = if neutral.iter().all(|v| *v > 0.) {
@@ -628,7 +672,7 @@ fn validate(raw: &ffi::Raw, info: &ffi::Info, layout: Layout) -> Result<(), Stri
         || u64::from(raw.pitch) < row_bytes
         || pattern > ffi::CBLACK_SIZE - 6
     {
-        return Err("LibRaw returned an unexpected DNG sample layout".into());
+        return Err("LibRaw returned an unexpected RAW sample layout".into());
     }
     Ok(())
 }
@@ -644,11 +688,27 @@ struct Balanced {
     step: usize,
 }
 
+/// The vendor lens opcodes of a non-DNG file, `[GainMap?, Warp?]`. A DNG gets
+/// none. A one-sample output has no red or blue plane, so it gets no CA
+/// correction; it keeps distortion and vignetting.
+fn vendor_lens(info: &ffi::Info, one_sample: bool) -> Vec<Opcode> {
+    if info.dng_version != 0 {
+        return Vec::new();
+    }
+    let mut tags = info.lens;
+    if one_sample {
+        tags.has_ca = 0;
+    }
+    lens::opcodes(&tags, false, info.width as usize, info.height as usize)
+}
+
 fn decode(
     path: &Path,
     cancel: &AtomicBool,
     half_size: bool,
     method: Option<DemosaicMethod>,
+    lens: bool,
+    vignetting: bool,
 ) -> Result<(Balanced, color::Calibration, u16), String> {
     let opened = open(path, cancel)?;
     let info = &opened.info;
@@ -661,7 +721,19 @@ fn decode(
         Some(DemosaicMethod::Mono) => color::monochrome(baseline_exposure(info)),
         _ => calibration(&opened)?,
     };
-    let lists = opcode_lists(info)?;
+    let mut lists = opcode_lists(info)?;
+    // A non-DNG file gets its lens corrections from the vendor tags: the
+    // GainMap before the other OpcodeList3 opcodes, the Warp after them.
+    if lens {
+        let one_sample = opened.layout == Layout::Mono || method == Some(DemosaicMethod::Mono);
+        for op in vendor_lens(info, one_sample) {
+            match op {
+                Opcode::Gain(_) if vignetting => lists[2].insert(0, op),
+                Opcode::Gain(_) => {}
+                Opcode::Warp(_) => lists[2].push(op),
+            }
+        }
+    }
     // SAFETY: Raw is plain data that the shim fills on success.
     let mut raw: Box<ffi::Raw> = Box::new(unsafe { std::mem::zeroed() });
     opened
@@ -713,7 +785,7 @@ fn decode(
                 let b = black(row, col, c);
                 let w = white[if opened.layout == Layout::Cfa { 0 } else { s }];
                 if w <= b {
-                    return Err("The DNG white level is not above the black level".into());
+                    return Err("The RAW white level is not above the black level".into());
                 }
                 let v = (samples.get(row, col, s) - b) / (w - b);
                 let i = row * width + col;
@@ -914,7 +986,7 @@ impl Domain {
         let mut hi = clip;
         for &v in data {
             if !v.is_finite() {
-                return Err("The DNG has non-finite samples".into());
+                return Err("The RAW file has non-finite samples".into());
             }
             hi = hi.max(v);
             if v < 0. && (lowest.len() <= rank || lowest.peek().is_some_and(|k: &Key| v < k.0)) {
@@ -930,7 +1002,7 @@ impl Domain {
         };
         let scale = 65535. / (f64::from(hi) - f64::from(lo));
         if !(scale.is_finite() && scale > 0.) {
-            return Err("The DNG sample range is too large to demosaic".into());
+            return Err("The RAW sample range is too large to demosaic".into());
         }
         Ok(Self {
             lo: f64::from(lo),
@@ -959,7 +1031,7 @@ fn floor_rank(samples: usize) -> usize {
 fn zeroed(len: usize) -> Result<Vec<f32>, String> {
     let mut v = Vec::new();
     v.try_reserve_exact(len)
-        .map_err(|_| "Not enough memory to demosaic the DNG")?;
+        .map_err(|_| "Not enough memory to demosaic the RAW file")?;
     v.resize(len, 0.);
     Ok(v)
 }
@@ -1031,7 +1103,7 @@ fn native(
     check(cancel)?;
     match code {
         0 => {}
-        -10001 => return Err("Not enough memory to demosaic the DNG".into()),
+        -10001 => return Err("Not enough memory to demosaic the RAW file".into()),
         _ => return Err(format!("Native {method:?} demosaic failed ({code})")),
     }
     drop(data);
@@ -1221,13 +1293,14 @@ fn to_scene(image: Balanced, cal: &color::Calibration) -> Result<Vec<f32>, Strin
         }
     }
     if data.iter().any(|v| !v.is_finite()) {
-        return Err("The DNG produced non-finite samples".into());
+        return Err("The RAW file produced non-finite samples".into());
     }
     Ok(data)
 }
 
 /// Decode the full image as an unrotated, active-area scene for the editor.
-/// LibRaw demosaics a color filter array.
+/// LibRaw demosaics a color filter array. A Sony or Panasonic file gets the
+/// lens corrections that its camera recorded as on; `preview` applies them too.
 pub fn prepare(path: &Path, cancel: &AtomicBool) -> Result<x3f_core::SceneLinearImage, String> {
     prepare_with_method(path, None, cancel)
 }
@@ -1242,7 +1315,18 @@ pub fn prepare_with_method(
     method: Option<DemosaicMethod>,
     cancel: &AtomicBool,
 ) -> Result<x3f_core::SceneLinearImage, String> {
-    let (image, cal, orientation) = decode(path, cancel, false, method)?;
+    scene(path, cancel, false, method, true, true)
+}
+
+fn scene(
+    path: &Path,
+    cancel: &AtomicBool,
+    half_size: bool,
+    method: Option<DemosaicMethod>,
+    lens: bool,
+    vignetting: bool,
+) -> Result<x3f_core::SceneLinearImage, String> {
+    let (image, cal, orientation) = decode(path, cancel, half_size, method, lens, vignetting)?;
     let (width, height) = (image.width as u32, image.height as u32);
     let data = to_scene(image, &cal)?;
     check(cancel)?;
@@ -1258,6 +1342,30 @@ pub fn prepare_with_method(
         },
         color_mode_calibration: None,
     })
+}
+
+/// Test entry point: the vendor lens tags that the shim captured.
+#[doc(hidden)]
+pub use ffi::Lens as LensTags;
+
+#[doc(hidden)]
+pub fn lens_tags(path: &Path, cancel: &AtomicBool) -> Result<LensTags, String> {
+    Ok(open(path, cancel)?.info.lens)
+}
+
+/// Test entry point: `prepare` at full or half size, with or without the
+/// Sony and Panasonic lens corrections. Acceptance tests compare these.
+/// With `lens` true and `vignetting` false, only the lens Warp applies.
+/// With `lens` false, `vignetting` has no effect.
+#[doc(hidden)]
+pub fn prepare_for_test(
+    path: &Path,
+    half_size: bool,
+    lens: bool,
+    vignetting: bool,
+    cancel: &AtomicBool,
+) -> Result<x3f_core::SceneLinearImage, String> {
+    scene(path, cancel, half_size, None, lens, vignetting)
 }
 
 fn srgb(v: f32) -> u16 {
@@ -1293,7 +1401,7 @@ fn preview_crop(info: DngInfo, width: u32, height: u32) -> [u32; 4] {
 pub fn preview(path: &Path, cancel: &AtomicBool) -> Result<Vec<u8>, String> {
     use image::ImageEncoder;
     let info = inspect(path, cancel)?;
-    let (image, cal, _) = decode(path, cancel, true, None)?;
+    let (image, cal, _) = decode(path, cancel, true, None, true, true)?;
     let (width, height) = (image.width as u32, image.height as u32);
     let data = to_scene(image, &cal)?;
     check(cancel)?;
@@ -1302,7 +1410,7 @@ pub fn preview(path: &Path, cancel: &AtomicBool) -> Result<Vec<u8>, String> {
         height,
         data.into_iter().map(srgb).collect(),
     )
-    .ok_or("Invalid DNG preview dimensions")?;
+    .ok_or("Invalid RAW preview dimensions")?;
     let [x, y, w, h] = preview_crop(info, width, height);
     let preview = image::DynamicImage::ImageRgb16(rgb)
         .crop_imm(x, y, w, h)

@@ -216,7 +216,8 @@ export function boundedWhiteBalanceGains(gains: Rgb): Rgb | undefined {
 export const AEROCHROME_MATRIX: number[] = [
   1.6874, 0.7225, -1.4099, -0.7473, 2.965, -1.2177, -1.5352, 1.93, 0.6052
 ]
-/** The RAW format of a photo. x3f-core opens X3F and X3I files; LibRaw opens DNG files. */
+/** The RAW format of a photo. x3f-core opens X3F and X3I files; LibRaw opens DNG, ARW, and RW2
+    files, all with the `dng` kind. */
 export type SourceKind = 'x3f' | 'x3i' | 'dng'
 /** The settings that a photo supports. A DNG has no Foveon settings and exports only
     rendered images. A monochrome DNG also has no white balance. A Bayer or monochrome
@@ -239,10 +240,10 @@ export const FOVEON_CAPABILITIES: SourceCapabilities = {
   whiteBalance: true,
   renderedOnly: false
 }
-/** The source kind. Without it, a `.dng` path is a DNG and other paths are Foveon files. */
+/** The source kind. Without it, a `.dng`, `.arw`, or `.rw2` path uses LibRaw and other paths are Foveon files. */
 export const sourceKindOf = (source: Source): SourceKind =>
   source.sourceKind ??
-  (/\.dng$/i.test(source.path) ? 'dng' : /\.x3i$/i.test(source.path) ? 'x3i' : 'x3f')
+  (/\.(dng|arw|rw2)$/i.test(source.path) ? 'dng' : /\.x3i$/i.test(source.path) ? 'x3i' : 'x3f')
 /** The capabilities. Without them, a DNG is a color DNG and other files are Foveon files. */
 export function capabilitiesOf(source: Source): SourceCapabilities {
   if (source.capabilities) return source.capabilities

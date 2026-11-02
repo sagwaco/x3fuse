@@ -95,6 +95,17 @@ reuse the Debug probe executable. Release builds omit the probe.
   ExifTool handles metadata. Opcode resources apply to DNG processing.
 - Original export supports DNG, TIFF, and embedded JPEG extraction. DNG output uses
   `name.dng`, without the input `.X3F` suffix. SD9 and SD10 have no embedded JPEG.
+- DNG, Sony ARW, and Panasonic RW2 inputs use `Kind::Dng` and the `x3f-dng` crate
+  (bundled LibRaw 0.22.2). ARW and RW2 color comes from LibRaw's built-in camera
+  matrix. `x3f-dng/src/lens.rs` turns the camera's Sony (SubIFD 0x7031 to 0x7037:
+  distortion, CA, vignetting) and Panasonic (RW2 tag 0x119: distortion) lens tags
+  into OpcodeList3 opcodes, only when the camera flag says on and the parameters are
+  valid. A DNG never gets vendor lens corrections; its opcodes carry them.
+- `Kind::Dng` previews use embedded JPEGs: the smallest with a long edge of 320 or
+  more for thumbnails, the largest with 1024 or more for the fit view, black
+  letterbox bands cropped, else a rendered RAW preview. The 1:1 view uses an embedded
+  JPEG only when its upright long edge is within 1% of the native size and its aspect
+  within 0.5%; otherwise it renders the RAW.
 - `x3f-preview` serves extracted previews through an asynchronous Tauri URI protocol.
   `x3f-edit` serves revisioned rendered images. The renderer uses bounded caches,
   worker-based scopes, and virtualized browsing views.

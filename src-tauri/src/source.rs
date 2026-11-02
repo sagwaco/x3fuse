@@ -21,9 +21,11 @@ pub enum Kind {
 
 impl Kind {
     pub fn of(path: &Path) -> Self {
-        match path.extension() {
-            Some(ext) if ext.eq_ignore_ascii_case("dng") => Self::Dng,
-            Some(ext) if ext.eq_ignore_ascii_case("x3i") => Self::X3i,
+        let ext = path.extension().and_then(|e| e.to_str());
+        match ext.map(str::to_ascii_lowercase).as_deref() {
+            // LibRaw opens ARW and RW2 files on the DNG route.
+            Some("dng" | "arw" | "rw2") => Self::Dng,
+            Some("x3i") => Self::X3i,
             _ => Self::X3f,
         }
     }
@@ -31,7 +33,7 @@ impl Kind {
     pub fn validate_export(self, settings: &BatchSettings) -> Result<(), String> {
         settings.validate()?;
         if self == Self::Dng && !settings.is_rendered() {
-            return Err("DNG inputs support edited JPEG or TIFF export only".into());
+            return Err("DNG, ARW, and RW2 inputs support edited JPEG or TIFF export only".into());
         }
         Ok(())
     }
@@ -170,6 +172,19 @@ impl Info {
         Self::read_in(path, cancel, store, None, inspect)
     }
 
+    /// The cached metadata of `path`, from session memory or the disk store. It
+    /// never reads the RAW. None on a miss, and for an unsupported RAW.
+    pub fn cached(path: &Path) -> Option<Self> {
+        Self::read_in(
+            path,
+            &AtomicBool::new(false),
+            STORE.get().map(AsRef::as_ref),
+            Some(MEMORY.get_or_init(Default::default)),
+            |_, _| Err("Not cached".into()),
+        )
+        .ok()
+    }
+
     fn read_in(
         path: &Path,
         cancel: &AtomicBool,
@@ -212,7 +227,7 @@ impl Info {
                 let info = inspect(&path, cancel)?;
                 if SourceStamp::new(&fs::metadata(&path).map_err(|e| e.to_string())?)? != stamp {
                     return Err(
-                        "Source changed while reading DNG metadata; reopen the photo".into(),
+                        "Source changed while reading RAW metadata; reopen the photo".into(),
                     );
                 }
                 if let Some((store, name)) = store.zip(name.as_deref()).filter(|_| info.valid_dng())

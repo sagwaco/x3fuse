@@ -77,9 +77,93 @@ pub fn jpeg_region(bytes: &[u8], region: [f64; 4]) -> Result<Vec<u8>, RenderErro
     Ok(output)
 }
 
+/// Crops black letterbox bands from the stored pixels of a JPEG. It ignores the
+/// EXIF orientation. `aspect` is the expected width / height. The kept rectangle
+/// is centered. Returns Ok(None) if a band pixel is 4/255 or brighter, or if the
+/// aspect already matches. The result is quality 90, keeps the ICC profile, and
+/// has no EXIF.
+pub fn jpeg_letterbox(bytes: &[u8], aspect: f64) -> Result<Option<Vec<u8>>, RenderError> {
+    let mut reader = image::ImageReader::with_format(Cursor::new(bytes), image::ImageFormat::Jpeg);
+    let mut limits = image::Limits::default();
+    limits.max_alloc = Some(256 * 1024 * 1024);
+    reader.limits(limits);
+    let mut decoder = reader.into_decoder()?;
+    let profile = decoder.icc_profile()?;
+    let image = image::DynamicImage::from_decoder(decoder)?.into_rgb8();
+    let (width, height) = image.dimensions();
+    let (w, h) = (f64::from(width), f64::from(height));
+    let (keep_width, keep_height) = if w / h > aspect {
+        ((h * aspect).floor() as u32, height)
+    } else {
+        (width, (w / aspect).floor() as u32)
+    };
+    if !aspect.is_finite() || keep_width == 0 || keep_height == 0 {
+        return Ok(None);
+    }
+    if (keep_width, keep_height) == (width, height) {
+        return Ok(None);
+    }
+    let (x, y) = ((width - keep_width) / 2, (height - keep_height) / 2);
+    let inside =
+        |px: u32, py: u32| (x..x + keep_width).contains(&px) && (y..y + keep_height).contains(&py);
+    if !image
+        .enumerate_pixels()
+        .all(|(px, py, pixel)| inside(px, py) || pixel.0.iter().all(|&v| v < 4))
+    {
+        return Ok(None);
+    }
+    let kept = image::imageops::crop_imm(&image, x, y, keep_width, keep_height).to_image();
+    let mut output = Vec::new();
+    let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut output, 90);
+    if let Some(profile) = profile {
+        encoder
+            .set_icc_profile(profile)
+            .map_err(image::ImageError::Unsupported)?;
+    }
+    encoder.encode(
+        &kept,
+        keep_width,
+        keep_height,
+        image::ExtendedColorType::Rgb8,
+    )?;
+    Ok(Some(output))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn letterbox_crops_black_bands_and_rejects_others() {
+        // A 4:3 image: gray rows 20..160, black rows elsewhere.
+        let banded = |band: u8| {
+            let rgb = image::RgbImage::from_fn(240, 180, |_, y| {
+                image::Rgb(if (20..160).contains(&y) {
+                    [128; 3]
+                } else {
+                    [band; 3]
+                })
+            });
+            let mut bytes = Vec::new();
+            let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, 95);
+            encoder.set_icc_profile(vec![1, 2, 3]).unwrap();
+            encoder
+                .encode(&rgb, 240, 180, image::ExtendedColorType::Rgb8)
+                .unwrap();
+            bytes
+        };
+        // 240 / 1.5 = 160 rows; the bands are rows 0..10 and 170..180.
+        let cropped = jpeg_letterbox(&banded(0), 1.5).unwrap().unwrap();
+        let mut decoder = image::codecs::jpeg::JpegDecoder::new(Cursor::new(&cropped)).unwrap();
+        assert_eq!(decoder.dimensions(), (240, 160));
+        assert_eq!(decoder.icc_profile().unwrap(), Some(vec![1, 2, 3]));
+        assert!(jpeg_letterbox(&banded(40), 1.5).unwrap().is_none());
+        // Pillarbox: a 3:2 aspect expected from a wider image crops columns.
+        let wide = jpeg_letterbox(&jpeg(300, 100), 1.5).unwrap();
+        assert!(wide.is_none(), "Red and blue columns are not black");
+        assert!(jpeg_letterbox(&banded(0), 240. / 180.).unwrap().is_none());
+        assert!(jpeg_letterbox(b"not a jpeg", 1.5).is_err());
+    }
 
     fn jpeg(width: u32, height: u32) -> Vec<u8> {
         let rgb = image::RgbImage::from_fn(width, height, |x, _| {

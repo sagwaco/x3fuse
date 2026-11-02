@@ -16,7 +16,7 @@
   "footer.output_directory": "输出目录",
   "footer.alongside_original": "与原始文件并排",
   "dialog.select_x3f_files.title": "选择 RAW 文件",
-  "dialog.select_x3f_files.message": "选择要导出的 X3F、X3I 或 DNG 文件",
+  "dialog.select_x3f_files.message": "选择要导出的 X3F、X3I、DNG、ARW 或 RW2 文件",
   "dialog.select_folders.title": "选择文件夹",
   "dialog.add_failed": "无法添加照片。",
   "dialog.select_output_directory.title": "选择输出目录",
@@ -569,6 +569,6 @@
   "settings.section.advanced": "高级",
   "export.partial_highlight_recovery": "高光恢复仅适用于所选的 Merrill 和 Quattro 图像。",
   "export.partial_sfd_source": "此设置仅适用于所选的 X3I 图像。",
-  "export.dng_rendered_only": "DNG 照片只能导出为应用了调整的 JPEG 或 16 位 TIFF 图像。",
+  "export.dng_rendered_only": "DNG、ARW 和 RW2 照片只能导出为应用了调整的 JPEG 或 16 位 TIFF 图像。",
   "settings.warning_label": "警告：{{setting}}"
 }

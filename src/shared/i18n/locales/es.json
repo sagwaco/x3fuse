@@ -16,7 +16,7 @@
   "footer.output_directory": "Directorio de salida",
   "footer.alongside_original": "Junto al archivo original",
   "dialog.select_x3f_files.title": "Seleccionar archivos RAW",
-  "dialog.select_x3f_files.message": "Elige los archivos X3F, X3I o DNG que quieres exportar",
+  "dialog.select_x3f_files.message": "Elige los archivos X3F, X3I, DNG, ARW o RW2 que quieres exportar",
   "dialog.select_folders.title": "Seleccionar carpetas",
   "dialog.add_failed": "No se pudieron añadir las fotos.",
   "dialog.select_output_directory.title": "Seleccionar directorio de salida",
@@ -569,6 +569,6 @@
   "settings.section.advanced": "Avanzado",
   "export.partial_highlight_recovery": "La recuperación de altas luces solo se aplica a las imágenes Merrill y Quattro seleccionadas.",
   "export.partial_sfd_source": "Este ajuste solo se aplica a las imágenes X3I seleccionadas.",
-  "export.dng_rendered_only": "Las fotos DNG solo se exportan como imágenes JPEG o TIFF de 16 bits renderizadas con sus ajustes.",
+  "export.dng_rendered_only": "Las fotos DNG, ARW y RW2 solo se exportan como imágenes JPEG o TIFF de 16 bits renderizadas con sus ajustes.",
   "settings.warning_label": "Advertencia: {{setting}}"
 }

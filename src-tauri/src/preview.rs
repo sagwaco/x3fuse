@@ -82,6 +82,52 @@ fn read_preview(store: &Store, key: &str, full: bool) -> Option<(Vec<u8>, bool)>
     read_jpeg(store, key, "jpg").map(|bytes| (bytes, false))
 }
 
+/// True when a JPEG can serve the 1:1 view of a `Kind::Dng` source: its upright
+/// long edge is within 1% of the native long edge, and its aspect within 0.5%.
+pub(crate) fn native_eligible(bytes: &[u8], info: &crate::source::Info) -> bool {
+    let (Some((width, height)), Some([native_width, native_height])) = (
+        crate::metadata::upright_size(bytes, info.orientation.unwrap_or(1)),
+        info.native_dimensions,
+    ) else {
+        return false;
+    };
+    let (native_width, native_height) = (f64::from(native_width), f64::from(native_height));
+    (width.max(height) / native_width.max(native_height) - 1.).abs() <= 0.01
+        && (width / height / (native_width / native_height) - 1.).abs() <= 0.005
+}
+
+/// The metadata of a supported `Kind::Dng` source. Cached JPEGs of such a
+/// source must match its aspect, so that a rejected JPEG never shows.
+/// Some(None) for other sources and for an unsupported RAW. A `cache_only`
+/// lookup never reads the RAW: None when the metadata is not cached, which the
+/// caller treats as a miss.
+async fn dng_info(path: &Path, cache_only: bool) -> Option<Option<crate::source::Info>> {
+    if crate::source::Kind::of(path) != crate::source::Kind::Dng {
+        return Some(None);
+    }
+    let path = path.to_owned();
+    tauri::async_runtime::spawn_blocking(move || {
+        if cache_only {
+            crate::source::Info::cached(&path).map(Some)
+        } else {
+            Some(crate::source::Info::read(&path, &std::sync::atomic::AtomicBool::new(false)).ok())
+        }
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+/// True when a cached JPEG can show in the fit view (`full`) or as the small
+/// preview of a source with `info` (see `dng_info`). A supported RAW never
+/// shows a small JPEG in the fit view, and never uses the "no full JPEG" marker.
+fn usable(bytes: &[u8], info: Option<&crate::source::Info>, full: bool) -> bool {
+    info.is_none_or(|info| {
+        crate::metadata::fits_aspect(bytes, info.orientation.unwrap_or(1), info)
+            && (!full || crate::metadata::fit_size(bytes, info))
+    })
+}
+
 pub struct Previews {
     memory: Arc<Memory>,
     flights: AsyncMutex<HashMap<String, Arc<AsyncMutex<()>>>>,
@@ -230,7 +276,14 @@ impl Previews {
             .map_err(|e| e.to_string())?
             .ok_or("Preview source unavailable")?;
         let memory_key = Self::memory_key(&key, full);
-        if let Some(hit) = self.cached(&memory_key) {
+        let Some(info) = dng_info(path, cache_only).await else {
+            Stats::add(&self.store.stats.misses);
+            return Ok(None);
+        };
+        if let Some(hit) = self
+            .cached(&memory_key)
+            .filter(|hit| usable(hit, info.as_ref(), full))
+        {
             return Ok(Some(hit));
         }
         if cache_only {
@@ -239,7 +292,9 @@ impl Previews {
                 tauri::async_runtime::spawn_blocking(move || read_preview(&store, &disk_key, full))
                     .await
                     .map_err(|e| e.to_string())?;
-            let Some((bytes, embedded)) = hit else {
+            let Some((bytes, embedded)) =
+                hit.filter(|(bytes, _)| usable(bytes, info.as_ref(), full))
+            else {
                 Stats::add(&self.store.stats.misses);
                 return Ok(None);
             };
@@ -261,7 +316,7 @@ impl Previews {
             .clone();
         let ticket = Ticket { key, generation };
         let result = self
-            .generate(path, full, ticket, &memory_key, &flight)
+            .generate(path, full, ticket, &memory_key, &flight, info.as_ref())
             .await;
         let mut flights = self.flights.lock().await;
         if Arc::strong_count(&flight) == 2 {
@@ -272,16 +327,19 @@ impl Previews {
 
     /// Checks for an embedded full JPEG without substituting the small fallback.
     /// None means that a cache-only lookup cannot determine the result.
-    /// DNG native views use RAW because embedded previews can have a smaller size.
+    /// For a `Kind::Dng` source, the full entry is the fit JPEG. It serves the 1:1
+    /// view only when `native_eligible`; an unsupported RAW never uses it there.
     pub async fn has_embedded_full(
         &self,
         path: &Path,
         cache_only: bool,
     ) -> Result<Option<bool>, String> {
         source_path(path)?;
-        if crate::source::Kind::of(path) == crate::source::Kind::Dng {
-            return Ok(Some(false));
-        }
+        let dng = crate::source::Kind::of(path) == crate::source::Kind::Dng;
+        let Some(info) = dng_info(path, cache_only).await else {
+            return Ok(None);
+        };
+        let native = move |bytes: &[u8]| !dng || info.is_some_and(|i| native_eligible(bytes, &i));
         let source = path.to_owned();
         let store = self.store.clone();
         let ticket = tauri::async_runtime::spawn_blocking(move || Ticket::new(&store, &source))
@@ -290,12 +348,12 @@ impl Previews {
             .ok_or("Preview source unavailable")?;
         let memory_key = Self::memory_key(&ticket.key, true);
         // Full memory entries contain only embedded JPEGs, never small fallbacks.
-        if self.cached(&memory_key).is_some() {
-            return Ok(Some(true));
+        if let Some(hit) = self.cached(&memory_key) {
+            return Ok(Some(native(&hit)));
         }
         if cache_only {
             return self
-                .inspect_embedded_full(path, ticket, &memory_key, true)
+                .inspect_embedded_full(path, ticket, &memory_key, true, native)
                 .await;
         }
         let flight = self
@@ -307,7 +365,7 @@ impl Previews {
             .clone();
         let result = {
             let _guard = flight.lock().await;
-            self.inspect_embedded_full(path, ticket, &memory_key, false)
+            self.inspect_embedded_full(path, ticket, &memory_key, false, native)
                 .await
         };
         let mut flights = self.flights.lock().await;
@@ -323,9 +381,10 @@ impl Previews {
         ticket: Ticket,
         memory_key: &str,
         cache_only: bool,
+        native: impl Fn(&[u8]) -> bool,
     ) -> Result<Option<bool>, String> {
-        if self.cached(memory_key).is_some() {
-            return Ok(Some(true));
+        if let Some(hit) = self.cached(memory_key) {
+            return Ok(Some(native(&hit)));
         }
         let store = self.store.clone();
         let disk_key = ticket.key.clone();
@@ -334,7 +393,8 @@ impl Previews {
                 .await
                 .map_err(|e| e.to_string())?;
         if let Some(bytes) = hit {
-            let embedded = !bytes.is_empty();
+            // A nonempty entry of a DNG can be a fit JPEG smaller than the RAW.
+            let embedded = !bytes.is_empty() && native(&bytes);
             if embedded {
                 self.store_memory(memory_key, &Some(Arc::new(bytes)), ticket.generation);
             }
@@ -345,7 +405,7 @@ impl Previews {
         }
         let _slot = self.slots.acquire().await.map_err(|e| e.to_string())?;
         let bytes = self.exif.preview(path, true).await?;
-        let embedded = bytes.is_some();
+        let embedded = bytes.as_deref().is_some_and(&native);
         let store = self.store.clone();
         let source = path.to_owned();
         let generation = ticket.generation;
@@ -431,10 +491,15 @@ impl Previews {
         ticket: Ticket,
         memory_key: &str,
         flight: &AsyncMutex<()>,
+        info: Option<&crate::source::Info>,
     ) -> Result<Image, String> {
         let generation = ticket.generation;
         let _guard = flight.lock().await;
-        if let Some(hit) = self.cached(memory_key) {
+        let cached = || {
+            self.cached(memory_key)
+                .filter(|hit| usable(hit, info, full))
+        };
+        if let Some(hit) = cached() {
             return Ok(Some(hit));
         }
         // A disk hit needs no ExifTool slot.
@@ -442,7 +507,8 @@ impl Previews {
         let hit =
             tauri::async_runtime::spawn_blocking(move || read_preview(&store, &disk_key, full))
                 .await
-                .unwrap_or(None);
+                .unwrap_or(None)
+                .filter(|(bytes, _)| usable(bytes, info, full));
         if let Some((bytes, embedded)) = hit {
             if bytes.is_empty() {
                 return Box::pin(self.get(path, false, false)).await;
@@ -467,7 +533,7 @@ impl Previews {
         };
         let _slot = self.slots.acquire().await.map_err(|e| e.to_string())?;
         // Import metadata can prime the preview while extraction is queued.
-        if let Some(hit) = self.cached(memory_key) {
+        if let Some(hit) = cached() {
             return Ok(Some(hit));
         }
         let mut result = self.exif.preview(path, full).await.map(|b| b.map(Arc::new));
@@ -476,7 +542,14 @@ impl Previews {
             // Release extraction slots before the full view requests its thumbnail.
             drop(_slot);
             drop(_thumbnail_slot);
-            result = if full {
+            result = if let (true, Some(info)) = (full, info) {
+                // A supported RAW: the fit view is the rendered RAW preview,
+                // never a small JPEG. Reuse the small preview when it is that.
+                match Box::pin(self.get(path, false, false)).await? {
+                    Some(small) if crate::metadata::fit_size(&small, info) => Ok(Some(small)),
+                    _ => self.render(path).await,
+                }
+            } else if full {
                 // An empty full entry records that the photo has no full JPEG.
                 let (store, source, marker) = (self.store.clone(), path.to_owned(), ticket.clone());
                 tauri::async_runtime::spawn_blocking(move || {
@@ -487,24 +560,7 @@ impl Previews {
                 kind = "";
                 Box::pin(self.get(path, false, false)).await
             } else {
-                let _raw_slot = self.raw_slot.acquire().await.map_err(|e| e.to_string())?;
-                let source = path.to_owned();
-                Stats::add(&self.store.stats.renders);
-                tauri::async_runtime::spawn_blocking(move || {
-                    let bytes = if crate::source::Kind::of(&source) == crate::source::Kind::Dng {
-                        let cancel = std::sync::atomic::AtomicBool::new(false);
-                        let info = crate::source::Info::read(&source, &cancel)?;
-                        crate::metadata::preview_orientation(
-                            x3f_dng::preview(&source, &cancel)?,
-                            info.orientation.unwrap_or(1),
-                        )?
-                    } else {
-                        x3f_render::raw_preview(&source)?
-                    };
-                    Ok(Some(Arc::new(bytes)))
-                })
-                .await
-                .unwrap_or_else(|e| Err(e.to_string()))
+                self.render(path).await
             };
         }
         if let (Ok(Some(bytes)), false) = (&result, kind.is_empty()) {
@@ -523,6 +579,28 @@ impl Previews {
             }
         }
         result
+    }
+
+    /// The rendered RAW preview, for a photo without a usable embedded JPEG.
+    async fn render(&self, path: &Path) -> Result<Image, String> {
+        let _raw_slot = self.raw_slot.acquire().await.map_err(|e| e.to_string())?;
+        let source = path.to_owned();
+        Stats::add(&self.store.stats.renders);
+        tauri::async_runtime::spawn_blocking(move || {
+            let bytes = if crate::source::Kind::of(&source) == crate::source::Kind::Dng {
+                let cancel = std::sync::atomic::AtomicBool::new(false);
+                let info = crate::source::Info::read(&source, &cancel)?;
+                crate::metadata::preview_orientation(
+                    x3f_dng::preview(&source, &cancel)?,
+                    info.orientation.unwrap_or(1),
+                )?
+            } else {
+                x3f_render::raw_preview(&source)?
+            };
+            Ok(Some(Arc::new(bytes)))
+        })
+        .await
+        .unwrap_or_else(|e| Err(e.to_string()))
     }
 
     /// Keeps an image in memory, unless a Clear came after `generation`. The
@@ -698,7 +776,9 @@ mod tests {
             (&embedded, Some(true)),
             (&no_jpeg, Some(false)),
             (&unknown, None),
-            (&dng, Some(false)),
+            // A cache-only lookup does not read the RAW: without cached
+            // metadata, a DNG is unknown.
+            (&dng, None),
         ] {
             assert_eq!(
                 tokio::time::timeout(
@@ -727,6 +807,100 @@ mod tests {
         assert!(previews.has_embedded_full(&unknown, false).await.is_err());
         assert!(read_jpeg(&previews.store, &key(&unknown), "full.jpg").is_none());
         assert_eq!(fs::read(no_jpeg).unwrap(), b"raw");
+    }
+
+    #[test]
+    fn native_view_needs_a_native_size_jpeg() {
+        use crate::metadata::tests::{info, jpeg};
+        let leica = info([7864, 5200], 1, None);
+        assert!(native_eligible(&jpeg(7840, 5184, 0), &leica));
+        // 1.5% short on the long edge, or 0.6% off in aspect, renders the RAW.
+        assert!(!native_eligible(&jpeg(7746, 5122, 0), &leica));
+        assert!(!native_eligible(&jpeg(7840, 5153, 0), &leica));
+        assert!(!native_eligible(&jpeg(1440, 960, 0), &leica));
+        assert!(!native_eligible(b"not a jpeg", &leica));
+        // Orientation 8 swaps the stored size; the JPEG's own tag wins.
+        let a7 = info([4024, 6048], 8, None);
+        assert!(native_eligible(&jpeg(6048, 4024, 0), &a7));
+        let upright = crate::metadata::preview_orientation(jpeg(6048, 4024, 0), 1).unwrap();
+        assert!(!native_eligible(&upright, &a7));
+    }
+
+    /// Plan task 13: `previewRevision` is `source_key`, which hashes the decoder
+    /// identity. The `x3f-dng 5` bump gives every DNG, ARW and RW2 a new key, so
+    /// no older `full.jpg` entry is read again.
+    #[test]
+    fn decoder_bump_changes_the_preview_revision_of_a_dng() {
+        use sha2::{Digest, Sha256};
+        let dir = tempfile::tempdir().unwrap();
+        let x3f = source(dir.path(), "image.X3F", b"raw");
+        for name in ["image.DNG", "image.ARW", "image.rw2"] {
+            let path = source(dir.path(), name, b"raw");
+            let canonical = path.canonicalize().unwrap();
+            let stamp = crate::edits::SourceStamp::new(&fs::metadata(&canonical).unwrap()).unwrap();
+            let revision = |decoder: &str| {
+                let mut bytes = serde_json::to_vec(&(&canonical, &stamp)).unwrap();
+                bytes.extend(decoder.as_bytes());
+                format!("{:x}", Sha256::digest(bytes))
+            };
+            let dto = crate::metadata::basic_metadata(path.clone()).unwrap();
+            assert_eq!(
+                dto.preview_revision,
+                Some(revision(x3f_dng::DECODER_VERSION))
+            );
+            assert_ne!(
+                dto.preview_revision,
+                Some(revision("LibRaw 0.22.2, librtprocess 9a85827, x3f-dng 4"))
+            );
+        }
+        assert!(x3f_dng::DECODER_VERSION.ends_with(", x3f-dng 5"));
+        // X3F keys do not include a decoder, so they do not change.
+        let canonical = x3f.canonicalize().unwrap();
+        let stamp = crate::edits::SourceStamp::new(&fs::metadata(&canonical).unwrap()).unwrap();
+        let bytes = serde_json::to_vec(&(&canonical, &stamp)).unwrap();
+        assert_eq!(key(&x3f), format!("{:x}", Sha256::digest(bytes)));
+    }
+
+    /// Cache-only requests for a DNG without cached metadata are misses. They do
+    /// not read the RAW: before this rule, the failed RAW read made the source
+    /// "unsupported", and the planted JPEG answered.
+    #[tokio::test]
+    async fn cache_only_with_cold_metadata_never_opens_the_raw() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = source(dir.path(), "cold.DNG", b"raw");
+        let previews = previews(dir.path(), dir.path().join("missing"), 1 << 20);
+        let ticket = Ticket::new(&previews.store, &path).unwrap();
+        for kind in ["jpg", "full.jpg"] {
+            ticket.store(&previews.store, &path, kind, JPEG);
+        }
+        previews.store_memory(
+            &Previews::memory_key(&key(&path), false),
+            &Some(Arc::new(JPEG.to_vec())),
+            previews.store.generation(),
+        );
+        let within = |future| tokio::time::timeout(Duration::from_secs(5), future);
+        for full in [false, true] {
+            assert!(within(previews.get(&path, full, true))
+                .await
+                .expect("A cache-only request must not open the RAW")
+                .unwrap()
+                .is_none());
+        }
+        assert_eq!(
+            tokio::time::timeout(
+                Duration::from_secs(5),
+                previews.has_embedded_full(&path, true)
+            )
+            .await
+            .unwrap()
+            .unwrap(),
+            None
+        );
+        // A normal request reads the RAW: it is unsupported, so never 1:1.
+        assert_eq!(
+            previews.has_embedded_full(&path, false).await.unwrap(),
+            Some(false)
+        );
     }
 
     #[test]
