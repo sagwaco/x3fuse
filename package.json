@@ -18,6 +18,7 @@
     "pack": "tauri build --no-bundle",
     "dist": "tauri build",
     "sync:resources": "node scripts/prepare-resources.mjs",
+    "check:quicklook": "mkdir -p src-tauri/target && swiftc -parse-as-library -o src-tauri/target/quicklook-check src-tauri/quicklook/X3F.swift src-tauri/quicklook/check.swift && src-tauri/target/quicklook-check",
     "dev:frontend": "vite",
     "build:frontend": "npm run build",
     "predev": "npm run sync:resources",

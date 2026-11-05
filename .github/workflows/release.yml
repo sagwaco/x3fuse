@@ -184,19 +184,47 @@ jobs:
           PYTHON
           npm version --no-git-tag-version --allow-same-version --ignore-scripts "$VERSION"
 
+      - name: Check Quick Look extensions
+        run: npm run check:quicklook
+
+      # The Quick Look build in beforeBundleCommand signs with codesign before Tauri
+      # starts to bundle, so the identity must be in a keychain first. Tauri then
+      # finds the same identity there; it does not import APPLE_CERTIFICATE again.
+      - name: Import Developer ID certificate
+        env:
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+        run: |
+          : "${BUILD_CERTIFICATE_BASE64:?Missing BUILD_CERTIFICATE_BASE64}"
+          : "${P12_PASSWORD:?Missing P12_PASSWORD}"
+          keychain="$RUNNER_TEMP/x3fuse-signing.keychain-db"
+          certificate="$RUNNER_TEMP/x3fuse-signing.p12"
+          password=$(openssl rand -hex 24)
+          trap 'rm -f "$certificate"' EXIT
+          (umask 077; printf '%s' "$BUILD_CERTIFICATE_BASE64" | base64 --decode > "$certificate")
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security import "$certificate" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain" login.keychain-db
+          # Sign with the SHA-1 fingerprint, so no identity in another keychain can match.
+          identities=$(security find-identity -v -p codesigning "$keychain" | grep '"Developer ID Application' || true)
+          if [ "$(printf '%s' "$identities" | grep -c .)" -ne 1 ]; then
+            echo "ERROR: Expected one Developer ID Application identity, found:"
+            printf '%s\n' "$identities"
+            exit 1
+          fi
+          echo "APPLE_SIGNING_IDENTITY=$(printf '%s' "$identities" | awk '{print $2}')" >> "$GITHUB_ENV"
+
       - name: Build, sign, and notarize macOS release
         env:
-          APPLE_CERTIFICATE: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.P12_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: Developer ID Application
           APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER_ID }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
-          : "${APPLE_CERTIFICATE:?Missing BUILD_CERTIFICATE_BASE64}"
-          : "${APPLE_CERTIFICATE_PASSWORD:?Missing P12_PASSWORD}"
           : "${APPLE_API_KEY_BASE64:?Missing APPLE_API_KEY_BASE64}"
           : "${APPLE_API_KEY:?Missing APPLE_API_KEY_ID}"
           : "${APPLE_API_ISSUER:?Missing APPLE_API_ISSUER_ID}"
@@ -208,12 +236,25 @@ jobs:
 
       - name: Verify universal binary
         run: |
-          architectures=$(lipo -info src-tauri/target/universal-apple-darwin/release/bundle/macos/X3Fuse.app/Contents/MacOS/x3fuse)
-          printf '%s\n' "$architectures"
-          if [[ "$architectures" != *x86_64* || "$architectures" != *arm64* ]]; then
-            echo "ERROR: App must contain both x86_64 and arm64."
-            exit 1
-          fi
+          app=src-tauri/target/universal-apple-darwin/release/bundle/macos/X3Fuse.app
+          for binary in "$app/Contents/MacOS/x3fuse" "$app"/Contents/PlugIns/X3FThumbnail.appex/Contents/MacOS/* "$app"/Contents/PlugIns/X3FPreview.appex/Contents/MacOS/*; do
+            architectures=$(lipo -info "$binary")
+            printf '%s\n' "$architectures"
+            if [[ "$architectures" != *x86_64* || "$architectures" != *arm64* ]]; then
+              echo "ERROR: $binary must contain both x86_64 and arm64."
+              exit 1
+            fi
+          done
+          for appex in X3FThumbnail X3FPreview; do
+            entitlements=$(codesign -d --entitlements - "$app/Contents/PlugIns/$appex.appex" 2>&1)
+            printf '%s\n' "$entitlements"
+            if [[ "$entitlements" != *com.apple.security.app-sandbox* ]]; then
+              echo "ERROR: $appex.appex must have the app sandbox entitlement."
+              exit 1
+            fi
+          done
+          codesign --verify --deep --strict --verbose=2 "$app"
+          spctl -a -vv "$app"
 
       - name: Create release archives
         run: |
@@ -245,6 +286,10 @@ jobs:
             package-lock.json
             src-tauri/Cargo.toml
             src-tauri/Cargo.lock
+
+      - name: Delete signing keychain
+        if: always()
+        run: security delete-keychain "$RUNNER_TEMP/x3fuse-signing.keychain-db" || true
 
   release:
     name: "Create Release"

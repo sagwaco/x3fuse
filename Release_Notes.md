@@ -14,6 +14,7 @@
 - Halation starts without emulsion scattering, so enabling it no longer softens the whole photo. The Scatter amount slider restores the stock's physical scattering.
 - Existing saved film edits load unchanged, but render differently with the new model. The recipe format is unchanged; no re-save is required.
 - Add photo culling with pick/reject flags, star ratings, and queue filters.
+- Show X3F and X3I photos in Finder thumbnails and Quick Look previews on macOS, using the camera's embedded JPEG. Turn it off in Settings.
 - Reorganize the menus, with new View and Photo menus and File > Add Folder, and show most menu text in the app language. Add right-click menus to photos, the editor preview, and the editor sections. Help > Keyboard Shortcuts lists the keyboard shortcuts.
 - Change two shortcuts to match other Mac photo apps: ⌘R now shows the selected photo in Finder, and ⌘. (Command-Period) stops an export. Export All no longer has a shortcut.
 - Make Windows and Linux portable alpha builds available from the Releases page.

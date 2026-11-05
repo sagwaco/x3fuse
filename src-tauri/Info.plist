@@ -4,5 +4,42 @@
 <dict>
     <key>SUPublicEDKey</key>
     <string>HHPGohDWrcchBmExvCrK7pTUZyDZT5J5kW/81+r2jIE=</string>
+    <key>UTImportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>com.sigmaphoto.photopro-x3f</string>
+            <key>UTTypeDescription</key>
+            <string>Sigma X3F RAW image</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.data</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>x3f</string>
+                </array>
+            </dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>com.sigmaphoto.photopro-x3i</string>
+            <key>UTTypeDescription</key>
+            <string>Sigma X3I SFD RAW image</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.data</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>x3i</string>
+                </array>
+            </dict>
+        </dict>
+    </array>
 </dict>
 </plist>

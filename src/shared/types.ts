@@ -116,6 +116,8 @@ export interface ConversionSettings {
   debugLoggingEnabled: boolean
   /** True after a batch configuration has been committed. */
   hasPreviousConversion: boolean
+  /** True after the first launch turned on the Quick Look extensions. The backend sets it. */
+  quickLookRegistered: boolean
   /** Simultaneous conversions: 0 = auto (CPU-derived), 1..MAX_CONCURRENCY = manual. */
   concurrency: number
   sortField: SortField
@@ -163,6 +165,7 @@ export const DEFAULT_SETTINGS: ConversionSettings = {
   outputDirectory: null,
   debugLoggingEnabled: false,
   hasPreviousConversion: false,
+  quickLookRegistered: false,
   concurrency: 0,
   sortField: 'File Name',
   sortAscending: true,

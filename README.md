@@ -147,6 +147,16 @@ The conversion settings also include:
 - **Highlight recovery (Merrill / Quattro)**, for DNG output: enables highlight recovery
   during conversion for Merrill, dp Quattro, sd Quattro, and sd Quattro H cameras.
 
+### Quick Look on macOS
+
+X3Fuse adds Finder thumbnails and Quick Look previews (Space bar) for X3F and X3I
+files. They show the camera's embedded JPEG, so edits do not appear. An X3I shows
+its SFD reference exposure. X3Fuse turns this on when it first opens. To turn it off, open
+Settings and turn off Quick Look. If another app, such as X3Fuse Alpha or X3F Peek,
+also shows X3F or X3I files in Quick Look, Settings shows a warning and can turn
+that app's extension off. You can also manage them in System Settings > General >
+Login Items & Extensions > Quick Look.
+
 ### Converting a classic-camera library
 
 Keep the original X3F files as your archive. A DNG contains converted image data, not a

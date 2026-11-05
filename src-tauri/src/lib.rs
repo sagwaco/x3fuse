@@ -8,6 +8,7 @@ mod menu;
 pub mod metadata;
 pub mod model;
 pub mod preview;
+mod quicklook;
 #[cfg(debug_assertions)]
 mod smoke;
 pub mod source;
@@ -351,6 +352,7 @@ pub fn run() {
             let settings = app.state::<Arc<AppState>>().preferences.get();
             menu::set_language(&settings.language);
             menu::install(app.handle())?;
+            quicklook::startup(app.handle());
             // The page's first IPC call needs the managed state, so the window is built last.
             if build_main_window(app.handle(), &settings).is_none() {
                 return Err(std::io::Error::other("Could not create the main window").into());
@@ -525,6 +527,8 @@ pub fn run() {
             commands::cache_memory_budget,
             commands::cache_sfd_size,
             commands::cache_sfd_clear,
+            commands::quick_look_status,
+            commands::quick_look_set,
             commands::app_info,
             commands::haptics_detent,
             updater::update_check

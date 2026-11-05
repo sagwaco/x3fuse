@@ -570,5 +570,10 @@
   "export.partial_highlight_recovery": "하이라이트 복구는 선택한 Merrill 및 Quattro 이미지에만 적용됩니다.",
   "export.partial_sfd_source": "이 설정은 선택한 X3I 이미지에만 적용됩니다.",
   "export.dng_rendered_only": "DNG, ARW, RW2 사진은 조정이 적용된 JPEG 또는 16비트 TIFF 이미지로만 내보낼 수 있습니다.",
-  "settings.warning_label": "주의: {{setting}}"
+  "settings.warning_label": "주의: {{setting}}",
+  "settings.section.finder": "Finder",
+  "settings.quick_look": "Finder 썸네일 및 훑어보기 미리보기",
+  "settings.quick_look.help": "Finder에서 X3F 및 X3I 파일의 카메라 미리보기를 표시합니다.",
+  "settings.quick_look.conflict": "{{app}}도 Finder에서 X3F 미리보기를 표시합니다. macOS는 파일마다 하나의 앱만 사용하며 어느 앱을 사용할지 선택할 수 없으므로, 미리보기는 두 앱 중 어느 쪽에서든 표시될 수 있습니다. 한 앱을 끄더라도 다른 앱에는 영향을 주지 않습니다. 둘 중 하나를 끄십시오.",
+  "settings.quick_look.turn_off": "{{app}}에서 끄기"
 }

@@ -1,8 +1,15 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { AppearanceMode, LanguageSetting } from '@shared/types'
-import { HardDrive, Info, PaintbrushVertical, RefreshCw, Settings2 } from 'lucide-react'
+import {
+  HardDrive,
+  Info,
+  PaintbrushVertical,
+  RefreshCw,
+  Settings2,
+  TriangleAlert
+} from 'lucide-react'
 import { MAX_CONCURRENCY } from '@shared/concurrency'
-import type { LogSizes } from '@shared/ipc'
+import type { IpcPayload, LogSizes, QuickLookStatus } from '@shared/ipc'
 import { ipc } from '../lib/ipc'
 import { appInfo } from '../lib/appInfo'
 import { checkForUpdates } from '../lib/commands'
@@ -163,6 +170,7 @@ export function SettingsWindow(): React.JSX.Element {
 
         {tab === 'advanced' && (
           <>
+            <QuickLookSection />
             <Section title={t('settings.section.conversion')}>
               <Row label={t('settings.concurrency')} help={t('settings.concurrency.help')}>
                 <Select
@@ -450,6 +458,77 @@ function SfdCacheSection(): React.JSX.Element {
           {t('settings.sfd_cache.clear_failed')}
         </p>
       )}
+    </Section>
+  )
+}
+
+/** The Finder Quick Look extensions. Hidden where the app has none. */
+function QuickLookSection(): React.JSX.Element | null {
+  const [status, setStatus] = useState<QuickLookStatus | null>(null)
+  const latest = useRef(0)
+  const changes = useRef(0)
+  const refreshLater = useRef(false)
+  // Only the newest request shows its result. On an error, the last status stays.
+  const apply = (request: Promise<QuickLookStatus>, done?: () => void): void => {
+    const id = ++latest.current
+    void request
+      .then((next) => {
+        if (id === latest.current) setStatus(next)
+      }, console.error)
+      .finally(done)
+  }
+  // A refresh during a change can read the old state, so it waits for the change.
+  const refresh = (): void => {
+    if (changes.current > 0) {
+      refreshLater.current = true
+      return
+    }
+    apply(ipc.invoke('quickLook:status'))
+  }
+  const change = (payload: IpcPayload<'quickLook:set'>): void => {
+    changes.current++
+    apply(ipc.invoke('quickLook:set', payload), () => {
+      changes.current--
+      if (changes.current === 0 && refreshLater.current) {
+        refreshLater.current = false
+        refresh()
+      }
+    })
+  }
+  useEffect(() => {
+    if (appInfo.platform !== 'darwin') return
+    refresh()
+    window.addEventListener('focus', refresh)
+    return () => window.removeEventListener('focus', refresh)
+    // `refresh` uses only refs and the state setter, so the first one stays correct.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  if (!status || status.state === 'unavailable') return null
+  return (
+    <Section title={t('settings.section.finder')}>
+      <ToggleRow
+        label={t('settings.quick_look')}
+        help={t('settings.quick_look.help')}
+        checked={status.state === 'on'}
+        onChange={(enabled) => change({ enabled })}
+      />
+      {status.conflicts.map(({ app, ids }) => (
+        <div key={ids.join(' ')} className="flex flex-col gap-2">
+          <p className="flex gap-2 text-xs leading-relaxed text-tone-300">
+            <TriangleAlert
+              aria-hidden="true"
+              className="mt-0.5 h-3.5 w-3.5 shrink-0 text-yellow-400 [[data-theme=light]_&]:text-yellow-700 [[data-theme=gray]_&]:text-yellow-950"
+            />
+            {t('settings.quick_look.conflict', { app })}
+          </p>
+          <div className="flex justify-end">
+            <Button variant="bordered" size="sm" onClick={() => change({ enabled: false, ids })}>
+              {t('settings.quick_look.turn_off', { app })}
+            </Button>
+          </div>
+        </div>
+      ))}
     </Section>
   )
 }

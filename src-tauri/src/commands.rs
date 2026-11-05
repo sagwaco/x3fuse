@@ -1,4 +1,9 @@
-use crate::{conversion, metadata, model::*, AppState};
+use crate::{
+    conversion, metadata,
+    model::*,
+    quicklook::{QuickLookSet, QuickLookStatus},
+    AppState,
+};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{
@@ -569,6 +574,26 @@ pub async fn cache_sfd_clear(state: State<'_, Arc<AppState>>) -> Result<(), Stri
         .await
         .map_err(|e| e.to_string())?
 }
+
+#[tauri::command]
+pub async fn quick_look_status(app: AppHandle) -> Result<QuickLookStatus, String> {
+    let host = app.config().identifier.clone();
+    tauri::async_runtime::spawn_blocking(move || crate::quicklook::status(&host))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn quick_look_set(
+    app: AppHandle,
+    payload: QuickLookSet,
+) -> Result<QuickLookStatus, String> {
+    let host = app.config().identifier.clone();
+    tauri::async_runtime::spawn_blocking(move || crate::quicklook::set(&host, payload))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 pub fn app_info(app: AppHandle) -> Value {
     let platform = if cfg!(target_os = "macos") {

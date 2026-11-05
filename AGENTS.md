@@ -18,6 +18,8 @@ Intel and Apple Silicon support. Windows and Linux x64 builds are portable alpha
 - `src/`: React renderer, shared types, and translations.
 - `src-tauri/`: Rust backend, Tauri configuration, and backend acceptance tests.
 - `src-tauri/crates/x3f-render/`: GPU renderer, edit recipes, camera profiles, and film data.
+- `src-tauri/quicklook/`: Swift sources for the macOS Quick Look thumbnail and preview
+  extensions. `scripts/build-quicklook.mjs` builds them.
 - `src-tauri/resources/opcodes/`: tracked camera/lens flat-field corrections.
 - `scripts/prepare-resources.mjs`: downloads checksum-verified LibRaw 0.22.2 source
   and ExifTool 13.59 for the host OS, and prepares bundled license notices.
@@ -176,6 +178,45 @@ reuse the Debug probe executable. Release builds omit the probe.
   Merged scenes are cached in app-data `edits/x3i-v1/` within a 3 GiB budget.
   Bump `x3i::CACHE_VERSION` when x3f-core changes merged pixels. One merge runs at
   a time in conversion and the editor.
+
+### Quick Look extensions
+
+- The macOS app embeds `Contents/PlugIns/X3FThumbnail.appex` and
+  `Contents/PlugIns/X3FPreview.appex`. They show the camera's embedded JPEG for X3F
+  (`com.sigmaphoto.photopro-x3f`) and X3I (`com.sigmaphoto.photopro-x3i`) files in
+  Finder thumbnails and Quick Look previews. For an X3I they use frame 0, the SFD
+  reference exposure. They do not render the RAW.
+- The extension IDs are `<host id>.QuickLookThumbnail` and `<host id>.QuickLookPreview`.
+  The host ID is `com.sagwa.X3Fuse`, or `com.sagwa.X3Fuse.alpha` for alpha builds.
+- `build.beforeBundleCommand` in `src-tauri/tauri.macos.conf.json` runs
+  `scripts/build-quicklook.mjs`. It builds the extensions for the Tauri target
+  architectures and signs them with `APPLE_SIGNING_IDENTITY` (ad hoc when unset).
+  `X3FUSE_BUNDLE_ID` sets the host ID; else the script reads `tauri.conf.json`.
+  The script runs before Tauri signs the app, so CI imports the Developer ID
+  certificate into a temporary keychain first. It requires exactly one Developer ID
+  Application identity there and sets `APPLE_SIGNING_IDENTITY` to its SHA-1
+  fingerprint for the script and Tauri. `npm run check:quicklook` runs the
+  Swift self-check. `tauri dev`, Windows, and Linux have no extensions; Settings
+  shows Quick Look as unavailable there.
+- On each launch, if a copy that macOS selected is missing or is not inside the
+  running app, the app runs `pluginkit -a` for both extensions. This repairs a moved
+  app or a cleaned database and keeps the user's choice. The first launch also runs
+  `pluginkit -e use` once and records that in `quickLookRegistered` in settings.
+- The Settings toggle runs `pluginkit -e use` or `pluginkit -e ignore`. The bundle
+  always keeps the extensions. When Quick Look is on, Settings warns about enabled
+  extensions from other apps (for example X3Fuse Alpha or X3F Peek) that also handle
+  X3F or X3I, and can turn them off.
+- Manual acceptance on a built app:
+
+  ```sh
+  pluginkit -m -v -i com.sagwa.X3Fuse.QuickLookThumbnail
+  pluginkit -m -v -i com.sagwa.X3Fuse.QuickLookPreview
+  mkdir -p /tmp/x3fuse-ql && qlmanage -t -s 512 -o /tmp/x3fuse-ql /absolute/path/photo.X3F
+  qlmanage -p /absolute/path/photo.X3I
+  ```
+
+  `+` or a space before the ID means enabled, `-` means turned off. The listed path
+  must be inside the app that you test.
 
 ### Edits, culling, settings, and logs
 

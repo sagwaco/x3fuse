@@ -74,21 +74,52 @@ jobs:
       - run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml --locked --workspace --all-targets -- -D warnings
       - run: cargo test --manifest-path src-tauri/Cargo.toml --locked --workspace
+      - name: Check Quick Look extensions
+        if: runner.os == 'macOS' && !(github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'x3fuse-alpha-'))
+        run: npm run check:quicklook
       - name: Build macOS application bundle
         if: runner.os == 'macOS' && !(github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'x3fuse-alpha-'))
+        env:
+          X3FUSE_BUNDLE_ID: com.sagwa.X3Fuse.alpha
         run: npm run tauri -- build --bundles app --config '{"identifier":"com.sagwa.X3Fuse.alpha","version":"'"$(node -p "require('./src-tauri/tauri.conf.json').version")"'-alpha.'"$GITHUB_RUN_NUMBER"'"}'
+      # The Quick Look build in beforeBundleCommand signs with codesign before Tauri
+      # starts to bundle, so the identity must be in a keychain first. Tauri then
+      # finds the same identity there; it does not import APPLE_CERTIFICATE again.
+      - name: Import Developer ID certificate
+        if: runner.os == 'macOS' && github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'x3fuse-alpha-')
+        env:
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+        run: |
+          : "${BUILD_CERTIFICATE_BASE64:?Missing BUILD_CERTIFICATE_BASE64}"
+          : "${P12_PASSWORD:?Missing P12_PASSWORD}"
+          keychain="$RUNNER_TEMP/x3fuse-signing.keychain-db"
+          certificate="$RUNNER_TEMP/x3fuse-signing.p12"
+          password=$(openssl rand -hex 24)
+          trap 'rm -f "$certificate"' EXIT
+          (umask 077; printf '%s' "$BUILD_CERTIFICATE_BASE64" | base64 --decode > "$certificate")
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security import "$certificate" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain" login.keychain-db
+          # Sign with the SHA-1 fingerprint, so no identity in another keychain can match.
+          identities=$(security find-identity -v -p codesigning "$keychain" | grep '"Developer ID Application' || true)
+          if [ "$(printf '%s' "$identities" | grep -c .)" -ne 1 ]; then
+            echo "ERROR: Expected one Developer ID Application identity, found:"
+            printf '%s\n' "$identities"
+            exit 1
+          fi
+          echo "APPLE_SIGNING_IDENTITY=$(printf '%s' "$identities" | awk '{print $2}')" >> "$GITHUB_ENV"
       - name: Build, sign, and notarize macOS alpha
         if: runner.os == 'macOS' && github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'x3fuse-alpha-')
         env:
-          APPLE_CERTIFICATE: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.P12_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: Developer ID Application
+          X3FUSE_BUNDLE_ID: com.sagwa.X3Fuse.alpha
           APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER_ID }}
         run: |
-          : "${APPLE_CERTIFICATE:?Missing BUILD_CERTIFICATE_BASE64}"
-          : "${APPLE_CERTIFICATE_PASSWORD:?Missing P12_PASSWORD}"
           : "${APPLE_API_KEY_BASE64:?Missing APPLE_API_KEY_BASE64}"
           : "${APPLE_API_KEY:?Missing APPLE_API_KEY_ID}"
           : "${APPLE_API_ISSUER:?Missing APPLE_API_ISSUER_ID}"
@@ -114,6 +145,9 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "$app"
           xcrun stapler validate "$app"
           spctl --assess --type execute --verbose=4 "$app"
+      - name: Delete signing keychain
+        if: always() && runner.os == 'macOS'
+        run: security delete-keychain "$RUNNER_TEMP/x3fuse-signing.keychain-db" 2>/dev/null || true
       - uses: actions/upload-artifact@v4
         with:
           name: x3fuse-alpha-${{ matrix.platform }}-${{ matrix.arch }}

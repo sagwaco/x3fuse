@@ -570,5 +570,10 @@
   "export.partial_highlight_recovery": "高光恢复仅适用于所选的 Merrill 和 Quattro 图像。",
   "export.partial_sfd_source": "此设置仅适用于所选的 X3I 图像。",
   "export.dng_rendered_only": "DNG、ARW 和 RW2 照片只能导出为应用了调整的 JPEG 或 16 位 TIFF 图像。",
-  "settings.warning_label": "警告：{{setting}}"
+  "settings.warning_label": "警告：{{setting}}",
+  "settings.section.finder": "访达",
+  "settings.quick_look": "访达缩略图和快速查看预览",
+  "settings.quick_look.help": "在访达中显示 X3F 和 X3I 文件的相机预览。",
+  "settings.quick_look.conflict": "{{app}} 也会在访达中显示 X3F 预览。macOS 对每个文件只使用一个应用，且无法选择使用哪一个，因此预览可能来自任一应用。关闭一个应用不会影响另一个。请关闭其中一个。",
+  "settings.quick_look.turn_off": "在 {{app}} 中关闭"
 }

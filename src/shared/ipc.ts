@@ -43,6 +43,12 @@ export interface OutputConflict {
   outputPath: string
 }
 
+/** The Finder Quick Look extensions. `conflicts` are other apps that also show X3F or X3I. */
+export interface QuickLookStatus {
+  state: 'on' | 'off' | 'unavailable'
+  conflicts: { app: string; ids: string[] }[]
+}
+
 export interface LogSizes {
   conversion: number
   error: number
@@ -267,6 +273,9 @@ export interface IpcRequestMap {
   'app:info': { payload: void; result: AppInfo }
   /** Trackpad click as a slider drag reaches a detent (macOS only). */
   'haptics:detent': { payload: void; result: void }
+  'quickLook:status': { payload: void; result: QuickLookStatus }
+  /** Without `ids`, turns this app's extensions on or off. With `ids`, turns those off. */
+  'quickLook:set': { payload: { enabled: boolean; ids?: string[] }; result: QuickLookStatus }
 
   'update:check': { payload: { manual: boolean }; result: void }
 }
@@ -343,6 +352,8 @@ export const IPC_REQUEST_CHANNELS: IpcRequestChannel[] = [
   'cache:sfdClear',
   'app:info',
   'haptics:detent',
+  'quickLook:status',
+  'quickLook:set',
   'update:check'
 ]
 

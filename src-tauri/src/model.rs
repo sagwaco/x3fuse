@@ -204,6 +204,9 @@ pub struct Settings {
     /// The interface language: "auto" follows the system, or a locale name.
     #[serde(default = "default_language")]
     pub language: String,
+    /// True after the one-time first-launch `pluginkit -e use` of the Quick Look extensions.
+    #[serde(default)]
+    pub quick_look_registered: bool,
 }
 
 /// Decimal units, as the Settings window shows sizes.
@@ -259,6 +262,7 @@ impl Default for Settings {
             preview_cache_limit: default_preview_cache_limit(),
             preview_cache_unified: true,
             language: default_language(),
+            quick_look_registered: false,
         }
     }
 }
