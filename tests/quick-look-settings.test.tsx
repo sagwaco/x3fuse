@@ -41,9 +41,13 @@ afterEach(() => {
   vi.clearAllMocks()
 })
 
-it('hides the Finder section when Quick Look is unavailable', async () => {
+it('disables the toggle when Quick Look is unavailable', async () => {
   await show({ state: 'unavailable', conflicts: [] })
-  expect(screen.queryByRole('switch', { name: t('settings.quick_look') })).toBeNull()
+  const toggle = screen.getByRole('switch', { name: t('settings.quick_look') })
+  expect(toggle.getAttribute('aria-checked')).toBe('false')
+  expect(toggle.hasAttribute('disabled') || toggle.getAttribute('aria-disabled') === 'true').toBe(
+    true
+  )
 })
 
 it('turns the extensions off and shows the returned status', async () => {

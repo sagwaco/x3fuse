@@ -504,13 +504,16 @@ function QuickLookSection(): React.JSX.Element | null {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  if (!status || status.state === 'unavailable') return null
+  if (!status) return null
+  // A build without an app bundle (`tauri dev`) has no extensions: show the control disabled.
+  const unavailable = status.state === 'unavailable'
   return (
     <Section title={t('settings.section.finder')}>
       <ToggleRow
         label={t('settings.quick_look')}
-        help={t('settings.quick_look.help')}
+        help={t(unavailable ? 'settings.quick_look.unavailable' : 'settings.quick_look.help')}
         checked={status.state === 'on'}
+        disabled={unavailable}
         onChange={(enabled) => change({ enabled })}
       />
       {status.conflicts.map(({ app, ids }) => (

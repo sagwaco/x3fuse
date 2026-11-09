@@ -574,6 +574,7 @@
   "settings.section.finder": "Finder",
   "settings.quick_look": "Finder 縮圖和快速查看預覽",
   "settings.quick_look.help": "在 Finder 中顯示 X3F 和 X3I 檔案的相機預覽。",
+  "settings.quick_look.unavailable": "僅在 App 套件中可用。此建置版本不含快速查看延伸功能。",
   "settings.quick_look.conflict": "{{app}} 也會在 Finder 中顯示 X3F 預覽。macOS 對每個檔案只使用一個 App，且無法選擇使用哪一個，因此預覽可能來自任一 App。關閉一個 App 不會影響另一個。請關閉其中一個。",
   "settings.quick_look.turn_off": "在 {{app}} 中關閉"
 }

@@ -574,6 +574,7 @@
   "settings.section.finder": "Finder",
   "settings.quick_look": "Miniaturas de Finder y vistas previas de Vista Rápida",
   "settings.quick_look.help": "Muestra la vista previa de la cámara de los archivos X3F y X3I en Finder.",
+  "settings.quick_look.unavailable": "Solo disponible en el paquete de la app. Esta compilación no incluye las extensiones de Vista Rápida.",
   "settings.quick_look.conflict": "{{app}} también muestra vistas previas de X3F en Finder. macOS usa solo una app para cada archivo y no puedes elegir cuál, así que las vistas previas pueden venir de cualquiera de las dos. Desactivar una app no afecta a la otra. Desactiva una de ellas.",
   "settings.quick_look.turn_off": "Desactivar en {{app}}"
 }

@@ -196,8 +196,9 @@ reuse the Debug probe executable. Release builds omit the probe.
   certificate into a temporary keychain first. It requires exactly one Developer ID
   Application identity there and sets `APPLE_SIGNING_IDENTITY` to its SHA-1
   fingerprint for the script and Tauri. `npm run check:quicklook` runs the
-  Swift self-check. `tauri dev`, Windows, and Linux have no extensions; Settings
-  shows Quick Look as unavailable there.
+  Swift self-check. `tauri dev`, Windows, and Linux have no extensions. On macOS
+  without an app bundle (`tauri dev`), Settings shows the toggle off and disabled.
+  Windows and Linux hide the section.
 - On each launch, if a copy that macOS selected is missing or is not inside the
   running app, the app runs `pluginkit -a` for both extensions. This repairs a moved
   app or a cleaned database and keeps the user's choice. The first launch also runs

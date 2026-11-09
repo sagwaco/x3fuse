@@ -574,6 +574,7 @@
   "settings.section.finder": "Finder",
   "settings.quick_look": "Finder のサムネイルとクイックルックのプレビュー",
   "settings.quick_look.help": "Finder で X3F と X3I ファイルのカメラプレビューを表示します。",
+  "settings.quick_look.unavailable": "アプリバンドルでのみ使用できます。このビルドにはクイックルック機能拡張が含まれていません。",
   "settings.quick_look.conflict": "{{app}} も Finder で X3F のプレビューを表示します。macOS はファイルごとに 1 つのアプリだけを使い、どちらを使うかは選べないため、プレビューはどちらのアプリからも表示される可能性があります。一方のアプリをオフにしても、もう一方には影響しません。どちらか一方をオフにしてください。",
   "settings.quick_look.turn_off": "{{app}} でオフにする"
 }

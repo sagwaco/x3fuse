@@ -574,6 +574,7 @@
   "settings.section.finder": "Finder",
   "settings.quick_look": "Finder thumbnails and Quick Look previews",
   "settings.quick_look.help": "Shows the camera preview of X3F and X3I files in Finder.",
+  "settings.quick_look.unavailable": "Available only in the app bundle. This build has no Quick Look extensions.",
   "settings.quick_look.conflict": "{{app}} also shows X3F previews in Finder. macOS uses only one app for each file and you cannot choose which, so previews can come from either app. Turning off one app does not affect the other. Turn off one of them.",
   "settings.quick_look.turn_off": "Turn off in {{app}}"
 }
