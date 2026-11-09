@@ -22,7 +22,7 @@ use crate::edits::SourceStamp;
 pub const DIRECTORY: &str = "x3i-v1";
 /// Bump when x3f-core changes merged pixels or their calibration. The app
 /// version is also part of each key, so a release starts a new cache.
-const CACHE_VERSION: u32 = 2;
+const CACHE_VERSION: u32 = 4;
 /// ponytail: one budget for frame copies and scenes, least recently used out first.
 /// A dp0 Quattro scene is about 240 MB, an sd Quattro H scene about 310 MB.
 const BUDGET: u64 = 3 << 30;
@@ -136,10 +136,7 @@ fn scene_file(
         return None;
     }
     let identity = identity(path)?;
-    let (settings, denoise_free) = scene_settings(
-        options,
-        std::env::var("X3F_X3I_DENOISE_SCALE").ok().as_deref(),
-    );
+    let (settings, denoise_free) = scene_settings(options);
     let key = format!("{identity}:{source_revision}:{settings:?}");
     // The photo name tells the user which photo a merged image belongs to. At
     // most 64 bytes of it keep the file name inside the 255-byte limit.
@@ -199,8 +196,8 @@ pub fn remove_scene(
 /// the cached scene, it merges only when `merge` is set, else it fails with
 /// UNPROCESSED. A merge is cached when `merge` still confirms that the source
 /// is unchanged. Other files, and the middle exposure of an X3I, prepare as an
-/// X3F. Also returns true when no denoise setting can change the scene, which
-/// is true for a merged X3I without core's experimental denoise.
+/// X3F. Also returns true when no denoise setting can change the scene. This
+/// is always false now: core applies the denoise settings to a merged X3I too.
 pub fn prepare_scene(
     cache: &Path,
     path: &Path,
@@ -250,15 +247,13 @@ pub fn prepare_scene(
 }
 
 /// The settings that change merged pixels, for the cache key, and whether no
-/// denoise setting changes them. X3I ignores highlight recovery. Core's
-/// experimental denoise needs a positive X3F_X3I_DENOISE_SCALE, as in
-/// x3f-core's `read_denoise_scale`; without it, denoise settings do nothing.
-fn scene_settings(options: &SceneLinearOptions, scale: Option<&str>) -> (SceneLinearOptions, bool) {
-    let filter = scale
-        .and_then(|value| value.parse::<f32>().ok())
-        .is_some_and(|scale| scale > 0.);
-    let denoise = filter
-        && options.denoise_intensity > 0
+/// denoise setting changes them. X3I ignores highlight recovery. Core denoises
+/// the merged scene with the denoise settings, so they are part of the key when
+/// denoise is on. All "off" settings share one key. The second value is always
+/// false.
+// ponytail: a denoise change fuses the photo again. Cache the merged scene without denoise and filter it after the load if this is too slow.
+fn scene_settings(options: &SceneLinearOptions) -> (SceneLinearOptions, bool) {
+    let denoise = options.denoise_intensity > 0
         && (options.denoise_options.luminance || options.denoise_options.chroma);
     let settings = SceneLinearOptions {
         highlight_recovery: false,
@@ -273,7 +268,7 @@ fn scene_settings(options: &SceneLinearOptions, scale: Option<&str>) -> (SceneLi
         denoise_options: Default::default(),
         ..settings
     };
-    (settings, !filter)
+    (settings, false)
 }
 
 #[derive(Serialize, Deserialize)]
@@ -517,19 +512,30 @@ mod tests {
     }
 
     #[test]
-    fn denoise_settings_change_x3i_scenes_only_with_the_experimental_filter() {
-        let off = SceneLinearOptions {
-            denoise_intensity: 0,
+    fn active_denoise_settings_change_x3i_scenes() {
+        let mut on = SceneLinearOptions {
+            denoise_intensity: 10,
             ..Default::default()
         };
-        let on = SceneLinearOptions::default();
-        // Without the filter, every denoise setting gives one scene.
-        assert_eq!(scene_settings(&on, None), scene_settings(&off, Some("0")));
-        assert!(scene_settings(&on, None).1);
-        // With it, a scene prepared at 0 must not serve a recipe at 10.
-        let (zero, free) = scene_settings(&off, Some("0.3"));
-        assert!(!free);
-        assert_ne!(zero, scene_settings(&on, Some("0.3")).0);
+        on.denoise_options.luminance = true;
+        on.denoise_options.chroma = true;
+        let mut weaker = on;
+        weaker.denoise_intensity = 5;
+        // Two active settings give two scenes.
+        assert_ne!(scene_settings(&on).0, scene_settings(&weaker).0);
+        // All "off" settings give one scene.
+        let mut zero = on;
+        zero.denoise_intensity = 0;
+        let mut zero_luminance = zero;
+        zero_luminance.denoise_options.chroma = false;
+        let mut no_channel = on;
+        no_channel.denoise_options.luminance = false;
+        no_channel.denoise_options.chroma = false;
+        assert_eq!(scene_settings(&zero), scene_settings(&zero_luminance));
+        assert_eq!(scene_settings(&zero), scene_settings(&no_channel));
+        for options in [on, weaker, zero, zero_luminance, no_channel] {
+            assert!(!scene_settings(&options).1);
+        }
     }
 
     #[test]

@@ -172,7 +172,8 @@ reuse the Debug probe executable. Release builds omit the probe.
   "Fused SFD RAW" with its size, and `editor:x3iDelete` removes it. A change between
   the two morphs the preview into the developing cloud until it renders. A recipe
   that uses an SFD RAW that is not stored merges it again; its embedded preview can
-  zoom and pan meanwhile.
+  zoom and pan meanwhile. Sensor denoise applies to the SFD RAW after the merge;
+  a change of a denoise setting fuses the photo again.
   Edited exports merge when needed. Original exports use the `x3iSource`
   setting; Embedded JPG always uses the middle exposure.
   Merged scenes are cached in app-data `edits/x3i-v1/` within a 3 GiB budget.
