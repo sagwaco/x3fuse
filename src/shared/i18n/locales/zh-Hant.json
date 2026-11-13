@@ -77,7 +77,7 @@
   "settings.color_mode": "Sigma 色彩模式",
   "settings.color_mode.off": "關閉",
   "settings.color_mode.help": "將 Sigma Photo Pro 色彩模式套用到 TIFF 影像。Merrill 相機支援標準到 FOV Classic Blue，dp Quattro 相機支援所有模式。如果相片無法使用該模式（例如以單色拍攝的相片），則使用標準匯出。其他相機匯出時不使用色彩模式。DNG 一律將所有色彩模式包含為相機設定檔。",
-  "settings.x3i_source.help": "用於 Super Fine Detail X3I 檔案。SFD RAW 會合併所有曝光，每個檔案約需 30 秒，最多佔用 3 GB 記憶體。未合併的 RAW 只使用一幀，無需合併。其他檔案會忽略此設定。",
+  "settings.x3i_source.help": "用於 Super Fine Detail X3I 檔案。SFD RAW 會合併所有曝光，每個檔案約需 1 分鐘，最多佔用 3 GB 記憶體。未合併的 RAW 只使用一幀，無需合併。其他檔案會忽略此設定。",
   "settings.debug_logging": "偵錯日誌記錄",
   "settings.debug_logging.help": "啟用詳細的偵錯日誌以進行故障排除",
   "settings.debug_logs": "偵錯日誌",

@@ -216,7 +216,7 @@ Foveon cameras do not have a color filter array (CFA) like most other cameras, s
 X3I files from Quattro Super Fine Detail (SFD) mode hold several exposures. The
 editor opens an X3I as its unfused RAW: the middle exposure, which needs no fuse.
 To use the SFD RAW, which fuses all exposures into one image, turn on Use SFD RAW
-or select Fuse in the SFD RAW section. The first fuse takes about 30 seconds and
+or select Fuse in the SFD RAW section. The first fuse takes about one minute and
 up to 3 GB of memory. You can edit, leave the photo, or cancel while it runs. The
 editor keeps the SFD RAW in its cache, so it opens quickly after that. Settings >
 Cache shows SFD cache usage and clears merged SFD RAWs separately from thumbnails.

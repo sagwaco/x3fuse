@@ -77,7 +77,7 @@
   "settings.color_mode": "Sigmaカラーモード",
   "settings.color_mode.off": "オフ",
   "settings.color_mode.help": "Sigma Photo ProのカラーモードをTIFF画像に適用します。Merrillカメラは標準からFOV Classic Blueまで、dp Quattroカメラはすべてのモードに対応します。モノクロで撮影した写真など、モードを使用できない場合は標準で書き出します。その他のカメラはカラーモードなしで書き出します。DNGには常にすべてのカラーモードがカメラプロファイルとして含まれます。",
-  "settings.x3i_source.help": "Super Fine DetailのX3Iファイル用です。SFD RAWはすべての露出を合成し、1ファイルにつき約30秒と最大3 GBのRAMを使用します。未合成のRAWは1フレームだけを使い、合成は不要です。その他のファイルはこの設定を無視します。",
+  "settings.x3i_source.help": "Super Fine DetailのX3Iファイル用です。SFD RAWはすべての露出を合成し、1ファイルにつき約1分と最大3 GBのRAMを使用します。未合成のRAWは1フレームだけを使い、合成は不要です。その他のファイルはこの設定を無視します。",
   "settings.debug_logging": "デバッグログ",
   "settings.debug_logging.help": "トラブルシューティング用の詳細なデバッグログを有効にする",
   "settings.debug_logs": "デバッグログ",

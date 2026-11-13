@@ -77,7 +77,7 @@
   "settings.color_mode": "Sigma color mode",
   "settings.color_mode.off": "Off",
   "settings.color_mode.help": "Applies a Sigma Photo Pro color mode to the TIFF image. Merrill cameras support Standard to FOV Classic Blue. dp Quattro cameras support all modes. If a photo cannot use the mode, such as a photo shot in Monochrome, the export uses Standard. Other cameras export without a color mode. DNG exports always include every color mode as a camera profile.",
-  "settings.x3i_source.help": "For Super Fine Detail X3I files. The SFD RAW fuses every exposure, which takes about 30 seconds and up to 3 GB of RAM for each file. The unfused RAW uses one frame and needs no fuse. Other files ignore this setting.",
+  "settings.x3i_source.help": "For Super Fine Detail X3I files. The SFD RAW fuses every exposure, which takes about one minute and up to 3 GB of RAM for each file. The unfused RAW uses one frame and needs no fuse. Other files ignore this setting.",
   "settings.debug_logging": "Debug logging",
   "settings.debug_logging.help": "Enable detailed debug logging for troubleshooting",
   "settings.debug_logs": "Debug logs",

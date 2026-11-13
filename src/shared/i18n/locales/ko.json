@@ -77,7 +77,7 @@
   "settings.color_mode": "Sigma 컬러 모드",
   "settings.color_mode.off": "끔",
   "settings.color_mode.help": "Sigma Photo Pro 컬러 모드를 TIFF 이미지에 적용합니다. Merrill 카메라는 표준부터 FOV Classic Blue까지, dp Quattro 카메라는 모든 모드를 지원합니다. 모노크롬으로 촬영한 사진처럼 모드를 사용할 수 없으면 표준으로 내보냅니다. 다른 카메라는 컬러 모드 없이 내보냅니다. DNG에는 항상 모든 컬러 모드가 카메라 프로파일로 포함됩니다.",
-  "settings.x3i_source.help": "Super Fine Detail X3I 파일용입니다. SFD RAW는 모든 노출을 병합하며 파일마다 약 30초와 최대 3GB의 RAM이 필요합니다. 병합하지 않은 RAW는 프레임 하나만 사용하므로 병합이 필요 없습니다. 다른 파일은 이 설정을 무시합니다.",
+  "settings.x3i_source.help": "Super Fine Detail X3I 파일용입니다. SFD RAW는 모든 노출을 병합하며 파일마다 약 1분과 최대 3GB의 RAM이 필요합니다. 병합하지 않은 RAW는 프레임 하나만 사용하므로 병합이 필요 없습니다. 다른 파일은 이 설정을 무시합니다.",
   "settings.debug_logging": "디버그 로깅",
   "settings.debug_logging.help": "문제 해결을 위한 자세한 디버그 로그를 활성화합니다",
   "settings.debug_logs": "디버그 로그",

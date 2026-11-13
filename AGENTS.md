@@ -286,7 +286,7 @@ Strings live in `src/shared/i18n/locales/`; locale detection is in
 
 ## Known issues
 
-- The first X3I merge takes about 30 s and 3 GB.
+- The first X3I merge takes about 60 s and 3 GB.
 - Compressed Foveon DNG support varies by destination editor. Check sample output
   before converting a library. Quick Look can render Foveon DNGs incorrectly.
 - Classic Foveon support comes from x3f-core 0.3.0. SD9, SD10, and SD14 conversion
