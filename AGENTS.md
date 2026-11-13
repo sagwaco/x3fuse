@@ -5,7 +5,7 @@ This file provides guidance to coding agents like Claude Code (claude.ai/code) w
 ## Project overview
 
 X3Fuse is a cross-platform Tauri 2 app for converting and editing Sigma X3F RAW files.
-The renderer uses React, Zustand, and Vite. The Rust backend uses `x3f-core` 0.4.0
+The renderer uses React, Zustand, and Vite. The Rust backend uses `x3f-core` 0.5.0
 from crates.io for conversion and RAW preparation, and the in-repo `x3f-render`
 crate for GPU editing and the spektrafilm film model.
 
@@ -242,7 +242,7 @@ reuse the Debug probe executable. Release builds omit the probe.
 
 ## Dependencies
 
-Use published `x3f-core` and `x3f-sys` 0.4.0 dependencies. A temporary local
+Use published `x3f-core` and `x3f-sys` 0.5.0 dependencies. A temporary local
 `[patch.crates-io]` can test an unpublished core, but **never commit it** or its
 local-path lockfile changes. CI and release builds cannot access local checkouts.
 

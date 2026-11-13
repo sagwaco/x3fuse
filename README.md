@@ -234,7 +234,7 @@ and ratings are stored by file path; moving a photo does not carry them with it.
 X3Fuse 0.2.0 uses Tauri 2 with a React renderer and a Rust backend. Its bundle
 identifier is `com.sagwa.X3Fuse`.
 
-- [**x3f-core 0.4.0**](https://github.com/sagwaco/x3fuse-core): published on crates.io;
+- [**x3f-core 0.5.0**](https://github.com/sagwaco/x3fuse-core): published on crates.io;
   converts X3F files and prepares RAW data directly in Rust.
 - **x3f-render**: in-repo GPU renderer for RAW edits and the spektrafilm film model.
 - **x3f-dng**: in-repo adapter for bundled [LibRaw 0.22.2](https://www.libraw.org/),
@@ -303,7 +303,7 @@ needs network access; later runs can use the cached archives. Run
 `npm run sync:resources` before direct Cargo commands in a fresh checkout.
 LibRaw is compiled into the app, so users need no separate download.
 
-The backend, `x3f-render`, and `x3f-dng` use published `x3f-core` 0.4.0,
+The backend, `x3f-render`, and `x3f-dng` use published `x3f-core` 0.5.0,
 which includes X3I (SFD) support.
 `src-tauri/Cargo.lock` pins dependency versions. To test an unpublished core, use a
 temporary `[patch.crates-io]` for `x3f-core` and `x3f-sys`. Never commit this patch
